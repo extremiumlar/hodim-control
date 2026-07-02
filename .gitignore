@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.db
+*.sqlite3
+.env
+node_modules/
+web/dist/
+web/*.tsbuildinfo
+*.log
+.pytest_cache/
+.mypy_cache/

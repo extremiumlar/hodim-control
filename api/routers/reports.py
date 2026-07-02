@@ -1,0 +1,84 @@
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.config import settings
+from api.deps import get_db, require_roles, verify_bot_secret
+from api.services.export import build_report_xlsx
+from api.telegram_notify import send_message
+from db.models import ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
+
+router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+@router.get("/export")
+async def export_report(
+    date_from: date,
+    date_to: date,
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    buffer = await build_report_xlsx(db, date_from, date_to)
+    filename = f"hisobot_{date_from.isoformat()}_{date_to.isoformat()}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/daily-summary", dependencies=[Depends(verify_bot_secret)])
+async def daily_summary(db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler tomonidan har kuni (~19:00) chaqiriladi — umumiy guruhga
+    kunlik xulosani monospace formatda yuboradi."""
+    today = date.today()
+    day_start = datetime.combine(today, datetime.min.time())
+    day_end = datetime.combine(today, datetime.max.time())
+
+    employees = list(
+        await db.scalars(
+            select(User).where(User.role == Role.employee.value, User.is_active == True).order_by(User.full_name)  # noqa: E712
+        )
+    )
+
+    lines = []
+    for emp in employees:
+        excused = await db.scalar(
+            select(ExcusedDay).where(
+                ExcusedDay.user_id == emp.id,
+                ExcusedDay.date == today,
+                ExcusedDay.status == ExcusedStatus.approved.value,
+            )
+        )
+        if excused:
+            lines.append(f"{'🙋 ' + emp.full_name:<28} sababli kun")
+            continue
+
+        tasks_today = list(
+            await db.scalars(
+                select(TaskModel).where(
+                    TaskModel.assigned_to == emp.id,
+                    TaskModel.created_at >= day_start,
+                    TaskModel.created_at <= day_end,
+                )
+            )
+        )
+        total = len(tasks_today)
+        done = sum(1 for t in tasks_today if t.status == TaskStatus.done.value)
+        mark = "✅" if total > 0 and done == total else ("❌" if total > 0 else "•")
+        lines.append(f"{mark + ' ' + emp.full_name:<28} {done}/{total} vazifa")
+
+    body = "\n".join(lines) if lines else "Xodimlar topilmadi."
+    # API xabarlarni HTML parse_mode bilan yuboradi (api/telegram_notify.py), shuning uchun
+    # Telegram monospace bloki uchun ```  emas balki <pre> tegi ishlatiladi.
+    text = f"📊 Kunlik xulosa — {today.isoformat()}\n<pre>{body}</pre>"
+
+    sent = False
+    if settings.telegram_group_chat_id:
+        result = await send_message(settings.telegram_group_chat_id, text)
+        sent = result is not None
+
+    return {"employees": len(employees), "sent": sent}
