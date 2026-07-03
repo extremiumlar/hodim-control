@@ -1,3 +1,4 @@
+import hmac
 from typing import AsyncGenerator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -45,5 +46,5 @@ def require_roles(*roles: str):
 
 
 async def verify_bot_secret(x_bot_secret: str | None = Header(default=None)) -> None:
-    if not x_bot_secret or x_bot_secret != settings.bot_shared_secret:
+    if not x_bot_secret or not hmac.compare_digest(x_bot_secret, settings.bot_shared_secret):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bot autentifikatsiyasi muvaffaqiyatsiz")

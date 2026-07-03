@@ -1,3 +1,4 @@
+import hmac
 from datetime import date
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -144,7 +145,9 @@ async def crm_webhook(
     Haqiqiy amoCRM webhook payload formati (form-encoded, ichma-ich maydonlar) hisobga
     olib, buni shu normallashtirilgan shaklga o'giradigan kichik middleware qo'shilishi
     mumkin — hozircha to'g'ridan-to'g'ri normallashtirilgan JSON qabul qilinadi."""
-    if not settings.crm_webhook_secret or x_crm_webhook_secret != settings.crm_webhook_secret:
+    if not settings.crm_webhook_secret or not x_crm_webhook_secret or not hmac.compare_digest(
+        x_crm_webhook_secret, settings.crm_webhook_secret
+    ):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Webhook maxfiy kaliti noto'g'ri")
 
     user = await db.scalar(select(User).where(User.crm_external_id == payload.crm_external_id))
