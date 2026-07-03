@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { api, User } from "./api";
+import { api, User, UNAUTHORIZED_EVENT } from "./api";
 
 interface AuthContextValue {
   user: User | null;
@@ -27,6 +27,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("access_token");
       })
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      localStorage.removeItem("access_token");
+      setUser(null);
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
   }, []);
 
   const loginWithToken = (token: string, user: User) => {

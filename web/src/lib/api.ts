@@ -1,5 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+export const UNAUTHORIZED_EVENT = "auth:unauthorized";
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -29,6 +31,9 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       detail = body.detail || detail;
     } catch {
       // ignore
+    }
+    if (resp.status === 401) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
     throw new ApiError(resp.status, detail);
   }
@@ -195,6 +200,9 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!resp.ok) {
+      if (resp.status === 401) {
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      }
       throw new ApiError(resp.status, "Hisobotni yuklashda xatolik");
     }
     const blob = await resp.blob();
