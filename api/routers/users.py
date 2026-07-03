@@ -417,6 +417,7 @@ async def _has_dependent_records(db: AsyncSession, user_id: int) -> bool:
         ),
         select(ExcusedDay.id).where((ExcusedDay.user_id == user_id) | (ExcusedDay.decided_by == user_id)),
         select(Bonus.id).where(Bonus.user_id == user_id),
+        select(AuditLog.id).where((AuditLog.actor_id == user_id) | (AuditLog.target_user_id == user_id)),
     ]
     for query in checks:
         if await db.scalar(query.limit(1)) is not None:
