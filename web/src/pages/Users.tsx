@@ -18,10 +18,20 @@ export default function Users() {
   const [submitting, setSubmitting] = useState(false);
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
 
+  const [crmDrafts, setCrmDrafts] = useState<Record<number, string>>({});
+  const [savingCrmId, setSavingCrmId] = useState<number | null>(null);
+  const [savingRole, setSavingRole] = useState<number | null>(null);
+
   const load = async () => {
     setLoading(true);
     try {
-      setUsers(await api.listUsers());
+      const data = await api.listUsers(undefined, true);
+      setUsers(data);
+      const drafts: Record<number, string> = {};
+      data.forEach((u) => {
+        drafts[u.id] = u.crm_external_id ?? "";
+      });
+      setCrmDrafts(drafts);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Yuklashda xatolik");
     } finally {
@@ -63,6 +73,73 @@ export default function Users() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Havolani olishda xatolik");
+    }
+  };
+
+  const saveCrmExternalId = async (userId: number) => {
+    setSavingCrmId(userId);
+    setError(null);
+    try {
+      const value = crmDrafts[userId]?.trim() || null;
+      await api.updateCrmExternalId(userId, value);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "CRM ID saqlashda xatolik");
+    } finally {
+      setSavingCrmId(null);
+    }
+  };
+
+  const handleRoleChange = async (userId: number, newRole: string) => {
+    if (!window.confirm(`Rolni "${ROLE_LABELS[newRole] ?? newRole}"ga o'zgartirishni tasdiqlaysizmi?`)) return;
+    setSavingRole(userId);
+    setError(null);
+    try {
+      await api.updateRole(userId, newRole);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Rolni o'zgartirishda xatolik");
+    } finally {
+      setSavingRole(null);
+    }
+  };
+
+  const handleDeactivate = async (userId: number) => {
+    if (!window.confirm("Bu foydalanuvchini o'chirishni tasdiqlaysizmi? (keyinroq tiklash mumkin)")) return;
+    setError(null);
+    try {
+      await api.deactivateUser(userId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "O'chirishda xatolik");
+    }
+  };
+
+  const handleActivate = async (userId: number) => {
+    setError(null);
+    try {
+      await api.activateUser(userId);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Tiklashda xatolik");
+    }
+  };
+
+  const handleResetAccount = async (userId: number) => {
+    if (
+      !window.confirm(
+        "Akkaunt qayta bog'lansa, eski Telegram ulanishi bekor bo'ladi va yangi havola yaratiladi. Davom etaymi?"
+      )
+    )
+      return;
+    setError(null);
+    setLastInviteLink(null);
+    try {
+      const { invite_link } = await api.resetAccount(userId);
+      setLastInviteLink(invite_link);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Akkauntni qayta bog'lashda xatolik");
     }
   };
 
@@ -124,25 +201,83 @@ export default function Users() {
               <tr className="text-left text-slate-500 border-b">
                 <th className="py-2">Ism</th>
                 <th className="py-2">Rol</th>
-                <th className="py-2">Bot holati</th>
+                <th className="py-2">Holat</th>
+                <th className="py-2">Bot</th>
+                <th className="py-2">CRM ID</th>
                 <th className="py-2"></th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b last:border-0">
+                <tr key={u.id} className={`border-b last:border-0 ${!u.is_active ? "opacity-50" : ""}`}>
                   <td className="py-2">{u.full_name}</td>
-                  <td className="py-2">{ROLE_LABELS[u.role] ?? u.role}</td>
+                  <td className="py-2">
+                    <select
+                      value={u.role}
+                      disabled={savingRole === u.id}
+                      onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                      className="border rounded px-2 py-1 text-xs disabled:opacity-50"
+                    >
+                      {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="py-2">{u.is_active ? "Faol" : "O'chirilgan"}</td>
                   <td className="py-2">{u.bot_started ? "✅ ulangan" : "— kutilmoqda"}</td>
-                  <td className="py-2 text-right">
-                    {!u.bot_started && (
+                  <td className="py-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={crmDrafts[u.id] ?? ""}
+                        onChange={(e) => setCrmDrafts((prev) => ({ ...prev, [u.id]: e.target.value }))}
+                        placeholder="masalan email@uysot"
+                        className="w-40 border rounded px-2 py-1 text-xs"
+                      />
                       <button
-                        onClick={() => showInviteLink(u.id)}
-                        className="text-indigo-600 hover:underline text-xs"
+                        onClick={() => saveCrmExternalId(u.id)}
+                        disabled={savingCrmId === u.id}
+                        className="text-indigo-600 hover:underline text-xs disabled:opacity-50"
                       >
-                        Havola olish
+                        Saqlash
                       </button>
-                    )}
+                    </div>
+                  </td>
+                  <td className="py-2 text-right whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-3">
+                      {!u.bot_started && (
+                        <button
+                          onClick={() => showInviteLink(u.id)}
+                          className="text-indigo-600 hover:underline text-xs"
+                        >
+                          Havola olish
+                        </button>
+                      )}
+                      {u.bot_started && (
+                        <button
+                          onClick={() => handleResetAccount(u.id)}
+                          className="text-indigo-600 hover:underline text-xs"
+                        >
+                          Qayta bog'lash
+                        </button>
+                      )}
+                      {u.is_active ? (
+                        <button
+                          onClick={() => handleDeactivate(u.id)}
+                          className="text-red-600 hover:underline text-xs"
+                        >
+                          O'chirish
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleActivate(u.id)}
+                          className="text-emerald-600 hover:underline text-xs"
+                        >
+                          Tiklash
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

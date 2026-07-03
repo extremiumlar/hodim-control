@@ -12,4 +12,8 @@ def get_crm_adapter(crm_type: str) -> CRMAdapter | None:
         from crm.onec import OneCAdapter
 
         return OneCAdapter()
+    if crm_type == "uysot":
+        from crm.uysot import UysotAdapter
+
+        return UysotAdapter()
     return None

@@ -9,6 +9,7 @@ from api.config import settings
 from api.deps import get_db, require_roles, verify_bot_secret
 from api.services.export import build_report_xlsx
 from api.telegram_notify import send_message
+from crm import get_crm_adapter
 from db.models import ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -82,3 +83,35 @@ async def daily_summary(db: AsyncSession = Depends(get_db)) -> dict:
         sent = result is not None
 
     return {"employees": len(employees), "sent": sent}
+
+
+@router.post("/call-stats", dependencies=[Depends(verify_bot_secret)])
+async def call_stats(db: AsyncSession = Depends(get_db)) -> dict:
+    """Bot `/statistika` buyrug'i orqali talab bo'yicha chaqiradi — CRM'dan (hozircha Uysot)
+    shu kunda har bir operator/managerning nechta qo'ng'iroq qilgani/qabul qilganini olib,
+    guruhga jo'natadi."""
+    adapter = get_crm_adapter(settings.crm_type)
+    if not adapter:
+        return {"sent": False, "reason": "CRM sozlanmagan"}
+
+    today = date.today()
+    counts = await adapter.get_all_daily_call_counts(today)
+    if not counts:
+        return {"sent": False, "reason": "Bugun uchun qo'ng'iroq ma'lumoti topilmadi"}
+
+    users = list(await db.scalars(select(User).where(User.crm_external_id.isnot(None))))
+    name_by_external_id = {u.crm_external_id: u.full_name for u in users}
+
+    rows = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    lines = [
+        f"{name_by_external_id.get(external_id, external_id):<28} {count} qo'ng'iroq"
+        for external_id, count in rows
+    ]
+    text = f"📞 Bugungi qo'ng'iroqlar — {today.isoformat()}\n<pre>{chr(10).join(lines)}</pre>"
+
+    sent = False
+    if settings.telegram_group_chat_id:
+        result = await send_message(settings.telegram_group_chat_id, text)
+        sent = result is not None
+
+    return {"operators": len(counts), "sent": sent}

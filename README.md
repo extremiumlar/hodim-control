@@ -114,6 +114,8 @@ python -m scheduler.main
 
 Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan vazifalar uchun eslatma yuboradi, 19:00'da esa guruhga kunlik xulosani jo'natadi. Bu vaqtlarni tezroq sinash uchun `scheduler/main.py` ichidagi `REMINDER_HOURS`/`DAILY_SUMMARY_HOUR` o'zgaruvchilarini vaqtincha o'zgartirishingiz mumkin, yoki API'dagi `/tasks/send-reminders` va `/reports/daily-summary` endpointlarini to'g'ridan-to'g'ri (Swagger orqali, `X-Bot-Secret` header bilan) chaqirib sinang.
 
+**Talab bo'yicha statistika:** 19:00'ni kutmasdan, HR/ROP/Boshliq sozlangan guruhda `/statistika` buyrug'ini yuborsa, bot darhol kunlik xulosani hisoblab, guruhga jo'natadi (aynan shu `/reports/daily-summary` endpointini chaqiradi).
+
 **Muhim eslatma — Telegram Login Widget lokal muhitda:** Telegram Login Widget odatda faqat BotFather orqali ro'yxatdan o'tkazilgan haqiqiy domenda ishlaydi (`/setdomain`), `localhost`da ko'pincha ishlamaydi. Shu sababli lokal sinov uchun login sahifasida **"Dev-login"** blokini qo'shdik — u faqat `.env`da `DEBUG=true` bo'lganda ko'rinadi. O'zingizning (yoki HR/ROP sifatida yaratilgan foydalanuvchining) Telegram ID'ini kiritib, parolsiz kirasiz. Production'ga chiqishda `DEBUG=false` qiling — bu blok avtomatik yashiriladi va faqat haqiqiy Telegram Login ishlaydi (buning uchun avval BotFather'da `/setdomain` orqali saytingiz domenini ro'yxatdan o'tkazing).
 
 ## 3. To'liq oqimni qo'lda sinash
@@ -142,7 +144,12 @@ Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan
 
 ## 3.2. 3-bosqich oqimlarini sinash
 
-**Muhim eslatma — amoCRM:** hozircha haqiqiy amoCRM hisobingiz sozlanmagan bo'lishi mumkin (`CRM_TYPE=none` standart holat). Bu butunlay normal — spetsifikatsiya "kunlik natijalar CRM'dan **yoki qo'lda** to'ladi" deb belgilaydi, shuning uchun quyidagi oqim qo'lda kiritish orqali sinaladi. `CRM_TYPE=amocrm`, `CRM_API_KEY`, `CRM_AMOCRM_SUBDOMAIN`ni to'ldirsangiz (real amoCRM hisobi bilan), `/crm/amocrm.py` adapteri avtomatik ishga tushadi — u hozircha amoCRM Events (suhbat) va bajarilgan Tasks (tashrif) sonini hisoblaydi; aniq maydon xaritasi kompaniyaning haqiqiy amoCRM sozlamalari ma'lum bo'lgach moslashtiriladi.
+**Muhim eslatma — CRM:** hozircha haqiqiy CRM hisobingiz sozlanmagan bo'lishi mumkin (`CRM_TYPE=none` standart holat). Bu butunlay normal — spetsifikatsiya "kunlik natijalar CRM'dan **yoki qo'lda** to'ladi" deb belgilaydi, shuning uchun quyidagi oqim qo'lda kiritish orqali sinaladi.
+
+- `CRM_TYPE=amocrm` + `CRM_API_KEY` + `CRM_AMOCRM_SUBDOMAIN` — `/crm/amocrm.py` adapteri; hozircha amoCRM Events (suhbat) va bajarilgan Tasks (tashrif) sonini hisoblaydi.
+- `CRM_TYPE=uysot` + `CRM_API_KEY` (Uysot Open API tokeni, "Call History: Read" ruxsati bilan) — `/crm/uysot.py` adapteri; Uysot'ning `call-history/filter` endpointidan xodimning shu kungi qo'ng'iroqlar sonini "suhbat" sifatida hisoblaydi (bitta sinxronizatsiya davomida barcha xodimlar uchun bitta umumiy so'rov natijasi qayta ishlatiladi, shuning uchun 30 soniyalik tez sinxronizatsiyada ham ortiqcha yuklama tushmaydi). **Tashriflar hozircha 0** — Uysot'da "tashrif" alohida hodisa emas, balki lid pipeline bosqichi bo'lib, minglab lidni har 30 soniyada to'liq skanerlash amaliy emas; shuning uchun tashriflar hozircha qo'lda kiritiladi.
+
+Har ikkala holatda ham xodimning `users.crm_external_id` ustuni tegishli CRM identifikatoriga (amoCRM uchun `responsible_user_id`, Uysot uchun qo'ng'iroq tizimidagi `employeeNum`/email) mos kelishi kerak — bu hozircha faqat bazaga to'g'ridan-to'g'ri yozish orqali sozlanadi (web UI hali yo'q).
 
 **Kunlik natijani qo'lda kiritish va bonusni hisoblash:**
 1. Saytda **"Normalar"** bo'limidan xodim ismiga bosib uning **profiliga** o'ting (yoki Bosh sahifadagi vazifa jadvalidan).

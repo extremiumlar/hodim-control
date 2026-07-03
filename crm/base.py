@@ -15,3 +15,9 @@ class CRMAdapter(ABC):
         """`user.crm_external_id` orqali CRM tizimidagi xodimga moslanadi.
         Qaytaradi: {"conversations": int, "visits": int}."""
         raise NotImplementedError
+
+    async def get_all_daily_call_counts(self, day: date) -> dict[str, int]:
+        """Ixtiyoriy: shu kunda barcha operator/managerlarning qo'ng'iroqlar sonini
+        {crm_external_id: soni} ko'rinishida qaytaradi (masalan botning `/statistika`
+        buyrug'i uchun). Qo'llab-quvvatlamaydigan adapterlar bo'sh dict qaytaradi."""
+        return {}

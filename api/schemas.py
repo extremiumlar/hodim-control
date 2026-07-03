@@ -12,9 +12,18 @@ class UserOut(BaseModel):
     manager_id: int | None
     bot_started: bool
     is_active: bool
+    crm_external_id: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class UserCrmIdUpdate(BaseModel):
+    crm_external_id: str | None = None
+
+
+class UserRoleUpdate(BaseModel):
+    role: str
 
 
 class UserCreate(BaseModel):

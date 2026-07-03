@@ -12,7 +12,9 @@ from api.schemas import (
     TelegramStartResponse,
     UserCreate,
     UserCreateOut,
+    UserCrmIdUpdate,
     UserOut,
+    UserRoleUpdate,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -37,10 +39,13 @@ async def list_employees_for_bot(db: AsyncSession = Depends(get_db)) -> list[Use
 @router.get("", response_model=list[UserOut])
 async def list_users(
     role: str | None = None,
+    include_inactive: bool = False,
     _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[User]:
-    query = select(User).where(User.is_active == True)  # noqa: E712
+    query = select(User)
+    if not include_inactive:
+        query = query.where(User.is_active == True)  # noqa: E712
     if role:
         roles = [r.strip() for r in role.split(",") if r.strip()]
         query = query.where(User.role.in_(roles))
@@ -118,6 +123,12 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         if not user:
             return TelegramStartResponse(status="invalid_token")
 
+        conflicting = await db.scalar(
+            select(User).where(User.telegram_id == payload.telegram_id, User.id != user.id)
+        )
+        if conflicting:
+            return TelegramStartResponse(status="telegram_already_linked")
+
         user.telegram_id = payload.telegram_id
         user.bot_started = True
         user.invite_token = None
@@ -147,3 +158,150 @@ async def get_user(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return user
+
+
+@router.patch("/{user_id}/crm-external-id", response_model=UserOut)
+async def update_crm_external_id(
+    user_id: int,
+    payload: UserCrmIdUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = user.crm_external_id
+    user.crm_external_id = payload.crm_external_id or None
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="crm_external_id_changed",
+            target_user_id=user.id,
+            before={"crm_external_id": before},
+            after={"crm_external_id": user.crm_external_id},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/role", response_model=UserOut)
+async def update_role(
+    user_id: int,
+    payload: UserRoleUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if payload.role not in {r.value for r in Role}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri rol")
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = user.role
+    user.role = payload.role
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_role_changed",
+            target_user_id=user.id,
+            before={"role": before},
+            after={"role": user.role},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/{user_id}/deactivate", response_model=UserOut)
+async def deactivate_user(
+    user_id: int,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    if user_id == actor.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O'zingizni o'chira olmaysiz")
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    user.is_active = False
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_deactivated",
+            target_user_id=user.id,
+            before={"is_active": True},
+            after={"is_active": False},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/{user_id}/activate", response_model=UserOut)
+async def activate_user(
+    user_id: int,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    user.is_active = True
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_activated",
+            target_user_id=user.id,
+            before={"is_active": False},
+            after={"is_active": True},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/{user_id}/reset-account", response_model=UserCreateOut)
+async def reset_account(
+    user_id: int,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> UserCreateOut:
+    """Foydalanuvchining eski Telegram bog'lanishini bekor qiladi va yangi bot-havola
+    yaratadi — masalan xodim telefon/Telegram akkauntini almashtirganda ishlatiladi."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before_telegram_id = user.telegram_id
+    token = secrets.token_urlsafe(16)
+    user.telegram_id = None
+    user.bot_started = False
+    user.invite_token = token
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_account_reset",
+            target_user_id=user.id,
+            before={"telegram_id": before_telegram_id},
+            after={"telegram_id": None},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+
+    return UserCreateOut(user=UserOut.model_validate(user), invite_link=_invite_link(token))

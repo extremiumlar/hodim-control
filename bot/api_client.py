@@ -150,3 +150,17 @@ async def bot_create_task(assigner_telegram_id: int, assigned_to: int, title: st
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def trigger_daily_summary() -> dict:
+    async with await _client() as client:
+        resp = await client.post("/reports/daily-summary")
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def trigger_call_stats() -> dict:
+    async with await _client() as client:
+        resp = await client.post("/reports/call-stats")
+        resp.raise_for_status()
+        return resp.json()

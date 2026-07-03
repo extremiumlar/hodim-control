@@ -48,6 +48,7 @@ export interface User {
   manager_id: number | null;
   bot_started: boolean;
   is_active: boolean;
+  crm_external_id: string | null;
   created_at: string;
 }
 
@@ -117,8 +118,13 @@ export interface AuditLog {
 export const api = {
   me: () => apiFetch<User>("/users/me"),
   getUser: (userId: number) => apiFetch<User>(`/users/${userId}`),
-  listUsers: (role?: string) =>
-    apiFetch<User[]>(`/users${role ? `?role=${role}` : ""}`),
+  listUsers: (role?: string, includeInactive = false) => {
+    const params = new URLSearchParams();
+    if (role) params.set("role", role);
+    if (includeInactive) params.set("include_inactive", "true");
+    const query = params.toString();
+    return apiFetch<User[]>(`/users${query ? `?${query}` : ""}`);
+  },
   createUser: (data: { full_name: string; role: string; team_id?: number | null; manager_id?: number | null }) =>
     apiFetch<{ user: User; invite_link: string }>("/users", {
       method: "POST",
@@ -126,6 +132,17 @@ export const api = {
     }),
   inviteLink: (userId: number) =>
     apiFetch<{ invite_link: string | null; already_started: boolean }>(`/users/${userId}/invite-link`),
+  updateCrmExternalId: (userId: number, crmExternalId: string | null) =>
+    apiFetch<User>(`/users/${userId}/crm-external-id`, {
+      method: "PATCH",
+      body: JSON.stringify({ crm_external_id: crmExternalId }),
+    }),
+  updateRole: (userId: number, role: string) =>
+    apiFetch<User>(`/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  deactivateUser: (userId: number) => apiFetch<User>(`/users/${userId}/deactivate`, { method: "POST" }),
+  activateUser: (userId: number) => apiFetch<User>(`/users/${userId}/activate`, { method: "POST" }),
+  resetAccount: (userId: number) =>
+    apiFetch<{ user: User; invite_link: string }>(`/users/${userId}/reset-account`, { method: "POST" }),
   listTasks: (dateFilter = "today") => apiFetch<Task[]>(`/tasks?date_filter=${dateFilter}`),
   createTask: (data: { assigned_to: number; title: string; description?: string; deadline?: string | null }) =>
     apiFetch<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
