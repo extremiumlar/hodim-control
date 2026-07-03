@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,13 +16,15 @@ PLACEHOLDER_RATE_PER_VISIT = 5000
 async def calculate_bonus(db: AsyncSession, user: User, period: str) -> dict:
     """period format: "YYYY-MM". Qaytaradi: {"amount": float, "breakdown": dict}."""
     year, month = (int(part) for part in period.split("-"))
+    period_start = date(year, month, 1)
+    period_end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
 
     results = list(
         await db.scalars(
             select(DailyResult).where(
                 DailyResult.user_id == user.id,
-                DailyResult.date >= f"{year:04d}-{month:02d}-01",
-                DailyResult.date < (f"{year:04d}-{month + 1:02d}-01" if month < 12 else f"{year + 1:04d}-01-01"),
+                DailyResult.date >= period_start,
+                DailyResult.date < period_end,
             )
         )
     )
