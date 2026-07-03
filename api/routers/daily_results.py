@@ -16,7 +16,7 @@ from api.schemas import (
     DailyResultTodayOut,
 )
 from crm import get_crm_adapter
-from db.models import DailyResult, DailyResultSource, Norm, Role, User
+from db.models import AuditLog, DailyResult, DailyResultSource, Norm, Role, User
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +69,37 @@ async def manual_daily_result(
     if not is_within_rop_scope(actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
 
-    return await _upsert_daily_result(
+    existing = await db.scalar(
+        select(DailyResult).where(DailyResult.user_id == payload.user_id, DailyResult.date == payload.date)
+    )
+    before = (
+        {"conversations_count": existing.conversations_count, "visits_count": existing.visits_count, "source": existing.source}
+        if existing
+        else None
+    )
+
+    record = await _upsert_daily_result(
         db, payload.user_id, payload.date, payload.conversations_count, payload.visits_count,
         DailyResultSource.manual.value,
     )
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="daily_result_manual_set",
+            target_user_id=payload.user_id,
+            before=before,
+            after={
+                "conversations_count": record.conversations_count,
+                "visits_count": record.visits_count,
+                "source": record.source,
+                "date": payload.date.isoformat(),
+            },
+        )
+    )
+    await db.commit()
+
+    return record
 
 
 @router.get("/daily-results", response_model=list[DailyResultOut])
@@ -173,7 +200,33 @@ async def crm_webhook(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "CRM ID bo'yicha foydalanuvchi topilmadi")
 
+    existing = await db.scalar(
+        select(DailyResult).where(DailyResult.user_id == user.id, DailyResult.date == payload.date)
+    )
+    before = (
+        {"conversations_count": existing.conversations_count, "visits_count": existing.visits_count, "source": existing.source}
+        if existing
+        else None
+    )
+
     record = await _upsert_daily_result(
         db, user.id, payload.date, payload.conversations, payload.visits, DailyResultSource.crm.value
     )
+
+    db.add(
+        AuditLog(
+            actor_id=None,  # CRM webhook orqali tizim tomonidan avtomatik
+            action="daily_result_crm_webhook",
+            target_user_id=user.id,
+            before=before,
+            after={
+                "conversations_count": record.conversations_count,
+                "visits_count": record.visits_count,
+                "source": record.source,
+                "date": payload.date.isoformat(),
+            },
+        )
+    )
+    await db.commit()
+
     return {"status": "ok", "daily_result_id": record.id}
