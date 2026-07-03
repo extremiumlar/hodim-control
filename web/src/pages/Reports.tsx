@@ -1,14 +1,15 @@
 import { FormEvent, useState } from "react";
 import { api } from "../lib/api";
+import { toLocalDateString } from "../lib/date";
 
 function firstDayOfMonth(): string {
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  return toLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
 }
 
 export default function Reports() {
   const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
-  const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
+  const [dateTo, setDateTo] = useState(toLocalDateString(new Date()));
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

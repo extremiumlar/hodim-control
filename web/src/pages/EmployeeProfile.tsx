@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, Bonus, DailyResult, User } from "../lib/api";
+import { toLocalDateString } from "../lib/date";
 
 const SOURCE_LABELS: Record<string, string> = { crm: "CRM", manual: "Qo'lda" };
 
@@ -25,7 +26,7 @@ export default function EmployeeProfile() {
   const [error, setError] = useState<string | null>(null);
   const [expandedBonus, setExpandedBonus] = useState<number | null>(null);
 
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(toLocalDateString(new Date()));
   const [conversations, setConversations] = useState("");
   const [visits, setVisits] = useState("");
   const [submitting, setSubmitting] = useState(false);
