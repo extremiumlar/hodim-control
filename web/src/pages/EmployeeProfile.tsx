@@ -55,14 +55,27 @@ export default function EmployeeProfile() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
     setError(null);
+
+    const conversationsCount = Number(conversations);
+    const visitsCount = Number(visits);
+    if (
+      !Number.isInteger(conversationsCount) ||
+      conversationsCount < 0 ||
+      !Number.isInteger(visitsCount) ||
+      visitsCount < 0
+    ) {
+      setError("Suhbatlar va tashriflar soni manfiy bo'lmagan butun son bo'lishi kerak");
+      return;
+    }
+
+    setSubmitting(true);
     try {
       await api.createManualDailyResult({
         user_id: userId,
         date,
-        conversations_count: Number(conversations) || 0,
-        visits_count: Number(visits) || 0,
+        conversations_count: conversationsCount,
+        visits_count: visitsCount,
       });
       setConversations("");
       setVisits("");

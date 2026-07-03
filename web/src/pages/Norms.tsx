@@ -40,8 +40,8 @@ export default function Norms() {
   const saveMetric = async (userId: number, metric: "suhbat" | "tashrif") => {
     const raw = drafts[userId]?.[metric] ?? "";
     const value = Number(raw);
-    if (!raw || Number.isNaN(value)) {
-      setError("Qiymat butun son bo'lishi kerak");
+    if (!raw || !Number.isInteger(value) || value < 0) {
+      setError("Qiymat manfiy bo'lmagan butun son bo'lishi kerak");
       return;
     }
     setSavingKey(`${userId}:${metric}`);
