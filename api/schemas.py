@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UserOut(BaseModel):
@@ -127,14 +127,14 @@ class ExcusedDayDecide(BaseModel):
 class NormCreate(BaseModel):
     user_id: int
     metric_type: str  # suhbat | tashrif
-    value: int
+    value: int = Field(ge=0)
 
 
 class NormBotUpdate(BaseModel):
     changer_telegram_id: int
     target_user_id: int
     metric_type: str
-    value: int
+    value: int = Field(ge=0)
 
 
 class NormOut(BaseModel):
@@ -185,8 +185,8 @@ class MobilografOut(BaseModel):
 class DailyResultManualCreate(BaseModel):
     user_id: int
     date: date
-    conversations_count: int
-    visits_count: int
+    conversations_count: int = Field(ge=0)
+    visits_count: int = Field(ge=0)
 
 
 class DailyResultOut(BaseModel):
