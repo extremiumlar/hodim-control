@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, require_roles, verify_bot_secret
+from api.deps import get_db, is_within_rop_scope, require_roles, verify_bot_secret
 from api.timeutil import today_local
 from api.schemas import (
     CRMWebhookPayload,
@@ -60,12 +60,14 @@ async def _upsert_daily_result(
 @router.post("/daily-results/manual", response_model=DailyResultOut)
 async def manual_daily_result(
     payload: DailyResultManualCreate,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> DailyResult:
     target = await db.get(User, payload.user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
+    if not is_within_rop_scope(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
 
     return await _upsert_daily_result(
         db, payload.user_id, payload.date, payload.conversations_count, payload.visits_count,
@@ -76,9 +78,15 @@ async def manual_daily_result(
 @router.get("/daily-results", response_model=list[DailyResultOut])
 async def list_daily_results(
     user_id: int,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[DailyResult]:
+    target = await db.get(User, user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    if not is_within_rop_scope(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
+
     query = (
         select(DailyResult)
         .where(DailyResult.user_id == user_id)

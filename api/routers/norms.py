@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles, verify_bot_secret
+from api.deps import get_db, is_within_rop_scope, require_roles, verify_bot_secret
 from api.schemas import NormBotUpdate, NormCreate, NormOut, TeamNormRow
 from db.models import AuditLog, Norm, Role, User
 
@@ -51,14 +51,13 @@ async def _create_norm(db: AsyncSession, actor: User, target_user: User, metric_
 
 @router.get("/team", response_model=list[TeamNormRow])
 async def team_norms(
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[TeamNormRow]:
-    employees = list(
-        await db.scalars(
-            select(User).where(User.role == Role.employee.value, User.is_active == True).order_by(User.full_name)  # noqa: E712
-        )
-    )
+    query = select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
+    if actor.role == Role.rop.value:
+        query = query.where(User.manager_id == actor.id)
+    employees = list(await db.scalars(query.order_by(User.full_name)))
     rows = []
     for emp in employees:
         rows.append(
@@ -81,6 +80,8 @@ async def create_norm(
     target = await db.get(User, payload.user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
+    if not is_within_rop_scope(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
 
     return await _create_norm(db, actor, target, payload.metric_type, payload.value)
 
@@ -94,5 +95,7 @@ async def bot_update_norm(payload: NormBotUpdate, db: AsyncSession = Depends(get
     target = await db.get(User, payload.target_user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
+    if not is_within_rop_scope(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
 
     return await _create_norm(db, actor, target, payload.metric_type, payload.value)

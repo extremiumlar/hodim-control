@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.security import decode_access_token
 from db.base import async_session
-from db.models import User
+from db.models import Role, User
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -48,3 +48,11 @@ def require_roles(*roles: str):
 async def verify_bot_secret(x_bot_secret: str | None = Header(default=None)) -> None:
     if not x_bot_secret or not hmac.compare_digest(x_bot_secret, settings.bot_shared_secret):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bot autentifikatsiyasi muvaffaqiyatsiz")
+
+
+def is_within_rop_scope(actor: User, target: User) -> bool:
+    """ROP faqat o'zining to'g'ridan-to'g'ri bo'ysunuvchilarini (target.manager_id ==
+    actor.id) boshqara oladi. HR va Boshliq uchun cheklovsiz — har doim True."""
+    if actor.role != Role.rop.value:
+        return True
+    return target.manager_id == actor.id

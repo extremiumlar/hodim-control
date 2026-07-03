@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, is_within_rop_scope, require_roles, verify_bot_secret
 from api.schemas import TaskBotCreate, TaskCompleteRequest, TaskCreate, TaskOut, UserOut
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, Role, TaskModel, TaskStatus, User
@@ -81,7 +81,7 @@ async def _create_task_record(
 async def _resolve_assignee(db: AsyncSession, actor: User, assigned_to: int) -> User:
     assignee = await db.get(User, assigned_to)
     allowed_roles = ASSIGNABLE_ROLES.get(actor.role, set())
-    if not assignee or assignee.role not in allowed_roles:
+    if not assignee or assignee.role not in allowed_roles or not is_within_rop_scope(actor, assignee):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu foydalanuvchiga vazifa bera olmaysiz")
     return assignee
 
@@ -120,18 +120,17 @@ async def assignable_users(telegram_id: int, db: AsyncSession = Depends(get_db))
     if not allowed_roles:
         return []
 
-    query = (
-        select(User)
-        .where(User.role.in_(allowed_roles), User.is_active == True)  # noqa: E712
-        .order_by(User.full_name)
-    )
+    query = select(User).where(User.role.in_(allowed_roles), User.is_active == True)  # noqa: E712
+    if actor.role == Role.rop.value:
+        query = query.where(User.manager_id == actor.id)
+    query = query.order_by(User.full_name)
     return list(await db.scalars(query))
 
 
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
     date_filter: str | None = "today",
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[TaskOut]:
     query = select(TaskModel).order_by(TaskModel.created_at.desc())
@@ -141,6 +140,8 @@ async def list_tasks(
             TaskModel.created_at >= datetime.combine(target_date, datetime.min.time()),
             TaskModel.created_at < datetime.combine(target_date, datetime.max.time()),
         )
+    if actor.role == Role.rop.value:
+        query = query.where(TaskModel.assigned_to.in_(select(User.id).where(User.manager_id == actor.id)))
     tasks = list(await db.scalars(query))
     return [await _to_out(t, db) for t in tasks]
 
