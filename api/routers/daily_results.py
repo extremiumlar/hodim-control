@@ -166,6 +166,7 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
 
     synced = 0
     failed = 0
+    skipped_manual = 0
     for emp in employees:
         data = await adapter.get_daily_results(emp, today)
         if data is None:
@@ -174,12 +175,28 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
             logger.warning("CRM sinxronizatsiyasi o'tkazib yuborildi (user_id=%s) — CRM xatosi", emp.id)
             failed += 1
             continue
+
+        existing = await db.scalar(
+            select(DailyResult).where(DailyResult.user_id == emp.id, DailyResult.date == today)
+        )
+        if existing and existing.source == DailyResultSource.manual.value:
+            # Qo'lda kiritilgan yozuvni CRM sync avtomatik ustidan yozmaydi — qo'lda
+            # kiritilgan qiymat qasddan CRM'dan farq qilishi mumkin (masalan tuzatish).
+            logger.info("CRM sinxronizatsiyasi o'tkazib yuborildi (user_id=%s) — qo'lda kiritilgan yozuv", emp.id)
+            skipped_manual += 1
+            continue
+
         await _upsert_daily_result(
             db, emp.id, today, data["conversations"], data["visits"], DailyResultSource.crm.value
         )
         synced += 1
 
-    return {"synced": synced, "failed": failed, "total_employees_with_crm_id": len(employees)}
+    return {
+        "synced": synced,
+        "failed": failed,
+        "skipped_manual": skipped_manual,
+        "total_employees_with_crm_id": len(employees),
+    }
 
 
 @router.post("/crm/webhook")
