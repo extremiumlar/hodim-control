@@ -1,4 +1,5 @@
 import hmac
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -16,6 +17,8 @@ from api.schemas import (
 )
 from crm import get_crm_adapter
 from db.models import DailyResult, DailyResultSource, Norm, Role, User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["daily-results"])
 
@@ -126,14 +129,21 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
     )
 
     synced = 0
+    failed = 0
     for emp in employees:
         data = await adapter.get_daily_results(emp, today)
+        if data is None:
+            # CRM'dan ma'lumot olib bo'lmadi (xatolik) — mavjud yozuvni ustidan
+            # yozib yubormaslik uchun bu xodimni butunlay o'tkazib yuboramiz.
+            logger.warning("CRM sinxronizatsiyasi o'tkazib yuborildi (user_id=%s) — CRM xatosi", emp.id)
+            failed += 1
+            continue
         await _upsert_daily_result(
             db, emp.id, today, data["conversations"], data["visits"], DailyResultSource.crm.value
         )
         synced += 1
 
-    return {"synced": synced, "total_employees_with_crm_id": len(employees)}
+    return {"synced": synced, "failed": failed, "total_employees_with_crm_id": len(employees)}
 
 
 @router.post("/crm/webhook")

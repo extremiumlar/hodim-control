@@ -81,7 +81,10 @@ class UysotAdapter(CRMAdapter):
         self._day_cache[day_key] = counts
         return counts
 
-    async def get_daily_results(self, user, day: date) -> dict:
+    async def get_daily_results(self, user, day: date) -> dict | None:
+        """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi
+        mavjud yozuvni ustidan yozmasligi kerak. Xodimda CRM ID bo'lmasa (0, 0)
+        qaytariladi — bu xatolik emas, shunchaki mos yozuv yo'qligini bildiradi."""
         if not user.crm_external_id or not CRM_API_KEY:
             return {"conversations": 0, "visits": 0}
 
@@ -90,7 +93,7 @@ class UysotAdapter(CRMAdapter):
                 counts = await self._load_day_call_counts(client, day)
             except httpx.HTTPError:
                 logger.exception("Uysot'dan ma'lumot olishda xatolik (user_id=%s)", user.id)
-                return {"conversations": 0, "visits": 0}
+                return None
 
         return {"conversations": counts.get(user.crm_external_id, 0), "visits": 0}
 

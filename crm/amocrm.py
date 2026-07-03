@@ -60,7 +60,10 @@ class AmoCRMAdapter(CRMAdapter):
         data = resp.json()
         return len(data.get("_embedded", {}).get("tasks", []))
 
-    async def get_daily_results(self, user, day: date) -> dict:
+    async def get_daily_results(self, user, day: date) -> dict | None:
+        """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi
+        mavjud yozuvni ustidan yozmasligi kerak. Xodimda CRM ID bo'lmasa (0, 0)
+        qaytariladi — bu xatolik emas, shunchaki mos yozuv yo'qligini bildiradi."""
         if not user.crm_external_id or not CRM_AMOCRM_SUBDOMAIN or not CRM_API_KEY:
             return {"conversations": 0, "visits": 0}
 
@@ -70,6 +73,6 @@ class AmoCRMAdapter(CRMAdapter):
                 visits = await self._count_completed_tasks(client, user.crm_external_id, day)
             except httpx.HTTPError:
                 logger.exception("amoCRM'dan ma'lumot olishda xatolik (user_id=%s)", user.id)
-                return {"conversations": 0, "visits": 0}
+                return None
 
         return {"conversations": conversations, "visits": visits}
