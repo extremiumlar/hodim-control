@@ -126,14 +126,14 @@ class ExcusedDayDecide(BaseModel):
 
 class NormCreate(BaseModel):
     user_id: int
-    metric_type: str  # suhbat | tashrif
+    metric_type: str = Field(min_length=1, max_length=50)  # suhbat | tashrif | custom
     value: int = Field(ge=0)
 
 
 class NormBotUpdate(BaseModel):
     changer_telegram_id: int
     target_user_id: int
-    metric_type: str
+    metric_type: str = Field(min_length=1, max_length=50)
     value: int = Field(ge=0)
 
 
