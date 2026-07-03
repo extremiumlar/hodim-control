@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Task, User } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -37,7 +37,10 @@ export default function Dashboard() {
   const [deadline, setDeadline] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const latestRequestId = useRef(0);
+
   const load = async (showSpinner = true) => {
+    const requestId = ++latestRequestId.current;
     if (showSpinner) setLoading(true);
     try {
       const roleFilter = user ? ASSIGNABLE_ROLES[user.role] ?? "employee" : "employee";
@@ -45,12 +48,14 @@ export default function Dashboard() {
         api.listTasks("today"),
         api.listUsers(roleFilter),
       ]);
+      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
       setTasks(taskList);
       setAssignableUsers(userList);
     } catch (e) {
+      if (requestId !== latestRequestId.current) return;
       setError(e instanceof Error ? e.message : "Yuklashda xatolik");
     } finally {
-      if (showSpinner) setLoading(false);
+      if (requestId === latestRequestId.current && showSpinner) setLoading(false);
     }
   };
 

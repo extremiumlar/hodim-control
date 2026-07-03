@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   CartesianGrid,
@@ -31,7 +31,10 @@ export default function EmployeeProfile() {
   const [visits, setVisits] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  const latestRequestId = useRef(0);
+
   const load = async () => {
+    const requestId = ++latestRequestId.current;
     setLoading(true);
     try {
       const [emp, resultList, bonusList] = await Promise.all([
@@ -39,13 +42,15 @@ export default function EmployeeProfile() {
         api.listDailyResults(userId),
         api.listBonuses(userId),
       ]);
+      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
       setEmployee(emp);
       setResults(resultList);
       setBonuses(bonusList);
     } catch (e) {
+      if (requestId !== latestRequestId.current) return;
       setError(e instanceof Error ? e.message : "Yuklashda xatolik");
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   };
 

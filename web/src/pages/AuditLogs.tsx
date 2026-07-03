@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, AuditLog } from "../lib/api";
 
 const ACTION_LABELS: Record<string, string> = {
@@ -27,20 +27,24 @@ export default function AuditLogs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const latestRequestId = useRef(0);
+
   const load = async () => {
+    const requestId = ++latestRequestId.current;
     setLoading(true);
     try {
-      setLogs(
-        await api.listAuditLogs({
-          action: action || undefined,
-          date_from: dateFrom || undefined,
-          date_to: dateTo || undefined,
-        })
-      );
+      const logs = await api.listAuditLogs({
+        action: action || undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+      });
+      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
+      setLogs(logs);
     } catch (e) {
+      if (requestId !== latestRequestId.current) return;
       setError(e instanceof Error ? e.message : "Yuklashda xatolik");
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   };
 
