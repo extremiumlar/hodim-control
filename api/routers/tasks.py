@@ -36,6 +36,29 @@ async def _to_out(task: TaskModel, db: AsyncSession) -> TaskOut:
     )
 
 
+async def _to_out_many(tasks: list[TaskModel], db: AsyncSession) -> list[TaskOut]:
+    """`_to_out`ning ro'yxat versiyasi — har bir vazifa uchun alohida `assigned_to`
+    so'rovi yubormaslik uchun (N+1) barcha kerakli userlarni bitta so'rovda oladi."""
+    assignee_ids = {t.assigned_to for t in tasks}
+    assignees = list(await db.scalars(select(User).where(User.id.in_(assignee_ids))))
+    name_by_id = {u.id: u.full_name for u in assignees}
+    return [
+        TaskOut(
+            id=t.id,
+            assigned_by=t.assigned_by,
+            assigned_to=t.assigned_to,
+            assigned_to_name=name_by_id.get(t.assigned_to, "?"),
+            title=t.title,
+            description=t.description,
+            deadline=t.deadline,
+            status=t.status,
+            completed_at=t.completed_at,
+            created_at=t.created_at,
+        )
+        for t in tasks
+    ]
+
+
 async def _create_task_record(
     db: AsyncSession,
     actor: User,
@@ -144,7 +167,7 @@ async def list_tasks(
     if actor.role == Role.rop.value:
         query = query.where(TaskModel.assigned_to.in_(select(User.id).where(User.manager_id == actor.id)))
     tasks = list(await db.scalars(query))
-    return [await _to_out(t, db) for t in tasks]
+    return await _to_out_many(tasks, db)
 
 
 @router.get("/my/{telegram_id}", response_model=list[TaskOut], dependencies=[Depends(verify_bot_secret)])
@@ -160,7 +183,7 @@ async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) ->
         .limit(20)
     )
     tasks = list(await db.scalars(query))
-    return [await _to_out(t, db) for t in tasks]
+    return await _to_out_many(tasks, db)
 
 
 @router.post("/send-reminders", dependencies=[Depends(verify_bot_secret)])

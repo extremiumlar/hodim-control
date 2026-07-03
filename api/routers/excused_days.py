@@ -28,6 +28,28 @@ async def _to_out(item: ExcusedDay, db: AsyncSession) -> ExcusedDayOut:
     )
 
 
+async def _to_out_many(items: list[ExcusedDay], db: AsyncSession) -> list[ExcusedDayOut]:
+    """`_to_out`ning ro'yxat versiyasi — har bir yozuv uchun alohida `user_id` so'rovi
+    yubormaslik uchun (N+1) barcha kerakli userlarni bitta so'rovda oladi."""
+    user_ids = {i.user_id for i in items}
+    users = list(await db.scalars(select(User).where(User.id.in_(user_ids))))
+    name_by_id = {u.id: u.full_name for u in users}
+    return [
+        ExcusedDayOut(
+            id=i.id,
+            user_id=i.user_id,
+            user_full_name=name_by_id.get(i.user_id, "?"),
+            date=i.date,
+            reason=i.reason,
+            status=i.status,
+            decided_by=i.decided_by,
+            decided_at=i.decided_at,
+            created_at=i.created_at,
+        )
+        for i in items
+    ]
+
+
 @router.post("", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
 async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depends(get_db)) -> ExcusedDayOut:
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
@@ -65,7 +87,7 @@ async def list_excused_days(
     if status_filter:
         query = query.where(ExcusedDay.status == status_filter)
     items = list(await db.scalars(query))
-    return [await _to_out(i, db) for i in items]
+    return await _to_out_many(items, db)
 
 
 @router.post("/{item_id}/decide", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
