@@ -1,4 +1,5 @@
 import secrets
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -6,8 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
-from db.models import AuditLog, Role, User
+from crm import get_crm_adapter
+from db.models import (
+    AuditLog,
+    Bonus,
+    DailyResult,
+    ExcusedDay,
+    MobilografVideo,
+    Norm,
+    Role,
+    TaskModel,
+    User,
+)
 from api.schemas import (
+    CrmOperatorRow,
     TelegramStartRequest,
     TelegramStartResponse,
     UserCreate,
@@ -34,6 +47,38 @@ async def get_me(user: User = Depends(get_current_user)) -> User:
 async def list_employees_for_bot(db: AsyncSession = Depends(get_db)) -> list[User]:
     query = select(User).where(User.role == Role.employee.value, User.is_active == True).order_by(User.full_name)  # noqa: E712
     return list(await db.scalars(query))
+
+
+@router.get("/crm-operators", response_model=list[CrmOperatorRow])
+async def list_crm_operators(
+    _: User = Depends(require_roles(Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> list[CrmOperatorRow]:
+    """CRM'dagi (hozircha Uysot) bugungi qo'ng'iroq qilgan operatorlarni, har biri
+    tizimdagi qaysi (Telegram orqali ulangan) foydalanuvchiga bog'langanini ko'rsatadi —
+    qo'lda email yozish o'rniga, shu ro'yxatdan to'g'ridan-to'g'ri bog'lash uchun."""
+    adapter = get_crm_adapter(settings.crm_type)
+    if not adapter:
+        return []
+
+    counts = await adapter.get_all_daily_call_counts(date.today())
+    if not counts:
+        return []
+
+    users = list(await db.scalars(select(User).where(User.crm_external_id.isnot(None))))
+    user_by_external_id = {u.crm_external_id: u for u in users}
+
+    rows = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    return [
+        CrmOperatorRow(
+            crm_external_id=external_id,
+            calls_today=count,
+            matched_user=UserOut.model_validate(user_by_external_id[external_id])
+            if external_id in user_by_external_id
+            else None,
+        )
+        for external_id, count in rows
+    ]
 
 
 @router.get("", response_model=list[UserOut])
@@ -69,6 +114,9 @@ async def create_user(
         team_id=payload.team_id,
         manager_id=payload.manager_id,
         invite_token=token,
+        # CRM ID faqat Boshliq tomonidan belgilanishi mumkin — boshqa rol yuborsa jim
+        # e'tiborsiz qoldiriladi (frontendda ham hr uchun bu maydon ko'rsatilmaydi).
+        crm_external_id=payload.crm_external_id if actor.role == Role.boss.value else None,
     )
     db.add(user)
     await db.flush()
@@ -123,11 +171,30 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         if not user:
             return TelegramStartResponse(status="invalid_token")
 
+        # Bitta Telegram akkaunt bir vaqtda faqat bitta foydalanuvchiga tegishli bo'lishi
+        # mumkin. Agar bu akkaunt ilgari boshqa foydalanuvchiga bog'langan bo'lsa — yangi
+        # havola orqali kirish "haqiqiy" hisoblanadi: eski bog'lanish avtomatik bekor
+        # qilinadi (o'sha foydalanuvchi keyinroq o'ziga alohida yangi havola olishi kerak
+        # bo'ladi), va akkaunt shu (yangi) foydalanuvchiga o'tkaziladi.
         conflicting = await db.scalar(
             select(User).where(User.telegram_id == payload.telegram_id, User.id != user.id)
         )
         if conflicting:
-            return TelegramStartResponse(status="telegram_already_linked")
+            db.add(
+                AuditLog(
+                    actor_id=None,
+                    action="telegram_account_transferred",
+                    target_user_id=conflicting.id,
+                    before={"telegram_id": conflicting.telegram_id},
+                    after={"telegram_id": None, "transferred_to_user_id": user.id},
+                )
+            )
+            conflicting.telegram_id = None
+            conflicting.bot_started = False
+            # Eski bog'lanishni avval bazaga yozib qo'yamiz — aks holda SQLite/PostgreSQL
+            # UNIQUE(telegram_id) cheklovi ikkala UPDATE bir xil tranzaksiyada noto'g'ri
+            # tartibda bajarilsa xato berishi mumkin.
+            await db.flush()
 
         user.telegram_id = payload.telegram_id
         user.bot_started = True
@@ -164,7 +231,7 @@ async def get_user(
 async def update_crm_external_id(
     user_id: int,
     payload: UserCrmIdUpdate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.boss.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     user = await db.get(User, user_id)
@@ -305,3 +372,59 @@ async def reset_account(
     await db.refresh(user)
 
     return UserCreateOut(user=UserOut.model_validate(user), invite_link=_invite_link(token))
+
+
+async def _has_dependent_records(db: AsyncSession, user_id: int) -> bool:
+    checks = [
+        select(TaskModel.id).where((TaskModel.assigned_to == user_id) | (TaskModel.assigned_by == user_id)),
+        select(Norm.id).where((Norm.user_id == user_id) | (Norm.changed_by == user_id)),
+        select(DailyResult.id).where(DailyResult.user_id == user_id),
+        select(MobilografVideo.id).where(
+            (MobilografVideo.user_id == user_id) | (MobilografVideo.confirmed_by == user_id)
+        ),
+        select(ExcusedDay.id).where((ExcusedDay.user_id == user_id) | (ExcusedDay.decided_by == user_id)),
+        select(Bonus.id).where(Bonus.user_id == user_id),
+    ]
+    for query in checks:
+        if await db.scalar(query.limit(1)) is not None:
+            return True
+    return False
+
+
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: int,
+    actor: User = Depends(require_roles(Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Foydalanuvchini bazadan butunlay o'chiradi. Faqat Boshliq uchun, va faqat
+    hech qanday tarixiy ma'lumot (vazifa, norma, kunlik natija va h.k.) yo'q bo'lsa —
+    aks holda o'chirish o'sha ma'lumotlarni yetim (orphan) qoldirar edi. Bunday hollarda
+    "O'chirish" (faolsizlantirish) tugmasidan foydalaning."""
+    if user_id == actor.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O'zingizni o'chira olmaysiz")
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    if await _has_dependent_records(db, user_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Bu foydalanuvchida tarixiy ma'lumotlar bor (vazifa, norma va h.k.), shuning "
+            "uchun butunlay o'chirib bo'lmaydi. Buning o'rniga 'O'chirish' (faolsizlantirish) "
+            "tugmasidan foydalaning.",
+        )
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_deleted",
+            target_user_id=None,
+            before={"id": user.id, "full_name": user.full_name, "role": user.role},
+            after=None,
+        )
+    )
+    await db.delete(user)
+    await db.commit()
+    return {"deleted": True}

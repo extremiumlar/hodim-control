@@ -31,11 +31,18 @@ class UserCreate(BaseModel):
     role: str
     team_id: int | None = None
     manager_id: int | None = None
+    crm_external_id: str | None = None
 
 
 class UserCreateOut(BaseModel):
     user: UserOut
     invite_link: str
+
+
+class CrmOperatorRow(BaseModel):
+    crm_external_id: str
+    calls_today: int
+    matched_user: UserOut | None = None
 
 
 class DevLoginRequest(BaseModel):

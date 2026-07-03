@@ -77,6 +77,12 @@ export interface ExcusedDay {
   created_at: string;
 }
 
+export interface CrmOperatorRow {
+  crm_external_id: string;
+  calls_today: number;
+  matched_user: User | null;
+}
+
 export interface TeamNormRow {
   user_id: number;
   full_name: string;
@@ -125,7 +131,13 @@ export const api = {
     const query = params.toString();
     return apiFetch<User[]>(`/users${query ? `?${query}` : ""}`);
   },
-  createUser: (data: { full_name: string; role: string; team_id?: number | null; manager_id?: number | null }) =>
+  createUser: (data: {
+    full_name: string;
+    role: string;
+    team_id?: number | null;
+    manager_id?: number | null;
+    crm_external_id?: string | null;
+  }) =>
     apiFetch<{ user: User; invite_link: string }>("/users", {
       method: "POST",
       body: JSON.stringify(data),
@@ -139,6 +151,8 @@ export const api = {
     }),
   updateRole: (userId: number, role: string) =>
     apiFetch<User>(`/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  deleteUser: (userId: number) => apiFetch<{ deleted: boolean }>(`/users/${userId}`, { method: "DELETE" }),
+  listCrmOperators: () => apiFetch<CrmOperatorRow[]>("/users/crm-operators"),
   deactivateUser: (userId: number) => apiFetch<User>(`/users/${userId}/deactivate`, { method: "POST" }),
   activateUser: (userId: number) => apiFetch<User>(`/users/${userId}/activate`, { method: "POST" }),
   resetAccount: (userId: number) =>
