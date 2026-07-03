@@ -12,6 +12,7 @@ const ROLE_LABELS: Record<string, string> = {
 export default function Users() {
   const { user: currentUser } = useAuth();
   const isBoss = currentUser?.role === "boss";
+  const canCreateUser = currentUser?.role === "hr" || currentUser?.role === "boss";
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -209,65 +210,67 @@ export default function Users() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 md:grid-cols-3">
-        <div className="md:col-span-1 bg-white rounded-lg shadow p-5 h-fit">
-          <h2 className="font-semibold mb-4">Foydalanuvchi qo'shish</h2>
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">To'liq ism</label>
-              <input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">Rol</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="w-full border rounded px-3 py-2 text-sm"
-              >
-                {Object.entries(ROLE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {isBoss && (
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className={`grid gap-6 ${canCreateUser ? "md:grid-cols-3" : ""}`}>
+        {canCreateUser && (
+          <div className="md:col-span-1 bg-white rounded-lg shadow p-5 h-fit">
+            <h2 className="font-semibold mb-4">Foydalanuvchi qo'shish</h2>
+            <form onSubmit={handleSubmit} className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-600 mb-1">CRM ID (ixtiyoriy)</label>
+                <label className="block text-sm text-slate-600 mb-1">To'liq ism</label>
                 <input
-                  value={crmExternalIdForCreate}
-                  onChange={(e) => setCrmExternalIdForCreate(e.target.value)}
-                  placeholder="masalan email@uysot"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
                   className="w-full border rounded px-3 py-2 text-sm"
                 />
               </div>
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Rol</label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full border rounded px-3 py-2 text-sm"
+                >
+                  {Object.entries(ROLE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {isBoss && (
+                <div>
+                  <label className="block text-sm text-slate-600 mb-1">CRM ID (ixtiyoriy)</label>
+                  <input
+                    value={crmExternalIdForCreate}
+                    onChange={(e) => setCrmExternalIdForCreate(e.target.value)}
+                    placeholder="masalan email@uysot"
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {submitting ? "Yaratilmoqda..." : "Qo'shish"}
+              </button>
+            </form>
+
+            {lastInviteLink && (
+              <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs break-all">
+                <p className="font-medium text-emerald-700 mb-1">Bot havolasi:</p>
+                <a href={lastInviteLink} target="_blank" rel="noreferrer" className="text-emerald-800 underline">
+                  {lastInviteLink}
+                </a>
+              </div>
             )}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {submitting ? "Yaratilmoqda..." : "Qo'shish"}
-            </button>
-          </form>
+          </div>
+        )}
 
-          {lastInviteLink && (
-            <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded text-xs break-all">
-              <p className="font-medium text-emerald-700 mb-1">Bot havolasi:</p>
-              <a href={lastInviteLink} target="_blank" rel="noreferrer" className="text-emerald-800 underline">
-                {lastInviteLink}
-              </a>
-            </div>
-          )}
-          {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
-        </div>
-
-        <div className="md:col-span-2 bg-white rounded-lg shadow p-5">
+        <div className={`${canCreateUser ? "md:col-span-2" : ""} bg-white rounded-lg shadow p-5`}>
           <h2 className="font-semibold mb-4">Barcha foydalanuvchilar</h2>
           {loading ? (
             <p className="text-sm text-slate-500">Yuklanmoqda...</p>

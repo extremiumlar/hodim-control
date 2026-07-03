@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, TeamNormRow } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 export default function Norms() {
+  const { user: currentUser } = useAuth();
+  const canEditNorms = currentUser?.role === "rop" || currentUser?.role === "boss";
+
   const [rows, setRows] = useState<TeamNormRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -77,30 +81,36 @@ export default function Norms() {
                     {row.full_name}
                   </Link>
                 </td>
-                {(["suhbat", "tashrif"] as const).map((metric) => (
-                  <td key={metric} className="py-2">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={drafts[row.user_id]?.[metric] ?? ""}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [row.user_id]: { ...prev[row.user_id], [metric]: e.target.value },
-                          }))
-                        }
-                        className="w-24 border rounded px-2 py-1"
-                      />
-                      <button
-                        onClick={() => saveMetric(row.user_id, metric)}
-                        disabled={savingKey === `${row.user_id}:${metric}`}
-                        className="text-indigo-600 hover:underline text-xs disabled:opacity-50"
-                      >
-                        Saqlash
-                      </button>
-                    </div>
-                  </td>
-                ))}
+                {(["suhbat", "tashrif"] as const).map((metric) =>
+                  canEditNorms ? (
+                    <td key={metric} className="py-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          value={drafts[row.user_id]?.[metric] ?? ""}
+                          onChange={(e) =>
+                            setDrafts((prev) => ({
+                              ...prev,
+                              [row.user_id]: { ...prev[row.user_id], [metric]: e.target.value },
+                            }))
+                          }
+                          className="w-24 border rounded px-2 py-1"
+                        />
+                        <button
+                          onClick={() => saveMetric(row.user_id, metric)}
+                          disabled={savingKey === `${row.user_id}:${metric}`}
+                          className="text-indigo-600 hover:underline text-xs disabled:opacity-50"
+                        >
+                          Saqlash
+                        </button>
+                      </div>
+                    </td>
+                  ) : (
+                    <td key={metric} className="py-2">
+                      {row[metric] ?? "—"}
+                    </td>
+                  )
+                )}
               </tr>
             ))}
           </tbody>
