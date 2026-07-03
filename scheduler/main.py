@@ -59,22 +59,42 @@ async def sync_daily_results() -> None:
 
 
 async def calculate_monthly_bonus() -> None:
+    """Bu job muvaffaqiyatsiz bo'lsa, xodimlarga bonus umuman hisoblanmay qoladi —
+    shuning uchun natija har doim (muvaffaqiyatli/muvaffaqiyatsiz) aniq log'ga yoziladi.
+    Kelajakda: muvaffaqiyatsizlikda bossga Telegram orqali darhol xabar yuborish tavsiya
+    qilinadi (masalan alohida "/scheduler/notify-boss" API endpointi orqali) — hozircha
+    faqat log orqali kuzatiladi."""
     async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
         try:
             resp = await client.post("/bonuses/calculate-monthly", json={})
             resp.raise_for_status()
-            logger.info("Oylik bonus hisoblandi: %s", resp.json())
+            logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", resp.json())
         except httpx.HTTPError:
-            logger.exception("Oylik bonus hisoblashda xatolik")
+            logger.exception("[BONUS FAILED] Oylik bonus hisoblashda xatolik yuz berdi")
 
 
 async def main() -> None:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-    for hour in REMINDER_HOURS:
-        scheduler.add_job(send_reminders, CronTrigger(hour=hour, minute=0, timezone=TIMEZONE))
+    # misfire_grace_time + coalesce: agar scheduler band/o'chiq bo'lgani sabab job o'z
+    # vaqtida ishga tushmasa, uni butunlay o'tkazib yubormasdan (default xatti-harakat),
+    # imkon bo'lganda (grace davri ichida) kechroq bitta marta ishga tushiradi.
+    MISFIRE_GRACE_TIME = 3600
 
-    scheduler.add_job(send_daily_summary, CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=0, timezone=TIMEZONE))
+    for hour in REMINDER_HOURS:
+        scheduler.add_job(
+            send_reminders,
+            CronTrigger(hour=hour, minute=0, timezone=TIMEZONE),
+            misfire_grace_time=MISFIRE_GRACE_TIME,
+            coalesce=True,
+        )
+
+    scheduler.add_job(
+        send_daily_summary,
+        CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=0, timezone=TIMEZONE),
+        misfire_grace_time=MISFIRE_GRACE_TIME,
+        coalesce=True,
+    )
 
     scheduler.add_job(sync_daily_results, IntervalTrigger(seconds=CRM_SYNC_INTERVAL_SECONDS))
 
@@ -83,6 +103,8 @@ async def main() -> None:
         CronTrigger(
             day=MONTHLY_BONUS_DAY, hour=MONTHLY_BONUS_HOUR, minute=MONTHLY_BONUS_MINUTE, timezone=TIMEZONE
         ),
+        misfire_grace_time=MISFIRE_GRACE_TIME,
+        coalesce=True,
     )
 
     scheduler.start()
