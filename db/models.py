@@ -72,11 +72,11 @@ class TaskModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     assigned_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    assigned_to: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    assigned_to: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     deadline: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default=TaskStatus.pending.value)
+    status: Mapped[str] = mapped_column(String(20), default=TaskStatus.pending.value, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -85,7 +85,7 @@ class Norm(Base):
     __tablename__ = "norms"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     metric_type: Mapped[str] = mapped_column(String(50))
     value: Mapped[int] = mapped_column(Integer)
     changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -123,8 +123,8 @@ class ExcusedDay(Base):
     __tablename__ = "excused_days"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    date: Mapped[date] = mapped_column(Date)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default=ExcusedStatus.pending.value)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -148,8 +148,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    action: Mapped[str] = mapped_column(String(100))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)
     target_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
