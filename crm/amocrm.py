@@ -1,9 +1,9 @@
 import logging
-from datetime import date, datetime, time, timezone
+from datetime import date
 
 import httpx
 
-from crm.base import CRMAdapter
+from crm.base import CRMAdapter, day_bounds_unix
 from crm.config import CRM_AMOCRM_SUBDOMAIN, CRM_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -25,13 +25,8 @@ class AmoCRMAdapter(CRMAdapter):
         self.base_url = f"https://{CRM_AMOCRM_SUBDOMAIN}.amocrm.ru/api/v4"
         self.headers = {"Authorization": f"Bearer {CRM_API_KEY}"}
 
-    def _day_bounds_unix(self, day: date) -> tuple[int, int]:
-        start = datetime.combine(day, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(day, time.max, tzinfo=timezone.utc)
-        return int(start.timestamp()), int(end.timestamp())
-
     async def _count_events(self, client: httpx.AsyncClient, external_id: str, day: date) -> int:
-        start_ts, end_ts = self._day_bounds_unix(day)
+        start_ts, end_ts = day_bounds_unix(day)
         resp = await client.get(
             "/events",
             params={
@@ -48,7 +43,7 @@ class AmoCRMAdapter(CRMAdapter):
         return len(data.get("_embedded", {}).get("events", []))
 
     async def _count_completed_tasks(self, client: httpx.AsyncClient, external_id: str, day: date) -> int:
-        start_ts, end_ts = self._day_bounds_unix(day)
+        start_ts, end_ts = day_bounds_unix(day)
         resp = await client.get(
             "/tasks",
             params={

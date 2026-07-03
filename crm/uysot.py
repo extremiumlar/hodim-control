@@ -1,9 +1,9 @@
 import logging
-from datetime import date, datetime, time, timezone
+from datetime import date
 
 import httpx
 
-from crm.base import CRMAdapter
+from crm.base import CRMAdapter, day_bounds_unix
 from crm.config import CRM_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -39,17 +39,12 @@ class UysotAdapter(CRMAdapter):
         self.headers = {"X-Open-Api-Token": CRM_API_KEY}
         self._day_cache: dict[str, dict[str, int]] = {}
 
-    def _day_bounds_unix(self, day: date) -> tuple[int, int]:
-        start = datetime.combine(day, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(day, time.max, tzinfo=timezone.utc)
-        return int(start.timestamp()), int(end.timestamp())
-
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
         if day_key in self._day_cache:
             return self._day_cache[day_key]
 
-        start_ts, end_ts = self._day_bounds_unix(day)
+        start_ts, end_ts = day_bounds_unix(day)
         counts: dict[str, int] = {}
         page = 1
 
