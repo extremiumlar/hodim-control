@@ -16,7 +16,7 @@ def _has_confirm_emoji(reactions: list) -> bool:
     return any(isinstance(r, ReactionTypeEmoji) and r.emoji == CONFIRM_EMOJI for r in reactions)
 
 
-@router.message(F.chat.id == TELEGRAM_GROUP_CHAT_ID, F.video)
+@router.message(F.chat.id == TELEGRAM_GROUP_CHAT_ID, F.video | F.video_note)
 async def on_mobilograf_video(message: Message) -> None:
     if not TELEGRAM_GROUP_CHAT_ID:
         return
