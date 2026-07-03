@@ -107,6 +107,11 @@ async def create_user(
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri rol")
 
+    # HR faqat "employee" rolida foydalanuvchi yarata oladi — rop/hr/boss darajasidagi
+    # rollarni faqat Boshliq bera oladi (privilege escalation oldini olish uchun).
+    if actor.role == Role.hr.value and payload.role != Role.employee.value:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "HR faqat 'Xodim' rolida foydalanuvchi yarata oladi")
+
     token = secrets.token_urlsafe(16)
     user = User(
         full_name=payload.full_name,
@@ -264,6 +269,14 @@ async def update_role(
 ) -> User:
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri rol")
+
+    if user_id == actor.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "O'zingizning rolingizni o'zgartira olmaysiz")
+
+    # HR faqat "employee" rolini bera oladi — rop/hr/boss darajasidagi rollarni faqat
+    # Boshliq bera oladi (privilege escalation oldini olish uchun).
+    if actor.role == Role.hr.value and payload.role != Role.employee.value:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "HR faqat 'Xodim' rolini bera oladi")
 
     user = await db.get(User, user_id)
     if not user:
