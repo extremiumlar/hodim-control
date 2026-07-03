@@ -1,7 +1,13 @@
+import logging
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+_PLACEHOLDER_JWT_SECRET = "please-change-this-secret"
+_PLACEHOLDER_BOT_SECRET = "please-change-this-bot-secret"
 
 
 class Settings(BaseSettings):
@@ -10,15 +16,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    debug: bool = True
+    debug: bool = False
     timezone: str = "Asia/Tashkent"
 
     bot_token: str = ""
-    bot_shared_secret: str = "please-change-this-bot-secret"
+    bot_shared_secret: str = _PLACEHOLDER_BOT_SECRET
 
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
-    jwt_secret: str = "please-change-this-secret"
+    jwt_secret: str = _PLACEHOLDER_JWT_SECRET
     jwt_expire_minutes: int = 1440
 
     frontend_url: str = "http://localhost:5173"
@@ -34,6 +40,26 @@ class Settings(BaseSettings):
         if value == "":
             return 0
         return value
+
+    @model_validator(mode="after")
+    def _warn_on_placeholder_secrets(self) -> "Settings":
+        placeholders = []
+        if self.jwt_secret == _PLACEHOLDER_JWT_SECRET:
+            placeholders.append("JWT_SECRET")
+        if self.bot_shared_secret == _PLACEHOLDER_BOT_SECRET:
+            placeholders.append("BOT_SHARED_SECRET")
+
+        if placeholders:
+            message = (
+                f"XAVFSIZLIK OGOHLANTIRISHI: {', '.join(placeholders)} hali standart "
+                "(placeholder) qiymatda turibdi — .env faylida haqiqiy maxfiy "
+                "qiymatlar bilan almashtiring."
+            )
+            if self.debug:
+                logger.error(message)
+            else:
+                raise RuntimeError(message)
+        return self
 
 
 settings = Settings()
