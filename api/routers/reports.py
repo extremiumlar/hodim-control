@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_db, require_roles, verify_bot_secret
 from api.services.export import build_report_xlsx
+from api.timeutil import today_local
 from api.telegram_notify import send_message
 from crm import get_crm_adapter
 from db.models import ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
@@ -35,7 +36,7 @@ async def export_report(
 async def daily_summary(db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan har kuni (~19:00) chaqiriladi — umumiy guruhga
     kunlik xulosani monospace formatda yuboradi."""
-    today = date.today()
+    today = today_local()
     day_start = datetime.combine(today, datetime.min.time())
     day_end = datetime.combine(today, datetime.max.time())
 
@@ -94,7 +95,7 @@ async def call_stats(db: AsyncSession = Depends(get_db)) -> dict:
     if not adapter:
         return {"sent": False, "reason": "CRM sozlanmagan"}
 
-    today = date.today()
+    today = today_local()
     counts = await adapter.get_all_daily_call_counts(today)
     if not counts:
         return {"sent": False, "reason": "Bugun uchun qo'ng'iroq ma'lumoti topilmadi"}

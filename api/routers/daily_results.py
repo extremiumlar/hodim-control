@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_db, require_roles, verify_bot_secret
+from api.timeutil import today_local
 from api.schemas import (
     CRMWebhookPayload,
     DailyResultManualCreate,
@@ -94,7 +95,7 @@ async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
-    today = date.today()
+    today = today_local()
     result = await db.scalar(select(DailyResult).where(DailyResult.user_id == user.id, DailyResult.date == today))
 
     return DailyResultTodayOut(
@@ -113,7 +114,7 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
     if not adapter:
         return {"synced": 0, "skipped_reason": "CRM_TYPE sozlanmagan"}
 
-    today = date.today()
+    today = today_local()
     employees = list(
         await db.scalars(
             select(User).where(

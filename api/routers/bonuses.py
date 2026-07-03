@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ from api.deps import get_db, require_roles, verify_bot_secret
 from api.schemas import BonusMyOut, BonusOut
 from api.services.bonus import calculate_bonus
 from api.telegram_notify import send_message
+from api.timeutil import today_local
 from db.models import AuditLog, Bonus, Role, User
 
 router = APIRouter(prefix="/bonuses", tags=["bonuses"])
@@ -22,7 +23,7 @@ class CalculateMonthlyRequest(BaseModel):
 async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan har oy oxirida chaqiriladi — barcha faol xodimlar uchun
     bonusni hisoblab, natijani saqlaydi va botga push-xabar yuboradi (summasiz)."""
-    period = payload.period or date.today().strftime("%Y-%m")
+    period = payload.period or today_local().strftime("%Y-%m")
 
     employees = list(
         await db.scalars(select(User).where(User.role == Role.employee.value, User.is_active == True))  # noqa: E712

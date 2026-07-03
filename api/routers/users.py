@@ -1,5 +1,4 @@
 import secrets
-from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -7,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.timeutil import today_local
 from crm import get_crm_adapter
 from db.models import (
     AuditLog,
@@ -61,7 +61,7 @@ async def list_crm_operators(
     if not adapter:
         return []
 
-    counts = await adapter.get_all_daily_call_counts(date.today())
+    counts = await adapter.get_all_daily_call_counts(today_local())
     if not counts:
         return []
 
