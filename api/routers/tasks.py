@@ -1,3 +1,4 @@
+import html
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -68,7 +69,7 @@ async def _create_task_record(
 
     if assignee.telegram_id:
         deadline_text = f"\nMuddat: {task.deadline:%Y-%m-%d %H:%M}" if task.deadline else ""
-        text = f"🆕 <b>Yangi vazifa</b> ({actor.full_name} tomonidan)\n{task.title}{deadline_text}"
+        text = f"🆕 <b>Yangi vazifa</b> ({actor.full_name} tomonidan)\n{html.escape(task.title)}{deadline_text}"
         await send_message(
             assignee.telegram_id,
             text,
@@ -175,7 +176,7 @@ async def send_reminders(db: AsyncSession = Depends(get_db)) -> dict:
         if not assignee or not assignee.telegram_id:
             continue
         deadline_text = f"\nMuddat: {task.deadline:%Y-%m-%d %H:%M}" if task.deadline else ""
-        text = f"⏰ <b>Eslatma:</b> vazifa hali bajarilmagan\n{task.title}{deadline_text}"
+        text = f"⏰ <b>Eslatma:</b> vazifa hali bajarilmagan\n{html.escape(task.title)}{deadline_text}"
         result = await send_message(
             assignee.telegram_id,
             text,

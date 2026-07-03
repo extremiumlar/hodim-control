@@ -1,3 +1,4 @@
+import html
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -44,7 +45,7 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
             await db.scalars(select(User).where(User.role == Role.boss.value, User.telegram_id.isnot(None)))
         )
 
-    text = f"🙋 <b>Sababli kun so'rovi</b>\nXodim: {user.full_name}\nSana: {item.date}\nSabab: {item.reason}"
+    text = f"🙋 <b>Sababli kun so'rovi</b>\nXodim: {user.full_name}\nSana: {item.date}\nSabab: {html.escape(item.reason)}"
     keyboard = inline_keyboard(
         [[("✅ Tasdiqlayman", f"excused_decide:{item.id}:approved"), ("❌ Rad etaman", f"excused_decide:{item.id}:rejected")]]
     )

@@ -1,3 +1,5 @@
+import html
+
 import httpx
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
@@ -19,5 +21,5 @@ async def on_task_done(callback: CallbackQuery) -> None:
             await callback.answer("Xatolik yuz berdi.", show_alert=True)
         return
 
-    await callback.message.edit_text(f"✅ Bajarildi: {task['title']}")
+    await callback.message.edit_text(f"✅ Bajarildi: {html.escape(task['title'])}")
     await callback.answer("Vazifa bajarildi deb belgilandi!")

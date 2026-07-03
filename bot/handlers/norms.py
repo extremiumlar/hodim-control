@@ -1,3 +1,5 @@
+import html
+
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -81,7 +83,7 @@ async def enter_custom_metric(message: Message, state: FSMContext) -> None:
 
     await state.update_data(metric_type=metric)
     await state.set_state(NormFSM.entering_value)
-    await message.answer(f"'{metric}' uchun yangi qiymatni yozing (butun son):")
+    await message.answer(f"'{html.escape(metric)}' uchun yangi qiymatni yozing (butun son):")
 
 
 @router.message(StateFilter(NormFSM.entering_value))
@@ -102,6 +104,6 @@ async def enter_value(message: Message, state: FSMContext) -> None:
         value=value,
     )
     await message.answer(
-        f"Norma yangilandi: <b>{data['metric_type']}</b> = {result['value']} "
+        f"Norma yangilandi: <b>{html.escape(data['metric_type'])}</b> = {result['value']} "
         f"(kuchga kirish sanasi: {result['effective_from']})."
     )

@@ -1,3 +1,5 @@
+import html
+
 from aiogram import F, Router
 from aiogram.types import Message
 
@@ -21,7 +23,7 @@ async def show_tasks(message: Message) -> None:
     for task in tasks:
         emoji = STATUS_EMOJI.get(task["status"], "•")
         deadline = f" (muddat: {task['deadline'][:16].replace('T', ' ')})" if task.get("deadline") else ""
-        lines.append(f"{emoji} {task['title']}{deadline}")
+        lines.append(f"{emoji} {html.escape(task['title'])}{deadline}")
     await message.answer("<b>Vazifalaringiz:</b>\n" + "\n".join(lines))
 
 
