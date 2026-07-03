@@ -7,6 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ErrorEvent
 
+from bot import api_client
 from bot.config import BOT_TOKEN
 from bot.handlers import assign_task, excused, group_stats, menu, mobilograf, norms, start, tasks
 
@@ -58,7 +59,10 @@ async def main() -> None:
     if "message_reaction" not in allowed_updates:
         allowed_updates = [*allowed_updates, "message_reaction"]
 
-    await dp.start_polling(bot, allowed_updates=allowed_updates)
+    try:
+        await dp.start_polling(bot, allowed_updates=allowed_updates)
+    finally:
+        await api_client.close_client()
 
 
 if __name__ == "__main__":
