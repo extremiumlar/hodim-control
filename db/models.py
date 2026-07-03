@@ -60,7 +60,7 @@ class User(Base):
     bot_started: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
-    crm_external_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    crm_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])

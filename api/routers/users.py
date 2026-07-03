@@ -112,6 +112,15 @@ async def create_user(
     if actor.role == Role.hr.value and payload.role != Role.employee.value:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "HR faqat 'Xodim' rolida foydalanuvchi yarata oladi")
 
+    new_crm_id = payload.crm_external_id if actor.role == Role.boss.value else None
+    if new_crm_id:
+        duplicate = await db.scalar(select(User).where(User.crm_external_id == new_crm_id))
+        if duplicate:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Bu CRM ID allaqachon '{duplicate.full_name}' foydalanuvchisiga bog'langan",
+            )
+
     token = secrets.token_urlsafe(16)
     user = User(
         full_name=payload.full_name,
@@ -121,7 +130,7 @@ async def create_user(
         invite_token=token,
         # CRM ID faqat Boshliq tomonidan belgilanishi mumkin — boshqa rol yuborsa jim
         # e'tiborsiz qoldiriladi (frontendda ham hr uchun bu maydon ko'rsatilmaydi).
-        crm_external_id=payload.crm_external_id if actor.role == Role.boss.value else None,
+        crm_external_id=new_crm_id,
     )
     db.add(user)
     await db.flush()
@@ -243,8 +252,19 @@ async def update_crm_external_id(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
+    new_crm_id = payload.crm_external_id or None
+    if new_crm_id is not None:
+        duplicate = await db.scalar(
+            select(User).where(User.crm_external_id == new_crm_id, User.id != user_id)
+        )
+        if duplicate:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Bu CRM ID allaqachon '{duplicate.full_name}' foydalanuvchisiga bog'langan",
+            )
+
     before = user.crm_external_id
-    user.crm_external_id = payload.crm_external_id or None
+    user.crm_external_id = new_crm_id
 
     db.add(
         AuditLog(
