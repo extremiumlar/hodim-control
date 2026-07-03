@@ -17,6 +17,7 @@ from api.schemas import (
 )
 from crm import get_crm_adapter
 from db.models import AuditLog, DailyResult, DailyResultSource, Norm, Role, User
+from db.upsert import upsert
 
 logger = logging.getLogger(__name__)
 
@@ -36,25 +37,25 @@ async def _current_norm(db: AsyncSession, user_id: int, metric_type: str) -> int
 async def _upsert_daily_result(
     db: AsyncSession, user_id: int, day: date, conversations: int, visits: int, source: str
 ) -> DailyResult:
-    existing = await db.scalar(select(DailyResult).where(DailyResult.user_id == user_id, DailyResult.date == day))
-    if existing:
-        existing.conversations_count = conversations
-        existing.visits_count = visits
-        existing.source = source
-        record = existing
-    else:
-        record = DailyResult(
-            user_id=user_id,
-            date=day,
-            conversations_count=conversations,
-            visits_count=visits,
-            source=source,
+    stmt = (
+        upsert(DailyResult)
+        .values(user_id=user_id, date=day, conversations_count=conversations, visits_count=visits, source=source)
+        .on_conflict_do_update(
+            index_elements=[DailyResult.user_id, DailyResult.date],
+            set_={"conversations_count": conversations, "visits_count": visits, "source": source},
         )
-        db.add(record)
-
+    )
+    await db.execute(stmt)
     await db.commit()
-    await db.refresh(record)
-    return record
+
+    # populate_existing=True: agar shu qatorga mos ORM obyekt sessiyada allaqachon
+    # (masalan chaqiruvchi "before" auditi uchun) yuklangan bo'lsa, identity map eski
+    # qiymatlarni qaytarib yubormasin — yangi UPDATE'dan keyingi haqiqiy qiymatlarni oling.
+    return await db.scalar(
+        select(DailyResult)
+        .where(DailyResult.user_id == user_id, DailyResult.date == day)
+        .execution_options(populate_existing=True)
+    )
 
 
 @router.post("/daily-results/manual", response_model=DailyResultOut)

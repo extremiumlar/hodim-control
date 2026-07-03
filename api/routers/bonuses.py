@@ -11,6 +11,7 @@ from api.services.bonus import calculate_bonus
 from api.telegram_notify import send_message
 from api.timeutil import today_local
 from db.models import AuditLog, Bonus, Role, User
+from db.upsert import upsert
 
 router = APIRouter(prefix="/bonuses", tags=["bonuses"])
 
@@ -32,23 +33,26 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
     calculated = 0
     for emp in employees:
         result = await calculate_bonus(db, emp, period)
-        before_amount = None
 
         existing = await db.scalar(select(Bonus).where(Bonus.user_id == emp.id, Bonus.period == period))
-        if existing:
-            before_amount = float(existing.amount)
-            existing.amount = result["amount"]
-            existing.breakdown = result["breakdown"]
-            existing.calculated_at = datetime.utcnow()
-        else:
-            db.add(
-                Bonus(
-                    user_id=emp.id,
-                    period=period,
-                    amount=result["amount"],
-                    breakdown=result["breakdown"],
-                )
+        before_amount = float(existing.amount) if existing else None
+
+        calculated_at = datetime.utcnow()
+        stmt = (
+            upsert(Bonus)
+            .values(
+                user_id=emp.id,
+                period=period,
+                amount=result["amount"],
+                breakdown=result["breakdown"],
+                calculated_at=calculated_at,
             )
+            .on_conflict_do_update(
+                index_elements=[Bonus.user_id, Bonus.period],
+                set_={"amount": result["amount"], "breakdown": result["breakdown"], "calculated_at": calculated_at},
+            )
+        )
+        await db.execute(stmt)
 
         db.add(
             AuditLog(
