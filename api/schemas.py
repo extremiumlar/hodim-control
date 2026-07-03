@@ -56,6 +56,14 @@ class TaskCreate(BaseModel):
     deadline: datetime | None = None
 
 
+class TaskBotCreate(BaseModel):
+    assigner_telegram_id: int
+    assigned_to: int
+    title: str
+    description: str | None = None
+    deadline: datetime | None = None
+
+
 class TaskOut(BaseModel):
     id: int
     assigned_by: int

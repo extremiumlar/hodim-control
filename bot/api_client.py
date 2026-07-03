@@ -129,3 +129,24 @@ async def my_latest_bonus(telegram_id: int) -> dict:
         resp = await client.get(f"/bonuses/my/{telegram_id}")
         resp.raise_for_status()
         return resp.json()
+
+
+async def assignable_users(telegram_id: int) -> list[dict]:
+    async with await _client() as client:
+        resp = await client.get(f"/tasks/assignable-users/{telegram_id}")
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def bot_create_task(assigner_telegram_id: int, assigned_to: int, title: str) -> dict:
+    async with await _client() as client:
+        resp = await client.post(
+            "/tasks/bot-create",
+            json={
+                "assigner_telegram_id": assigner_telegram_id,
+                "assigned_to": assigned_to,
+                "title": title,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()

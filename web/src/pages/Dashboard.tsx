@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Task, User } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "🕓 Kutilmoqda",
@@ -9,9 +10,24 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "🚫 Bekor qilingan",
 };
 
+const ROLE_LABELS: Record<string, string> = {
+  employee: "Xodim",
+  hr: "HR",
+  rop: "ROP",
+  boss: "Boshliq",
+};
+
+// Boshliq ROP/HR/xodimga, ROP va HR esa faqat xodimga vazifa bera oladi.
+const ASSIGNABLE_ROLES: Record<string, string> = {
+  boss: "employee,rop,hr",
+  rop: "employee",
+  hr: "employee",
+};
+
 export default function Dashboard() {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [employees, setEmployees] = useState<User[]>([]);
+  const [assignableUsers, setAssignableUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,12 +40,13 @@ export default function Dashboard() {
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     try {
-      const [taskList, employeeList] = await Promise.all([
+      const roleFilter = user ? ASSIGNABLE_ROLES[user.role] ?? "employee" : "employee";
+      const [taskList, userList] = await Promise.all([
         api.listTasks("today"),
-        api.listUsers("employee"),
+        api.listUsers(roleFilter),
       ]);
       setTasks(taskList);
-      setEmployees(employeeList);
+      setAssignableUsers(userList);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Yuklashda xatolik");
     } finally {
@@ -43,7 +60,8 @@ export default function Dashboard() {
     // (spetsifikatsiya 11-bo'lim, 6-band: WebSocket 4-bosqichdan tashqarida qoldirilgan).
     const interval = setInterval(() => load(false), 20000);
     return () => clearInterval(interval);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -82,11 +100,11 @@ export default function Dashboard() {
               required
               className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">— xodim tanlang —</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.full_name}
-                  {!emp.bot_started ? " (bot ulanmagan)" : ""}
+              <option value="">— foydalanuvchi tanlang —</option>
+              {assignableUsers.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.full_name} ({ROLE_LABELS[u.role] ?? u.role})
+                  {!u.bot_started ? " — bot ulanmagan" : ""}
                 </option>
               ))}
             </select>

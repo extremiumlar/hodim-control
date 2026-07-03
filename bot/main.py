@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.config import BOT_TOKEN
-from bot.handlers import excused, menu, mobilograf, norms, start, tasks
+from bot.handlers import assign_task, excused, menu, mobilograf, norms, start, tasks
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,6 +25,7 @@ async def main() -> None:
     dp.include_router(excused.router)
     dp.include_router(norms.router)
     dp.include_router(mobilograf.router)
+    dp.include_router(assign_task.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
 

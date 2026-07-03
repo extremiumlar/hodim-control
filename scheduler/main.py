@@ -4,6 +4,7 @@ import logging
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from scheduler.config import API_BASE_URL, BOT_SHARED_SECRET, TIMEZONE
 
@@ -16,8 +17,10 @@ HEADERS = {"X-Bot-Secret": BOT_SHARED_SECRET}
 REMINDER_HOURS = [13, 16, 17, 18]
 DAILY_SUMMARY_HOUR = 19
 
-# CRM webhook mavjud bo'lmagan holat uchun zaxira: ish soatlarida har soatda so'raladi.
-CRM_SYNC_HOURS = list(range(9, 20))
+# CRM webhook mavjud bo'lmagan holat uchun zaxira. Deyarli real-vaqtli bo'lishi uchun
+# har 30 soniyada so'raladi — amoCRM ulanganda API so'rov chegarasiga (rate limit)
+# e'tibor bering, xodimlar soni ko'p bo'lsa oraliqni kattalashtirish kerak bo'lishi mumkin.
+CRM_SYNC_INTERVAL_SECONDS = 30
 
 # "Har oy oxirida, 1 marta" (8-bo'lim).
 MONTHLY_BONUS_DAY = "last"
@@ -73,8 +76,7 @@ async def main() -> None:
 
     scheduler.add_job(send_daily_summary, CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=0, timezone=TIMEZONE))
 
-    for hour in CRM_SYNC_HOURS:
-        scheduler.add_job(sync_daily_results, CronTrigger(hour=hour, minute=15, timezone=TIMEZONE))
+    scheduler.add_job(sync_daily_results, IntervalTrigger(seconds=CRM_SYNC_INTERVAL_SECONDS))
 
     scheduler.add_job(
         calculate_monthly_bonus,
@@ -86,11 +88,11 @@ async def main() -> None:
     scheduler.start()
     logger.info(
         "Scheduler ishga tushdi (%s). Eslatma soatlari: %s, kunlik xulosa: %02d:00, "
-        "CRM sync: har soatda (%s), oylik bonus: oyning oxirgi kuni %02d:%02d",
+        "CRM sync: har %d soniyada, oylik bonus: oyning oxirgi kuni %02d:%02d",
         TIMEZONE,
         REMINDER_HOURS,
         DAILY_SUMMARY_HOUR,
-        CRM_SYNC_HOURS,
+        CRM_SYNC_INTERVAL_SECONDS,
         MONTHLY_BONUS_HOUR,
         MONTHLY_BONUS_MINUTE,
     )

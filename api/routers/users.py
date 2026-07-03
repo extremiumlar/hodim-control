@@ -42,7 +42,8 @@ async def list_users(
 ) -> list[User]:
     query = select(User).where(User.is_active == True)  # noqa: E712
     if role:
-        query = query.where(User.role == role)
+        roles = [r.strip() for r in role.split(",") if r.strip()]
+        query = query.where(User.role.in_(roles))
     result = await db.scalars(query.order_by(User.full_name))
     return list(result)
 

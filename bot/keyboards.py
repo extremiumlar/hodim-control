@@ -5,6 +5,7 @@ BTN_NORM = "📊 Bugungi normam"
 BTN_KPI = "💰 Oylik KPI'm"
 BTN_PANEL = "📈 Panelim"
 BTN_EXCUSED = "🙋 Sababli kun so'rash"
+BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_CANCEL = "❌ Bekor qilish"
 
 
@@ -15,6 +16,7 @@ def main_menu(role: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(text=BTN_EXCUSED)],
     ]
     if role in {"hr", "rop", "boss"}:
+        rows.append([KeyboardButton(text=BTN_ASSIGN_TASK)])
         rows.append([KeyboardButton(text=BTN_PANEL)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 

@@ -5,11 +5,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
-from api.schemas import TaskCompleteRequest, TaskCreate, TaskOut
+from api.schemas import TaskBotCreate, TaskCompleteRequest, TaskCreate, TaskOut, UserOut
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# Kim kimga vazifa bera oladi: boshliq ROP/HR/xodimga, ROP va HR esa faqat xodimga.
+ASSIGNABLE_ROLES: dict[str, set[str]] = {
+    Role.boss.value: {Role.employee.value, Role.rop.value, Role.hr.value},
+    Role.rop.value: {Role.employee.value},
+    Role.hr.value: {Role.employee.value},
+}
 
 
 async def _to_out(task: TaskModel, db: AsyncSession) -> TaskOut:
@@ -28,22 +35,20 @@ async def _to_out(task: TaskModel, db: AsyncSession) -> TaskOut:
     )
 
 
-@router.post("", response_model=TaskOut)
-async def create_task(
-    payload: TaskCreate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
-    db: AsyncSession = Depends(get_db),
-) -> TaskOut:
-    assignee = await db.get(User, payload.assigned_to)
-    if not assignee or assignee.role != Role.employee.value:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-
+async def _create_task_record(
+    db: AsyncSession,
+    actor: User,
+    assignee: User,
+    title: str,
+    description: str | None,
+    deadline,
+) -> TaskModel:
     task = TaskModel(
         assigned_by=actor.id,
         assigned_to=assignee.id,
-        title=payload.title,
-        description=payload.description,
-        deadline=payload.deadline,
+        title=title,
+        description=description,
+        deadline=deadline,
         status=TaskStatus.pending.value,
     )
     db.add(task)
@@ -63,14 +68,64 @@ async def create_task(
 
     if assignee.telegram_id:
         deadline_text = f"\nMuddat: {task.deadline:%Y-%m-%d %H:%M}" if task.deadline else ""
-        text = f"🆕 <b>Yangi vazifa</b>\n{task.title}{deadline_text}"
+        text = f"🆕 <b>Yangi vazifa</b> ({actor.full_name} tomonidan)\n{task.title}{deadline_text}"
         await send_message(
             assignee.telegram_id,
             text,
             inline_keyboard([[("✅ Bajardim", f"task_done:{task.id}")]]),
         )
 
+    return task
+
+
+async def _resolve_assignee(db: AsyncSession, actor: User, assigned_to: int) -> User:
+    assignee = await db.get(User, assigned_to)
+    allowed_roles = ASSIGNABLE_ROLES.get(actor.role, set())
+    if not assignee or assignee.role not in allowed_roles:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu foydalanuvchiga vazifa bera olmaysiz")
+    return assignee
+
+
+@router.post("", response_model=TaskOut)
+async def create_task(
+    payload: TaskCreate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    db: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    assignee = await _resolve_assignee(db, actor, payload.assigned_to)
+    task = await _create_task_record(db, actor, assignee, payload.title, payload.description, payload.deadline)
     return await _to_out(task, db)
+
+
+@router.post("/bot-create", response_model=TaskOut, dependencies=[Depends(verify_bot_secret)])
+async def bot_create_task(payload: TaskBotCreate, db: AsyncSession = Depends(get_db)) -> TaskOut:
+    actor = await db.scalar(select(User).where(User.telegram_id == payload.assigner_telegram_id))
+    if not actor or actor.role not in ASSIGNABLE_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+    assignee = await _resolve_assignee(db, actor, payload.assigned_to)
+    task = await _create_task_record(db, actor, assignee, payload.title, payload.description, payload.deadline)
+    return await _to_out(task, db)
+
+
+@router.get(
+    "/assignable-users/{telegram_id}", response_model=list[UserOut], dependencies=[Depends(verify_bot_secret)]
+)
+async def assignable_users(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[User]:
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    allowed_roles = ASSIGNABLE_ROLES.get(actor.role, set())
+    if not allowed_roles:
+        return []
+
+    query = (
+        select(User)
+        .where(User.role.in_(allowed_roles), User.is_active == True)  # noqa: E712
+        .order_by(User.full_name)
+    )
+    return list(await db.scalars(query))
 
 
 @router.get("", response_model=list[TaskOut])
