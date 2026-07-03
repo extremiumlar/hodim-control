@@ -7,6 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
+from bot.keyboards import BTN_CANCEL, cancel_menu, main_menu
 
 router = Router(name="norms")
 
@@ -64,34 +65,50 @@ async def choose_metric(callback: CallbackQuery, state: FSMContext) -> None:
 
     if metric == "custom":
         await state.set_state(NormFSM.entering_custom_metric)
-        await callback.message.edit_text("Ko'rsatkich nomini yozing (masalan: sifat_bahosi):")
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.message.answer(
+            "Ko'rsatkich nomini yozing (masalan: sifat_bahosi):", reply_markup=cancel_menu()
+        )
         await callback.answer()
         return
 
     await state.update_data(metric_type=metric)
     await state.set_state(NormFSM.entering_value)
-    await callback.message.edit_text(f"{METRIC_LABELS[metric]} uchun yangi qiymatni yozing (butun son):")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        f"{METRIC_LABELS[metric]} uchun yangi qiymatni yozing (butun son):", reply_markup=cancel_menu()
+    )
     await callback.answer()
 
 
-@router.message(StateFilter(NormFSM.entering_custom_metric))
+@router.message(StateFilter(NormFSM.entering_custom_metric, NormFSM.entering_value), F.text == BTN_CANCEL)
+async def cancel_norm_change(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    role = user["role"] if user else "employee"
+    await message.answer("Bekor qilindi.", reply_markup=main_menu(role))
+
+
+@router.message(StateFilter(NormFSM.entering_custom_metric), F.text)
 async def enter_custom_metric(message: Message, state: FSMContext) -> None:
     metric = message.text.strip()
     if not metric:
-        await message.answer("Ko'rsatkich nomini yozing:")
+        await message.answer("Ko'rsatkich nomini yozing:", reply_markup=cancel_menu())
         return
 
     await state.update_data(metric_type=metric)
     await state.set_state(NormFSM.entering_value)
-    await message.answer(f"'{html.escape(metric)}' uchun yangi qiymatni yozing (butun son):")
+    await message.answer(
+        f"'{html.escape(metric)}' uchun yangi qiymatni yozing (butun son):", reply_markup=cancel_menu()
+    )
 
 
-@router.message(StateFilter(NormFSM.entering_value))
+@router.message(StateFilter(NormFSM.entering_value), F.text)
 async def enter_value(message: Message, state: FSMContext) -> None:
     try:
         value = int(message.text.strip())
     except ValueError:
-        await message.answer("Iltimos, butun son kiriting (masalan: 100).")
+        await message.answer("Iltimos, butun son kiriting (masalan: 100).", reply_markup=cancel_menu())
         return
 
     data = await state.get_data()
@@ -103,7 +120,15 @@ async def enter_value(message: Message, state: FSMContext) -> None:
         metric_type=data["metric_type"],
         value=value,
     )
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    role = user["role"] if user else "employee"
     await message.answer(
         f"Norma yangilandi: <b>{html.escape(data['metric_type'])}</b> = {result['value']} "
-        f"(kuchga kirish sanasi: {result['effective_from']})."
+        f"(kuchga kirish sanasi: {result['effective_from']}).",
+        reply_markup=main_menu(role),
     )
+
+
+@router.message(StateFilter(NormFSM.entering_custom_metric, NormFSM.entering_value))
+async def non_text_norm_input(message: Message) -> None:
+    await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())

@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_ASSIGN_TASK, main_menu
+from bot.keyboards import BTN_ASSIGN_TASK, BTN_CANCEL, cancel_menu, main_menu
 
 router = Router(name="assign_task")
 
@@ -42,15 +42,24 @@ async def choose_target(callback: CallbackQuery, state: FSMContext) -> None:
     target_id = int(callback.data.split(":")[1])
     await state.update_data(assigned_to=target_id)
     await state.set_state(AssignTaskFSM.entering_title)
-    await callback.message.edit_text("Vazifa matnini yozing:")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer("Vazifa matnini yozing:", reply_markup=cancel_menu())
     await callback.answer()
 
 
-@router.message(StateFilter(AssignTaskFSM.entering_title))
+@router.message(StateFilter(AssignTaskFSM.entering_title), F.text == BTN_CANCEL)
+async def cancel_assign_task(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    role = user["role"] if user else "employee"
+    await message.answer("Bekor qilindi.", reply_markup=main_menu(role))
+
+
+@router.message(StateFilter(AssignTaskFSM.entering_title), F.text)
 async def enter_title(message: Message, state: FSMContext) -> None:
     title = message.text.strip()
     if not title:
-        await message.answer("Vazifa matnini yozing:")
+        await message.answer("Vazifa matnini yozing:", reply_markup=cancel_menu())
         return
 
     data = await state.get_data()
@@ -61,3 +70,8 @@ async def enter_title(message: Message, state: FSMContext) -> None:
     user = await api_client.get_user_by_telegram(message.from_user.id)
     role = user["role"] if user else "employee"
     await message.answer("Vazifa berildi ✅", reply_markup=main_menu(role))
+
+
+@router.message(StateFilter(AssignTaskFSM.entering_title))
+async def non_text_task_title(message: Message) -> None:
+    await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
