@@ -15,7 +15,7 @@ def main_menu(role: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(text=BTN_NORM), KeyboardButton(text=BTN_KPI)],
         [KeyboardButton(text=BTN_EXCUSED)],
     ]
-    if role in {"hr", "rop", "boss"}:
+    if role in {"hr", "rop", "boss", "dasturchi"}:
         rows.append([KeyboardButton(text=BTN_ASSIGN_TASK)])
         rows.append([KeyboardButton(text=BTN_PANEL)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)

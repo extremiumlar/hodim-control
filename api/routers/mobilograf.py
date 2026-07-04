@@ -48,7 +48,7 @@ async def react_mobilograf_video(payload: MobilografReact, db: AsyncSession = De
     is_authorized = bool(
         reactor
         and owner
-        and (reactor.role == Role.boss.value or reactor.id == owner.manager_id)
+        and (reactor.role in {Role.boss.value, Role.dasturchi.value} or reactor.id == owner.manager_id)
     )
 
     if is_authorized and payload.action == "add":

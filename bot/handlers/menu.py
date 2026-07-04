@@ -65,6 +65,6 @@ async def show_kpi(message: Message) -> None:
 @router.message(F.text == BTN_PANEL)
 async def show_panel(message: Message) -> None:
     user = await api_client.get_user_by_telegram(message.from_user.id)
-    if not user or user["role"] not in {"hr", "rop", "boss"}:
+    if not user or user["role"] not in {"hr", "rop", "boss", "dasturchi"}:
         return
     await message.answer(f"Boshqaruv paneli: {FRONTEND_URL}")

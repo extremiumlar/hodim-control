@@ -48,7 +48,7 @@ export interface User {
   id: number;
   telegram_id: number | null;
   full_name: string;
-  role: "employee" | "hr" | "rop" | "boss";
+  role: "employee" | "hr" | "rop" | "boss" | "dasturchi";
   team_id: number | null;
   manager_id: number | null;
   bot_started: boolean;

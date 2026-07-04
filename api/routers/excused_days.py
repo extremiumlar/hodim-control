@@ -80,7 +80,7 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
 @router.get("", response_model=list[ExcusedDayOut])
 async def list_excused_days(
     status_filter: str | None = None,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[ExcusedDayOut]:
     query = select(ExcusedDay).order_by(ExcusedDay.created_at.desc())
@@ -97,7 +97,7 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
         raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
 
     decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
-    if not decider or decider.role not in {Role.hr.value, Role.boss.value}:
+    if not decider or decider.role not in {Role.hr.value, Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     if payload.decision not in {ExcusedStatus.approved.value, ExcusedStatus.rejected.value}:

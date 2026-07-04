@@ -12,9 +12,10 @@ from db.models import AuditLog, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-# Kim kimga vazifa bera oladi: boshliq ROP/HR/xodimga, ROP va HR esa faqat xodimga.
+# Kim kimga vazifa bera oladi: boshliq/dasturchi ROP/HR/xodimga, ROP va HR esa faqat xodimga.
 ASSIGNABLE_ROLES: dict[str, set[str]] = {
     Role.boss.value: {Role.employee.value, Role.rop.value, Role.hr.value},
+    Role.dasturchi.value: {Role.employee.value, Role.rop.value, Role.hr.value, Role.boss.value},
     Role.rop.value: {Role.employee.value},
     Role.hr.value: {Role.employee.value},
 }
@@ -113,7 +114,7 @@ async def _resolve_assignee(db: AsyncSession, actor: User, assigned_to: int) -> 
 @router.post("", response_model=TaskOut)
 async def create_task(
     payload: TaskCreate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> TaskOut:
     assignee = await _resolve_assignee(db, actor, payload.assigned_to)
@@ -154,7 +155,7 @@ async def assignable_users(telegram_id: int, db: AsyncSession = Depends(get_db))
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
     date_filter: str | None = "today",
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[TaskOut]:
     query = select(TaskModel).order_by(TaskModel.created_at.desc())

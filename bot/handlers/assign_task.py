@@ -9,7 +9,7 @@ from bot.keyboards import BTN_ASSIGN_TASK, BTN_CANCEL, cancel_menu, main_menu
 
 router = Router(name="assign_task")
 
-ROLE_LABELS = {"employee": "Xodim", "hr": "HR", "rop": "ROP", "boss": "Boshliq"}
+ROLE_LABELS = {"employee": "Xodim", "hr": "HR", "rop": "ROP", "boss": "Boshliq", "dasturchi": "Dasturchi"}
 
 
 class AssignTaskFSM(StatesGroup):

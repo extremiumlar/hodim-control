@@ -7,12 +7,17 @@ const ROLE_LABELS: Record<string, string> = {
   hr: "HR",
   rop: "ROP",
   boss: "Boshliq",
+  dasturchi: "Dasturchi",
 };
 
 export default function Users() {
   const { user: currentUser } = useAuth();
   const isBoss = currentUser?.role === "boss";
-  const canCreateUser = currentUser?.role === "hr" || currentUser?.role === "boss";
+  const isDasturchi = currentUser?.role === "dasturchi";
+  // Dasturchi — Boshliq bilan bir xil (aslida undan ham kengroq: majburiy o'chirish
+  // huquqi bilan) to'liq boshqaruv huquqiga ega.
+  const hasFullControl = isBoss || isDasturchi;
+  const canCreateUser = currentUser?.role === "hr" || hasFullControl;
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,9 +65,9 @@ export default function Users() {
 
   useEffect(() => {
     load();
-    if (isBoss) loadOperators();
+    if (hasFullControl) loadOperators();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isBoss]);
+  }, [hasFullControl]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -74,7 +79,7 @@ export default function Users() {
       const { invite_link } = await api.createUser({
         full_name: fullName,
         role,
-        crm_external_id: isBoss && crmExternalIdForCreate ? crmExternalIdForCreate.trim() : undefined,
+        crm_external_id: hasFullControl && crmExternalIdForCreate ? crmExternalIdForCreate.trim() : undefined,
       });
       setLastInviteLink(invite_link);
       setFullName("");
@@ -171,13 +176,14 @@ export default function Users() {
   };
 
   const handleDelete = async (userId: number, fullNameLabel: string) => {
-    if (
-      !window.confirm(
-        `"${fullNameLabel}"ni bazadan BUTUNLAY o'chirmoqchimisiz? Bu amalni ORTGA QAYTARIB BO'LMAYDI. ` +
-          `Agar bu foydalanuvchida tarixiy ma'lumot (vazifa, norma va h.k.) bo'lsa, o'chirish rad etiladi.`
-      )
-    )
-      return;
+    const confirmText = isDasturchi
+      ? `"${fullNameLabel}"ni bazadan BUTUNLAY o'chirmoqchimisiz? Bu amalni ORTGA QAYTARIB BO'LMAYDI. ` +
+        `Dasturchi sifatida bu xodimga norma belgilangan yoki vazifa berilgan bo'lsa ham, ` +
+        `unga bog'liq BARCHA ma'lumotlar (vazifa, norma, kunlik natija, mobilograf, sababli kun, bonus) ` +
+        `birga o'chiriladi.`
+      : `"${fullNameLabel}"ni bazadan BUTUNLAY o'chirmoqchimisiz? Bu amalni ORTGA QAYTARIB BO'LMAYDI. ` +
+        `Agar bu foydalanuvchida tarixiy ma'lumot (vazifa, norma va h.k.) bo'lsa, o'chirish rad etiladi.`;
+    if (!window.confirm(confirmText)) return;
     setDeletingId(userId);
     setError(null);
     try {
@@ -239,7 +245,7 @@ export default function Users() {
                   ))}
                 </select>
               </div>
-              {isBoss && (
+              {hasFullControl && (
                 <div>
                   <label className="block text-sm text-slate-600 mb-1">CRM ID (ixtiyoriy)</label>
                   <input
@@ -282,7 +288,7 @@ export default function Users() {
                   <th className="py-2">Rol</th>
                   <th className="py-2">Holat</th>
                   <th className="py-2">Bot</th>
-                  {isBoss && <th className="py-2">CRM ID</th>}
+                  {hasFullControl && <th className="py-2">CRM ID</th>}
                   <th className="py-2"></th>
                 </tr>
               </thead>
@@ -306,7 +312,7 @@ export default function Users() {
                     </td>
                     <td className="py-2">{u.is_active ? "Faol" : "O'chirilgan"}</td>
                     <td className="py-2">{u.bot_started ? "✅ ulangan" : "— kutilmoqda"}</td>
-                    {isBoss && (
+                    {hasFullControl && (
                       <td className="py-2">
                         <div className="flex items-center gap-2">
                           <input
@@ -358,13 +364,14 @@ export default function Users() {
                             Tiklash
                           </button>
                         )}
-                        {isBoss && (
+                        {hasFullControl && (
                           <button
                             onClick={() => handleDelete(u.id, u.full_name)}
                             disabled={deletingId === u.id}
                             className="text-red-800 hover:underline text-xs font-medium disabled:opacity-50"
+                            title={isDasturchi ? "Dasturchi: norma/vazifa borligiga qaramay to'liq o'chiradi" : undefined}
                           >
-                            Butunlay o'chirish
+                            {isDasturchi ? "Majburiy o'chirish" : "Butunlay o'chirish"}
                           </button>
                         )}
                       </div>
@@ -377,7 +384,7 @@ export default function Users() {
         </div>
       </div>
 
-      {isBoss && operators.length > 0 && (
+      {hasFullControl && operators.length > 0 && (
         <div className="bg-white rounded-lg shadow p-5">
           <h2 className="font-semibold mb-1">CRM bog'lash</h2>
           <p className="text-xs text-slate-400 mb-4">

@@ -12,6 +12,7 @@ class Role(str, enum.Enum):
     hr = "hr"
     rop = "rop"
     boss = "boss"
+    dasturchi = "dasturchi"
 
 
 class TaskStatus(str, enum.Enum):

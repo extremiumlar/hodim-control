@@ -5,7 +5,8 @@ import { useAuth } from "../lib/auth";
 
 export default function Norms() {
   const { user: currentUser } = useAuth();
-  const canEditNorms = currentUser?.role === "rop" || currentUser?.role === "boss";
+  const canEditNorms =
+    currentUser?.role === "rop" || currentUser?.role === "boss" || currentUser?.role === "dasturchi";
 
   const [rows, setRows] = useState<TeamNormRow[]>([]);
   const [loading, setLoading] = useState(true);

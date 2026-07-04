@@ -15,11 +15,13 @@ const ROLE_LABELS: Record<string, string> = {
   hr: "HR",
   rop: "ROP",
   boss: "Boshliq",
+  dasturchi: "Dasturchi",
 };
 
-// Boshliq ROP/HR/xodimga, ROP va HR esa faqat xodimga vazifa bera oladi.
+// Boshliq/Dasturchi ROP/HR/xodimga(+boshliqqa), ROP va HR esa faqat xodimga vazifa bera oladi.
 const ASSIGNABLE_ROLES: Record<string, string> = {
   boss: "employee,rop,hr",
+  dasturchi: "employee,rop,hr,boss",
   rop: "employee",
   hr: "employee",
 };

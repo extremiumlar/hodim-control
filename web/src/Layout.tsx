@@ -5,6 +5,7 @@ const ROLE_LABELS: Record<string, string> = {
   hr: "HR",
   rop: "ROP",
   boss: "Boshliq",
+  dasturchi: "Dasturchi",
 };
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>

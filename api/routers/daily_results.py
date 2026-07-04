@@ -61,7 +61,7 @@ async def _upsert_daily_result(
 @router.post("/daily-results/manual", response_model=DailyResultOut)
 async def manual_daily_result(
     payload: DailyResultManualCreate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> DailyResult:
     target = await db.get(User, payload.user_id)
@@ -106,7 +106,7 @@ async def manual_daily_result(
 @router.get("/daily-results", response_model=list[DailyResultOut])
 async def list_daily_results(
     user_id: int,
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[DailyResult]:
     target = await db.get(User, user_id)

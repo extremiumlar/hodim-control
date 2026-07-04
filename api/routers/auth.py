@@ -12,7 +12,7 @@ from db.models import Role, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-SITE_ROLES = {Role.hr.value, Role.rop.value, Role.boss.value}
+SITE_ROLES = {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}
 
 
 async def _issue_token(user: User) -> TokenOut:

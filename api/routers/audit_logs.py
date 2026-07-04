@@ -18,7 +18,7 @@ async def list_audit_logs(
     target_user_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditLogOut]:
     query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)

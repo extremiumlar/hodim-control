@@ -1,7 +1,7 @@
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -51,7 +51,7 @@ async def list_employees_for_bot(db: AsyncSession = Depends(get_db)) -> list[Use
 
 @router.get("/crm-operators", response_model=list[CrmOperatorRow])
 async def list_crm_operators(
-    _: User = Depends(require_roles(Role.boss.value)),
+    _: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[CrmOperatorRow]:
     """CRM'dagi (hozircha Uysot) bugungi qo'ng'iroq qilgan operatorlarni, har biri
@@ -85,7 +85,7 @@ async def list_crm_operators(
 async def list_users(
     role: str | None = None,
     include_inactive: bool = False,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[User]:
     query = select(User)
@@ -101,18 +101,19 @@ async def list_users(
 @router.post("", response_model=UserCreateOut)
 async def create_user(
     payload: UserCreate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> UserCreateOut:
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri rol")
 
-    # HR faqat "employee" rolida foydalanuvchi yarata oladi — rop/hr/boss darajasidagi
-    # rollarni faqat Boshliq bera oladi (privilege escalation oldini olish uchun).
+    # HR faqat "employee" rolida foydalanuvchi yarata oladi — rop/hr/boss/dasturchi
+    # darajasidagi rollarni faqat Boshliq yoki Dasturchi bera oladi (privilege escalation
+    # oldini olish uchun).
     if actor.role == Role.hr.value and payload.role != Role.employee.value:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "HR faqat 'Xodim' rolida foydalanuvchi yarata oladi")
 
-    new_crm_id = payload.crm_external_id if actor.role == Role.boss.value else None
+    new_crm_id = payload.crm_external_id if actor.role in {Role.boss.value, Role.dasturchi.value} else None
     if new_crm_id:
         duplicate = await db.scalar(select(User).where(User.crm_external_id == new_crm_id))
         if duplicate:
@@ -161,7 +162,7 @@ async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_
 @router.get("/{user_id}/invite-link")
 async def get_invite_link(
     user_id: int,
-    _: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     user = await db.get(User, user_id)
@@ -232,7 +233,7 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
 @router.get("/{user_id}", response_model=UserOut)
 async def get_user(
     user_id: int,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     user = await db.get(User, user_id)
@@ -245,7 +246,7 @@ async def get_user(
 async def update_crm_external_id(
     user_id: int,
     payload: UserCrmIdUpdate,
-    actor: User = Depends(require_roles(Role.boss.value)),
+    actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     user = await db.get(User, user_id)
@@ -284,7 +285,7 @@ async def update_crm_external_id(
 async def update_role(
     user_id: int,
     payload: UserRoleUpdate,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if payload.role not in {r.value for r in Role}:
@@ -293,8 +294,8 @@ async def update_role(
     if user_id == actor.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "O'zingizning rolingizni o'zgartira olmaysiz")
 
-    # HR faqat "employee" rolini bera oladi — rop/hr/boss darajasidagi rollarni faqat
-    # Boshliq bera oladi (privilege escalation oldini olish uchun).
+    # HR faqat "employee" rolini bera oladi — rop/hr/boss/dasturchi darajasidagi rollarni
+    # faqat Boshliq yoki Dasturchi bera oladi (privilege escalation oldini olish uchun).
     if actor.role == Role.hr.value and payload.role != Role.employee.value:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "HR faqat 'Xodim' rolini bera oladi")
 
@@ -322,7 +323,7 @@ async def update_role(
 @router.post("/{user_id}/deactivate", response_model=UserOut)
 async def deactivate_user(
     user_id: int,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     if user_id == actor.id:
@@ -351,7 +352,7 @@ async def deactivate_user(
 @router.post("/{user_id}/activate", response_model=UserOut)
 async def activate_user(
     user_id: int,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     user = await db.get(User, user_id)
@@ -377,7 +378,7 @@ async def activate_user(
 @router.post("/{user_id}/reset-account", response_model=UserCreateOut)
 async def reset_account(
     user_id: int,
-    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> UserCreateOut:
     """Foydalanuvchining eski Telegram bog'lanishini bekor qiladi va yangi bot-havola
@@ -425,16 +426,43 @@ async def _has_dependent_records(db: AsyncSession, user_id: int) -> bool:
     return False
 
 
+async def _force_delete_dependent_records(db: AsyncSession, user_id: int) -> None:
+    """Dasturchi uchun: foydalanuvchini o'chirishdan oldin unga bog'liq BARCHA yozuvlarni
+    tozalaydi (norma, vazifa, kunlik natija, mobilograf, sababli kun, bonus) — shu tufayli
+    Dasturchi biror xodimga norma belgilangan yoki topshiriq berilganidan qat'i nazar uni
+    to'liq o'chira oladi. Audit jurnali (AuditLog) esa o'chirilmaydi — faqat shu
+    foydalanuvchiga bo'lgan bog'lanish uzatiladi (NULL), chunki audit tarixi doimiy
+    saqlanishi kerak."""
+    await db.execute(update(AuditLog).where(AuditLog.actor_id == user_id).values(actor_id=None))
+    await db.execute(update(AuditLog).where(AuditLog.target_user_id == user_id).values(target_user_id=None))
+
+    await db.execute(delete(TaskModel).where((TaskModel.assigned_to == user_id) | (TaskModel.assigned_by == user_id)))
+    await db.execute(delete(Norm).where((Norm.user_id == user_id) | (Norm.changed_by == user_id)))
+    await db.execute(delete(DailyResult).where(DailyResult.user_id == user_id))
+    await db.execute(
+        delete(MobilografVideo).where(
+            (MobilografVideo.user_id == user_id) | (MobilografVideo.confirmed_by == user_id)
+        )
+    )
+    await db.execute(delete(ExcusedDay).where((ExcusedDay.user_id == user_id) | (ExcusedDay.decided_by == user_id)))
+    await db.execute(delete(Bonus).where(Bonus.user_id == user_id))
+
+
 @router.delete("/{user_id}")
 async def delete_user(
     user_id: int,
-    actor: User = Depends(require_roles(Role.boss.value)),
+    actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Foydalanuvchini bazadan butunlay o'chiradi. Faqat Boshliq uchun, va faqat
-    hech qanday tarixiy ma'lumot (vazifa, norma, kunlik natija va h.k.) yo'q bo'lsa —
-    aks holda o'chirish o'sha ma'lumotlarni yetim (orphan) qoldirar edi. Bunday hollarda
-    "O'chirish" (faolsizlantirish) tugmasidan foydalaning."""
+    """Foydalanuvchini bazadan butunlay o'chiradi.
+
+    Boshliq uchun: faqat hech qanday tarixiy ma'lumot (vazifa, norma, kunlik natija va
+    h.k.) yo'q bo'lsa ishlaydi — aks holda o'chirish o'sha ma'lumotlarni yetim (orphan)
+    qoldirar edi. Bunday hollarda "O'chirish" (faolsizlantirish) tugmasidan foydalaning.
+
+    Dasturchi uchun: yuqoridagi tekshiruv o'tkazib yuboriladi — norma belgilangan yoki
+    vazifa berilgan bo'lsa ham, foydalanuvchi va unga bog'liq barcha yozuvlar (audit
+    jurnalidan tashqari) to'liq o'chiriladi."""
     if user_id == actor.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "O'zingizni o'chira olmaysiz")
 
@@ -442,7 +470,8 @@ async def delete_user(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
-    if await _has_dependent_records(db, user_id):
+    is_dasturchi = actor.role == Role.dasturchi.value
+    if not is_dasturchi and await _has_dependent_records(db, user_id):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Bu foydalanuvchida tarixiy ma'lumotlar bor (vazifa, norma va h.k.), shuning "
@@ -450,10 +479,13 @@ async def delete_user(
             "tugmasidan foydalaning.",
         )
 
+    if is_dasturchi:
+        await _force_delete_dependent_records(db, user_id)
+
     db.add(
         AuditLog(
             actor_id=actor.id,
-            action="user_deleted",
+            action="user_force_deleted" if is_dasturchi else "user_deleted",
             target_user_id=None,
             before={"id": user.id, "full_name": user.full_name, "role": user.role},
             after=None,

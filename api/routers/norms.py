@@ -51,7 +51,7 @@ async def _create_norm(db: AsyncSession, actor: User, target_user: User, metric_
 
 @router.get("/team", response_model=list[TeamNormRow])
 async def team_norms(
-    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[TeamNormRow]:
     query = select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
@@ -74,7 +74,7 @@ async def team_norms(
 @router.post("", response_model=NormOut)
 async def create_norm(
     payload: NormCreate,
-    actor: User = Depends(require_roles(Role.rop.value, Role.boss.value)),
+    actor: User = Depends(require_roles(Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> Norm:
     target = await db.get(User, payload.user_id)
@@ -89,7 +89,7 @@ async def create_norm(
 @router.post("/bot-update", response_model=NormOut, dependencies=[Depends(verify_bot_secret)])
 async def bot_update_norm(payload: NormBotUpdate, db: AsyncSession = Depends(get_db)) -> Norm:
     actor = await db.scalar(select(User).where(User.telegram_id == payload.changer_telegram_id))
-    if not actor or actor.role not in {Role.rop.value, Role.boss.value}:
+    if not actor or actor.role not in {Role.rop.value, Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     target = await db.get(User, payload.target_user_id)

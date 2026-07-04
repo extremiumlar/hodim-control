@@ -20,7 +20,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 async def export_report(
     date_from: date,
     date_to: date,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     buffer = await build_report_xlsx(db, date_from, date_to)

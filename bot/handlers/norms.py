@@ -24,7 +24,7 @@ class NormFSM(StatesGroup):
 @router.message(Command("norma_ozgartir"))
 async def cmd_norma_ozgartir(message: Message, state: FSMContext) -> None:
     user = await api_client.get_user_by_telegram(message.from_user.id)
-    if not user or user["role"] not in {"rop", "boss"}:
+    if not user or user["role"] not in {"rop", "boss", "dasturchi"}:
         await message.answer("Bu buyruq faqat ROP/Boshliq uchun mavjud.")
         return
 

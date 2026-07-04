@@ -12,6 +12,7 @@ ROLE_NAMES = {
     "hr": "HR",
     "rop": "ROP",
     "boss": "Boshliq",
+    "dasturchi": "Dasturchi",
 }
 
 

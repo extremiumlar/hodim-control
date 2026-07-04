@@ -78,7 +78,7 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
 @router.get("", response_model=list[BonusOut])
 async def list_bonuses(
     user_id: int,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value)),
+    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[Bonus]:
     query = select(Bonus).where(Bonus.user_id == user_id).order_by(Bonus.period.desc())
