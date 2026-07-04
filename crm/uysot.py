@@ -4,13 +4,14 @@ from datetime import date
 import httpx
 
 from crm.base import CRMAdapter, day_bounds_unix
-from crm.config import CRM_API_KEY
+from crm.config import CRM_API_KEY, CRM_UYSOT_VISIT_PIPE_STATUS_ID
 
 logger = logging.getLogger(__name__)
 
 UYSOT_BASE_URL = "https://api.service.app.uysot.uz/v1/open-api"
 CALL_HISTORY_PAGE_SIZE = 100
-MAX_PAGES_PER_SYNC = 20  # xavfsizlik chegarasi — kunlik qo'ng'iroqlar juda ko'p bo'lib ketsa ham to'xtaydi
+LEAD_FILTER_PAGE_SIZE = 50  # /lead/filter uchun API'ning ruxsat etilgan maksimal "size"si
+MAX_PAGES_PER_SYNC = 20  # xavfsizlik chegarasi — kunlik qo'ng'iroqlar/lidlar juda ko'p bo'lib ketsa ham to'xtaydi
 
 
 class UysotAdapter(CRMAdapter):
@@ -25,12 +26,19 @@ class UysotAdapter(CRMAdapter):
     umumiy so'rov natijasi qayta ishlatiladi (`_day_cache`) — aks holda har xodim uchun
     alohida to'liq skanerlash kerak bo'lib, API'ga ortiqcha yuklama tushardi.
 
-    Tashriflar soni: hozircha 0 qaytariladi. Sababi — Uysot'da "tashrif" alohida hodisa
-    sifatida emas, balki lid pipeline bosqichi ("Tashrif") sifatida saqlanadi va lidlar
-    ro'yxati (`/lead/filter`) minglab yozuvdan iborat bo'lib, unda ishonchli sana-oralig'i
-    filtri topilmadi — shuning uchun har 30 soniyada to'liq skanerlash amaliy emas.
-    Tashriflar hozircha xodim profilida qo'lda kiritiladi; kelajakda Uysot webhook yoki
-    ishonchli filtr parametri aniqlansa, shu yerga qo'shiladi.
+    Tashriflar soni: `/lead/filter` endpointi `pipeStatusIds` bo'yicha server tomonida
+    filtrlashni qo'llab-quvvatlaydi, shuning uchun faqat "Tashrif" bosqichidagi (ID
+    `CRM_UYSOT_VISIT_PIPE_STATUS_ID` orqali sozlanadi) lidlarni so'raymiz — bu minglab
+    lidning bir qismi (masalan yuzlab), to'liq ro'yxatni emas. Natijalar `updatedTimestamp`
+    bo'yicha kamayish tartibida kelgani uchun call-history bilan bir xil "eskirgan yozuvga
+    yetguncha sahifala" strategiyasi ishlatiladi. `user.crm_visit_external_id` — lid
+    javobidagi `responsibleById` (raqamli ID, `crm_external_id`/`employeeNum`dan farqli
+    ID tizimi) ga mos kelishi kerak.
+
+    Muhim cheklov: `updatedTimestamp` — lidning oxirgi tahrirlangan vaqti, aynan "Tashrif"
+    bosqichiga o'tgan vaqti emas (Uysot'da bosqich-o'tish tarixi/event log ochiq API orqali
+    topilmadi). Ya'ni lidga aloqasiz tahrir (masalan teg qo'shish) qilinsa ham bugungi
+    "tashrif" sifatida hisoblanishi mumkin — bu taxminiy hisob, aniq emas.
     """
 
     def __init__(self) -> None:
@@ -38,6 +46,7 @@ class UysotAdapter(CRMAdapter):
             logger.warning("Uysot sozlanmagan (CRM_API_KEY bo'sh)")
         self.headers = {"X-Open-Api-Token": CRM_API_KEY}
         self._day_cache: dict[str, dict[str, int]] = {}
+        self._visit_day_cache: dict[str, dict[str, int]] = {}
 
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
@@ -81,21 +90,76 @@ class UysotAdapter(CRMAdapter):
         self._day_cache[day_key] = counts
         return counts
 
+    async def _load_day_visit_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
+        """"Tashrif" bosqichidagi (`CRM_UYSOT_VISIT_PIPE_STATUS_ID`) lidlarni sahifalab
+        o'qib, `responsibleById` bo'yicha shu kunda tahrirlanganlarni sanaydi."""
+        if not CRM_UYSOT_VISIT_PIPE_STATUS_ID:
+            return {}
+
+        day_key = day.isoformat()
+        if day_key in self._visit_day_cache:
+            return self._visit_day_cache[day_key]
+
+        start_ts, end_ts = day_bounds_unix(day)
+        counts: dict[str, int] = {}
+        page = 1
+
+        while page <= MAX_PAGES_PER_SYNC:
+            resp = await client.post(
+                "/lead/filter",
+                json={
+                    "page": page,
+                    "size": LEAD_FILTER_PAGE_SIZE,
+                    "pipeStatusIds": [int(CRM_UYSOT_VISIT_PIPE_STATUS_ID)],
+                },
+            )
+            resp.raise_for_status()
+            body = resp.json()["data"]
+            records = body.get("data", [])
+            if not records:
+                break
+
+            reached_older_record = False
+            for record in records:
+                ts = record.get("updatedTimestamp")
+                if ts is None:
+                    continue
+                if ts < start_ts:
+                    reached_older_record = True
+                    continue
+                if start_ts <= ts <= end_ts:
+                    responsible_id = record.get("responsibleById")
+                    if responsible_id is not None:
+                        key = str(responsible_id)
+                        counts[key] = counts.get(key, 0) + 1
+
+            if reached_older_record or page >= body.get("totalPages", page):
+                break
+            page += 1
+        else:
+            logger.warning("Uysot lead (tashrif) skanerlash %s sahifada to'xtatildi (xavfsizlik chegarasi)", MAX_PAGES_PER_SYNC)
+
+        self._visit_day_cache[day_key] = counts
+        return counts
+
     async def get_daily_results(self, user, day: date) -> dict | None:
         """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi
         mavjud yozuvni ustidan yozmasligi kerak. Xodimda CRM ID bo'lmasa (0, 0)
         qaytariladi — bu xatolik emas, shunchaki mos yozuv yo'qligini bildiradi."""
-        if not user.crm_external_id or not CRM_API_KEY:
+        if (not user.crm_external_id and not user.crm_visit_external_id) or not CRM_API_KEY:
             return {"conversations": 0, "visits": 0}
 
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
             try:
                 counts = await self._load_day_call_counts(client, day)
+                visit_counts = await self._load_day_visit_counts(client, day)
             except httpx.HTTPError:
                 logger.exception("Uysot'dan ma'lumot olishda xatolik (user_id=%s)", user.id)
                 return None
 
-        return {"conversations": counts.get(user.crm_external_id, 0), "visits": 0}
+        conversations = counts.get(user.crm_external_id, 0) if user.crm_external_id else 0
+        visits = visit_counts.get(user.crm_visit_external_id, 0) if user.crm_visit_external_id else 0
+        return {"conversations": conversations, "visits": visits}
 
     async def get_all_daily_call_counts(self, day: date) -> dict[str, int]:
         """Botning `/statistika` buyrug'i uchun: shu kunda barcha operator/managerlarning

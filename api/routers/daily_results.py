@@ -159,7 +159,7 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
             select(User).where(
                 User.role == Role.employee.value,
                 User.is_active == True,  # noqa: E712
-                User.crm_external_id.isnot(None),
+                (User.crm_external_id.isnot(None) | User.crm_visit_external_id.isnot(None)),
             )
         )
     )

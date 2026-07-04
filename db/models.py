@@ -61,6 +61,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     crm_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    # Uysot'da tashriflar suhbatlardan (crm_external_id/employeeNum) boshqa ID tizimida
+    # ("responsibleById", lid pipeline'idagi mas'ul xodim) hisoblanadi — shuning uchun
+    # alohida ustun kerak.
+    crm_visit_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
