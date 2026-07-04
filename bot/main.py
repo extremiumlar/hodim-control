@@ -9,7 +9,7 @@ from aiogram.types import ErrorEvent
 
 from bot import api_client
 from bot.config import BOT_TOKEN
-from bot.handlers import assign_task, excused, group_stats, menu, mobilograf, norms, start, tasks
+from bot.handlers import assign_task, excused, group_stats, menu, mobilograf, norms, start, stats, tasks
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ async def main() -> None:
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(group_stats.router)
+    dp.include_router(stats.router)
 
     @dp.error()
     async def on_error(event: ErrorEvent) -> None:

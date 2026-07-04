@@ -49,6 +49,31 @@ class Team(Base):
     users: Mapped[list["User"]] = relationship(back_populates="team")
 
 
+class Position(Base):
+    """Lavozim — xodimning ish funksiyasi (sotuvchi, operator, mobilograf va h.k.).
+
+    Roldan (ruxsat darajasi) farqli o'laroq, lavozim botning qaysi menyu tugmalari
+    ko'rinishini (`menu_flags`), qaysi ko'rsatkichlar kuzatilishini (`metrics`) va
+    qaysi rahbar rol (ROP yoki HR) bu lavozimga vazifa/norma belgilay olishini
+    (`managed_by_roles`) belgilaydi. Web paneldan to'liq sozlanadi."""
+
+    __tablename__ = "positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    # {"tasks": true, "norm": true, "kpi": true, "excused": true} — bot menyu tugmalari
+    menu_flags: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # ["suhbat", "tashrif", "video"] — shu lavozim uchun kuzatiladigan ko'rsatkichlar
+    metrics: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # ["rop"] yoki ["hr"] — qaysi rahbar rol shu lavozimga vazifa/norma belgilay oladi
+    # (boss/dasturchi har doim hammani boshqaradi, ro'yxatga kiritish shart emas)
+    managed_by_roles: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    users: Mapped[list["User"]] = relationship(back_populates="position")
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -58,6 +83,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20))
     team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    position_id: Mapped[int | None] = mapped_column(ForeignKey("positions.id"), nullable=True, index=True)
     bot_started: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
@@ -70,6 +96,7 @@ class User(Base):
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
     manager: Mapped["User | None"] = relationship(remote_side=[id])
+    position: Mapped["Position | None"] = relationship(back_populates="users", lazy="selectin")
 
 
 class TaskModel(Base):

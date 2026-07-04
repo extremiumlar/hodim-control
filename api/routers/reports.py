@@ -2,6 +2,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,14 @@ from crm import get_crm_adapter
 from db.models import ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+class SummaryTarget(BaseModel):
+    """Ixtiyoriy nishon chat: berilmasa — sozlangan umumiy guruhga yuboriladi.
+    Bot HR/ROP/Boshliq/Dasturchi shaxsiy chatda so'raganida o'sha chatga yuborish
+    uchun ishlatiladi."""
+
+    chat_id: int | None = None
 
 
 @router.get("/export")
@@ -33,9 +42,10 @@ async def export_report(
 
 
 @router.post("/daily-summary", dependencies=[Depends(verify_bot_secret)])
-async def daily_summary(db: AsyncSession = Depends(get_db)) -> dict:
+async def daily_summary(payload: SummaryTarget | None = None, db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan har kuni (~19:00) chaqiriladi — umumiy guruhga
-    kunlik xulosani monospace formatda yuboradi."""
+    kunlik xulosani monospace formatda yuboradi. `chat_id` berilsa (bot orqali
+    shaxsiy so'rov), xulosa o'sha chatga yuboriladi."""
     today = today_local()
     day_start = datetime.combine(today, datetime.min.time())
     day_end = datetime.combine(today, datetime.max.time())
@@ -78,16 +88,17 @@ async def daily_summary(db: AsyncSession = Depends(get_db)) -> dict:
     # Telegram monospace bloki uchun ```  emas balki <pre> tegi ishlatiladi.
     text = f"📊 Kunlik xulosa — {today.isoformat()}\n<pre>{body}</pre>"
 
+    target_chat = (payload.chat_id if payload else None) or settings.telegram_group_chat_id
     sent = False
-    if settings.telegram_group_chat_id:
-        result = await send_message(settings.telegram_group_chat_id, text)
+    if target_chat:
+        result = await send_message(target_chat, text)
         sent = result is not None
 
     return {"employees": len(employees), "sent": sent}
 
 
 @router.post("/call-stats", dependencies=[Depends(verify_bot_secret)])
-async def call_stats(db: AsyncSession = Depends(get_db)) -> dict:
+async def call_stats(payload: SummaryTarget | None = None, db: AsyncSession = Depends(get_db)) -> dict:
     """Bot `/statistika` buyrug'i orqali talab bo'yicha chaqiradi — CRM'dan (hozircha Uysot)
     shu kunda har bir operator/managerning nechta qo'ng'iroq qilgani/qabul qilganini olib,
     guruhga jo'natadi."""
@@ -110,9 +121,10 @@ async def call_stats(db: AsyncSession = Depends(get_db)) -> dict:
     ]
     text = f"📞 Bugungi qo'ng'iroqlar — {today.isoformat()}\n<pre>{chr(10).join(lines)}</pre>"
 
+    target_chat = (payload.chat_id if payload else None) or settings.telegram_group_chat_id
     sent = False
-    if settings.telegram_group_chat_id:
-        result = await send_message(settings.telegram_group_chat_id, text)
+    if target_chat:
+        result = await send_message(target_chat, text)
         sent = result is not None
 
     return {"operators": len(counts), "sent": sent}

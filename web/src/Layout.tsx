@@ -15,6 +15,7 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const canManagePositions = user?.role === "boss" || user?.role === "dasturchi";
 
   return (
     <div className="min-h-screen">
@@ -35,6 +36,11 @@ export default function Layout() {
               <NavLink to="/users" className={navLinkClass}>
                 Foydalanuvchilar
               </NavLink>
+              {canManagePositions && (
+                <NavLink to="/positions" className={navLinkClass}>
+                  Lavozimlar
+                </NavLink>
+              )}
               <NavLink to="/reports" className={navLinkClass}>
                 Hisobotlar
               </NavLink>

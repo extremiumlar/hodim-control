@@ -77,6 +77,20 @@ async def list_employees() -> list[dict]:
     return resp.json()
 
 
+async def norm_targets(telegram_id: int) -> list[dict]:
+    """Aktyor norma belgilay oladigan xodimlar (matritsa: ROP — jamoasi, HR —
+    o'ziga biriktirilgan lavozimlar, Boshliq/Dasturchi — hamma)."""
+    resp = await _get_client().get(f"/norms/norm-targets/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def my_stats(telegram_id: int) -> dict:
+    resp = await _get_client().get(f"/stats/my/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def update_norm(changer_telegram_id: int, target_user_id: int, metric_type: str, value: int) -> dict:
     resp = await _get_client().post(
         "/norms/bot-update",
@@ -153,13 +167,36 @@ async def bot_create_task(assigner_telegram_id: int, assigned_to: int, title: st
     return resp.json()
 
 
-async def trigger_daily_summary() -> dict:
-    resp = await _get_client().post("/reports/daily-summary")
+async def bot_create_bulk_tasks(
+    assigner_telegram_id: int,
+    target_type: str,
+    title: str,
+    target_roles: list[str] | None = None,
+    position_id: int | None = None,
+) -> dict:
+    """Ommaviy vazifa (faqat Boshliq/Dasturchi): barcha xodimlarga, rol bo'yicha
+    (ROP/HR/ikkalasi) yoki lavozim bo'yicha."""
+    resp = await _get_client().post(
+        "/tasks/bot-bulk-create",
+        json={
+            "assigner_telegram_id": assigner_telegram_id,
+            "target_type": target_type,
+            "target_roles": target_roles,
+            "position_id": position_id,
+            "title": title,
+        },
+    )
     resp.raise_for_status()
     return resp.json()
 
 
-async def trigger_call_stats() -> dict:
-    resp = await _get_client().post("/reports/call-stats")
+async def trigger_daily_summary(chat_id: int | None = None) -> dict:
+    resp = await _get_client().post("/reports/daily-summary", json={"chat_id": chat_id})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def trigger_call_stats(chat_id: int | None = None) -> dict:
+    resp = await _get_client().post("/reports/call-stats", json={"chat_id": chat_id})
     resp.raise_for_status()
     return resp.json()

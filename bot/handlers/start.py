@@ -3,7 +3,7 @@ from aiogram.filters import CommandObject, CommandStart
 from aiogram.types import Message
 
 from bot import api_client
-from bot.keyboards import main_menu
+from bot.keyboards import menu_for_user
 
 router = Router(name="start")
 
@@ -31,7 +31,10 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
 
     user = result["user"]
     role_name = ROLE_NAMES.get(user["role"], user["role"])
+    position = user.get("position") or {}
+    position_line = f"\nLavozim: <b>{position['name']}</b>" if position.get("name") else ""
     await message.answer(
-        f"Assalomu alaykum, {user['full_name']}!\nSiz tizimga <b>{role_name}</b> sifatida ulandingiz.",
-        reply_markup=main_menu(user["role"]),
+        f"Assalomu alaykum, {user['full_name']}!\n"
+        f"Siz tizimga <b>{role_name}</b> sifatida ulandingiz.{position_line}",
+        reply_markup=menu_for_user(user),
     )

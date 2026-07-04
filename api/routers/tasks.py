@@ -5,20 +5,47 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, is_within_rop_scope, require_roles, verify_bot_secret
-from api.schemas import TaskBotCreate, TaskCompleteRequest, TaskCreate, TaskOut, UserOut
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.schemas import (
+    TaskBotCreate,
+    TaskBulkBotCreate,
+    TaskBulkCreate,
+    TaskCompleteRequest,
+    TaskCreate,
+    TaskOut,
+    UserOut,
+)
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-# Kim kimga vazifa bera oladi: boshliq/dasturchi ROP/HR/xodimga, ROP va HR esa faqat xodimga.
-ASSIGNABLE_ROLES: dict[str, set[str]] = {
-    Role.boss.value: {Role.employee.value, Role.rop.value, Role.hr.value},
-    Role.dasturchi.value: {Role.employee.value, Role.rop.value, Role.hr.value, Role.boss.value},
-    Role.rop.value: {Role.employee.value},
-    Role.hr.value: {Role.employee.value},
-}
+# Vazifa bera oladigan rollar (umumiy tekshiruv; kimga berishi mumkinligi
+# `_can_assign` matritsasida aniqlanadi).
+MANAGER_ROLES = {Role.boss.value, Role.dasturchi.value, Role.rop.value, Role.hr.value}
+
+
+def _can_assign(actor: User, target: User) -> bool:
+    """Vazifa berish matritsasi:
+    - Dasturchi — hammaga (boshliq ham kiradi);
+    - Boshliq — ROP, HR va xodimlarga (alohida yoki ommaviy);
+    - ROP (sotuv boshlig'i) — faqat o'z jamoasidagi sotuvchilarga (manager_id);
+    - HR — faqat lavozimi "HR boshqaradi" deb belgilangan xodimlarga
+      (masalan mobilograf, dasturchi-xodim lavozimlari)."""
+    if not target.is_active or target.id == actor.id:
+        return False
+    if actor.role == Role.dasturchi.value:
+        return True
+    if actor.role == Role.boss.value:
+        return target.role in {Role.employee.value, Role.rop.value, Role.hr.value}
+    if actor.role == Role.rop.value:
+        return target.role == Role.employee.value and target.manager_id == actor.id
+    if actor.role == Role.hr.value:
+        if target.role != Role.employee.value:
+            return False
+        position = target.position
+        return bool(position and position.managed_by_roles and Role.hr.value in position.managed_by_roles)
+    return False
 
 
 async def _to_out(task: TaskModel, db: AsyncSession) -> TaskOut:
@@ -105,8 +132,7 @@ async def _create_task_record(
 
 async def _resolve_assignee(db: AsyncSession, actor: User, assigned_to: int) -> User:
     assignee = await db.get(User, assigned_to)
-    allowed_roles = ASSIGNABLE_ROLES.get(actor.role, set())
-    if not assignee or assignee.role not in allowed_roles or not is_within_rop_scope(actor, assignee):
+    if not assignee or not _can_assign(actor, assignee):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu foydalanuvchiga vazifa bera olmaysiz")
     return assignee
 
@@ -125,7 +151,7 @@ async def create_task(
 @router.post("/bot-create", response_model=TaskOut, dependencies=[Depends(verify_bot_secret)])
 async def bot_create_task(payload: TaskBotCreate, db: AsyncSession = Depends(get_db)) -> TaskOut:
     actor = await db.scalar(select(User).where(User.telegram_id == payload.assigner_telegram_id))
-    if not actor or actor.role not in ASSIGNABLE_ROLES:
+    if not actor or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     assignee = await _resolve_assignee(db, actor, payload.assigned_to)
@@ -141,15 +167,84 @@ async def assignable_users(telegram_id: int, db: AsyncSession = Depends(get_db))
     if not actor:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
-    allowed_roles = ASSIGNABLE_ROLES.get(actor.role, set())
-    if not allowed_roles:
+    if actor.role not in MANAGER_ROLES:
         return []
 
-    query = select(User).where(User.role.in_(allowed_roles), User.is_active == True)  # noqa: E712
-    if actor.role == Role.rop.value:
-        query = query.where(User.manager_id == actor.id)
-    query = query.order_by(User.full_name)
-    return list(await db.scalars(query))
+    candidates = list(
+        await db.scalars(
+            select(User).where(User.is_active == True).order_by(User.full_name)  # noqa: E712
+        )
+    )
+    # Matritsa bo'yicha filtrlash (HR uchun lavozim tekshiruvi Python tomonda —
+    # position relationship selectin bilan yuklanadi, foydalanuvchilar soni kichik).
+    return [u for u in candidates if _can_assign(actor, u)]
+
+
+async def _resolve_bulk_targets(db: AsyncSession, payload: TaskBulkCreate) -> list[User]:
+    """Ommaviy vazifa nishonlarini aniqlaydi: barcha xodimlar / rol(lar) bo'yicha /
+    lavozim bo'yicha."""
+    if payload.target_type == "all_employees":
+        query = select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
+    elif payload.target_type == "role":
+        allowed = {Role.rop.value, Role.hr.value, Role.employee.value}
+        roles = [r for r in (payload.target_roles or []) if r in allowed]
+        if not roles:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Rol(lar) ko'rsatilmagan yoki noto'g'ri")
+        query = select(User).where(User.role.in_(roles), User.is_active == True)  # noqa: E712
+    else:  # position
+        if not payload.position_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lavozim ko'rsatilmagan")
+        query = select(User).where(User.position_id == payload.position_id, User.is_active == True)  # noqa: E712
+
+    return list(await db.scalars(query.order_by(User.full_name)))
+
+
+async def _create_bulk_tasks(db: AsyncSession, actor: User, payload: TaskBulkCreate) -> dict:
+    targets = [u for u in await _resolve_bulk_targets(db, payload) if u.id != actor.id]
+    if not targets:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tanlangan nishonda hech kim topilmadi")
+
+    for target in targets:
+        await _create_task_record(db, actor, target, payload.title, payload.description, payload.deadline)
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="task_bulk_created",
+            target_user_id=None,
+            before=None,
+            after={
+                "title": payload.title,
+                "target_type": payload.target_type,
+                "target_roles": payload.target_roles,
+                "position_id": payload.position_id,
+                "count": len(targets),
+            },
+        )
+    )
+    await db.commit()
+
+    return {"created": len(targets)}
+
+
+@router.post("/bulk")
+async def create_bulk_tasks(
+    payload: TaskBulkCreate,
+    actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Ommaviy vazifa (faqat Boshliq/Dasturchi): barcha xodimlarga, rol bo'yicha
+    (ROPlarga, HRlarga yoki ikkalasiga umumiy) yoki lavozim bo'yicha."""
+    return await _create_bulk_tasks(db, actor, payload)
+
+
+@router.post("/bot-bulk-create", dependencies=[Depends(verify_bot_secret)])
+async def bot_create_bulk_tasks(payload: TaskBulkBotCreate, db: AsyncSession = Depends(get_db)) -> dict:
+    actor = await db.scalar(select(User).where(User.telegram_id == payload.assigner_telegram_id))
+    if not actor or actor.role not in {Role.boss.value, Role.dasturchi.value}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+    return await _create_bulk_tasks(db, actor, payload)
 
 
 @router.get("", response_model=list[TaskOut])

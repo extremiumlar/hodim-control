@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, CrmOperatorRow, User } from "../lib/api";
+import { api, CrmOperatorRow, Position, User } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -18,6 +18,8 @@ export default function Users() {
   // huquqi bilan) to'liq boshqaruv huquqiga ega.
   const hasFullControl = isBoss || isDasturchi;
   const canCreateUser = currentUser?.role === "hr" || hasFullControl;
+  // Lavozim biriktirish: HR/Boshliq/Dasturchi (backend PATCH /users/{id}/position bilan mos)
+  const canSetPosition = canCreateUser;
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,9 @@ export default function Users() {
   const [operators, setOperators] = useState<CrmOperatorRow[]>([]);
   const [operatorLinkChoice, setOperatorLinkChoice] = useState<Record<string, string>>({});
   const [linkingOperator, setLinkingOperator] = useState<string | null>(null);
+
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [savingPosition, setSavingPosition] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -63,11 +68,33 @@ export default function Users() {
     }
   };
 
+  const loadPositions = async () => {
+    try {
+      setPositions(await api.listPositions());
+    } catch {
+      // Lavozimlar hali sozlanmagan bo'lishi mumkin — jim o'tkazamiz
+    }
+  };
+
   useEffect(() => {
     load();
+    loadPositions();
     if (hasFullControl) loadOperators();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFullControl]);
+
+  const handlePositionChange = async (userId: number, value: string) => {
+    setSavingPosition(userId);
+    setError(null);
+    try {
+      await api.updateUserPosition(userId, value ? Number(value) : null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Lavozimni o'zgartirishda xatolik");
+    } finally {
+      setSavingPosition(null);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -286,6 +313,7 @@ export default function Users() {
                 <tr className="text-left text-slate-500 border-b">
                   <th className="py-2">Ism</th>
                   <th className="py-2">Rol</th>
+                  <th className="py-2">Lavozim</th>
                   <th className="py-2">Holat</th>
                   <th className="py-2">Bot</th>
                   {hasFullControl && <th className="py-2">CRM ID</th>}
@@ -309,6 +337,25 @@ export default function Users() {
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td className="py-2">
+                      {canSetPosition ? (
+                        <select
+                          value={u.position_id ?? ""}
+                          disabled={savingPosition === u.id}
+                          onChange={(e) => handlePositionChange(u.id, e.target.value)}
+                          className="border rounded px-2 py-1 text-xs disabled:opacity-50"
+                        >
+                          <option value="">— yo'q —</option>
+                          {positions.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        u.position?.name ?? "—"
+                      )}
                     </td>
                     <td className="py-2">{u.is_active ? "Faol" : "O'chirilgan"}</td>
                     <td className="py-2">{u.bot_started ? "✅ ulangan" : "— kutilmoqda"}</td>

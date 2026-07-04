@@ -9,6 +9,7 @@ import Norms from "./pages/Norms";
 import EmployeeProfile from "./pages/EmployeeProfile";
 import Reports from "./pages/Reports";
 import AuditLogs from "./pages/AuditLogs";
+import Positions from "./pages/Positions";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="employees/:id" element={<EmployeeProfile />} />
         <Route path="reports" element={<Reports />} />
         <Route path="audit-logs" element={<AuditLogs />} />
+        <Route path="positions" element={<Positions />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

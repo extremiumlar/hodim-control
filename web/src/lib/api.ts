@@ -44,6 +44,19 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   return (await resp.json()) as T;
 }
 
+export interface PositionBrief {
+  id: number;
+  name: string;
+  menu_flags: Record<string, boolean> | null;
+  metrics: string[] | null;
+  managed_by_roles: string[] | null;
+}
+
+export interface Position extends PositionBrief {
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface User {
   id: number;
   telegram_id: number | null;
@@ -51,6 +64,8 @@ export interface User {
   role: "employee" | "hr" | "rop" | "boss" | "dasturchi";
   team_id: number | null;
   manager_id: number | null;
+  position_id: number | null;
+  position: PositionBrief | null;
   bot_started: boolean;
   is_active: boolean;
   crm_external_id: string | null;
@@ -88,9 +103,18 @@ export interface CrmOperatorRow {
   matched_user: User | null;
 }
 
+export interface TeamNormMetric {
+  key: string;
+  label: string;
+  value: number | null;
+}
+
 export interface TeamNormRow {
   user_id: number;
   full_name: string;
+  position_name: string | null;
+  can_edit: boolean;
+  metrics: TeamNormMetric[];
   suhbat: number | null;
   tashrif: number | null;
 }
@@ -156,6 +180,37 @@ export const api = {
     }),
   updateRole: (userId: number, role: string) =>
     apiFetch<User>(`/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  updateUserPosition: (userId: number, positionId: number | null) =>
+    apiFetch<User>(`/users/${userId}/position`, {
+      method: "PATCH",
+      body: JSON.stringify({ position_id: positionId }),
+    }),
+  listPositions: (includeInactive = false) =>
+    apiFetch<Position[]>(`/positions${includeInactive ? "?include_inactive=true" : ""}`),
+  createPosition: (data: {
+    name: string;
+    menu_flags?: Record<string, boolean> | null;
+    metrics?: string[] | null;
+    managed_by_roles?: string[] | null;
+  }) => apiFetch<Position>("/positions", { method: "POST", body: JSON.stringify(data) }),
+  updatePosition: (
+    positionId: number,
+    data: {
+      name?: string;
+      menu_flags?: Record<string, boolean> | null;
+      metrics?: string[] | null;
+      managed_by_roles?: string[] | null;
+      is_active?: boolean;
+    }
+  ) => apiFetch<Position>(`/positions/${positionId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  createBulkTasks: (data: {
+    target_type: "all_employees" | "role" | "position";
+    target_roles?: string[] | null;
+    position_id?: number | null;
+    title: string;
+    description?: string;
+    deadline?: string | null;
+  }) => apiFetch<{ created: number }>("/tasks/bulk", { method: "POST", body: JSON.stringify(data) }),
   deleteUser: (userId: number) => apiFetch<{ deleted: boolean }>(`/users/${userId}`, { method: "DELETE" }),
   listCrmOperators: () => apiFetch<CrmOperatorRow[]>("/users/crm-operators"),
   deactivateUser: (userId: number) => apiFetch<User>(`/users/${userId}/deactivate`, { method: "POST" }),

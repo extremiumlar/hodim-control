@@ -15,6 +15,7 @@ from db.models import (
     ExcusedDay,
     MobilografVideo,
     Norm,
+    Position,
     Role,
     TaskModel,
     User,
@@ -27,6 +28,7 @@ from api.schemas import (
     UserCreateOut,
     UserCrmIdUpdate,
     UserOut,
+    UserPositionUpdate,
     UserRoleUpdate,
 )
 
@@ -274,6 +276,41 @@ async def update_crm_external_id(
             target_user_id=user.id,
             before={"crm_external_id": before},
             after={"crm_external_id": user.crm_external_id},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/position", response_model=UserOut)
+async def update_position(
+    user_id: int,
+    payload: UserPositionUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    position_name = None
+    if payload.position_id is not None:
+        position = await db.get(Position, payload.position_id)
+        if not position or not position.is_active:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lavozim topilmadi yoki faol emas")
+        position_name = position.name
+
+    before_position_id = user.position_id
+    user.position_id = payload.position_id
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_position_changed",
+            target_user_id=user.id,
+            before={"position_id": before_position_id},
+            after={"position_id": user.position_id, "position_name": position_name},
         )
     )
     await db.commit()

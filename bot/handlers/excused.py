@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from bot import api_client
-from bot.keyboards import BTN_CANCEL, BTN_EXCUSED, cancel_menu, main_menu
+from bot.keyboards import BTN_CANCEL, BTN_EXCUSED, cancel_menu, menu_for_user
 
 router = Router(name="excused")
 
@@ -30,8 +30,7 @@ async def start_excused_request(message: Message, state: FSMContext) -> None:
 async def cancel_excused_request(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
-    role = user["role"] if user else "employee"
-    await message.answer("Bekor qilindi.", reply_markup=main_menu(role))
+    await message.answer("Bekor qilindi.", reply_markup=menu_for_user(user))
 
 
 @router.message(StateFilter(ExcusedDayFSM.waiting_for_reason))
@@ -42,10 +41,9 @@ async def receive_excused_reason(message: Message, state: FSMContext) -> None:
     await api_client.create_excused_day(message.from_user.id, date.today().isoformat(), reason)
 
     user = await api_client.get_user_by_telegram(message.from_user.id)
-    role = user["role"] if user else "employee"
     await message.answer(
         "So'rovingiz HR'ga yuborildi, javobini shu yerda kutib turing.",
-        reply_markup=main_menu(role),
+        reply_markup=menu_for_user(user),
     )
 
 

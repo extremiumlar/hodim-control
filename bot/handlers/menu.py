@@ -31,18 +31,17 @@ async def show_tasks(message: Message) -> None:
 async def show_norm(message: Message) -> None:
     today = await api_client.today_daily_result(message.from_user.id)
 
-    suhbat_norm = today["suhbat_norm"]
-    tashrif_norm = today["tashrif_norm"]
+    # Lavozimga moslashgan ko'rsatkichlar ro'yxati (suhbat/tashrif/video)
+    metrics = today.get("metrics") or []
+    with_norm = [m for m in metrics if m.get("norm") is not None]
 
-    if suhbat_norm is None and tashrif_norm is None:
-        await message.answer("Sizga hali norma belgilanmagan — ROP bilan bog'laning.")
+    if not with_norm:
+        await message.answer("Sizga hali norma belgilanmagan — rahbaringiz bilan bog'laning.")
         return
 
     lines = ["<b>Bugungi normang:</b>"]
-    if suhbat_norm is not None:
-        lines.append(f"Suhbatlar: {today['conversations_count']}/{suhbat_norm}")
-    if tashrif_norm is not None:
-        lines.append(f"Tashriflar: {today['visits_count']}/{tashrif_norm}")
+    for m in with_norm:
+        lines.append(f"{m['label']}: {m['value']}/{m['norm']}")
     await message.answer("\n".join(lines))
 
 

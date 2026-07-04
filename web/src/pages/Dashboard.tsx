@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Task, User } from "../lib/api";
+import { api, Position, Task, User } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -26,13 +26,26 @@ const ASSIGNABLE_ROLES: Record<string, string> = {
   hr: "employee",
 };
 
+// Ommaviy vazifa rejimlari (faqat Boshliq/Dasturchi)
+const BULK_MODES: { key: string; label: string; targetType: "all_employees" | "role"; roles?: string[] }[] = [
+  { key: "all", label: "👥 Barcha xodimlarga", targetType: "all_employees" },
+  { key: "rops", label: "🧭 Barcha ROPlarga", targetType: "role", roles: ["rop"] },
+  { key: "hrs", label: "🗂 Barcha HRlarga", targetType: "role", roles: ["hr"] },
+  { key: "rophr", label: "🤝 ROP + HR (umumiy)", targetType: "role", roles: ["rop", "hr"] },
+];
+
 export default function Dashboard() {
   const { user } = useAuth();
+  const canBulk = user?.role === "boss" || user?.role === "dasturchi";
   const [tasks, setTasks] = useState<Task[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<User[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
+  // "single" — bitta odamga; "all"/"rops"/"hrs"/"rophr" — ommaviy; "pos:<id>" — lavozimga
+  const [targetMode, setTargetMode] = useState("single");
   const [assignedTo, setAssignedTo] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -63,6 +76,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
+    if (canBulk) {
+      api.listPositions().then(setPositions).catch(() => {
+        // Lavozimlar hali sozlanmagan bo'lishi mumkin — jim o'tkazamiz
+      });
+    }
     // MVP uchun real-vaqt sinxronizatsiya shart emas — 20 soniyada bir polling yetarli
     // (spetsifikatsiya 11-bo'lim, 6-band: WebSocket 4-bosqichdan tashqarida qoldirilgan).
     const interval = setInterval(() => load(false), 20000);
@@ -72,16 +90,36 @@ export default function Dashboard() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!assignedTo || !title) return;
+    if (!title) return;
+    if (targetMode === "single" && !assignedTo) return;
     setSubmitting(true);
     setError(null);
+    setNotice(null);
     try {
-      await api.createTask({
-        assigned_to: Number(assignedTo),
+      const common = {
         title,
         description: description || undefined,
         deadline: deadline ? new Date(deadline).toISOString() : null,
-      });
+      };
+      if (targetMode === "single") {
+        await api.createTask({ assigned_to: Number(assignedTo), ...common });
+      } else if (targetMode.startsWith("pos:")) {
+        const result = await api.createBulkTasks({
+          target_type: "position",
+          position_id: Number(targetMode.slice(4)),
+          ...common,
+        });
+        setNotice(`Vazifa ${result.created} kishiga berildi ✅`);
+      } else {
+        const mode = BULK_MODES.find((m) => m.key === targetMode);
+        if (!mode) throw new Error("Noma'lum nishon");
+        const result = await api.createBulkTasks({
+          target_type: mode.targetType,
+          target_roles: mode.roles,
+          ...common,
+        });
+        setNotice(`Vazifa ${result.created} kishiga berildi ✅`);
+      }
       setTitle("");
       setDescription("");
       setDeadline("");
@@ -99,23 +137,47 @@ export default function Dashboard() {
       <div className="md:col-span-1 bg-white rounded-lg shadow p-5 h-fit">
         <h2 className="font-semibold mb-4">Yangi vazifa berish</h2>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-sm text-slate-600 mb-1">Kimga</label>
-            <select
-              value={assignedTo}
-              onChange={(e) => setAssignedTo(e.target.value)}
-              required
-              className="w-full border rounded px-3 py-2 text-sm"
-            >
-              <option value="">— foydalanuvchi tanlang —</option>
-              {assignableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name} ({ROLE_LABELS[u.role] ?? u.role})
-                  {!u.bot_started ? " — bot ulanmagan" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          {canBulk && (
+            <div>
+              <label className="block text-sm text-slate-600 mb-1">Nishon</label>
+              <select
+                value={targetMode}
+                onChange={(e) => setTargetMode(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value="single">👤 Bitta odamga</option>
+                {BULK_MODES.map((m) => (
+                  <option key={m.key} value={m.key}>
+                    {m.label}
+                  </option>
+                ))}
+                {positions.map((p) => (
+                  <option key={`pos:${p.id}`} value={`pos:${p.id}`}>
+                    🏷 Lavozim: {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {targetMode === "single" && (
+            <div>
+              <label className="block text-sm text-slate-600 mb-1">Kimga</label>
+              <select
+                value={assignedTo}
+                onChange={(e) => setAssignedTo(e.target.value)}
+                required
+                className="w-full border rounded px-3 py-2 text-sm"
+              >
+                <option value="">— foydalanuvchi tanlang —</option>
+                {assignableUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({ROLE_LABELS[u.role] ?? u.role})
+                    {!u.bot_started ? " — bot ulanmagan" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-sm text-slate-600 mb-1">Nima</label>
             <input
@@ -151,6 +213,7 @@ export default function Dashboard() {
           >
             {submitting ? "Yuborilmoqda..." : "Vazifa berish"}
           </button>
+          {notice && <p className="text-sm text-emerald-700">{notice}</p>}
         </form>
       </div>
 

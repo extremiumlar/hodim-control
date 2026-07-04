@@ -134,6 +134,8 @@ async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
+    from api.routers.stats import today_metric_rows
+
     today = today_local()
     result = await db.scalar(select(DailyResult).where(DailyResult.user_id == user.id, DailyResult.date == today))
 
@@ -142,6 +144,8 @@ async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db
         visits_count=result.visits_count if result else 0,
         suhbat_norm=await _current_norm(db, user.id, "suhbat"),
         tashrif_norm=await _current_norm(db, user.id, "tashrif"),
+        # Lavozimga moslashgan ro'yxat — bot endi shu ro'yxatni ko'rsatadi
+        metrics=await today_metric_rows(db, user),
     )
 
 

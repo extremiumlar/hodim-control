@@ -1,6 +1,83 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# Lavozim uchun qo'llab-quvvatlanadigan ko'rsatkichlar va bot menyu tugmalari.
+# Bu ro'yxatlar backend hisob-kitobi mavjud bo'lgan qiymatlar bilan cheklangan —
+# ixtiyoriy satr qabul qilinsa, hech qayerda hisoblanmaydigan "o'lik" norma paydo
+# bo'lar edi (avvalgi audit shuni ko'rsatgan).
+POSITION_METRICS = ["suhbat", "tashrif", "video"]
+POSITION_MENU_KEYS = ["tasks", "norm", "kpi", "excused"]
+POSITION_MANAGER_ROLES = ["rop", "hr"]
+
+
+class PositionBase(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    menu_flags: dict[str, bool] | None = None
+    metrics: list[str] | None = None
+    managed_by_roles: list[str] | None = None
+
+    @field_validator("metrics")
+    @classmethod
+    def _check_metrics(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            bad = [m for m in v if m not in POSITION_METRICS]
+            if bad:
+                raise ValueError(f"Noma'lum ko'rsatkich(lar): {', '.join(bad)}")
+        return v
+
+    @field_validator("managed_by_roles")
+    @classmethod
+    def _check_managers(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            bad = [r for r in v if r not in POSITION_MANAGER_ROLES]
+            if bad:
+                raise ValueError(f"Noma'lum boshqaruvchi rol(lar): {', '.join(bad)}")
+        return v
+
+    @field_validator("menu_flags")
+    @classmethod
+    def _check_menu_flags(cls, v: dict[str, bool] | None) -> dict[str, bool] | None:
+        if v is not None:
+            bad = [k for k in v if k not in POSITION_MENU_KEYS]
+            if bad:
+                raise ValueError(f"Noma'lum menyu kaliti(lari): {', '.join(bad)}")
+        return v
+
+
+class PositionCreate(PositionBase):
+    pass
+
+
+class PositionUpdate(PositionBase):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    is_active: bool | None = None
+
+
+class PositionOut(BaseModel):
+    id: int
+    name: str
+    menu_flags: dict | None
+    metrics: list | None
+    managed_by_roles: list | None
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PositionBrief(BaseModel):
+    """UserOut ichida yuboriladigan qisqa lavozim ma'lumoti — bot menyusi va
+    norma oqimi shu ma'lumotga qarab moslashadi."""
+
+    id: int
+    name: str
+    menu_flags: dict | None
+    metrics: list | None
+    managed_by_roles: list | None
+
+    model_config = {"from_attributes": True}
 
 
 class UserOut(BaseModel):
@@ -10,6 +87,8 @@ class UserOut(BaseModel):
     role: str
     team_id: int | None
     manager_id: int | None
+    position_id: int | None = None
+    position: PositionBrief | None = None
     bot_started: bool
     is_active: bool
     crm_external_id: str | None
@@ -24,6 +103,10 @@ class UserCrmIdUpdate(BaseModel):
 
 class UserRoleUpdate(BaseModel):
     role: str
+
+
+class UserPositionUpdate(BaseModel):
+    position_id: int | None = None
 
 
 class UserCreate(BaseModel):
@@ -78,6 +161,31 @@ class TaskBotCreate(BaseModel):
     title: str
     description: str | None = None
     deadline: datetime | None = None
+
+
+# Ommaviy vazifa nishonlari: barcha xodimlar / rol bo'yicha (rop, hr, rop+hr,
+# employee) / lavozim bo'yicha. Faqat Boshliq/Dasturchi ishlata oladi.
+BULK_TARGET_TYPES = ["all_employees", "role", "position"]
+
+
+class TaskBulkCreate(BaseModel):
+    target_type: str  # all_employees | role | position
+    target_roles: list[str] | None = None  # target_type="role" uchun, masalan ["rop", "hr"]
+    position_id: int | None = None  # target_type="position" uchun
+    title: str = Field(min_length=1, max_length=500)
+    description: str | None = None
+    deadline: datetime | None = None
+
+    @field_validator("target_type")
+    @classmethod
+    def _check_target_type(cls, v: str) -> str:
+        if v not in BULK_TARGET_TYPES:
+            raise ValueError(f"Noma'lum nishon turi: {v}")
+        return v
+
+
+class TaskBulkBotCreate(TaskBulkCreate):
+    assigner_telegram_id: int
 
 
 class TaskOut(BaseModel):
@@ -149,11 +257,24 @@ class NormOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TeamNormMetric(BaseModel):
+    key: str
+    label: str
+    value: int | None  # joriy belgilangan norma (yo'q bo'lsa None)
+
+
 class TeamNormRow(BaseModel):
     user_id: int
     full_name: str
-    suhbat: int | None
-    tashrif: int | None
+    position_name: str | None = None
+    # Joriy foydalanuvchi (aktyor) shu xodimning normalarini o'zgartira oladimi —
+    # ROP faqat o'z jamoasini, HR faqat o'ziga biriktirilgan lavozimlarni.
+    can_edit: bool = False
+    # Lavozimga qarab kuzatiladigan ko'rsatkichlar (default: suhbat+tashrif)
+    metrics: list[TeamNormMetric] = []
+    # Orqaga moslik uchun saqlangan eski maydonlar
+    suhbat: int | None = None
+    tashrif: int | None = None
 
 
 class MobilografCreate(BaseModel):
@@ -201,11 +322,34 @@ class DailyResultOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MetricProgressRow(BaseModel):
+    """Bitta ko'rsatkich bo'yicha jonli holat: bugungi qiymat va belgilangan norma."""
+
+    key: str  # suhbat | tashrif | video
+    label: str
+    value: int
+    norm: int | None
+
+
 class DailyResultTodayOut(BaseModel):
     conversations_count: int
     visits_count: int
     suhbat_norm: int | None
     tashrif_norm: int | None
+    # Lavozimga qarab moslashgan ko'rsatkichlar ro'yxati — bot endi shu ro'yxatni
+    # ko'rsatadi; eski maydonlar orqaga moslik uchun saqlab qolindi.
+    metrics: list[MetricProgressRow] = []
+
+
+class MyStatsOut(BaseModel):
+    """Xodimning botdagi "📈 Statistikam" tugmasi uchun shaxsiy statistika."""
+
+    period: str  # joriy oy, "YYYY-MM"
+    today: list[MetricProgressRow]
+    month_totals: dict[str, int]  # {"suhbat": 120, "tashrif": 8, "video": 5}
+    tasks_done: int
+    tasks_total: int
+    excused_days: int  # shu oyda tasdiqlangan sababli kunlar
 
 
 class CRMWebhookPayload(BaseModel):
