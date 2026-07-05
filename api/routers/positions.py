@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles
+from api.deps import get_db, require_roles, verify_bot_secret
 from api.schemas import PositionCreate, PositionOut, PositionUpdate
 from db.models import AuditLog, Position, Role, User
 
@@ -24,6 +24,13 @@ async def list_positions(
     if not include_inactive:
         query = query.where(Position.is_active == True)  # noqa: E712
     return list(await db.scalars(query))
+
+
+@router.get("/for-bot", response_model=list[PositionOut], dependencies=[Depends(verify_bot_secret)])
+async def list_positions_for_bot(db: AsyncSession = Depends(get_db)) -> list[Position]:
+    """Bot ommaviy vazifa oqimida "Lavozim: X" tugmalarini qurish uchun faol
+    lavozimlar ro'yxati."""
+    return list(await db.scalars(select(Position).where(Position.is_active == True).order_by(Position.name)))  # noqa: E712
 
 
 @router.post("", response_model=PositionOut)

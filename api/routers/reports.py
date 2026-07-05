@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -34,6 +34,38 @@ async def export_report(
 ) -> StreamingResponse:
     buffer = await build_report_xlsx(db, date_from, date_to)
     filename = f"hisobot_{date_from.isoformat()}_{date_to.isoformat()}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+BOT_EXPORT_PERIODS = {"today", "week", "month"}
+
+
+@router.get("/export-bot/{telegram_id}", dependencies=[Depends(verify_bot_secret)])
+async def export_report_for_bot(
+    telegram_id: int, period: str = "month", db: AsyncSession = Depends(get_db)
+) -> StreamingResponse:
+    """Bot "📥 Hisobot (Excel)" tugmasi uchun: davr (bugun / shu hafta / shu oy)
+    Toshkent sanasi bo'yicha backendda hisoblanadi — bot server vaqtiga bog'liq emas."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or actor.role not in {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    if period not in BOT_EXPORT_PERIODS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum davr")
+
+    today = today_local()
+    if period == "today":
+        date_from = today
+    elif period == "week":
+        date_from = today - timedelta(days=today.weekday())
+    else:
+        date_from = today.replace(day=1)
+
+    buffer = await build_report_xlsx(db, date_from, today)
+    filename = f"hisobot_{date_from.isoformat()}_{today.isoformat()}.xlsx"
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

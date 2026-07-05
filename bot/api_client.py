@@ -186,6 +186,34 @@ async def bot_create_bulk_tasks(
     return resp.json()
 
 
+async def list_positions() -> list[dict]:
+    """Faol lavozimlar — ommaviy vazifa oqimidagi "Lavozim: X" tugmalari uchun."""
+    resp = await _get_client().get("/positions/for-bot")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def download_report(telegram_id: int, period: str) -> tuple[bytes, str] | None:
+    """Excel hisobotni yuklab oladi. period: today | week | month.
+    Qaytaradi: (fayl_bayti, fayl_nomi) yoki ruxsat bo'lmasa None."""
+    resp = await _get_client().get(f"/reports/export-bot/{telegram_id}", params={"period": period})
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    disposition = resp.headers.get("content-disposition", "")
+    filename = disposition.split('filename="')[-1].rstrip('"') if 'filename="' in disposition else "hisobot.xlsx"
+    return resp.content, filename
+
+
+async def audit_logs(telegram_id: int, limit: int = 15) -> list[dict] | None:
+    """Oxirgi audit yozuvlari (faqat Boshliq/Dasturchi); ruxsat bo'lmasa None."""
+    resp = await _get_client().get(f"/audit-logs/for-bot/{telegram_id}", params={"limit": limit})
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def tasks_overview(telegram_id: int) -> list[dict]:
     """Bugungi barcha vazifalar (rahbar qamrovida) — kim bajardi/bajarmadi."""
     resp = await _get_client().get(f"/tasks/overview/{telegram_id}")

@@ -48,17 +48,28 @@ async def _show_individual_targets(message: Message, state: FSMContext, telegram
 
 @router.message(F.text == BTN_ASSIGN_TASK)
 async def start_assign_task(message: Message, state: FSMContext) -> None:
+    await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user:
         return
 
     if user["role"] in {"boss", "dasturchi"}:
-        # Boshliq/Dasturchi: alohida xodimga yoki ommaviy (hammaga/ROPlarga/HRlarga/umumiy)
+        # Boshliq/Dasturchi: alohida xodimga yoki ommaviy (hammaga/rol bo'yicha/
+        # lavozim bo'yicha — backend target_type="position" bilan qo'llaydi)
         buttons = [[InlineKeyboardButton(text="👤 Bitta odamga", callback_data="assignmode:single")]]
         buttons += [
             [InlineKeyboardButton(text=mode["label"], callback_data=f"assignmode:{key}")]
             for key, mode in BULK_MODES.items()
         ]
+
+        positions = await api_client.list_positions()
+        buttons += [
+            [InlineKeyboardButton(text=f"🏷 Lavozim: {p['name']}", callback_data=f"assignmode:pos_{p['id']}")]
+            for p in positions
+        ]
+        # Lavozim nomlari keyingi bosqichdagi tasdiqlash matni uchun saqlanadi
+        await state.update_data(position_names={str(p["id"]): p["name"] for p in positions})
+
         await state.set_state(AssignTaskFSM.choosing_mode)
         await message.answer(
             "Vazifani kimga berasiz?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -77,6 +88,18 @@ async def choose_mode(callback: CallbackQuery, state: FSMContext) -> None:
         shown = await _show_individual_targets(callback.message, state, callback.from_user.id)
         if not shown:
             await state.clear()
+        await callback.answer()
+        return
+
+    if mode_key.startswith("pos_"):
+        position_id = int(mode_key.removeprefix("pos_"))
+        data = await state.get_data()
+        name = (data.get("position_names") or {}).get(str(position_id), "?")
+        await state.update_data(bulk_mode="position", bulk_position_id=position_id)
+        await state.set_state(AssignTaskFSM.entering_title)
+        await callback.message.answer(
+            f"🏷 Lavozim: {name} — vazifa matnini yozing:", reply_markup=cancel_menu()
+        )
         await callback.answer()
         return
 
@@ -122,7 +145,15 @@ async def enter_title(message: Message, state: FSMContext) -> None:
     await state.clear()
 
     bulk_mode = data.get("bulk_mode")
-    if bulk_mode:
+    if bulk_mode == "position":
+        result = await api_client.bot_create_bulk_tasks(
+            assigner_telegram_id=message.from_user.id,
+            target_type="position",
+            position_id=data["bulk_position_id"],
+            title=title,
+        )
+        confirmation = f"Vazifa {result['created']} kishiga berildi ✅"
+    elif bulk_mode:
         mode = BULK_MODES[bulk_mode]
         result = await api_client.bot_create_bulk_tasks(
             assigner_telegram_id=message.from_user.id,
