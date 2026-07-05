@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_CANCEL, cancel_menu, menu_for_user
+from bot.keyboards import BTN_CANCEL, BTN_CHANGE_NORM, cancel_menu, menu_for_user
 
 router = Router(name="norms")
 
@@ -31,7 +31,10 @@ def _metrics_of(emp: dict) -> list[str]:
 
 
 @router.message(Command("norma_ozgartir"))
+@router.message(F.text == BTN_CHANGE_NORM)
 async def cmd_norma_ozgartir(message: Message, state: FSMContext) -> None:
+    # Menyu tugmasidan ham chaqiriladi — avvalgi chala FSM holati tozalanadi
+    await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user["role"] not in NORM_MANAGER_ROLES:
         await message.answer("Bu buyruq faqat rahbarlar (ROP/HR/Boshliq) uchun mavjud.")

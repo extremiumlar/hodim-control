@@ -272,6 +272,29 @@ async def list_tasks(
     return await _to_out_many(tasks, db)
 
 
+@router.get(
+    "/overview/{telegram_id}", response_model=list[TaskOut], dependencies=[Depends(verify_bot_secret)]
+)
+async def bot_tasks_overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[TaskOut]:
+    """Bot "📋 Vazifalar nazorati" tugmasi uchun: bugungi (Toshkent) barcha
+    vazifalar — kim bajardi, kim bajarmadi. ROP faqat o'z jamoasini ko'radi
+    (web'dagi list_tasks bilan bir xil qamrov)."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or actor.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+    start_utc, end_utc = local_range_utc_naive(today_local(), today_local())
+    query = (
+        select(TaskModel)
+        .where(TaskModel.created_at >= start_utc, TaskModel.created_at < end_utc)
+        .order_by(TaskModel.status.desc(), TaskModel.created_at)
+    )
+    if actor.role == Role.rop.value:
+        query = query.where(TaskModel.assigned_to.in_(select(User.id).where(User.manager_id == actor.id)))
+    tasks = list(await db.scalars(query))
+    return await _to_out_many(tasks, db)
+
+
 @router.get("/my/{telegram_id}", response_model=list[TaskOut], dependencies=[Depends(verify_bot_secret)])
 async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[TaskOut]:
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))

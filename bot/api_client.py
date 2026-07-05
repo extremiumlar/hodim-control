@@ -186,6 +186,20 @@ async def bot_create_bulk_tasks(
     return resp.json()
 
 
+async def tasks_overview(telegram_id: int) -> list[dict]:
+    """Bugungi barcha vazifalar (rahbar qamrovida) — kim bajardi/bajarmadi."""
+    resp = await _get_client().get(f"/tasks/overview/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def trigger_bonus_calculation(period: str | None = None) -> dict:
+    """Joriy oy (yoki berilgan davr) uchun barcha xodimlar bonusini qayta hisoblaydi."""
+    resp = await _get_client().post("/bonuses/calculate-monthly", json={"period": period})
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def trigger_daily_summary(chat_id: int | None = None) -> dict:
     resp = await _get_client().post("/reports/daily-summary", json={"chat_id": chat_id})
     resp.raise_for_status()

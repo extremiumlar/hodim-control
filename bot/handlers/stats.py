@@ -1,9 +1,11 @@
+import html
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot import api_client
-from bot.keyboards import BTN_GLOBAL_STATS, BTN_MY_STATS, MANAGER_ROLES
+from bot.keyboards import BTN_CALC_KPI, BTN_GLOBAL_STATS, BTN_MY_STATS, BTN_TASK_CONTROL, MANAGER_ROLES
 
 router = Router(name="stats")
 
@@ -42,6 +44,55 @@ async def show_my_stats(message: Message, state: FSMContext) -> None:
         lines.append(f"<b>Sababli kunlar:</b> {stats['excused_days']} kun")
 
     await message.answer("\n".join(lines))
+
+
+@router.message(F.text == BTN_TASK_CONTROL)
+async def show_task_control(message: Message, state: FSMContext) -> None:
+    """Rahbarlar uchun: bugun berilgan vazifalar — kim bajardi, kim hali yo'q.
+    ROP faqat o'z jamoasini ko'radi (qamrov backendda cheklanadi)."""
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or user["role"] not in MANAGER_ROLES:
+        return
+
+    tasks = await api_client.tasks_overview(message.from_user.id)
+    if not tasks:
+        await message.answer("Bugun berilgan vazifalar yo'q.")
+        return
+
+    done = [t for t in tasks if t["status"] == "done"]
+    pending = [t for t in tasks if t["status"] != "done"]
+
+    def _lines(items: list[dict]) -> list[str]:
+        return [f"  • {i['assigned_to_name']} — {html.escape(i['title'])}" for i in items[:30]]
+
+    lines = [f"📋 <b>Bugungi vazifalar</b> ({len(done)}/{len(tasks)} bajarildi)"]
+    if done:
+        lines.append("")
+        lines.append("✅ <b>Bajarilgan:</b>")
+        lines.extend(_lines(done))
+    if pending:
+        lines.append("")
+        lines.append("🕓 <b>Bajarilmagan:</b>")
+        lines.extend(_lines(pending))
+    await message.answer("\n".join(lines))
+
+
+@router.message(F.text == BTN_CALC_KPI)
+async def calc_monthly_kpi(message: Message, state: FSMContext) -> None:
+    """Faqat Boshliq/Dasturchi: joriy oy KPI/bonusini barcha xodimlar uchun
+    darhol qayta hisoblaydi (oy oxirini kutmasdan). Har bir xodimga bot orqali
+    "bonus hisoblandi" xabari ketadi."""
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or user["role"] not in {"boss", "dasturchi"}:
+        return
+
+    result = await api_client.trigger_bonus_calculation()
+    await message.answer(
+        f"💰 KPI/bonus <b>{result['period']}</b> davri uchun {result['calculated']} xodimga "
+        "qayta hisoblandi.\nTafsilotlar saytdagi xodim profillarida (Bonus tarixi)."
+    )
 
 
 async def send_global_stats(message: Message, *, to_group: bool) -> None:

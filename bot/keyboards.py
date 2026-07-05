@@ -8,6 +8,9 @@ BTN_EXCUSED = "🙋 Sababli kun so'rash"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
+BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
+BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
+BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
 BTN_CANCEL = "❌ Bekor qilish"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
@@ -42,8 +45,13 @@ def main_menu(role: str, menu_flags: dict | None = None) -> ReplyKeyboardMarkup:
     rows.append(stats_row)
 
     if role in MANAGER_ROLES:
-        rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_GLOBAL_STATS)])
-        rows.append([KeyboardButton(text=BTN_PANEL)])
+        rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
+        rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
+        if role in {"boss", "dasturchi"}:
+            # Oylik KPI/bonusni qayta hisoblash — faqat eng yuqori daraja
+            rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_PANEL)])
+        else:
+            rows.append([KeyboardButton(text=BTN_PANEL)])
 
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
