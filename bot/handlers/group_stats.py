@@ -4,6 +4,7 @@ from aiogram.types import Message
 
 from bot import api_client
 from bot.config import TELEGRAM_GROUP_CHAT_ID
+from bot.handlers.stats import send_global_stats
 
 router = Router(name="group_stats")
 
@@ -15,11 +16,4 @@ async def cmd_statistika(message: Message) -> None:
         await message.reply("Bu buyruq faqat HR/ROP/Boshliq uchun mavjud.")
         return
 
-    summary_result = await api_client.trigger_daily_summary()
-    if not summary_result.get("sent"):
-        await message.reply("Kunlik xulosani yuborib bo'lmadi — guruh sozlamalarini tekshiring.")
-
-    call_stats_result = await api_client.trigger_call_stats()
-    if not call_stats_result.get("sent"):
-        reason = call_stats_result.get("reason", "CRM ma'lumoti topilmadi")
-        await message.reply(f"Qo'ng'iroqlar statistikasi yuborilmadi: {reason}")
+    await send_global_stats(message, to_group=True)

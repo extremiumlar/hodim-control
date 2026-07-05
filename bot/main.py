@@ -22,15 +22,19 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
 
+    # menu/stats routerlari FSM oqimlaridan (norms, assign_task) OLDIN turadi:
+    # asosiy menyu tugmasi bosilganda u FSMning "istalgan matn" bosqichiga
+    # tushib qolmasdan, tegishli handlerda ushlanadi va (handler ichida
+    # state.clear() bilan) chala qolgan oqimni tozalaydi.
     dp.include_router(start.router)
     dp.include_router(menu.router)
+    dp.include_router(stats.router)
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
     dp.include_router(norms.router)
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(group_stats.router)
-    dp.include_router(stats.router)
 
     @dp.error()
     async def on_error(event: ErrorEvent) -> None:

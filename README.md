@@ -39,6 +39,8 @@ cp .env.example .env
 
 `DATABASE_URL` standart holatda SQLite'ga (`sqlite+aiosqlite:///./app.db`) ishora qiladi — hech narsa o'rnatish shart emas.
 
+> ⚠️ **Production'ga chiqishdan oldin:** `.env`da `DEBUG=false` qiling va barcha standart sirlarni (`BOT_SHARED_SECRET`, JWT maxfiy kaliti va h.k.) tasodifiy kuchli qiymatlarga almashtiring — `.env.example`dagi qiymatlar faqat lokal sinov uchun.
+
 ### 2.2. Backend (Python)
 
 ```bash

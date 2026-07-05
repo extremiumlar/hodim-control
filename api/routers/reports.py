@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_db, require_roles, verify_bot_secret
 from api.services.export import build_report_xlsx
-from api.timeutil import today_local
+from api.timeutil import local_range_utc_naive, today_local
 from api.telegram_notify import send_message
 from crm import get_crm_adapter
 from db.models import ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
@@ -47,8 +47,7 @@ async def daily_summary(payload: SummaryTarget | None = None, db: AsyncSession =
     kunlik xulosani monospace formatda yuboradi. `chat_id` berilsa (bot orqali
     shaxsiy so'rov), xulosa o'sha chatga yuboriladi."""
     today = today_local()
-    day_start = datetime.combine(today, datetime.min.time())
-    day_end = datetime.combine(today, datetime.max.time())
+    day_start, day_end = local_range_utc_naive(today, today)
 
     employees = list(
         await db.scalars(
@@ -74,7 +73,7 @@ async def daily_summary(payload: SummaryTarget | None = None, db: AsyncSession =
                 select(TaskModel).where(
                     TaskModel.assigned_to == emp.id,
                     TaskModel.created_at >= day_start,
-                    TaskModel.created_at <= day_end,
+                    TaskModel.created_at < day_end,
                 )
             )
         )

@@ -45,12 +45,6 @@ async def get_me(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-@router.get("/employees", response_model=list[UserOut], dependencies=[Depends(verify_bot_secret)])
-async def list_employees_for_bot(db: AsyncSession = Depends(get_db)) -> list[User]:
-    query = select(User).where(User.role == Role.employee.value, User.is_active == True).order_by(User.full_name)  # noqa: E712
-    return list(await db.scalars(query))
-
-
 @router.get("/crm-operators", response_model=list[CrmOperatorRow])
 async def list_crm_operators(
     _: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),

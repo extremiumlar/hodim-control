@@ -29,6 +29,7 @@ export default function EmployeeProfile() {
   const [date, setDate] = useState(toLocalDateString(new Date()));
   const [conversations, setConversations] = useState("");
   const [visits, setVisits] = useState("");
+  const [videos, setVideos] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const latestRequestId = useRef(0);
@@ -59,32 +60,47 @@ export default function EmployeeProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // Lavozimda kuzatiladigan ko'rsatkichlar — forma faqat shu maydonlarni ko'rsatadi
+  // (lavozim yo'q bo'lsa standart suhbat+tashrif, backend metrics_for bilan bir xil).
+  const trackedMetrics =
+    employee?.position?.metrics && employee.position.metrics.length > 0
+      ? employee.position.metrics
+      : ["suhbat", "tashrif"];
+  const tracksSuhbat = trackedMetrics.includes("suhbat");
+  const tracksTashrif = trackedMetrics.includes("tashrif");
+  const tracksVideo = trackedMetrics.includes("video");
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const conversationsCount = Number(conversations);
-    const visitsCount = Number(visits);
+    // Ko'rinmaydigan (lavozimda kuzatilmaydigan) maydonlar 0 sifatida yuboriladi
+    const conversationsCount = tracksSuhbat ? Number(conversations) : 0;
+    const visitsCount = tracksTashrif ? Number(visits) : 0;
+    const videosCount = tracksVideo ? Number(videos) : 0;
     if (
-      !Number.isInteger(conversationsCount) ||
-      conversationsCount < 0 ||
-      !Number.isInteger(visitsCount) ||
-      visitsCount < 0
+      [conversationsCount, visitsCount, videosCount].some((v) => !Number.isInteger(v) || v < 0)
     ) {
-      setError("Suhbatlar va tashriflar soni manfiy bo'lmagan butun son bo'lishi kerak");
+      setError("Ko'rsatkichlar soni manfiy bo'lmagan butun son bo'lishi kerak");
       return;
     }
 
     setSubmitting(true);
     try {
-      await api.createManualDailyResult({
-        user_id: userId,
-        date,
-        conversations_count: conversationsCount,
-        visits_count: visitsCount,
-      });
+      if (tracksSuhbat || tracksTashrif) {
+        await api.createManualDailyResult({
+          user_id: userId,
+          date,
+          conversations_count: conversationsCount,
+          visits_count: visitsCount,
+        });
+      }
+      if (tracksVideo) {
+        await api.setManualMobilografVideos({ user_id: userId, date, confirmed_count: videosCount });
+      }
       setConversations("");
       setVisits("");
+      setVideos("");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Saqlashda xatolik");
@@ -128,26 +144,48 @@ export default function EmployeeProfile() {
                 className="w-full border rounded px-3 py-2 text-sm"
               />
             </div>
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">Suhbatlar soni</label>
-              <input
-                type="number"
-                value={conversations}
-                onChange={(e) => setConversations(e.target.value)}
-                required
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">Tashriflar soni</label>
-              <input
-                type="number"
-                value={visits}
-                onChange={(e) => setVisits(e.target.value)}
-                required
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
+            {tracksSuhbat && (
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Suhbatlar soni</label>
+                <input
+                  type="number"
+                  value={conversations}
+                  onChange={(e) => setConversations(e.target.value)}
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm"
+                />
+              </div>
+            )}
+            {tracksTashrif && (
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">Tashriflar soni</label>
+                <input
+                  type="number"
+                  value={visits}
+                  onChange={(e) => setVisits(e.target.value)}
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm"
+                />
+              </div>
+            )}
+            {tracksVideo && (
+              <div>
+                <label className="block text-sm text-slate-600 mb-1">
+                  Tasdiqlangan videolar soni
+                </label>
+                <input
+                  type="number"
+                  value={videos}
+                  onChange={(e) => setVideos(e.target.value)}
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Guruh reaksiyasi ishlamay qolganda shu yerdan kiriting — kun uchun qo'lda
+                  kiritilgan son qayta kiritilsa ustidan yoziladi.
+                </p>
+              </div>
+            )}
             <button
               type="submit"
               disabled={submitting}

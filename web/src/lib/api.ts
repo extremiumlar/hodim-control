@@ -115,8 +115,6 @@ export interface TeamNormRow {
   position_name: string | null;
   can_edit: boolean;
   metrics: TeamNormMetric[];
-  suhbat: number | null;
-  tashrif: number | null;
 }
 
 export interface DailyResult {
@@ -242,6 +240,11 @@ export const api = {
     conversations_count: number;
     visits_count: number;
   }) => apiFetch<DailyResult>("/daily-results/manual", { method: "POST", body: JSON.stringify(data) }),
+  setManualMobilografVideos: (data: { user_id: number; date: string; confirmed_count: number }) =>
+    apiFetch<{ user_id: number; date: string; confirmed_count: number }>("/mobilograf-videos/manual", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   listBonuses: (userId: number) => apiFetch<Bonus[]>(`/bonuses?user_id=${userId}`),
   listAuditLogs: (params: { action?: string; date_from?: string; date_to?: string } = {}) => {
     const query = new URLSearchParams(

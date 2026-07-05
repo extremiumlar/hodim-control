@@ -15,7 +15,9 @@ from api.schemas import (
     TaskOut,
     UserOut,
 )
+from api.routers.norms import is_orphan_employee
 from api.telegram_notify import inline_keyboard, send_message
+from api.timeutil import local_range_utc_naive, today_local
 from db.models import AuditLog, Role, TaskModel, TaskStatus, User
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -31,7 +33,8 @@ def _can_assign(actor: User, target: User) -> bool:
     - Boshliq — ROP, HR va xodimlarga (alohida yoki ommaviy);
     - ROP (sotuv boshlig'i) — faqat o'z jamoasidagi sotuvchilarga (manager_id);
     - HR — faqat lavozimi "HR boshqaradi" deb belgilangan xodimlarga
-      (masalan mobilograf, dasturchi-xodim lavozimlari)."""
+      (masalan mobilograf, dasturchi-xodim lavozimlari), hamda zaxira sifatida
+      "yetim" (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
     if not target.is_active or target.id == actor.id:
         return False
     if actor.role == Role.dasturchi.value:
@@ -44,7 +47,9 @@ def _can_assign(actor: User, target: User) -> bool:
         if target.role != Role.employee.value:
             return False
         position = target.position
-        return bool(position and position.managed_by_roles and Role.hr.value in position.managed_by_roles)
+        if position and position.managed_by_roles and Role.hr.value in position.managed_by_roles:
+            return True
+        return is_orphan_employee(target)
     return False
 
 
@@ -255,10 +260,11 @@ async def list_tasks(
 ) -> list[TaskOut]:
     query = select(TaskModel).order_by(TaskModel.created_at.desc())
     if date_filter and date_filter != "all":
-        target_date = date.today() if date_filter == "today" else date.fromisoformat(date_filter)
+        target_date = today_local() if date_filter == "today" else date.fromisoformat(date_filter)
+        start_utc, end_utc = local_range_utc_naive(target_date, target_date)
         query = query.where(
-            TaskModel.created_at >= datetime.combine(target_date, datetime.min.time()),
-            TaskModel.created_at < datetime.combine(target_date, datetime.max.time()),
+            TaskModel.created_at >= start_utc,
+            TaskModel.created_at < end_utc,
         )
     if actor.role == Role.rop.value:
         query = query.where(TaskModel.assigned_to.in_(select(User.id).where(User.manager_id == actor.id)))
@@ -316,6 +322,11 @@ async def complete_task(task_id: int, payload: TaskCompleteRequest, db: AsyncSes
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
     if not user or user.id != task.assigned_to:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu vazifa sizga tegishli emas")
+
+    if task.status == TaskStatus.done.value:
+        # Idempotent: ✅ tugma ikkinchi marta bosilsa completed_at qayta yozilmaydi
+        # va takroriy audit yozuvi yaratilmaydi — foydalanuvchiga xato ko'rsatilmaydi.
+        return await _to_out(task, db)
 
     task.status = TaskStatus.done.value
     task.completed_at = datetime.utcnow()

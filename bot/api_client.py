@@ -53,10 +53,12 @@ async def complete_task(task_id: int, telegram_id: int) -> dict:
     return resp.json()
 
 
-async def create_excused_day(telegram_id: int, date_str: str, reason: str) -> dict:
+async def create_excused_day(telegram_id: int, reason: str) -> dict:
+    """Sana yuborilmaydi — backend bugungi (Toshkent) sanani o'zi aniqlaydi,
+    shunda bot serverining mahalliy vaqti kun chegarasiga ta'sir qilmaydi."""
     resp = await _get_client().post(
         "/excused-days",
-        json={"telegram_id": telegram_id, "date": date_str, "reason": reason},
+        json={"telegram_id": telegram_id, "reason": reason},
     )
     resp.raise_for_status()
     return resp.json()
@@ -67,12 +69,6 @@ async def decide_excused_day(item_id: int, decider_telegram_id: int, decision: s
         f"/excused-days/{item_id}/decide",
         json={"decider_telegram_id": decider_telegram_id, "decision": decision},
     )
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def list_employees() -> list[dict]:
-    resp = await _get_client().get("/users/employees")
     resp.raise_for_status()
     return resp.json()
 

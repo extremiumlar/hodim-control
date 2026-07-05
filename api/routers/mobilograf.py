@@ -1,12 +1,14 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, verify_bot_secret
-from api.schemas import MobilografCreate, MobilografOut, MobilografReact
-from db.models import AuditLog, MobilografStatus, MobilografVideo, Role, User
+from api.deps import get_db, require_roles, verify_bot_secret
+from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.schemas import MobilografCreate, MobilografManualCreate, MobilografOut, MobilografReact
+from api.timeutil import local_range_utc_naive
+from db.models import AuditLog, MobilografSource, MobilografStatus, MobilografVideo, Role, User
 
 router = APIRouter(prefix="/mobilograf-videos", tags=["mobilograf"])
 
@@ -27,6 +29,78 @@ async def create_mobilograf_video(payload: MobilografCreate, db: AsyncSession = 
     await db.commit()
     await db.refresh(video)
     return video
+
+
+@router.post("/manual")
+async def set_manual_mobilograf_videos(
+    payload: MobilografManualCreate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Kunlik tasdiqlangan videolar sonini qo'lda belgilaydi — guruh reaksiyasi
+    oqimi ishlamay qolganda zaxira yo'l. Idempotent "upsert": o'sha kunning eski
+    "manual" yozuvlari o'chirilib, `confirmed_count` ta yangi yozuv yaratiladi
+    (guruh reaksiyasidan kelgan yozuvlarga tegilmaydi — ular ustiga qo'shiladi)."""
+    target = await db.get(User, payload.user_id)
+    if not target or target.role != Role.employee.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
+    if not can_manage_norms(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga video kiritish huquqingiz yo'q")
+    if "video" not in metrics_for(target):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Bu xodimning lavozimi uchun '{METRIC_LABELS['video']}' ko'rsatkichi kuzatilmaydi",
+        )
+
+    day_start_utc, day_end_utc = local_range_utc_naive(payload.date, payload.date)
+    before_count = (
+        await db.scalar(
+            select(func.count(MobilografVideo.id)).where(
+                MobilografVideo.user_id == target.id,
+                MobilografVideo.source == MobilografSource.manual.value,
+                MobilografVideo.sent_at >= day_start_utc,
+                MobilografVideo.sent_at < day_end_utc,
+            )
+        )
+    ) or 0
+
+    await db.execute(
+        delete(MobilografVideo).where(
+            MobilografVideo.user_id == target.id,
+            MobilografVideo.source == MobilografSource.manual.value,
+            MobilografVideo.sent_at >= day_start_utc,
+            MobilografVideo.sent_at < day_end_utc,
+        )
+    )
+
+    now = datetime.utcnow()
+    for _ in range(payload.confirmed_count):
+        db.add(
+            MobilografVideo(
+                user_id=target.id,
+                telegram_message_id=None,
+                group_chat_id=None,
+                # Kun boshi (Toshkent) — _confirmed_videos_count shu kunga hisoblashi uchun
+                sent_at=day_start_utc,
+                status=MobilografStatus.confirmed.value,
+                source=MobilografSource.manual.value,
+                confirmed_by=actor.id,
+                confirmed_at=now,
+            )
+        )
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="mobilograf_manual_set",
+            target_user_id=target.id,
+            before={"confirmed_count": before_count, "date": payload.date.isoformat()},
+            after={"confirmed_count": payload.confirmed_count, "date": payload.date.isoformat()},
+        )
+    )
+    await db.commit()
+
+    return {"user_id": target.id, "date": payload.date.isoformat(), "confirmed_count": payload.confirmed_count}
 
 
 @router.post("/react", response_model=MobilografOut, dependencies=[Depends(verify_bot_secret)])

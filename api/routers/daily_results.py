@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, is_within_rop_scope, require_roles, verify_bot_secret
+from api.deps import get_db, require_roles, verify_bot_secret
+from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
 from api.timeutil import today_local
 from api.schemas import (
     CRMWebhookPayload,
@@ -16,7 +17,7 @@ from api.schemas import (
     DailyResultTodayOut,
 )
 from crm import get_crm_adapter
-from db.models import AuditLog, DailyResult, DailyResultSource, Norm, Role, User
+from db.models import AuditLog, DailyResult, DailyResultSource, Role, User
 from db.upsert import upsert
 
 logger = logging.getLogger(__name__)
@@ -24,14 +25,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["daily-results"])
 
 
-async def _current_norm(db: AsyncSession, user_id: int, metric_type: str) -> int | None:
-    norm = await db.scalar(
-        select(Norm)
-        .where(Norm.user_id == user_id, Norm.metric_type == metric_type)
-        .order_by(Norm.effective_from.desc(), Norm.created_at.desc())
-        .limit(1)
-    )
-    return norm.value if norm else None
+def _validate_manual_metrics(target: User, conversations: int, visits: int) -> None:
+    """Lavozimda kuzatilmaydigan ko'rsatkichga ijobiy qiymat kiritishni rad etadi
+    (norms.py:_validate_metric bilan bir xil uslub). 0 qiymatga ruxsat beriladi —
+    mavjud ish oqimlari (ikkala maydonni birga yuboradigan formalar) buzilmasligi uchun."""
+    allowed = metrics_for(target)
+    for metric, value in (("suhbat", conversations), ("tashrif", visits)):
+        if value > 0 and metric not in allowed:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Bu xodimning lavozimi uchun '{METRIC_LABELS[metric]}' ko'rsatkichi kuzatilmaydi",
+            )
 
 
 async def _upsert_daily_result(
@@ -67,8 +71,9 @@ async def manual_daily_result(
     target = await db.get(User, payload.user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-    if not is_within_rop_scope(actor, target):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
+    if not can_manage_norms(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga kunlik natija kiritish huquqingiz yo'q")
+    _validate_manual_metrics(target, payload.conversations_count, payload.visits_count)
 
     existing = await db.scalar(
         select(DailyResult).where(DailyResult.user_id == payload.user_id, DailyResult.date == payload.date)
@@ -112,8 +117,8 @@ async def list_daily_results(
     target = await db.get(User, user_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-    if not is_within_rop_scope(actor, target):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning jamoangizga tegishli emas")
+    if not can_manage_norms(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimning natijalarini ko'rish huquqingiz yo'q")
 
     query = (
         select(DailyResult)
@@ -142,9 +147,7 @@ async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db
     return DailyResultTodayOut(
         conversations_count=result.conversations_count if result else 0,
         visits_count=result.visits_count if result else 0,
-        suhbat_norm=await _current_norm(db, user.id, "suhbat"),
-        tashrif_norm=await _current_norm(db, user.id, "tashrif"),
-        # Lavozimga moslashgan ro'yxat — bot endi shu ro'yxatni ko'rsatadi
+        # Lavozimga moslashgan ro'yxat — bot shu ro'yxatni ko'rsatadi
         metrics=await today_metric_rows(db, user),
     )
 

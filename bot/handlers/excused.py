@@ -1,5 +1,3 @@
-from datetime import date
-
 import httpx
 from aiogram import F, Router
 from aiogram.filters import StateFilter
@@ -38,7 +36,7 @@ async def receive_excused_reason(message: Message, state: FSMContext) -> None:
     reason = message.text.strip()
     await state.clear()
 
-    await api_client.create_excused_day(message.from_user.id, date.today().isoformat(), reason)
+    await api_client.create_excused_day(message.from_user.id, reason)
 
     user = await api_client.get_user_by_telegram(message.from_user.id)
     await message.answer(

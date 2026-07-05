@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_roles, verify_bot_secret
 from api.schemas import ExcusedDayCreate, ExcusedDayDecide, ExcusedDayOut
+from api.timeutil import today_local
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, ExcusedDay, ExcusedStatus, Role, User
 
@@ -56,7 +57,9 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
-    item = ExcusedDay(user_id=user.id, date=payload.date, reason=payload.reason)
+    # Sana berilmasa bugungi (Toshkent) kun olinadi — kun chegarasi bot yoki
+    # serverning mahalliy vaqtiga emas, har doim backend timezone'iga bog'liq.
+    item = ExcusedDay(user_id=user.id, date=payload.date or today_local(), reason=payload.reason)
     db.add(item)
     await db.commit()
     await db.refresh(item)

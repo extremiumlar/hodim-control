@@ -39,6 +39,11 @@ class DailyResultSource(str, enum.Enum):
     manual = "manual"
 
 
+class MobilografSource(str, enum.Enum):
+    telegram_reaction = "telegram_reaction"
+    manual = "manual"
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -143,10 +148,14 @@ class MobilografVideo(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
-    telegram_message_id: Mapped[int] = mapped_column(Integer)
-    group_chat_id: Mapped[int] = mapped_column(Integer)
+    # Qo'lda kiritilgan ("manual" source) yozuvlarda Telegram xabari yo'q — NULL.
+    telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    group_chat_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     status: Mapped[str] = mapped_column(String(20), default=MobilografStatus.pending.value)
+    # telegram_reaction — guruhdagi reaksiya orqali; manual — HR/rahbar qo'lda kiritgan
+    # (masalan TELEGRAM_GROUP_CHAT_ID sozlanmagan yoki guruh ishlamay qolgan holat uchun).
+    source: Mapped[str] = mapped_column(String(20), default=MobilografSource.telegram_reaction.value)
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

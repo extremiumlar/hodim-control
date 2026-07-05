@@ -271,6 +271,12 @@ export default function Users() {
                     </option>
                   ))}
                 </select>
+                {role === "employee" && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Eslatma: yaratilgandan keyin xodimga lavozim (yoki ROP rahbar) biriktiring —
+                    biriktirilmaguncha uni zaxira qoida bo'yicha HR boshqaradi.
+                  </p>
+                )}
               </div>
               {hasFullControl && (
                 <div>

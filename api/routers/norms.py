@@ -23,10 +23,20 @@ def metrics_for(user: User) -> list[str]:
     return DEFAULT_METRICS
 
 
+def is_orphan_employee(target: User) -> bool:
+    """"Yetim" xodim: na bevosita rahbari (manager_id), na boshqaruvchi-rol
+    biriktirilgan lavozimi bor — uni ROP scope ham, lavozim matritsasi ham qamrab
+    olmaydi. Bunday xodimlarni zaxira sifatida HR boshqaradi (aks holda faqat
+    Boshliq/Dasturchi ko'rar edi)."""
+    position = target.position
+    return target.manager_id is None and not (position and position.managed_by_roles)
+
+
 def can_manage_norms(actor: User, target: User) -> bool:
     """Norma belgilash matritsasi (vazifa matritsasi bilan bir xil mantiq):
     Boshliq/Dasturchi — barcha xodimlarga; ROP — o'z jamoasiga; HR — lavozimi
-    "HR boshqaradi" deb belgilangan xodimlarga."""
+    "HR boshqaradi" deb belgilangan xodimlarga, hamda zaxira sifatida "yetim"
+    (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
     if target.role != Role.employee.value or not target.is_active:
         return False
     if actor.role in {Role.boss.value, Role.dasturchi.value}:
@@ -35,7 +45,9 @@ def can_manage_norms(actor: User, target: User) -> bool:
         return target.manager_id == actor.id
     if actor.role == Role.hr.value:
         position = target.position
-        return bool(position and position.managed_by_roles and Role.hr.value in position.managed_by_roles)
+        if position and position.managed_by_roles and Role.hr.value in position.managed_by_roles:
+            return True
+        return is_orphan_employee(target)
     return False
 
 
@@ -106,7 +118,6 @@ async def team_norms(
             )
             for key in metric_keys
         ]
-        by_key = {m.key: m.value for m in metrics}
         rows.append(
             TeamNormRow(
                 user_id=emp.id,
@@ -114,9 +125,6 @@ async def team_norms(
                 position_name=emp.position.name if emp.position else None,
                 can_edit=can_manage_norms(actor, emp),
                 metrics=metrics,
-                # Orqaga moslik uchun eski maydonlar
-                suhbat=by_key.get("suhbat"),
-                tashrif=by_key.get("tashrif"),
             )
         )
     return rows

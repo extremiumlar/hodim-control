@@ -1,6 +1,7 @@
 import html
 
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from bot import api_client
@@ -11,9 +12,14 @@ router = Router(name="menu")
 
 STATUS_EMOJI = {"pending": "🕓", "done": "✅", "overdue": "⏰", "cancelled": "🚫"}
 
+# Har bir asosiy menyu tugmasi avvalgi FSM oqimini (chala qolgan norma/vazifa
+# yaratish va h.k.) tozalaydi — holat "osilib qolmasligi" uchun (excused.py
+# kabi StateFilter'li oqimlardan chiqishning umumiy yo'li).
+
 
 @router.message(F.text == BTN_TASKS)
-async def show_tasks(message: Message) -> None:
+async def show_tasks(message: Message, state: FSMContext) -> None:
+    await state.clear()
     tasks = await api_client.list_my_tasks(message.from_user.id)
     if not tasks:
         await message.answer("Hozircha sizga biriktirilgan vazifa yo'q.")
@@ -28,7 +34,8 @@ async def show_tasks(message: Message) -> None:
 
 
 @router.message(F.text == BTN_NORM)
-async def show_norm(message: Message) -> None:
+async def show_norm(message: Message, state: FSMContext) -> None:
+    await state.clear()
     today = await api_client.today_daily_result(message.from_user.id)
 
     # Lavozimga moslashgan ko'rsatkichlar ro'yxati (suhbat/tashrif/video)
@@ -46,7 +53,8 @@ async def show_norm(message: Message) -> None:
 
 
 @router.message(F.text == BTN_KPI)
-async def show_kpi(message: Message) -> None:
+async def show_kpi(message: Message, state: FSMContext) -> None:
+    await state.clear()
     bonus = await api_client.my_latest_bonus(message.from_user.id)
 
     if not bonus["calculated"]:
@@ -62,7 +70,8 @@ async def show_kpi(message: Message) -> None:
 
 
 @router.message(F.text == BTN_PANEL)
-async def show_panel(message: Message) -> None:
+async def show_panel(message: Message, state: FSMContext) -> None:
+    await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user["role"] not in {"hr", "rop", "boss", "dasturchi"}:
         return

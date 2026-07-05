@@ -1,3 +1,4 @@
+import datetime as dt
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -209,7 +210,11 @@ class TaskCompleteRequest(BaseModel):
 
 class ExcusedDayCreate(BaseModel):
     telegram_id: int
-    date: date
+    # Berilmasa backend bugungi (Toshkent) sanani o'zi qo'yadi — bot server
+    # vaqtiga tayanmasligi uchun sanani yubormaydi. (`dt.date` to'liq yo'l bilan,
+    # chunki `date: date | None = None` ko'rinishida class tanasi avval `date=None`
+    # defaultni saqlab, keyin anotatsiyani baholaydi — tip nomi maydon nomiga to'qnashadi.)
+    date: dt.date | None = None
     reason: str
 
 
@@ -272,9 +277,6 @@ class TeamNormRow(BaseModel):
     can_edit: bool = False
     # Lavozimga qarab kuzatiladigan ko'rsatkichlar (default: suhbat+tashrif)
     metrics: list[TeamNormMetric] = []
-    # Orqaga moslik uchun saqlangan eski maydonlar
-    suhbat: int | None = None
-    tashrif: int | None = None
 
 
 class MobilografCreate(BaseModel):
@@ -293,14 +295,24 @@ class MobilografReact(BaseModel):
 class MobilografOut(BaseModel):
     id: int
     user_id: int
-    telegram_message_id: int
-    group_chat_id: int
+    telegram_message_id: int | None
+    group_chat_id: int | None
     sent_at: datetime
     status: str
+    source: str
     confirmed_by: int | None
     confirmed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class MobilografManualCreate(BaseModel):
+    """Guruh reaksiyasi ishlamay qolganda (yoki umuman sozlanmaganda) HR/rahbar
+    kunlik tasdiqlangan videolar sonini qo'lda belgilashi uchun."""
+
+    user_id: int
+    date: date
+    confirmed_count: int = Field(ge=0)
 
 
 class DailyResultManualCreate(BaseModel):
@@ -334,10 +346,7 @@ class MetricProgressRow(BaseModel):
 class DailyResultTodayOut(BaseModel):
     conversations_count: int
     visits_count: int
-    suhbat_norm: int | None
-    tashrif_norm: int | None
-    # Lavozimga qarab moslashgan ko'rsatkichlar ro'yxati — bot endi shu ro'yxatni
-    # ko'rsatadi; eski maydonlar orqaga moslik uchun saqlab qolindi.
+    # Lavozimga qarab moslashgan ko'rsatkichlar ro'yxati — bot shu ro'yxatni ko'rsatadi.
     metrics: list[MetricProgressRow] = []
 
 

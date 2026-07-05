@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 from io import BytesIO
 
 from openpyxl import Workbook
@@ -6,12 +6,17 @@ from openpyxl.styles import Font
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.routers.norms import METRIC_LABELS, metrics_for
+from api.routers.stats import _confirmed_videos_count
+from api.timeutil import local_range_utc_naive
 from db.models import Bonus, DailyResult, ExcusedDay, ExcusedStatus, Role, TaskModel, TaskStatus, User
 
-HEADERS = [
-    "Xodim",
-    "Suhbatlar (jami)",
-    "Tashriflar (jami)",
+# Ustunlar tartibi barqaror bo'lishi uchun (faqat faol xodimlar lavozimlarida
+# uchraydigan metrikalar ko'rsatiladi, lekin tartib doim shu).
+METRIC_ORDER = list(METRIC_LABELS)
+METRIC_TOTAL_LABELS = {"suhbat": "Suhbatlar (jami)", "tashrif": "Tashriflar (jami)", "video": "Videolar (jami)"}
+
+FIXED_HEADERS = [
     "Vazifalar (bajarilgan/jami)",
     "Sababli kunlar (tasdiqlangan)",
     "Bonus (agar bitta oy tanlangan bo'lsa)",
@@ -19,8 +24,7 @@ HEADERS = [
 
 
 async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) -> BytesIO:
-    day_start = datetime.combine(date_from, datetime.min.time())
-    day_end = datetime.combine(date_to, datetime.max.time())
+    day_start, day_end = local_range_utc_naive(date_from, date_to)
 
     # Bonus faqat aniq bitta oy tanlanganda ko'rsatiladi (davr YYYY-MM formatida saqlanadi,
     # ixtiyoriy sana oralig'i uchun bir nechta oyni yig'ish MVP doirasidan tashqarida).
@@ -34,11 +38,17 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
         )
     )
 
+    # Ustunlar dinamik: kamida bitta faol xodim lavozimida uchraydigan metrikalar.
+    # Xodimda kuzatilmaydigan metrika 0 emas "—" bilan ko'rsatiladi — "0 natija"
+    # va "umuman kuzatilmaydi" farqi yo'qolmasligi uchun.
+    metrics_by_user = {emp.id: metrics_for(emp) for emp in employees}
+    used_metrics = [m for m in METRIC_ORDER if any(m in keys for keys in metrics_by_user.values())]
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Hisobot"
     ws.append([f"Hisobot davri: {date_from.isoformat()} — {date_to.isoformat()}"])
-    ws.append(HEADERS)
+    ws.append(["Xodim", *(METRIC_TOTAL_LABELS[m] for m in used_metrics), *FIXED_HEADERS])
     for cell in ws[2]:
         cell.font = Font(bold=True)
 
@@ -50,15 +60,23 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
                 )
             )
         )
-        total_conversations = sum(r.conversations_count for r in results)
-        total_visits = sum(r.visits_count for r in results)
+        totals = {
+            "suhbat": sum(r.conversations_count for r in results),
+            "tashrif": sum(r.visits_count for r in results),
+        }
+        if "video" in metrics_by_user[emp.id]:
+            totals["video"] = await _confirmed_videos_count(db, emp.id, date_from, date_to)
+
+        metric_cells = [
+            totals.get(m, 0) if m in metrics_by_user[emp.id] else "—" for m in used_metrics
+        ]
 
         tasks = list(
             await db.scalars(
                 select(TaskModel).where(
                     TaskModel.assigned_to == emp.id,
                     TaskModel.created_at >= day_start,
-                    TaskModel.created_at <= day_end,
+                    TaskModel.created_at < day_end,
                 )
             )
         )
@@ -89,8 +107,7 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
         ws.append(
             [
                 emp.full_name,
-                total_conversations,
-                total_visits,
+                *metric_cells,
                 f"{tasks_done}/{tasks_total}",
                 excused_count,
                 bonus_amount,
