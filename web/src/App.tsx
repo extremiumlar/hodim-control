@@ -10,6 +10,7 @@ import EmployeeProfile from "./pages/EmployeeProfile";
 import Reports from "./pages/Reports";
 import AuditLogs from "./pages/AuditLogs";
 import Positions from "./pages/Positions";
+import LeadStats from "./pages/LeadStats";
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="users" element={<Users />} />
         <Route path="excused-days" element={<ExcusedDays />} />
         <Route path="norms" element={<Norms />} />
+        <Route path="lead-stats" element={<LeadStats />} />
         <Route path="employees/:id" element={<EmployeeProfile />} />
         <Route path="reports" element={<Reports />} />
         <Route path="audit-logs" element={<AuditLogs />} />

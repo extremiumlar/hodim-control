@@ -33,6 +33,9 @@ export default function Layout() {
               <NavLink to="/norms" className={navLinkClass}>
                 Normalar
               </NavLink>
+              <NavLink to="/lead-stats" className={navLinkClass}>
+                Lidlar
+              </NavLink>
               <NavLink to="/users" className={navLinkClass}>
                 Foydalanuvchilar
               </NavLink>

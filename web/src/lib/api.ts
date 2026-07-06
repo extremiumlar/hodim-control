@@ -147,6 +147,44 @@ export interface Bonus {
   breakdown: Record<string, unknown> | null;
 }
 
+export interface LeadStageRow {
+  pipe_status_id: number;
+  stage_name: string;
+  count: number;
+}
+
+export interface LeadOperatorRow {
+  responsible_id: number;
+  responsible_name: string;
+  total: number;
+  visits: number;
+}
+
+export interface LeadStageDaySummary {
+  date: string;
+  total: number;
+  visits: number;
+}
+
+export interface LeadStageMonth {
+  month: string;
+  total: number;
+  visits: number;
+  days: LeadStageDaySummary[];
+  last_updated: string | null;
+}
+
+export interface LeadStageDay {
+  date: string;
+  total: number;
+  visits: number;
+  stages: LeadStageRow[];
+  operators: LeadOperatorRow[];
+  responsible_id: number | null;
+  responsible_name: string | null;
+  last_updated: string | null;
+}
+
 export interface AuditLog {
   id: number;
   actor_id: number | null;
@@ -265,6 +303,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
   listBonuses: (userId: number) => apiFetch<Bonus[]>(`/bonuses?user_id=${userId}`),
+  leadStageMonth: (month?: string) =>
+    apiFetch<LeadStageMonth>(`/stats/web/lead-stages${month ? `?month=${month}` : ""}`),
+  leadStageDay: (day: string, responsibleId?: number) =>
+    apiFetch<LeadStageDay>(
+      `/stats/web/lead-stages/day/${day}${responsibleId != null ? `?responsible_id=${responsibleId}` : ""}`
+    ),
   listAuditLogs: (params: { action?: string; date_from?: string; date_to?: string } = {}) => {
     const query = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v) as [string, string][]

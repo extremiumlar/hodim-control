@@ -5,7 +5,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, verify_bot_secret
+from api.deps import get_current_user, get_db, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, metrics_for
 from api.schemas import (
     LeadOperatorRow,
@@ -246,18 +246,12 @@ async def _last_updated_for(db: AsyncSession, day_from: date, day_to: date):
     )
 
 
-@router.get(
-    "/lead-stages/{telegram_id}",
-    response_model=LeadStageMonthOut,
-    dependencies=[Depends(verify_bot_secret)],
-)
-async def lead_stage_month(
-    telegram_id: int, month: str | None = None, db: AsyncSession = Depends(get_db)
-) -> LeadStageMonthOut:
-    """Oylik ko'rinish (default — joriy oy): har kun uchun jami ishlangan lidlar va
-    tashriflar. Ma'lumot bazadagi oxirgi fon-snapshotdan o'qiladi (jonli emas)."""
-    await _lead_stats_actor(telegram_id, db)
+def _is_visit_name(stage_name: str) -> bool:
+    return stage_name.strip().lower() == VISIT_STAGE_NAME
 
+
+async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMonthOut:
+    """Oylik ko'rinishni bazadagi snapshotdan quradi (bot va web uchun umumiy)."""
     today = today_local()
     month_key = month or today.strftime("%Y-%m")
     try:
@@ -294,29 +288,13 @@ async def lead_stage_month(
     )
 
 
-@router.get(
-    "/lead-stages/{telegram_id}/day/{day}",
-    response_model=LeadStageDayOut,
-    dependencies=[Depends(verify_bot_secret)],
-)
-async def lead_stage_day(
-    telegram_id: int,
-    day: date,
-    responsible_id: int | None = None,
-    db: AsyncSession = Depends(get_db),
-) -> LeadStageDayOut:
-    """Bir kunning bosqich-kesimi. `responsible_id` berilmasa — butun tashkilot
-    (operatorlar yig'indisi) + shu kun ishlagan operatorlar ro'yxati; berilsa — faqat
-    o'sha operatorning bosqich-kesimi."""
-    await _lead_stats_actor(telegram_id, db)
-
+async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | None) -> LeadStageDayOut:
+    """Kunlik ko'rinishni bazadan quradi (bot va web uchun umumiy). `responsible_id`
+    berilmasa — tashkilot jami + operatorlar ro'yxati; berilsa — bitta operator."""
     base = select(LeadStageDaily).where(LeadStageDaily.date == day)
     if responsible_id is not None:
         base = base.where(LeadStageDaily.responsible_id == responsible_id)
     records = list(await db.scalars(base))
-
-    def _is_visit(stage_name: str) -> bool:
-        return stage_name.strip().lower() == VISIT_STAGE_NAME
 
     # Bosqichlarni nom bo'yicha birlashtiramiz (bir necha voronkada bir xil nomli
     # bosqich bo'lishi mumkin) — o'qish uchun qulayroq.
@@ -333,14 +311,13 @@ async def lead_stage_day(
     if responsible_id is not None:
         responsible_name = records[0].responsible_name if records else str(responsible_id)
     else:
-        # Kun ishlagan operatorlar (tanlash ro'yxati uchun)
         op_agg: dict[int, dict] = {}
         for r in records:
             agg = op_agg.setdefault(
                 r.responsible_id, {"name": r.responsible_name, "total": 0, "visits": 0}
             )
             agg["total"] += r.leads_count
-            if _is_visit(r.stage_name):
+            if _is_visit_name(r.stage_name):
                 agg["visits"] += r.leads_count
         operators = [
             LeadOperatorRow(responsible_id=rid, responsible_name=a["name"], total=a["total"], visits=a["visits"])
@@ -350,10 +327,72 @@ async def lead_stage_day(
     return LeadStageDayOut(
         date=day,
         total=sum(r.leads_count for r in records),
-        visits=sum(r.leads_count for r in records if _is_visit(r.stage_name)),
+        visits=sum(r.leads_count for r in records if _is_visit_name(r.stage_name)),
         stages=stages,
         operators=operators,
         responsible_id=responsible_id,
         responsible_name=responsible_name,
         last_updated=await _last_updated_for(db, day, day),
     )
+
+
+# --- Bot endpointlari (telegram_id + bot-secret) ---
+
+
+@router.get(
+    "/lead-stages/{telegram_id}",
+    response_model=LeadStageMonthOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def lead_stage_month(
+    telegram_id: int, month: str | None = None, db: AsyncSession = Depends(get_db)
+) -> LeadStageMonthOut:
+    """Oylik ko'rinish (default — joriy oy). Ma'lumot bazadagi fon-snapshotdan."""
+    await _lead_stats_actor(telegram_id, db)
+    return await _build_lead_month(db, month)
+
+
+@router.get(
+    "/lead-stages/{telegram_id}/day/{day}",
+    response_model=LeadStageDayOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def lead_stage_day(
+    telegram_id: int,
+    day: date,
+    responsible_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> LeadStageDayOut:
+    """Bir kunning bosqich-kesimi (bot)."""
+    await _lead_stats_actor(telegram_id, db)
+    return await _build_lead_day(db, day, responsible_id)
+
+
+# --- Web endpointlari (JWT — kirgan foydalanuvchi) ---
+
+
+def _require_lead_stats_web(user: User = Depends(get_current_user)) -> User:
+    if not _can_view_lead_stats(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu bo'lim uchun ruxsat yo'q")
+    return user
+
+
+@router.get("/web/lead-stages", response_model=LeadStageMonthOut)
+async def web_lead_stage_month(
+    month: str | None = None,
+    _: User = Depends(_require_lead_stats_web),
+    db: AsyncSession = Depends(get_db),
+) -> LeadStageMonthOut:
+    """Sayt uchun oylik lid statistikasi (kirgan foydalanuvchi ruxsati bilan)."""
+    return await _build_lead_month(db, month)
+
+
+@router.get("/web/lead-stages/day/{day}", response_model=LeadStageDayOut)
+async def web_lead_stage_day(
+    day: date,
+    responsible_id: int | None = None,
+    _: User = Depends(_require_lead_stats_web),
+    db: AsyncSession = Depends(get_db),
+) -> LeadStageDayOut:
+    """Sayt uchun kunlik lid statistikasi (operator kesimi bilan)."""
+    return await _build_lead_day(db, day, responsible_id)
