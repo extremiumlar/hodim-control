@@ -186,16 +186,26 @@ class Bonus(Base):
 
 
 class LeadStageDaily(Base):
-    """CRM (Uysot) lidlarining kunlik bosqich-kesimidagi snapshot'i — butun tashkilot
-    bo'yicha (xodimga bog'lanmagan). CRM API o'tgan kunlar tarixini bermaydi (faqat
-    lidning oxirgi `updatedTimestamp`i bor), shuning uchun har kunning yakuniy holati
-    shu jadvalda muzlatib qo'yiladi va oylik statistika shu yerdan o'qiladi."""
+    """CRM (Uysot) lidlarining kunlik snapshot'i — operator (`responsibleById`) va
+    pipeline bosqichi kesimida. CRM API o'tgan kunlar tarixini bermaydi (faqat lidning
+    oxirgi `updatedTimestamp`i) va "bugun tegilgan" lidlar bo'yicha server filtri yo'q,
+    shuning uchun scheduler butun bazani sekin skanerlab shu jadvalga yozadi; bot va
+    oylik/kunlik statistika shu yerdan tez o'qiladi.
+
+    Grain: (date, responsible_id, pipe_status_id) — tashkilot jami operatorlar bo'yicha,
+    bir kun bir bosqich jami esa operatorlar bo'yicha yig'indi orqali olinadi."""
 
     __tablename__ = "lead_stage_daily"
-    __table_args__ = (UniqueConstraint("date", "pipe_status_id", name="uq_lead_stage_daily_date_status"),)
+    __table_args__ = (
+        UniqueConstraint("date", "responsible_id", "pipe_status_id", name="uq_lead_stage_daily_grain"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[date] = mapped_column(Date, index=True)
+    # Uysot `responsibleById` — lidning mas'ul operatori (User.crm_visit_external_id bilan
+    # bir xil ID tizimi). Nom ham snapshot paytida saqlanadi (CRM'dagi `responsibleBy`).
+    responsible_id: Mapped[int] = mapped_column(Integer)
+    responsible_name: Mapped[str] = mapped_column(String(255))
     pipe_status_id: Mapped[int] = mapped_column(Integer)
     # Bosqich nomi snapshot paytida saqlanadi — CRM'da bosqich o'chirilsa/qayta nomlansa
     # ham eski kunlar statistikasi o'qiladigan bo'lib qoladi.

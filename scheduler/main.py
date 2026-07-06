@@ -22,6 +22,10 @@ DAILY_SUMMARY_HOUR = 19
 # e'tibor bering, xodimlar soni ko'p bo'lsa oraliqni kattalashtirish kerak bo'lishi mumkin.
 CRM_SYNC_INTERVAL_SECONDS = 30
 
+# Lid statistikasi snapshoti oralig'i (daqiqa). Skaner butun bazani sahifalab o'qiydi
+# va sekin — juda tez-tez yugurtirsa rate-limitni band qiladi, shuning uchun 30 daqiqa.
+LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
+
 # "Har oy oxirida, 1 marta" (8-bo'lim).
 MONTHLY_BONUS_DAY = "last"
 MONTHLY_BONUS_HOUR = 23
@@ -56,6 +60,19 @@ async def sync_daily_results() -> None:
             logger.info("CRM sinxronizatsiyasi: %s", resp.json())
         except httpx.HTTPError:
             logger.exception("CRM sinxronizatsiyasida xatolik")
+
+
+async def snapshot_lead_stages() -> None:
+    """Bugungi operator×bosqich lid kesimini CRM'dan to'liq skanerlab bazaga yozadi.
+    Skaner sekin (Uysot rate-limitiga rioya qilib butun bazani sahifalab o'qiydi, bir
+    necha daqiqa) — shuning uchun timeout katta. Bot bazadan tez o'qiydi."""
+    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=600) as client:
+        try:
+            resp = await client.post("/stats/lead-stages/sync")
+            resp.raise_for_status()
+            logger.info("Lid statistikasi snapshot'i: %s", resp.json())
+        except httpx.HTTPError:
+            logger.exception("Lid statistikasi snapshot'ida xatolik")
 
 
 async def calculate_monthly_bonus() -> None:
@@ -97,6 +114,24 @@ async def main() -> None:
     )
 
     scheduler.add_job(sync_daily_results, IntervalTrigger(seconds=CRM_SYNC_INTERVAL_SECONDS))
+
+    # Lid statistikasi snapshoti: butun bazani skanerlagani uchun sekin va og'ir
+    # (rate-limit), shuning uchun tez-tez emas — har LEAD_SNAPSHOT_INTERVAL_MINUTES
+    # daqiqada + kun yakunida (23:57) oxirgi holatni muzlatish uchun. max_instances=1:
+    # oldingi skaner tugamasdan yangisi boshlanmaydi.
+    scheduler.add_job(
+        snapshot_lead_stages,
+        IntervalTrigger(minutes=LEAD_SNAPSHOT_INTERVAL_MINUTES),
+        max_instances=1,
+        coalesce=True,
+    )
+    scheduler.add_job(
+        snapshot_lead_stages,
+        CronTrigger(hour=23, minute=57, timezone=TIMEZONE),
+        max_instances=1,
+        misfire_grace_time=600,
+        coalesce=True,
+    )
 
     scheduler.add_job(
         calculate_monthly_bonus,

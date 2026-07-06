@@ -1,14 +1,14 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, metrics_for
 from api.schemas import (
+    LeadOperatorRow,
     LeadStageDayOut,
     LeadStageDaySummary,
     LeadStageMonthOut,
@@ -18,7 +18,6 @@ from api.schemas import (
 )
 from api.timeutil import local_range_utc_naive, today_local
 from crm import get_crm_adapter
-from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_ID
 from db.models import (
     DailyResult,
     ExcusedDay,
@@ -173,8 +172,12 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
 LEAD_STATS_MANAGER_ROLES = {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}
 
 
-def _visit_status_id() -> int | None:
-    return int(CRM_UYSOT_VISIT_PIPE_STATUS_ID) if CRM_UYSOT_VISIT_PIPE_STATUS_ID else None
+# "Tashrif" bosqichi nom bo'yicha aniqlanadi (bir necha voronkada bir xil nomli
+# "Tashrif" bosqichi bo'lishi mumkin — tashkilot ko'rinishida hammasi tashrif sifatida
+# sanaladi, shunda sarlavhadagi "Tashriflar" soni bosqichlar ro'yxatidagi "Tashrif"
+# qatoriga mos keladi). Per-xodim KPI'dagi visit_id (CRM_UYSOT_VISIT_PIPE_STATUS_ID)
+# alohida — u faqat bitta voronka uchun.
+VISIT_STAGE_NAME = "tashrif"
 
 
 def _can_view_lead_stats(user: User) -> bool:
@@ -196,47 +199,51 @@ async def _lead_stats_actor(telegram_id: int, db: AsyncSession) -> User:
     return user
 
 
-async def _refresh_today_lead_snapshot(db: AsyncSession) -> bool:
-    """Bugungi kunning bosqich-kesimini CRM'dan qayta o'qib, `lead_stage_daily`da
-    yangilaydi (kunning yakuniy holati shu tarzda "muzlab" qoladi — o'tgan kunlar
-    CRM'dan qayta hisoblanmaydi, chunki Uysot'da tarix yo'q). CRM xatosida `False`
-    qaytaradi va mavjud snapshot saqlanib qoladi."""
+async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
+    """Bugungi kunning operator×bosqich kesimini CRM'dan to'liq skanerlab (sekin —
+    fon ishi) `lead_stage_daily`ga yozadi. CRM xatosida yozmaydi (mavjud snapshot
+    saqlanib qoladi). Bu funksiya scheduler tomonidan chaqiriladi; bot bevosita
+    chaqirmaydi (skaner bir necha daqiqa davom etadi)."""
     adapter = get_crm_adapter(settings.crm_type)
     if not adapter:
-        return False
+        return {"synced": False, "reason": "CRM sozlanmagan"}
 
     today = today_local()
-    rows = await adapter.get_daily_stage_counts(today)
+    rows = await adapter.get_daily_lead_breakdown(today)
     if rows is None:
-        return False
+        return {"synced": False, "reason": "CRM'dan olib bo'lmadi"}
 
-    try:
-        await db.execute(delete(LeadStageDaily).where(LeadStageDaily.date == today))
-        for row in rows:
-            db.add(
-                LeadStageDaily(
-                    date=today,
-                    pipe_status_id=row["pipe_status_id"],
-                    stage_name=row["stage_name"],
-                    leads_count=row["count"],
-                )
+    await db.execute(delete(LeadStageDaily).where(LeadStageDaily.date == today))
+    for row in rows:
+        db.add(
+            LeadStageDaily(
+                date=today,
+                responsible_id=row["responsible_id"],
+                responsible_name=row["responsible_name"],
+                pipe_status_id=row["pipe_status_id"],
+                stage_name=row["stage_name"],
+                leads_count=row["count"],
             )
-        await db.commit()
-    except IntegrityError:
-        # Parallel so'rov (scheduler + bot) bir vaqtda yozdi — boshqasi allaqachon
-        # yangilagan, o'qish uchun mavjud ma'lumot yetarli.
-        await db.rollback()
-    return True
+        )
+    await db.commit()
+    return {"synced": True, "date": today.isoformat(), "rows": len(rows)}
 
 
 @router.post("/lead-stages/sync", dependencies=[Depends(verify_bot_secret)])
 async def sync_lead_stages(db: AsyncSession = Depends(get_db)) -> dict:
-    """Bugungi bosqich-kesimini CRM'dan olib bazaga muzlatadi (kun oxiridagi holatni
-    saqlash uchun). Hozircha scheduler'ga ulanmagan — talab bo'yicha (masalan kun
-    yakunida qo'lda) chaqirish uchun ochiq turadi. Bundan tashqari bot statistikani
-    ochganda ham bugungi kun avtomatik yangilanib saqlanadi."""
-    synced = await _refresh_today_lead_snapshot(db)
-    return {"synced": synced, "date": today_local().isoformat()}
+    """Scheduler tomonidan muntazam chaqiriladi — bugungi operator×bosqich kesimini
+    CRM'dan to'liq skanerlab bazaga yozadi (kun davomida holat yangilanib boradi,
+    oxirgi skaner kunning yakuniy holati bo'lib qoladi). Skaner sekin (rate-limitga
+    rioya qilib bir necha daqiqa), shuning uchun faqat fon ishida chaqiriladi."""
+    return await _snapshot_lead_breakdown(db)
+
+
+async def _last_updated_for(db: AsyncSession, day_from: date, day_to: date):
+    return await db.scalar(
+        select(func.max(LeadStageDaily.updated_at)).where(
+            LeadStageDaily.date >= day_from, LeadStageDaily.date <= day_to
+        )
+    )
 
 
 @router.get(
@@ -248,7 +255,7 @@ async def lead_stage_month(
     telegram_id: int, month: str | None = None, db: AsyncSession = Depends(get_db)
 ) -> LeadStageMonthOut:
     """Oylik ko'rinish (default — joriy oy): har kun uchun jami ishlangan lidlar va
-    tashriflar. Joriy oy so'ralganda bugungi snapshot avval CRM'dan yangilanadi."""
+    tashriflar. Ma'lumot bazadagi oxirgi fon-snapshotdan o'qiladi (jonli emas)."""
     await _lead_stats_actor(telegram_id, db)
 
     today = today_local()
@@ -259,35 +266,31 @@ async def lead_stage_month(
     except (ValueError, IndexError):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Oy formati noto'g'ri (YYYY-MM)")
     month_end = date(year + 1, 1, 1) if mon == 12 else date(year, mon + 1, 1)
+    last_day = min(today, month_end - timedelta(days=1)) if month_start <= today else month_end - timedelta(days=1)
 
-    if month_start <= today < month_end:
-        await _refresh_today_lead_snapshot(db)
-
-    records = list(
-        await db.scalars(
-            select(LeadStageDaily)
+    # Kun × (jami, tashrif) — operatorlar bo'yicha yig'indi, bitta so'rovda. Tashrif
+    # nom bo'yicha ("Tashrif") aniqlanadi (kunlik ko'rinishdagi hisob bilan bir xil).
+    is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == VISIT_STAGE_NAME
+    rows = (
+        await db.execute(
+            select(
+                LeadStageDaily.date,
+                func.sum(LeadStageDaily.leads_count),
+                func.sum(case((is_visit, LeadStageDaily.leads_count), else_=0)),
+            )
             .where(LeadStageDaily.date >= month_start, LeadStageDaily.date < month_end)
+            .group_by(LeadStageDaily.date)
             .order_by(LeadStageDaily.date)
         )
-    )
+    ).all()
 
-    visit_id = _visit_status_id()
-    by_day: dict[date, dict[str, int]] = {}
-    for rec in records:
-        day_agg = by_day.setdefault(rec.date, {"total": 0, "visits": 0})
-        day_agg["total"] += rec.leads_count
-        if visit_id is not None and rec.pipe_status_id == visit_id:
-            day_agg["visits"] += rec.leads_count
-
-    days = [
-        LeadStageDaySummary(date=d, total=agg["total"], visits=agg["visits"])
-        for d, agg in sorted(by_day.items())
-    ]
+    days = [LeadStageDaySummary(date=d, total=int(total), visits=int(visits)) for d, total, visits in rows]
     return LeadStageMonthOut(
         month=month_key,
         total=sum(d.total for d in days),
         visits=sum(d.visits for d in days),
         days=days,
+        last_updated=await _last_updated_for(db, month_start, last_day),
     )
 
 
@@ -297,29 +300,60 @@ async def lead_stage_month(
     dependencies=[Depends(verify_bot_secret)],
 )
 async def lead_stage_day(
-    telegram_id: int, day: date, db: AsyncSession = Depends(get_db)
+    telegram_id: int,
+    day: date,
+    responsible_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
 ) -> LeadStageDayOut:
-    """Bir kunning to'liq bosqich-kesimi (botda kun tanlanganda)."""
+    """Bir kunning bosqich-kesimi. `responsible_id` berilmasa — butun tashkilot
+    (operatorlar yig'indisi) + shu kun ishlagan operatorlar ro'yxati; berilsa — faqat
+    o'sha operatorning bosqich-kesimi."""
     await _lead_stats_actor(telegram_id, db)
 
-    if day == today_local():
-        await _refresh_today_lead_snapshot(db)
+    base = select(LeadStageDaily).where(LeadStageDaily.date == day)
+    if responsible_id is not None:
+        base = base.where(LeadStageDaily.responsible_id == responsible_id)
+    records = list(await db.scalars(base))
 
-    records = list(
-        await db.scalars(
-            select(LeadStageDaily)
-            .where(LeadStageDaily.date == day)
-            .order_by(LeadStageDaily.leads_count.desc())
-        )
-    )
+    def _is_visit(stage_name: str) -> bool:
+        return stage_name.strip().lower() == VISIT_STAGE_NAME
 
-    visit_id = _visit_status_id()
+    # Bosqichlarni nom bo'yicha birlashtiramiz (bir necha voronkada bir xil nomli
+    # bosqich bo'lishi mumkin) — o'qish uchun qulayroq.
+    stage_agg: dict[str, int] = {}
+    for r in records:
+        stage_agg[r.stage_name] = stage_agg.get(r.stage_name, 0) + r.leads_count
+    stages = [
+        LeadStageRow(pipe_status_id=0, stage_name=name, count=cnt)
+        for name, cnt in sorted(stage_agg.items(), key=lambda x: -x[1])
+    ]
+
+    responsible_name = None
+    operators: list[LeadOperatorRow] = []
+    if responsible_id is not None:
+        responsible_name = records[0].responsible_name if records else str(responsible_id)
+    else:
+        # Kun ishlagan operatorlar (tanlash ro'yxati uchun)
+        op_agg: dict[int, dict] = {}
+        for r in records:
+            agg = op_agg.setdefault(
+                r.responsible_id, {"name": r.responsible_name, "total": 0, "visits": 0}
+            )
+            agg["total"] += r.leads_count
+            if _is_visit(r.stage_name):
+                agg["visits"] += r.leads_count
+        operators = [
+            LeadOperatorRow(responsible_id=rid, responsible_name=a["name"], total=a["total"], visits=a["visits"])
+            for rid, a in sorted(op_agg.items(), key=lambda x: -x[1]["total"])
+        ]
+
     return LeadStageDayOut(
         date=day,
         total=sum(r.leads_count for r in records),
-        visits=sum(r.leads_count for r in records if visit_id is not None and r.pipe_status_id == visit_id),
-        stages=[
-            LeadStageRow(pipe_status_id=r.pipe_status_id, stage_name=r.stage_name, count=r.leads_count)
-            for r in records
-        ],
+        visits=sum(r.leads_count for r in records if _is_visit(r.stage_name)),
+        stages=stages,
+        operators=operators,
+        responsible_id=responsible_id,
+        responsible_name=responsible_name,
+        last_updated=await _last_updated_for(db, day, day),
     )

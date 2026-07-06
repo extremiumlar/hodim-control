@@ -382,14 +382,29 @@ class LeadStageRow(BaseModel):
     count: int
 
 
+class LeadOperatorRow(BaseModel):
+    """Bir operatorning shu kundagi jami lid va tashrif soni — kunlik ko'rinishda
+    operator tanlash ro'yxati uchun."""
+
+    responsible_id: int
+    responsible_name: str
+    total: int
+    visits: int
+
+
 class LeadStageDayOut(BaseModel):
     """Bir kunning lid statistikasi bosqichlar kesimida — botdagi "Lidlar
-    statistikasi" kun tafsiloti."""
+    statistikasi" kun tafsiloti. `operators` — shu kun ishlagan operatorlar (tanlash
+    uchun). `responsible_id`/`responsible_name` — agar bitta operator uchun so'ralsa."""
 
     date: date
     total: int  # shu kunda ishlangan (yangilangan) lidlar jami
     visits: int  # "Tashrif" bosqichidagi lidlar (CRM_UYSOT_VISIT_PIPE_STATUS_ID)
     stages: list[LeadStageRow]
+    operators: list[LeadOperatorRow] = []
+    responsible_id: int | None = None
+    responsible_name: str | None = None
+    last_updated: datetime | None = None  # snapshot oxirgi yangilangan vaqti (naive-UTC)
 
 
 class LeadStageDaySummary(BaseModel):
@@ -406,6 +421,7 @@ class LeadStageMonthOut(BaseModel):
     total: int
     visits: int
     days: list[LeadStageDaySummary]
+    last_updated: datetime | None = None
 
 
 class CRMWebhookPayload(BaseModel):

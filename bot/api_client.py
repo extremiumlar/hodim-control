@@ -241,13 +241,11 @@ async def trigger_call_stats(chat_id: int | None = None) -> dict:
 
 
 async def lead_stage_month(telegram_id: int, month: str | None = None) -> dict | None:
-    """Oylik lidlar statistikasi (CRM bosqichlari kesimida). Joriy oy uchun bugungi
-    ma'lumot CRM'dan jonli yangilanadi, shuning uchun so'rov sekin bo'lishi mumkin —
-    umumiy clientning 10s timeout'i o'rniga kengroq berilgan. Ruxsat bo'lmasa None."""
+    """Oylik lidlar statistikasi (CRM bosqichlari kesimida). Ma'lumot bazadagi fon
+    snapshotdan tez o'qiladi. Ruxsat bo'lmasa None."""
     resp = await _get_client().get(
         f"/stats/lead-stages/{telegram_id}",
         params={"month": month} if month else None,
-        timeout=60,
     )
     if resp.status_code == 403:
         return None
@@ -255,9 +253,14 @@ async def lead_stage_month(telegram_id: int, month: str | None = None) -> dict |
     return resp.json()
 
 
-async def lead_stage_day(telegram_id: int, day: str) -> dict | None:
-    """Bir kunning bosqich-kesimidagi lid statistikasi (day — ISO sana). Ruxsat bo'lmasa None."""
-    resp = await _get_client().get(f"/stats/lead-stages/{telegram_id}/day/{day}", timeout=60)
+async def lead_stage_day(telegram_id: int, day: str, responsible_id: int | None = None) -> dict | None:
+    """Bir kunning bosqich-kesimidagi lid statistikasi (day — ISO sana). `responsible_id`
+    berilsa — faqat o'sha operator; berilmasa — tashkilot jami + operatorlar ro'yxati.
+    Ruxsat bo'lmasa None."""
+    resp = await _get_client().get(
+        f"/stats/lead-stages/{telegram_id}/day/{day}",
+        params={"responsible_id": responsible_id} if responsible_id is not None else None,
+    )
     if resp.status_code == 403:
         return None
     resp.raise_for_status()

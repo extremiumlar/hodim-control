@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date
 
@@ -12,6 +13,17 @@ UYSOT_BASE_URL = "https://api.service.app.uysot.uz/v1/open-api"
 CALL_HISTORY_PAGE_SIZE = 100
 LEAD_FILTER_PAGE_SIZE = 50  # /lead/filter uchun API'ning ruxsat etilgan maksimal "size"si
 MAX_PAGES_PER_SYNC = 20  # xavfsizlik chegarasi — kunlik qo'ng'iroqlar/lidlar juda ko'p bo'lib ketsa ham to'xtaydi
+
+# Fon (scheduler) lead breakdown skaneri uchun: butun bazani sahifalab o'qiydi.
+# Uysot rate limiti daqiqasiga 60 so'rov — 30s CRM sync ham shu endpointdan
+# foydalangani uchun ~40 so'rov/daqiqa'ga throttle qilamiz (zaxira qoldirib).
+MAX_LEAD_SCAN_PAGES = 400  # xavfsizlik chegarasi (hozir ~184 sahifa, o'sish uchun zaxira)
+REQUEST_THROTTLE_SECONDS = 1.5
+RATE_LIMIT_BACKOFF_SECONDS = 60
+# Vaqtinchalik tarmoq xatosi (DNS/timeout)da bitta sahifani qayta o'qish — uzoq
+# skaner bitta uzilishdan butunlay yiqilmasligi uchun.
+MAX_PAGE_RETRIES = 4
+TRANSIENT_RETRY_SECONDS = 5
 
 
 class UysotAdapter(CRMAdapter):
@@ -53,8 +65,6 @@ class UysotAdapter(CRMAdapter):
         self._visit_day_cache: dict[str, dict[str, dict]] = {}
         # pipe_status_id -> bosqich nomi (/pipe/all dan, jarayon davomida bir marta olinadi)
         self._pipe_status_names: dict[int, str] | None = None
-        # day_key -> {pipe_status_id: count} — shu kunda yangilangan lidlar bosqich kesimida
-        self._stage_day_cache: dict[str, dict[int, int]] = {}
 
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
@@ -168,79 +178,119 @@ class UysotAdapter(CRMAdapter):
         self._pipe_status_names = names
         return names
 
-    async def _load_day_stage_counts(self, client: httpx.AsyncClient, day: date) -> dict[int, int]:
-        """Shu kunda yangilangan (`updatedTimestamp`) barcha lidlarni bosqich bo'yicha
-        sanaydi — call-history bilan bir xil "eskirgan yozuvga yetguncha sahifala"
-        strategiyasi, lekin bosqich filtrisiz (barcha bosqichlar)."""
-        day_key = day.isoformat()
-        if day_key in self._stage_day_cache:
-            return self._stage_day_cache[day_key]
+    async def _fetch_lead_page(self, client: httpx.AsyncClient, page: int) -> dict:
+        """Bitta `/lead/filter` sahifasini chidamli o'qiydi: 429 (rate limit)da
+        `RATE_LIMIT_BACKOFF_SECONDS` kutadi; vaqtinchalik tarmoq xatosida (DNS/timeout)
+        `TRANSIENT_RETRY_SECONDS` kutib `MAX_PAGE_RETRIES` martagacha qayta urinadi.
+        Butun skaner uzoq davom etgani uchun bitta vaqtinchalik uzilish hammasini
+        bekor qilmasligi kerak — shu sabab retry bu yerda."""
+        attempt = 0
+        while True:
+            try:
+                resp = await client.post(
+                    "/lead/filter",
+                    json={"page": page, "size": LEAD_FILTER_PAGE_SIZE},
+                )
+                if resp.status_code == 429:
+                    logger.warning("Uysot rate limit — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
+                    await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                    continue
+                resp.raise_for_status()
+                return resp.json().get("data") or {}
+            except (httpx.TransportError, httpx.TimeoutException) as exc:
+                attempt += 1
+                if attempt > MAX_PAGE_RETRIES:
+                    raise
+                logger.warning(
+                    "Uysot sahifa %s vaqtinchalik xato (%s) — %ss kutib qayta (%s/%s)",
+                    page, type(exc).__name__, TRANSIENT_RETRY_SECONDS, attempt, MAX_PAGE_RETRIES,
+                )
+                await asyncio.sleep(TRANSIENT_RETRY_SECONDS)
 
+    async def _scan_day_lead_breakdown(
+        self, client: httpx.AsyncClient, day: date
+    ) -> dict[tuple[int, int], dict]:
+        """Shu kunda yangilangan (`updatedTimestamp`) barcha lidlarni operator×bosqich
+        kesimida sanaydi.
+
+        MUHIM: `/lead/filter` natijani lid ID'si bo'yicha (yaratilish tartibida)
+        qaytaradi, `updatedTimestamp` bo'yicha EMAS — shuning uchun "bugun tegilgan"
+        lidlar butun ro'yxat bo'ylab tarqoq. Server tomonda "updated bugun" filtri
+        ham yo'q (`start`/`finish` faqat yaratilgan sana bo'yicha). Demak butun bazani
+        to'liq skanerlash shart. Bu sekin (minglab lid ~ yuzlab sahifa), shuning uchun
+        bu metod faqat fon (scheduler) ishida chaqiriladi, bot bevosita chaqirmaydi."""
         start_ts, end_ts = day_bounds_unix(day)
-        counts: dict[int, int] = {}
+        # (responsible_id, pipe_status_id) -> {"name": str, "count": int}
+        entries: dict[tuple[int, int], dict] = {}
         page = 1
+        total_pages = None
 
-        while page <= MAX_PAGES_PER_SYNC:
-            resp = await client.post(
-                "/lead/filter",
-                json={"page": page, "size": LEAD_FILTER_PAGE_SIZE},
-            )
-            resp.raise_for_status()
-            body = resp.json()["data"]
-            records = body.get("data", [])
+        while page <= MAX_LEAD_SCAN_PAGES:
+            body = await self._fetch_lead_page(client, page)
+            if total_pages is None:
+                total_pages = body.get("totalPages") or 1
+            records = body.get("data") or []
             if not records:
                 break
 
-            reached_older_record = False
             for record in records:
                 ts = record.get("updatedTimestamp")
-                if ts is None:
+                if ts is None or not (start_ts <= ts <= end_ts):
                     continue
-                if ts < start_ts:
-                    reached_older_record = True
+                responsible_id = record.get("responsibleById")
+                status_id = record.get("pipeStatusId")
+                if responsible_id is None or status_id is None:
                     continue
-                if start_ts <= ts <= end_ts:
-                    status_id = record.get("pipeStatusId")
-                    if status_id is not None:
-                        counts[status_id] = counts.get(status_id, 0) + 1
+                key = (responsible_id, status_id)
+                entry = entries.setdefault(
+                    key, {"name": record.get("responsibleBy") or str(responsible_id), "count": 0}
+                )
+                entry["count"] += 1
 
-            if reached_older_record or page >= body.get("totalPages", page):
+            if page >= total_pages:
                 break
             page += 1
+            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
         else:
             logger.warning(
-                "Uysot lead (bosqich statistikasi) skanerlash %s sahifada to'xtatildi (xavfsizlik chegarasi)",
-                MAX_PAGES_PER_SYNC,
+                "Uysot lead breakdown skaner %s sahifada to'xtadi (xavfsizlik chegarasi) — natija chala bo'lishi mumkin",
+                MAX_LEAD_SCAN_PAGES,
             )
 
-        self._stage_day_cache[day_key] = counts
-        return counts
+        return entries
 
-    async def get_daily_stage_counts(self, day: date) -> list[dict] | None:
-        """Kunlik lid statistikasi bosqichlar kesimida (snapshot uchun).
+    async def get_daily_lead_breakdown(self, day: date) -> list[dict] | None:
+        """Kunlik lid statistikasi operator×bosqich kesimida (fon snapshot uchun).
+        `None` — CRM'dan olib bo'lmadi (chaqiruvchi mavjud snapshot'ni saqlab qolsin).
 
-        Muhim cheklov: `updatedTimestamp` bo'yicha taxminiy hisob — lid keyingi kuni
-        yana tahrirlansa, avvalgi kun oynasidan "chiqib ketadi". Shuning uchun o'tgan
-        kunlar bu metod bilan qayta hisoblanmaydi — kun yakunidagi holat
-        `lead_stage_daily` jadvalida muzlatiladi."""
+        Har element: {responsible_id, responsible_name, pipe_status_id, stage_name, count}.
+
+        Cheklov: hisob `updatedTimestamp` (oxirgi har qanday tahrir) ga asoslangan —
+        "bosqichga o'tish" voqeasi emas, shuning uchun taxminiy. Aniq hisob Uysot
+        lead-event API'si (X-Auth token) orqali keyingi bosqichda quriladi."""
         if not CRM_API_KEY:
             return None
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        # Skaner uzoq davom etadi (rate-limit throttle bilan bir necha daqiqa) —
+        # umumiy timeout kengroq, sahifa-so'rov timeouti alohida.
+        timeout = httpx.Timeout(30.0, read=30.0)
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=timeout) as client:
             try:
-                counts = await self._load_day_stage_counts(client, day)
+                entries = await self._scan_day_lead_breakdown(client, day)
                 names = await self._load_pipe_status_names(client)
             except httpx.HTTPError:
-                logger.exception("Uysot'dan bosqich statistikasini olishda xatolik (day=%s)", day)
+                logger.exception("Uysot'dan lead breakdown olishda xatolik (day=%s)", day)
                 return None
 
         return [
             {
+                "responsible_id": responsible_id,
+                "responsible_name": entry["name"],
                 "pipe_status_id": status_id,
                 "stage_name": names.get(status_id, f"Bosqich #{status_id}"),
-                "count": count,
+                "count": entry["count"],
             }
-            for status_id, count in counts.items()
+            for (responsible_id, status_id), entry in entries.items()
         ]
 
     async def get_daily_results(self, user, day: date) -> dict | None:
