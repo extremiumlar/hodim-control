@@ -149,9 +149,16 @@ Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan
 **Muhim eslatma — CRM:** hozircha haqiqiy CRM hisobingiz sozlanmagan bo'lishi mumkin (`CRM_TYPE=none` standart holat). Bu butunlay normal — spetsifikatsiya "kunlik natijalar CRM'dan **yoki qo'lda** to'ladi" deb belgilaydi, shuning uchun quyidagi oqim qo'lda kiritish orqali sinaladi.
 
 - `CRM_TYPE=amocrm` + `CRM_API_KEY` + `CRM_AMOCRM_SUBDOMAIN` — `/crm/amocrm.py` adapteri; hozircha amoCRM Events (suhbat) va bajarilgan Tasks (tashrif) sonini hisoblaydi.
-- `CRM_TYPE=uysot` + `CRM_API_KEY` (Uysot Open API tokeni, "Call History: Read" ruxsati bilan) — `/crm/uysot.py` adapteri; Uysot'ning `call-history/filter` endpointidan xodimning shu kungi qo'ng'iroqlar sonini "suhbat" sifatida hisoblaydi (bitta sinxronizatsiya davomida barcha xodimlar uchun bitta umumiy so'rov natijasi qayta ishlatiladi, shuning uchun 30 soniyalik tez sinxronizatsiyada ham ortiqcha yuklama tushmaydi). **Tashriflar hozircha 0** — Uysot'da "tashrif" alohida hodisa emas, balki lid pipeline bosqichi bo'lib, minglab lidni har 30 soniyada to'liq skanerlash amaliy emas; shuning uchun tashriflar hozircha qo'lda kiritiladi.
+- `CRM_TYPE=uysot` + `CRM_API_KEY` (Uysot Open API tokeni, "Call History: Read" va "Lead: Read" ruxsatlari bilan) — `/crm/uysot.py` adapteri:
+  - **Suhbatlar** — `call-history/filter`dan xodimning shu kungi qo'ng'iroqlar soni (`crm_external_id` = Uysot `employeeNum`, odatda email).
+  - **Tashriflar** — `lead/filter`dan `CRM_UYSOT_VISIT_PIPE_STATUS_ID` bosqichidagi lidlar soni (`crm_visit_external_id` = Uysot lid javobgarining `responsibleById`si). Bosqich ID'sini bilish uchun `GET /v1/open-api/pipe/all`ni tokeningiz bilan chaqiring. **Cheklov:** Uysot lidning bosqichga qachon o'tgani emas, oxirgi tahrirlangan vaqtini beradi — shuning uchun bu taxminiy hisob.
 
-Har ikkala holatda ham xodimning `users.crm_external_id` ustuni tegishli CRM identifikatoriga (amoCRM uchun `responsible_user_id`, Uysot uchun qo'ng'iroq tizimidagi `employeeNum`/email) mos kelishi kerak — bu hozircha faqat bazaga to'g'ridan-to'g'ri yozish orqali sozlanadi (web UI hali yo'q).
+Xodimlarni CRM'ga bog'lash **sayt orqali** ("Foydalanuvchilar" bo'limi, faqat Boshliq/Dasturchi uchun) amalga oshiriladi:
+- **"CRM bog'lash"** — bugun qo'ng'iroq qilgan Uysot operatorlari (email bo'yicha) ro'yxati, Telegram orqali ulangan foydalanuvchini tanlab bog'lash mumkin.
+- **"Tashrif bog'lash"** — bugun tashrif qayd etilgan operatorlar, bu safar Uysot **ism** beradi (email emas) — tizim ismlarni solishtirib avtomatik taklif qiladi, tasdiqlab "Bog'lash"ni bosish kifoya.
+- Har bir foydalanuvchining qatorida "CRM ID" ustunidan `crm_external_id`ni ham qo'lda tahrirlash mumkin.
+
+Bog'langandan so'ng, **"Normalar"** sahifasida har bir ko'rsatkich yonida bugungi CRM/qo'lda qiymat jonli ko'rinadi (norma bilan solishtirib) — shu orqali `/norms/team` API'si orqali normani real vaqtda tekshirish mumkin.
 
 **Kunlik natijani qo'lda kiritish va bonusni hisoblash:**
 1. Saytda **"Normalar"** bo'limidan xodim ismiga bosib uning **profiliga** o'ting (yoki Bosh sahifadagi vazifa jadvalidan).

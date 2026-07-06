@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, CrmOperatorRow, Position, User } from "../lib/api";
+import { api, CrmOperatorRow, CrmVisitOperatorRow, Position, User } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -40,6 +40,10 @@ export default function Users() {
   const [operatorLinkChoice, setOperatorLinkChoice] = useState<Record<string, string>>({});
   const [linkingOperator, setLinkingOperator] = useState<string | null>(null);
 
+  const [visitOperators, setVisitOperators] = useState<CrmVisitOperatorRow[]>([]);
+  const [visitLinkChoice, setVisitLinkChoice] = useState<Record<string, string>>({});
+  const [linkingVisitOperator, setLinkingVisitOperator] = useState<string | null>(null);
+
   const [positions, setPositions] = useState<Position[]>([]);
   const [savingPosition, setSavingPosition] = useState<number | null>(null);
 
@@ -62,9 +66,41 @@ export default function Users() {
 
   const loadOperators = async () => {
     try {
-      setOperators(await api.listCrmOperators());
+      const data = await api.listCrmOperators();
+      setOperators(data);
+      // Email manzilidagi ism qismiga qarab taklif qilingan foydalanuvchini oldindan
+      // tanlab qo'yamiz — tashrif bog'lashdagi bilan bir xil uslub.
+      setOperatorLinkChoice((prev) => {
+        const next = { ...prev };
+        data.forEach((op) => {
+          if (!next[op.crm_external_id] && op.suggested_user) {
+            next[op.crm_external_id] = String(op.suggested_user.id);
+          }
+        });
+        return next;
+      });
     } catch {
       // CRM sozlanmagan bo'lishi mumkin — jim o'tkazamiz, bu bo'lim faqat boss uchun ixtiyoriy
+    }
+  };
+
+  const loadVisitOperators = async () => {
+    try {
+      const data = await api.listCrmVisitOperators();
+      setVisitOperators(data);
+      // Taklif qilingan (ism bo'yicha eng yaqin) foydalanuvchini oldindan tanlab qo'yamiz —
+      // boss faqat tasdiqlashi kifoya, lekin xohlasa boshqasini tanlashi ham mumkin.
+      setVisitLinkChoice((prev) => {
+        const next = { ...prev };
+        data.forEach((op) => {
+          if (!next[op.responsible_id] && op.suggested_user) {
+            next[op.responsible_id] = String(op.suggested_user.id);
+          }
+        });
+        return next;
+      });
+    } catch {
+      // CRM sozlanmagan yoki tashrif bosqichi ID'si berilmagan bo'lishi mumkin — jim o'tkazamiz
     }
   };
 
@@ -79,7 +115,10 @@ export default function Users() {
   useEffect(() => {
     load();
     loadPositions();
-    if (hasFullControl) loadOperators();
+    if (hasFullControl) {
+      loadOperators();
+      loadVisitOperators();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasFullControl]);
 
@@ -236,6 +275,22 @@ export default function Users() {
       setError(e instanceof Error ? e.message : "Bog'lashda xatolik");
     } finally {
       setLinkingOperator(null);
+    }
+  };
+
+  const handleLinkVisitOperator = async (responsibleId: string) => {
+    const targetUserId = visitLinkChoice[responsibleId];
+    if (!targetUserId) return;
+    setLinkingVisitOperator(responsibleId);
+    setError(null);
+    try {
+      await api.updateCrmVisitExternalId(Number(targetUserId), responsibleId);
+      await load();
+      await loadVisitOperators();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bog'lashda xatolik");
+    } finally {
+      setLinkingVisitOperator(null);
     }
   };
 
@@ -461,6 +516,8 @@ export default function Users() {
                   <td className="py-2">
                     {op.matched_user ? (
                       <span className="text-emerald-700">✅ {op.matched_user.full_name}</span>
+                    ) : op.suggested_user ? (
+                      <span className="text-amber-600">taklif: {op.suggested_user.full_name}</span>
                     ) : (
                       <span className="text-slate-400">— bog'lanmagan</span>
                     )}
@@ -484,6 +541,73 @@ export default function Users() {
                       <button
                         onClick={() => handleLinkOperator(op.crm_external_id)}
                         disabled={linkingOperator === op.crm_external_id || !operatorLinkChoice[op.crm_external_id]}
+                        className="text-indigo-600 hover:underline text-xs disabled:opacity-50"
+                      >
+                        Bog'lash
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hasFullControl && visitOperators.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-5">
+          <h2 className="font-semibold mb-1">Tashrif bog'lash</h2>
+          <p className="text-xs text-slate-400 mb-4">
+            Uysot'da bugun "Tashrif" bosqichida qayd etilgan javobgarlar — bu yerda Uysot email
+            emas, ISM (Uysot'dagi javobgar ismi) beradi. Mos keladigan foydalanuvchi topilsa,
+            avtomatik taklif qilinadi — tasdiqlab "Bog'lash"ni bosing (yoki boshqasini tanlang).
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-slate-500 border-b">
+                <th className="py-2">Uysot'dagi ism</th>
+                <th className="py-2">Bugungi tashriflar</th>
+                <th className="py-2">Bog'langan foydalanuvchi</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {visitOperators.map((op) => (
+                <tr key={op.responsible_id} className="border-b last:border-0">
+                  <td className="py-2">{op.responsible_name}</td>
+                  <td className="py-2">{op.visits_today}</td>
+                  <td className="py-2">
+                    {op.matched_user ? (
+                      <span className="text-emerald-700">✅ {op.matched_user.full_name}</span>
+                    ) : op.suggested_user ? (
+                      <span className="text-amber-600">
+                        taklif: {op.suggested_user.full_name}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">— bog'lanmagan</span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <select
+                        value={visitLinkChoice[op.responsible_id] ?? ""}
+                        onChange={(e) =>
+                          setVisitLinkChoice((prev) => ({ ...prev, [op.responsible_id]: e.target.value }))
+                        }
+                        className="border rounded px-2 py-1 text-xs"
+                      >
+                        <option value="">— foydalanuvchi tanlang —</option>
+                        {telegramConnectedUsers.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.full_name} ({ROLE_LABELS[u.role] ?? u.role})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleLinkVisitOperator(op.responsible_id)}
+                        disabled={
+                          linkingVisitOperator === op.responsible_id || !visitLinkChoice[op.responsible_id]
+                        }
                         className="text-indigo-600 hover:underline text-xs disabled:opacity-50"
                       >
                         Bog'lash

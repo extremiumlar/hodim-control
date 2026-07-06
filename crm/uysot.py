@@ -46,7 +46,11 @@ class UysotAdapter(CRMAdapter):
             logger.warning("Uysot sozlanmagan (CRM_API_KEY bo'sh)")
         self.headers = {"X-Open-Api-Token": CRM_API_KEY}
         self._day_cache: dict[str, dict[str, int]] = {}
-        self._visit_day_cache: dict[str, dict[str, int]] = {}
+        # responsible_id -> {"name": responsibleBy, "count": int} — ism ham saqlanadi,
+        # chunki lid javobidagi `responsibleBy` xodimning o'qiladigan ismi bo'lib, uni
+        # tizimdagi foydalanuvchi bilan qo'lda (email o'rniga ism bo'yicha) bog'lashda
+        # foydalaniladi (`get_all_daily_visit_operators`).
+        self._visit_day_cache: dict[str, dict[str, dict]] = {}
 
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
@@ -90,9 +94,10 @@ class UysotAdapter(CRMAdapter):
         self._day_cache[day_key] = counts
         return counts
 
-    async def _load_day_visit_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
+    async def _load_day_visits(self, client: httpx.AsyncClient, day: date) -> dict[str, dict]:
         """"Tashrif" bosqichidagi (`CRM_UYSOT_VISIT_PIPE_STATUS_ID`) lidlarni sahifalab
-        o'qib, `responsibleById` bo'yicha shu kunda tahrirlanganlarni sanaydi."""
+        o'qib, `responsibleById` bo'yicha shu kunda tahrirlanganlarni sanaydi. Har bir
+        javobgar uchun oxirgi ko'ringan `responsibleBy` (ism) ham saqlanadi."""
         if not CRM_UYSOT_VISIT_PIPE_STATUS_ID:
             return {}
 
@@ -101,7 +106,7 @@ class UysotAdapter(CRMAdapter):
             return self._visit_day_cache[day_key]
 
         start_ts, end_ts = day_bounds_unix(day)
-        counts: dict[str, int] = {}
+        entries: dict[str, dict] = {}
         page = 1
 
         while page <= MAX_PAGES_PER_SYNC:
@@ -131,7 +136,8 @@ class UysotAdapter(CRMAdapter):
                     responsible_id = record.get("responsibleById")
                     if responsible_id is not None:
                         key = str(responsible_id)
-                        counts[key] = counts.get(key, 0) + 1
+                        entry = entries.setdefault(key, {"name": record.get("responsibleBy") or key, "count": 0})
+                        entry["count"] += 1
 
             if reached_older_record or page >= body.get("totalPages", page):
                 break
@@ -139,8 +145,8 @@ class UysotAdapter(CRMAdapter):
         else:
             logger.warning("Uysot lead (tashrif) skanerlash %s sahifada to'xtatildi (xavfsizlik chegarasi)", MAX_PAGES_PER_SYNC)
 
-        self._visit_day_cache[day_key] = counts
-        return counts
+        self._visit_day_cache[day_key] = entries
+        return entries
 
     async def get_daily_results(self, user, day: date) -> dict | None:
         """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi
@@ -152,13 +158,17 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
             try:
                 counts = await self._load_day_call_counts(client, day)
-                visit_counts = await self._load_day_visit_counts(client, day)
+                visits_by_id = await self._load_day_visits(client, day)
             except httpx.HTTPError:
                 logger.exception("Uysot'dan ma'lumot olishda xatolik (user_id=%s)", user.id)
                 return None
 
         conversations = counts.get(user.crm_external_id, 0) if user.crm_external_id else 0
-        visits = visit_counts.get(user.crm_visit_external_id, 0) if user.crm_visit_external_id else 0
+        visits = (
+            visits_by_id.get(user.crm_visit_external_id, {}).get("count", 0)
+            if user.crm_visit_external_id
+            else 0
+        )
         return {"conversations": conversations, "visits": visits}
 
     async def get_all_daily_call_counts(self, day: date) -> dict[str, int]:
@@ -173,3 +183,22 @@ class UysotAdapter(CRMAdapter):
             except httpx.HTTPError:
                 logger.exception("Uysot'dan qo'ng'iroqlar statistikasini olishda xatolik")
                 return {}
+
+    async def get_all_daily_visit_operators(self, day: date) -> list[dict]:
+        """Sayt uchun: shu kunda "Tashrif" bosqichida qayd etilgan har bir javobgarning
+        ID'si, ismi (`responsibleBy`) va tashriflar sonini qaytaradi — ism bo'yicha
+        bog'lashni osonlashtirish uchun."""
+        if not CRM_API_KEY:
+            return []
+
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+            try:
+                entries = await self._load_day_visits(client, day)
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan tashrif operatorlarini olishda xatolik")
+                return []
+
+        return [
+            {"responsible_id": responsible_id, "responsible_name": entry["name"], "visits": entry["count"]}
+            for responsible_id, entry in entries.items()
+        ]

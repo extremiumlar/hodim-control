@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_roles, verify_bot_secret
 from api.timeutil import today_local
-from api.schemas import NormBotUpdate, NormCreate, NormOut, TeamNormMetric, TeamNormRow, UserOut
+from api.schemas import NormBotUpdate, NormCreate, NormOut, TeamNormRow, UserOut
 from db.models import AuditLog, Norm, Role, User
 
 router = APIRouter(prefix="/norms", tags=["norms"])
@@ -34,7 +34,8 @@ def is_orphan_employee(target: User) -> bool:
 
 def can_manage_norms(actor: User, target: User) -> bool:
     """Norma belgilash matritsasi (vazifa matritsasi bilan bir xil mantiq):
-    Boshliq/Dasturchi — barcha xodimlarga; ROP — o'z jamoasiga; HR — lavozimi
+    Boshliq/Dasturchi — barcha xodimlarga; ROP — o'z jamoasiga (manager_id) yoki
+    lavozimi "ROP boshqaradi" deb belgilangan xodimlarga; HR — lavozimi
     "HR boshqaradi" deb belgilangan xodimlarga, hamda zaxira sifatida "yetim"
     (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
     if target.role != Role.employee.value or not target.is_active:
@@ -42,7 +43,10 @@ def can_manage_norms(actor: User, target: User) -> bool:
     if actor.role in {Role.boss.value, Role.dasturchi.value}:
         return True
     if actor.role == Role.rop.value:
-        return target.manager_id == actor.id
+        if target.manager_id == actor.id:
+            return True
+        position = target.position
+        return bool(position and position.managed_by_roles and Role.rop.value in position.managed_by_roles)
     if actor.role == Role.hr.value:
         position = target.position
         if position and position.managed_by_roles and Role.hr.value in position.managed_by_roles:
@@ -102,6 +106,11 @@ async def team_norms(
     actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[TeamNormRow]:
+    # Doiradan-tashqari import: api.routers.stats o'zi api.routers.norms'dan
+    # METRIC_LABELS/metrics_for'ni import qiladi — modul darajasida import qilinsa
+    # dumaloq (circular) import xatosiga olib keladi.
+    from api.routers.stats import today_metric_rows
+
     query = select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
     if actor.role == Role.rop.value:
         query = query.where(User.manager_id == actor.id)
@@ -109,22 +118,15 @@ async def team_norms(
 
     rows = []
     for emp in employees:
-        metric_keys = metrics_for(emp)
-        metrics = [
-            TeamNormMetric(
-                key=key,
-                label=METRIC_LABELS.get(key, key),
-                value=await _current_value(db, emp.id, key),
-            )
-            for key in metric_keys
-        ]
         rows.append(
             TeamNormRow(
                 user_id=emp.id,
                 full_name=emp.full_name,
                 position_name=emp.position.name if emp.position else None,
                 can_edit=can_manage_norms(actor, emp),
-                metrics=metrics,
+                # Bugungi haqiqiy (CRM/qo'lda) qiymat + norma — shu API orqali
+                # normani "tekshirish" imkonini beradi (bot bilan bir xil manba).
+                metrics=await today_metric_rows(db, emp),
             )
         )
     return rows

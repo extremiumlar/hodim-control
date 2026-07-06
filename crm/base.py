@@ -34,3 +34,10 @@ class CRMAdapter(ABC):
         {crm_external_id: soni} ko'rinishida qaytaradi (masalan botning `/statistika`
         buyrug'i uchun). Qo'llab-quvvatlamaydigan adapterlar bo'sh dict qaytaradi."""
         return {}
+
+    async def get_all_daily_visit_operators(self, day: date) -> list[dict]:
+        """Ixtiyoriy: shu kunda tashrif qayd etilgan har bir operator/managerning
+        {"responsible_id": str, "responsible_name": str, "visits": int} ko'rinishidagi
+        ro'yxatini qaytaradi — saytda ism bo'yicha bog'lash uchun. Qo'llab-quvvatlamaydigan
+        adapterlar bo'sh ro'yxat qaytaradi."""
+        return []

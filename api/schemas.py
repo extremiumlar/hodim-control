@@ -93,6 +93,7 @@ class UserOut(BaseModel):
     bot_started: bool
     is_active: bool
     crm_external_id: str | None
+    crm_visit_external_id: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -100,6 +101,7 @@ class UserOut(BaseModel):
 
 class UserCrmIdUpdate(BaseModel):
     crm_external_id: str | None = None
+    crm_visit_external_id: str | None = None
 
 
 class UserRoleUpdate(BaseModel):
@@ -127,6 +129,19 @@ class CrmOperatorRow(BaseModel):
     crm_external_id: str
     calls_today: int
     matched_user: UserOut | None = None
+    # Email manzilining "@"dan oldingi qismida xodim ismi uchrasa (masalan
+    # "nurlidiyorkamola@..." ichida "kamola"), taklif sifatida ko'rsatiladi.
+    suggested_user: UserOut | None = None
+
+
+class CrmVisitOperatorRow(BaseModel):
+    responsible_id: str
+    responsible_name: str
+    visits_today: int
+    matched_user: UserOut | None = None
+    # Ism bo'yicha eng yaqin mos keladigan (hali bog'lanmagan, Telegram orqali ulangan)
+    # foydalanuvchi — qo'lda tanlashni osonlashtirish uchun taklif sifatida.
+    suggested_user: UserOut | None = None
 
 
 class DevLoginRequest(BaseModel):
@@ -262,10 +277,16 @@ class NormOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class TeamNormMetric(BaseModel):
-    key: str
+class MetricProgressRow(BaseModel):
+    """Bitta ko'rsatkich bo'yicha jonli holat: bugungi (yoki joriy) qiymat va
+    belgilangan norma. Bot ("Bugungi normam"/"Statistikam") va sayt (jamoa normalari
+    jadvali) shu bir xil shaklni ishlatadi — CRM/qo'lda kiritilgan haqiqiy natija
+    har doim norma bilan yonma-yon ko'rinishi uchun."""
+
+    key: str  # suhbat | tashrif | video
     label: str
-    value: int | None  # joriy belgilangan norma (yo'q bo'lsa None)
+    value: int  # bugungi haqiqiy qiymat (CRM yoki qo'lda kiritilgan)
+    norm: int | None  # joriy belgilangan norma (yo'q bo'lsa None)
 
 
 class TeamNormRow(BaseModel):
@@ -275,8 +296,9 @@ class TeamNormRow(BaseModel):
     # Joriy foydalanuvchi (aktyor) shu xodimning normalarini o'zgartira oladimi —
     # ROP faqat o'z jamoasini, HR faqat o'ziga biriktirilgan lavozimlarni.
     can_edit: bool = False
-    # Lavozimga qarab kuzatiladigan ko'rsatkichlar (default: suhbat+tashrif)
-    metrics: list[TeamNormMetric] = []
+    # Lavozimga qarab kuzatiladigan ko'rsatkichlar (default: suhbat+tashrif), har biri
+    # bugungi haqiqiy (CRM/qo'lda) qiymat bilan birga — shu API orqali normani "tekshirish".
+    metrics: list[MetricProgressRow] = []
 
 
 class MobilografCreate(BaseModel):
@@ -332,15 +354,6 @@ class DailyResultOut(BaseModel):
     raw_data: dict | None
 
     model_config = {"from_attributes": True}
-
-
-class MetricProgressRow(BaseModel):
-    """Bitta ko'rsatkich bo'yicha jonli holat: bugungi qiymat va belgilangan norma."""
-
-    key: str  # suhbat | tashrif | video
-    label: str
-    value: int
-    norm: int | None
 
 
 class DailyResultTodayOut(BaseModel):

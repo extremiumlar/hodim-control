@@ -1,3 +1,4 @@
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -22,6 +23,7 @@ from db.models import (
 )
 from api.schemas import (
     CrmOperatorRow,
+    CrmVisitOperatorRow,
     TelegramStartRequest,
     TelegramStartResponse,
     UserCreate,
@@ -64,17 +66,125 @@ async def list_crm_operators(
     users = list(await db.scalars(select(User).where(User.crm_external_id.isnot(None))))
     user_by_external_id = {u.crm_external_id: u for u in users}
 
-    rows = sorted(counts.items(), key=lambda item: item[1], reverse=True)
-    return [
-        CrmOperatorRow(
-            crm_external_id=external_id,
-            calls_today=count,
-            matched_user=UserOut.model_validate(user_by_external_id[external_id])
-            if external_id in user_by_external_id
-            else None,
+    # Taklif faqat hali qo'ng'iroq-CRM ID'ga bog'lanmagan, Telegram orqali ulangan
+    # xodim YOKI managerlar (ROP) orasidan tanlanadi — Uysot'da qo'ng'iroq qiluvchi
+    # shart emas oddiy operator bo'lishi, ROP ham to'g'ridan-to'g'ri gaplashishi mumkin.
+    unmatched_candidates = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_([Role.employee.value, Role.rop.value]),
+                User.is_active == True,  # noqa: E712
+                User.bot_started == True,  # noqa: E712
+                User.crm_external_id.is_(None),
+            )
         )
-        for external_id, count in rows
-    ]
+    )
+
+    rows = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    result = []
+    for external_id, count in rows:
+        matched = user_by_external_id.get(external_id)
+        suggested = None if matched else _suggest_user_by_email(external_id, unmatched_candidates)
+        result.append(
+            CrmOperatorRow(
+                crm_external_id=external_id,
+                calls_today=count,
+                matched_user=UserOut.model_validate(matched) if matched else None,
+                suggested_user=UserOut.model_validate(suggested) if suggested else None,
+            )
+        )
+    return result
+
+
+def _name_tokens(name: str) -> set[str]:
+    """Ism-familiyani solishtirish uchun normallashtirilgan so'z to'plamiga o'giradi
+    (kichik harf, lotin/kirill harflari, 2 belgidan uzun so'zlar — "va", "of" kabi
+    umumiy bo'g'inlarni chalkashtirmaslik uchun)."""
+    words = re.findall(r"[a-zA-Zʻʼ'’a-яА-ЯёЁ]+", name.lower())
+    return {w for w in words if len(w) > 2}
+
+
+def _suggest_user_by_email(email: str, candidates: list[User]) -> User | None:
+    """Uysot qo'ng'iroq identifikatori odatda email bo'lib, unda alohida ism maydoni
+    yo'q — lekin ko'pincha "@"dan oldingi qismida xodim ismi so'z sifatida (bo'sh joysiz)
+    uchraydi, masalan "nurlidiyorkamola@gmail.com" ichida "kamola". Shuning uchun
+    to'liq so'z mosligi (`_suggest_user_by_name`dagidek) emas, balki QISM SATR
+    (substring) mosligi tekshiriladi. Eng uzun mos keladigan ism tokeni g'olib bo'ladi."""
+    local_part = email.split("@")[0].lower()
+
+    best_user, best_len = None, 0
+    for candidate in candidates:
+        for token in _name_tokens(candidate.full_name):
+            if token in local_part and len(token) > best_len:
+                best_user, best_len = candidate, len(token)
+    return best_user
+
+
+def _suggest_user_by_name(name: str, candidates: list[User]) -> User | None:
+    """CRM'dagi ism (masalan `responsibleBy`) bilan eng ko'p so'z mos keladigan
+    foydalanuvchini taklif qiladi — aniq bog'lash emas, faqat qo'lda tanlashni
+    tezlashtiruvchi taxmin. Hech qanday so'z mos kelmasa `None` qaytaradi."""
+    target = _name_tokens(name)
+    if not target:
+        return None
+
+    best_user, best_score = None, 0
+    for candidate in candidates:
+        score = len(target & _name_tokens(candidate.full_name))
+        if score > best_score:
+            best_user, best_score = candidate, score
+    return best_user
+
+
+@router.get("/crm-visit-operators", response_model=list[CrmVisitOperatorRow])
+async def list_crm_visit_operators(
+    _: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> list[CrmVisitOperatorRow]:
+    """CRM'dagi (hozircha Uysot) bugungi tashrif qayd etilgan operatorlarni ko'rsatadi.
+    Qo'ng'iroq operatorlaridan farqli o'laroq, bu yerda Uysot o'zi ismni (`responsibleBy`)
+    beradi — shuning uchun email o'rniga ISM bo'yicha bog'lash mumkin, va hali
+    bog'lanmagan operatorlar uchun eng yaqin mos keladigan (Telegram orqali ulangan)
+    foydalanuvchi avtomatik taklif qilinadi."""
+    adapter = get_crm_adapter(settings.crm_type)
+    if not adapter:
+        return []
+
+    operators = await adapter.get_all_daily_visit_operators(today_local())
+    if not operators:
+        return []
+
+    matched_users = list(await db.scalars(select(User).where(User.crm_visit_external_id.isnot(None))))
+    user_by_visit_id = {u.crm_visit_external_id: u for u in matched_users}
+
+    # Taklif faqat hali hech qanday tashrif-CRM ID'ga bog'lanmagan, Telegram orqali
+    # ulangan xodim yoki managerlar (ROP) orasidan tanlanadi.
+    unmatched_candidates = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_([Role.employee.value, Role.rop.value]),
+                User.is_active == True,  # noqa: E712
+                User.bot_started == True,  # noqa: E712
+                User.crm_visit_external_id.is_(None),
+            )
+        )
+    )
+
+    rows = sorted(operators, key=lambda op: op["visits"], reverse=True)
+    result = []
+    for op in rows:
+        matched = user_by_visit_id.get(op["responsible_id"])
+        suggested = None if matched else _suggest_user_by_name(op["responsible_name"], unmatched_candidates)
+        result.append(
+            CrmVisitOperatorRow(
+                responsible_id=op["responsible_id"],
+                responsible_name=op["responsible_name"],
+                visits_today=op["visits"],
+                matched_user=UserOut.model_validate(matched) if matched else None,
+                suggested_user=UserOut.model_validate(suggested) if suggested else None,
+            )
+        )
+    return result
 
 
 @router.get("", response_model=list[UserOut])
@@ -245,31 +355,50 @@ async def update_crm_external_id(
     actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """`crm_external_id` (qo'ng'iroqlar — email) va `crm_visit_external_id` (tashriflar —
+    Uysot javobgar ID'si) mustaqil ravishda yangilanadi: so'rov tanasida faqat yuborilgan
+    maydon(lar) o'zgartiriladi (`model_fields_set`), shuning uchun bittasini bog'lash
+    ikkinchisini bekor qilib qo'ymaydi."""
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
-    new_crm_id = payload.crm_external_id or None
-    if new_crm_id is not None:
-        duplicate = await db.scalar(
-            select(User).where(User.crm_external_id == new_crm_id, User.id != user_id)
-        )
-        if duplicate:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                f"Bu CRM ID allaqachon '{duplicate.full_name}' foydalanuvchisiga bog'langan",
-            )
+    before = {"crm_external_id": user.crm_external_id, "crm_visit_external_id": user.crm_visit_external_id}
+    fields_set = payload.model_fields_set
 
-    before = user.crm_external_id
-    user.crm_external_id = new_crm_id
+    if "crm_external_id" in fields_set:
+        new_crm_id = payload.crm_external_id or None
+        if new_crm_id is not None:
+            duplicate = await db.scalar(
+                select(User).where(User.crm_external_id == new_crm_id, User.id != user_id)
+            )
+            if duplicate:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Bu CRM ID allaqachon '{duplicate.full_name}' foydalanuvchisiga bog'langan",
+                )
+        user.crm_external_id = new_crm_id
+
+    if "crm_visit_external_id" in fields_set:
+        new_visit_id = payload.crm_visit_external_id or None
+        if new_visit_id is not None:
+            duplicate = await db.scalar(
+                select(User).where(User.crm_visit_external_id == new_visit_id, User.id != user_id)
+            )
+            if duplicate:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Bu tashrif CRM ID allaqachon '{duplicate.full_name}' foydalanuvchisiga bog'langan",
+                )
+        user.crm_visit_external_id = new_visit_id
 
     db.add(
         AuditLog(
             actor_id=actor.id,
             action="crm_external_id_changed",
             target_user_id=user.id,
-            before={"crm_external_id": before},
-            after={"crm_external_id": user.crm_external_id},
+            before=before,
+            after={"crm_external_id": user.crm_external_id, "crm_visit_external_id": user.crm_visit_external_id},
         )
     )
     await db.commit()

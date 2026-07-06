@@ -69,6 +69,7 @@ export interface User {
   bot_started: boolean;
   is_active: boolean;
   crm_external_id: string | null;
+  crm_visit_external_id: string | null;
   created_at: string;
 }
 
@@ -101,12 +102,22 @@ export interface CrmOperatorRow {
   crm_external_id: string;
   calls_today: number;
   matched_user: User | null;
+  suggested_user: User | null;
 }
 
-export interface TeamNormMetric {
+export interface CrmVisitOperatorRow {
+  responsible_id: string;
+  responsible_name: string;
+  visits_today: number;
+  matched_user: User | null;
+  suggested_user: User | null;
+}
+
+export interface MetricProgressRow {
   key: string;
   label: string;
-  value: number | null;
+  value: number; // bugungi haqiqiy (CRM/qo'lda) qiymat
+  norm: number | null; // belgilangan norma
 }
 
 export interface TeamNormRow {
@@ -114,7 +125,7 @@ export interface TeamNormRow {
   full_name: string;
   position_name: string | null;
   can_edit: boolean;
-  metrics: TeamNormMetric[];
+  metrics: MetricProgressRow[];
 }
 
 export interface DailyResult {
@@ -176,6 +187,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ crm_external_id: crmExternalId }),
     }),
+  updateCrmVisitExternalId: (userId: number, crmVisitExternalId: string | null) =>
+    apiFetch<User>(`/users/${userId}/crm-external-id`, {
+      method: "PATCH",
+      body: JSON.stringify({ crm_visit_external_id: crmVisitExternalId }),
+    }),
   updateRole: (userId: number, role: string) =>
     apiFetch<User>(`/users/${userId}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   updateUserPosition: (userId: number, positionId: number | null) =>
@@ -211,6 +227,7 @@ export const api = {
   }) => apiFetch<{ created: number }>("/tasks/bulk", { method: "POST", body: JSON.stringify(data) }),
   deleteUser: (userId: number) => apiFetch<{ deleted: boolean }>(`/users/${userId}`, { method: "DELETE" }),
   listCrmOperators: () => apiFetch<CrmOperatorRow[]>("/users/crm-operators"),
+  listCrmVisitOperators: () => apiFetch<CrmVisitOperatorRow[]>("/users/crm-visit-operators"),
   deactivateUser: (userId: number) => apiFetch<User>(`/users/${userId}/deactivate`, { method: "POST" }),
   activateUser: (userId: number) => apiFetch<User>(`/users/${userId}/activate`, { method: "POST" }),
   resetAccount: (userId: number) =>

@@ -18,7 +18,7 @@ export default function Norms() {
       const nextDrafts: Record<string, string> = {};
       data.forEach((row) => {
         row.metrics.forEach((m) => {
-          nextDrafts[`${row.user_id}:${m.key}`] = m.value?.toString() ?? "";
+          nextDrafts[`${row.user_id}:${m.key}`] = m.norm?.toString() ?? "";
         });
       });
       setDrafts(nextDrafts);
@@ -59,6 +59,8 @@ export default function Norms() {
       <p className="text-xs text-slate-400 mb-4">
         Ko'rsatkichlar har bir xodimning lavozimiga qarab belgilanadi ("Lavozimlar" bo'limida
         sozlanadi). Siz faqat o'zingiz boshqaradigan xodimlarning normalarini o'zgartira olasiz.
+        "Bugungi" qiymat CRM (yoki qo'lda kiritilgan) ma'lumot asosida jonli ko'rsatiladi — shu
+        orqali normani real vaqtda tekshirish mumkin.
       </p>
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
       {loading ? (
@@ -87,9 +89,19 @@ export default function Norms() {
                   <div className="flex flex-wrap gap-4">
                     {row.metrics.map((m) => {
                       const draftKey = `${row.user_id}:${m.key}`;
+                      const metNorm = m.norm !== null && m.value >= m.norm;
                       return (
                         <div key={m.key} className="flex items-center gap-2">
                           <span className="text-slate-500 text-xs">{m.label}:</span>
+                          <span
+                            className={`text-xs font-medium ${
+                              m.norm === null ? "text-slate-400" : metNorm ? "text-emerald-600" : "text-amber-600"
+                            }`}
+                            title="Bugungi haqiqiy qiymat (CRM/qo'lda)"
+                          >
+                            {m.value}
+                          </span>
+                          <span className="text-slate-300">/</span>
                           {row.can_edit ? (
                             <>
                               <input
@@ -109,7 +121,7 @@ export default function Norms() {
                               </button>
                             </>
                           ) : (
-                            <span>{m.value ?? "—"}</span>
+                            <span>{m.norm ?? "—"}</span>
                           )}
                         </div>
                       );

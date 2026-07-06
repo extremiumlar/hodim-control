@@ -31,7 +31,8 @@ def _can_assign(actor: User, target: User) -> bool:
     """Vazifa berish matritsasi:
     - Dasturchi — hammaga (boshliq ham kiradi);
     - Boshliq — ROP, HR va xodimlarga (alohida yoki ommaviy);
-    - ROP (sotuv boshlig'i) — faqat o'z jamoasidagi sotuvchilarga (manager_id);
+    - ROP (sotuv boshlig'i) — o'z jamoasidagi sotuvchilarga (manager_id), yoki
+      lavozimi "ROP boshqaradi" deb belgilangan xodimlarga;
     - HR — faqat lavozimi "HR boshqaradi" deb belgilangan xodimlarga
       (masalan mobilograf, dasturchi-xodim lavozimlari), hamda zaxira sifatida
       "yetim" (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
@@ -42,7 +43,12 @@ def _can_assign(actor: User, target: User) -> bool:
     if actor.role == Role.boss.value:
         return target.role in {Role.employee.value, Role.rop.value, Role.hr.value}
     if actor.role == Role.rop.value:
-        return target.role == Role.employee.value and target.manager_id == actor.id
+        if target.role != Role.employee.value:
+            return False
+        if target.manager_id == actor.id:
+            return True
+        position = target.position
+        return bool(position and position.managed_by_roles and Role.rop.value in position.managed_by_roles)
     if actor.role == Role.hr.value:
         if target.role != Role.employee.value:
             return False
