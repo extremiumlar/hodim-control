@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, LeadStageDay, LeadStageMonth } from "../lib/api";
+import { useAuth } from "../lib/auth";
+
+const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 
 const MONTH_NAMES = [
   "Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun",
@@ -35,6 +38,8 @@ function LastUpdated({ iso }: { iso: string | null }) {
 }
 
 export default function LeadStats() {
+  const { user } = useAuth();
+  const isManager = MANAGER_ROLES.includes(user?.role ?? "");
   const [month, setMonth] = useState(currentMonthKey());
   const [monthData, setMonthData] = useState<LeadStageMonth | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
@@ -43,25 +48,31 @@ export default function LeadStats() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Oylik ma'lumot
+  // Oylik ma'lumot — rahbar tashkilotni, xodim o'z statistikasini ko'radi
   useEffect(() => {
     setLoading(true);
     setError(null);
-    api
-      .leadStageMonth(month)
+    const req = isManager ? api.leadStageMonth(month) : api.myLeadStageMonth(month);
+    req
       .then((data) => {
         setMonthData(data);
-        // Standart: eng so'nggi kunni ochamiz
         const lastDay = data.days.length ? data.days[data.days.length - 1].date : null;
         setSelectedDay(lastDay);
         setSelectedOperator(null);
       })
       .catch((e) => {
-        setError(e instanceof ApiError && e.status === 403 ? "Bu bo'lim uchun ruxsatingiz yo'q." : "Ma'lumotni yuklashda xatolik.");
+        const status = e instanceof ApiError ? e.status : 0;
+        setError(
+          status === 403
+            ? "Bu bo'lim uchun ruxsatingiz yo'q."
+            : status === 400
+              ? "CRM operator ID'ingiz sozlanmagan — rahbaringizga murojaat qiling."
+              : "Ma'lumotni yuklashda xatolik."
+        );
         setMonthData(null);
       })
       .finally(() => setLoading(false));
-  }, [month]);
+  }, [month, isManager]);
 
   // Kunlik ma'lumot (kun yoki operator o'zgarganda)
   useEffect(() => {
@@ -69,11 +80,11 @@ export default function LeadStats() {
       setDayData(null);
       return;
     }
-    api
-      .leadStageDay(selectedDay, selectedOperator ?? undefined)
-      .then(setDayData)
-      .catch(() => setDayData(null));
-  }, [selectedDay, selectedOperator]);
+    const req = isManager
+      ? api.leadStageDay(selectedDay, selectedOperator ?? undefined)
+      : api.myLeadStageDay(selectedDay);
+    req.then(setDayData).catch(() => setDayData(null));
+  }, [selectedDay, selectedOperator, isManager]);
 
   if (loading) return <div className="p-8 text-center text-slate-500">Yuklanmoqda...</div>;
   if (error) return <div className="bg-white rounded-lg shadow p-6 text-slate-600">{error}</div>;
@@ -114,7 +125,7 @@ export default function LeadStats() {
       {monthData.days.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-6 text-slate-500">Bu oy uchun hali ma'lumot yo'q.</div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${isManager ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
           {/* Kunlar ro'yxati */}
           <div className="bg-white rounded-lg shadow p-4">
             <h3 className="font-medium text-sm text-slate-600 mb-3">Kunlar</h3>
@@ -180,7 +191,8 @@ export default function LeadStats() {
             )}
           </div>
 
-          {/* Operatorlar */}
+          {/* Operatorlar — faqat rahbarlar uchun */}
+          {isManager && (
           <div className="bg-white rounded-lg shadow p-4">
             <h3 className="font-medium text-sm text-slate-600 mb-3">Operatorlar</h3>
             {dayData && dayData.operators.length > 0 ? (
@@ -206,6 +218,7 @@ export default function LeadStats() {
               </p>
             )}
           </div>
+          )}
         </div>
       )}
     </div>

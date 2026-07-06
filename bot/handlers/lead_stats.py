@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_LEAD_STATS
+from bot.keyboards import BTN_LEAD_STATS, MANAGER_ROLES
 
 router = Router(name="lead_stats")
 
@@ -62,11 +62,12 @@ def _month_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-def _month_keyboard(data: dict) -> InlineKeyboardMarkup | None:
+def _month_keyboard(data: dict, personal: bool = False) -> InlineKeyboardMarkup | None:
     if not data["days"]:
         return None
+    prefix = "leadstats:md:" if personal else "leadstats:d:"
     buttons = [
-        InlineKeyboardButton(text=str(date.fromisoformat(d["date"]).day), callback_data=f"leadstats:d:{d['date']}")
+        InlineKeyboardButton(text=str(date.fromisoformat(d["date"]).day), callback_data=f"{prefix}{d['date']}")
         for d in data["days"]
     ]
     rows = [buttons[i : i + DAY_BUTTONS_PER_ROW] for i in range(0, len(buttons), DAY_BUTTONS_PER_ROW)]
@@ -106,11 +107,14 @@ def _day_text(data: dict) -> str:
     return "\n".join(lines)
 
 
-def _day_keyboard(data: dict) -> InlineKeyboardMarkup:
+def _day_keyboard(data: dict, personal: bool = False) -> InlineKeyboardMarkup:
     d = data["date"]
     rows: list[list[InlineKeyboardButton]] = []
-    if data.get("responsible_id") is not None:
-        # Operator ko'rinishida — kunning umumiysiga qaytish
+    if personal:
+        # Xodim o'z kunidan o'z oyiga qaytadi (operatorlar ro'yxati yo'q)
+        rows.append([InlineKeyboardButton(text="⬅️ Oyga qaytish", callback_data="leadstats:mmonth")])
+    elif data.get("responsible_id") is not None:
+        # Rahbar: operator ko'rinishidan kunning umumiysiga qaytish
         rows.append([InlineKeyboardButton(text="⬅️ Kun umumiysi", callback_data=f"leadstats:d:{d}")])
     else:
         for op in data.get("operators", []):
@@ -122,16 +126,37 @@ def _day_keyboard(data: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+NO_CRM_ID = (
+    "Statistikangizni ko'rsatib bo'lmadi — CRM operator ID'ingiz hali sozlanmagan. "
+    "Rahbaringizga murojaat qiling."
+)
+
+
 @router.message(F.text == BTN_LEAD_STATS)
 async def show_lead_stats(message: Message, state: FSMContext) -> None:
-    """Joriy oyning lidlar statistikasi (fon snapshotdan): oylik jami, har kunning
-    lid/tashrif soni va kun tanlash tugmalari. Ruxsat backendda tekshiriladi."""
+    """Lidlar statistikasi. Rahbarlar (HR/ROP/Boshliq/Dasturchi) butun tashkilotni +
+    operator kesimini ko'radi; sotuv operatorlari faqat O'Z statistikasini ko'radi."""
     await state.clear()
-    data = await api_client.lead_stage_month(message.from_user.id)
-    if data is None:
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or not user.get("is_active"):
         await message.answer(NO_PERMISSION)
         return
-    await message.answer(_month_text(data), reply_markup=_month_keyboard(data))
+
+    if user["role"] in MANAGER_ROLES:
+        data = await api_client.lead_stage_month(message.from_user.id)
+        if data is None:
+            await message.answer(NO_PERMISSION)
+            return
+        await message.answer(_month_text(data), reply_markup=_month_keyboard(data))
+    else:
+        data = await api_client.my_lead_stage_month(message.from_user.id)
+        if data is None:
+            await message.answer(NO_CRM_ID)
+            return
+        await message.answer(_month_text(data), reply_markup=_month_keyboard(data, personal=True))
+
+
+# --- Rahbar (tashkilot) oqimi ---
 
 
 @router.callback_query(F.data.startswith("leadstats:d:"))
@@ -163,3 +188,26 @@ async def back_to_month(callback: CallbackQuery) -> None:
     if data is None:
         return
     await callback.message.edit_text(_month_text(data), reply_markup=_month_keyboard(data))
+
+
+# --- Xodim (shaxsiy) oqimi ---
+
+
+@router.callback_query(F.data.startswith("leadstats:md:"))
+async def show_my_lead_stats_day(callback: CallbackQuery) -> None:
+    day = callback.data.split(":")[2]
+    await callback.answer()
+    data = await api_client.my_lead_stage_day(callback.from_user.id, day)
+    if data is None:
+        await callback.message.answer(NO_CRM_ID)
+        return
+    await callback.message.edit_text(_day_text(data), reply_markup=_day_keyboard(data, personal=True))
+
+
+@router.callback_query(F.data == "leadstats:mmonth")
+async def back_to_my_month(callback: CallbackQuery) -> None:
+    await callback.answer()
+    data = await api_client.my_lead_stage_month(callback.from_user.id)
+    if data is None:
+        return
+    await callback.message.edit_text(_month_text(data), reply_markup=_month_keyboard(data, personal=True))

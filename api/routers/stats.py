@@ -192,12 +192,39 @@ def _can_view_lead_stats(user: User) -> bool:
 
 
 async def _lead_stats_actor(telegram_id: int, db: AsyncSession) -> User:
+    """Lidlar statistikasini ko'ra oladigan har qanday foydalanuvchi (rahbar yoki
+    sotuv operatori) — shaxsiy (/me) ko'rinish uchun."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     if not user.is_active or not _can_view_lead_stats(user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     return user
+
+
+async def _lead_stats_manager_actor(telegram_id: int, db: AsyncSession) -> User:
+    """Faqat rahbar rollar — butun tashkilot / boshqa operatorlar ko'rinishi uchun.
+    Sotuv operatorlari faqat o'z shaxsiy statistikasini (/me) ko'radi."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    if not user.is_active or user.role not in LEAD_STATS_MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    return user
+
+
+def _resolve_self_responsible_id(user: User) -> int:
+    """Xodimning o'z CRM operator ID'si (`crm_visit_external_id` = Uysot
+    `responsibleById`). Sozlanmagan bo'lsa — tushunarli xato."""
+    if not user.crm_visit_external_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Sizning CRM operator ID'ingiz hali sozlanmagan — rahbaringizga murojaat qiling.",
+        )
+    try:
+        return int(user.crm_visit_external_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "CRM operator ID'ingiz noto'g'ri formatda.")
 
 
 async def _snapshot_calls(db: AsyncSession, adapter, today: date) -> int:
@@ -300,8 +327,12 @@ def _is_visit_name(stage_name: str) -> bool:
     return stage_name.strip().lower() == VISIT_STAGE_NAME
 
 
-async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMonthOut:
-    """Oylik ko'rinishni bazadagi snapshotdan quradi (bot va web uchun umumiy)."""
+async def _build_lead_month(
+    db: AsyncSession, month: str | None, responsible_id: int | None = None
+) -> LeadStageMonthOut:
+    """Oylik ko'rinishni bazadagi snapshotdan quradi (bot va web uchun umumiy).
+    `responsible_id` berilsa — faqat o'sha operatorning kunlik yig'indilari (xodim
+    o'z shaxsiy statistikasini ko'rganda)."""
     today = today_local()
     month_key = month or today.strftime("%Y-%m")
     try:
@@ -314,29 +345,30 @@ async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMon
 
     # Kun × (lidlar jami, tashrif) — operatorlar bo'yicha yig'indi. Tashrif nom bo'yicha.
     is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == VISIT_STAGE_NAME
-    lead_rows = (
-        await db.execute(
-            select(
-                LeadStageDaily.date,
-                func.sum(LeadStageDaily.leads_count),
-                func.sum(case((is_visit, LeadStageDaily.leads_count), else_=0)),
-            )
-            .where(LeadStageDaily.date >= month_start, LeadStageDaily.date < month_end)
-            .group_by(LeadStageDaily.date)
-            .order_by(LeadStageDaily.date)
+    lead_q = (
+        select(
+            LeadStageDaily.date,
+            func.sum(LeadStageDaily.leads_count),
+            func.sum(case((is_visit, LeadStageDaily.leads_count), else_=0)),
         )
-    ).all()
-    # Kun × gaplashilgan (qo'ng'iroqlar) — alohida jadvaldan
-    call_rows = (
-        await db.execute(
-            select(
-                OperatorCallsDaily.date,
-                func.sum(OperatorCallsDaily.calls_in + OperatorCallsDaily.calls_out),
-            )
-            .where(OperatorCallsDaily.date >= month_start, OperatorCallsDaily.date < month_end)
-            .group_by(OperatorCallsDaily.date)
+        .where(LeadStageDaily.date >= month_start, LeadStageDaily.date < month_end)
+        .group_by(LeadStageDaily.date)
+        .order_by(LeadStageDaily.date)
+    )
+    call_q = (
+        select(
+            OperatorCallsDaily.date,
+            func.sum(OperatorCallsDaily.calls_in + OperatorCallsDaily.calls_out),
         )
-    ).all()
+        .where(OperatorCallsDaily.date >= month_start, OperatorCallsDaily.date < month_end)
+        .group_by(OperatorCallsDaily.date)
+    )
+    if responsible_id is not None:
+        lead_q = lead_q.where(LeadStageDaily.responsible_id == responsible_id)
+        call_q = call_q.where(OperatorCallsDaily.responsible_id == responsible_id)
+
+    lead_rows = (await db.execute(lead_q)).all()
+    call_rows = (await db.execute(call_q)).all()
     calls_by_day = {d: int(c) for d, c in call_rows}
 
     days = [
@@ -445,8 +477,8 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
 async def lead_stage_month(
     telegram_id: int, month: str | None = None, db: AsyncSession = Depends(get_db)
 ) -> LeadStageMonthOut:
-    """Oylik ko'rinish (default — joriy oy). Ma'lumot bazadagi fon-snapshotdan."""
-    await _lead_stats_actor(telegram_id, db)
+    """Tashkilot oylik ko'rinishi (faqat rahbarlar). Bazadagi fon-snapshotdan."""
+    await _lead_stats_manager_actor(telegram_id, db)
     return await _build_lead_month(db, month)
 
 
@@ -461,9 +493,40 @@ async def lead_stage_day(
     responsible_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> LeadStageDayOut:
-    """Bir kunning bosqich-kesimi (bot)."""
-    await _lead_stats_actor(telegram_id, db)
+    """Tashkilot kunlik ko'rinishi + operator kesimi (faqat rahbarlar)."""
+    await _lead_stats_manager_actor(telegram_id, db)
     return await _build_lead_day(db, day, responsible_id)
+
+
+# --- Shaxsiy (/me) — har bir xodim faqat o'z statistikasini ko'radi ---
+
+
+@router.get(
+    "/lead-stages/{telegram_id}/me",
+    response_model=LeadStageMonthOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def my_lead_stage_month(
+    telegram_id: int, month: str | None = None, db: AsyncSession = Depends(get_db)
+) -> LeadStageMonthOut:
+    """Xodimning O'Z oylik lid/qo'ng'iroq statistikasi (sotuv operatorlari uchun)."""
+    user = await _lead_stats_actor(telegram_id, db)
+    rid = _resolve_self_responsible_id(user)
+    return await _build_lead_month(db, month, responsible_id=rid)
+
+
+@router.get(
+    "/lead-stages/{telegram_id}/me/day/{day}",
+    response_model=LeadStageDayOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def my_lead_stage_day(
+    telegram_id: int, day: date, db: AsyncSession = Depends(get_db)
+) -> LeadStageDayOut:
+    """Xodimning O'Z kunlik statistikasi (gaplashilgan + lid bosqichlari)."""
+    user = await _lead_stats_actor(telegram_id, db)
+    rid = _resolve_self_responsible_id(user)
+    return await _build_lead_day(db, day, rid)
 
 
 # --- Web endpointlari (JWT — kirgan foydalanuvchi) ---
@@ -475,13 +538,19 @@ def _require_lead_stats_web(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def _require_lead_stats_manager_web(user: User = Depends(get_current_user)) -> User:
+    if user.role not in LEAD_STATS_MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ko'rinish faqat rahbarlar uchun")
+    return user
+
+
 @router.get("/web/lead-stages", response_model=LeadStageMonthOut)
 async def web_lead_stage_month(
     month: str | None = None,
-    _: User = Depends(_require_lead_stats_web),
+    _: User = Depends(_require_lead_stats_manager_web),
     db: AsyncSession = Depends(get_db),
 ) -> LeadStageMonthOut:
-    """Sayt uchun oylik lid statistikasi (kirgan foydalanuvchi ruxsati bilan)."""
+    """Sayt uchun tashkilot oylik lid statistikasi (faqat rahbarlar)."""
     return await _build_lead_month(db, month)
 
 
@@ -489,8 +558,30 @@ async def web_lead_stage_month(
 async def web_lead_stage_day(
     day: date,
     responsible_id: int | None = None,
-    _: User = Depends(_require_lead_stats_web),
+    _: User = Depends(_require_lead_stats_manager_web),
     db: AsyncSession = Depends(get_db),
 ) -> LeadStageDayOut:
-    """Sayt uchun kunlik lid statistikasi (operator kesimi bilan)."""
+    """Sayt uchun tashkilot kunlik lid statistikasi + operator kesimi (faqat rahbarlar)."""
     return await _build_lead_day(db, day, responsible_id)
+
+
+@router.get("/web/lead-stages/me", response_model=LeadStageMonthOut)
+async def web_my_lead_stage_month(
+    month: str | None = None,
+    user: User = Depends(_require_lead_stats_web),
+    db: AsyncSession = Depends(get_db),
+) -> LeadStageMonthOut:
+    """Sayt uchun xodimning O'Z oylik statistikasi."""
+    rid = _resolve_self_responsible_id(user)
+    return await _build_lead_month(db, month, responsible_id=rid)
+
+
+@router.get("/web/lead-stages/me/day/{day}", response_model=LeadStageDayOut)
+async def web_my_lead_stage_day(
+    day: date,
+    user: User = Depends(_require_lead_stats_web),
+    db: AsyncSession = Depends(get_db),
+) -> LeadStageDayOut:
+    """Sayt uchun xodimning O'Z kunlik statistikasi."""
+    rid = _resolve_self_responsible_id(user)
+    return await _build_lead_day(db, day, rid)

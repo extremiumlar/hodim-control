@@ -317,6 +317,9 @@ export const api = {
     apiFetch<LeadStageDay>(
       `/stats/web/lead-stages/day/${day}${responsibleId != null ? `?responsible_id=${responsibleId}` : ""}`
     ),
+  myLeadStageMonth: (month?: string) =>
+    apiFetch<LeadStageMonth>(`/stats/web/lead-stages/me${month ? `?month=${month}` : ""}`),
+  myLeadStageDay: (day: string) => apiFetch<LeadStageDay>(`/stats/web/lead-stages/me/day/${day}`),
   listAuditLogs: (params: { action?: string; date_from?: string; date_to?: string } = {}) => {
     const query = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v) as [string, string][]

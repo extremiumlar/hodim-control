@@ -256,12 +256,34 @@ async def lead_stage_month(telegram_id: int, month: str | None = None) -> dict |
 async def lead_stage_day(telegram_id: int, day: str, responsible_id: int | None = None) -> dict | None:
     """Bir kunning bosqich-kesimidagi lid statistikasi (day — ISO sana). `responsible_id`
     berilsa — faqat o'sha operator; berilmasa — tashkilot jami + operatorlar ro'yxati.
-    Ruxsat bo'lmasa None."""
+    Ruxsat bo'lmasa None (faqat rahbarlar)."""
     resp = await _get_client().get(
         f"/stats/lead-stages/{telegram_id}/day/{day}",
         params={"responsible_id": responsible_id} if responsible_id is not None else None,
     )
     if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def my_lead_stage_month(telegram_id: int, month: str | None = None) -> dict | None:
+    """Xodimning O'Z oylik lid/qo'ng'iroq statistikasi. 403 (ruxsat yo'q) yoki
+    400 (CRM ID sozlanmagan) bo'lsa — mos xabar bilan (None, sabab)."""
+    resp = await _get_client().get(
+        f"/stats/lead-stages/{telegram_id}/me",
+        params={"month": month} if month else None,
+    )
+    if resp.status_code in (400, 403):
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def my_lead_stage_day(telegram_id: int, day: str) -> dict | None:
+    """Xodimning O'Z kunlik statistikasi (gaplashilgan + lid bosqichlari)."""
+    resp = await _get_client().get(f"/stats/lead-stages/{telegram_id}/me/day/{day}")
+    if resp.status_code in (400, 403):
         return None
     resp.raise_for_status()
     return resp.json()
