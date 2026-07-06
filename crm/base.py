@@ -35,6 +35,13 @@ class CRMAdapter(ABC):
         buyrug'i uchun). Qo'llab-quvvatlamaydigan adapterlar bo'sh dict qaytaradi."""
         return {}
 
+    async def get_daily_call_breakdown(self, day: date) -> dict[str, dict] | None:
+        """Ixtiyoriy: shu kundagi qo'ng'iroqlarni CRM xodim identifikatori
+        (`crm_external_id`/employeeNum) bo'yicha kiruvchi/chiquvchi kesimida qaytaradi:
+        {employee_id: {"in": int, "out": int}}. CRM'dan olib bo'lmasa `None`.
+        Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
+        return None
+
     async def get_daily_lead_breakdown(self, day: date) -> list[dict] | None:
         """Ixtiyoriy: shu kunda ishlangan (yangilangan) lidlarni operator×bosqich
         kesimida sanaydi — har element {"responsible_id": int, "responsible_name": str,

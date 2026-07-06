@@ -44,14 +44,14 @@ def _last_updated_line(iso: str | None) -> str:
 def _month_text(data: dict) -> str:
     lines = [
         f"🧲 <b>Lidlar statistikasi — {_month_title(data['month'])}</b>",
-        f"Jami gaplashilgan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
+        f"📞 Gaplashilgan lidlar: <b>{data['calls']}</b> | 🧲 Ishlangan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
     ]
     if data["days"]:
         lines.append("")
         for day_row in data["days"]:
             d = date.fromisoformat(day_row["date"])
             visits_part = f", {day_row['visits']} tashrif" if day_row["visits"] else ""
-            lines.append(f"{d:%d.%m} — {day_row['total']} lid{visits_part}")
+            lines.append(f"{d:%d.%m} — {day_row['calls']} gaplashildi, {day_row['total']} lid{visits_part}")
         lines.append("")
         lines.append("Kun tafsiloti uchun sanani tanlang:")
     else:
@@ -79,24 +79,24 @@ def _stages_block(data: dict) -> list[str]:
     return [f"• {html.escape(s['stage_name'])}: {s['count']}" for s in data["stages"]]
 
 
+def _summary_lines(data: dict) -> list[str]:
+    return [
+        f"📞 Gaplashilgan lidlar: <b>{data['calls']}</b> "
+        f"(kiruvchi {data['calls_in']}, chiquvchi {data['calls_out']})",
+        f"🧲 Ishlangan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
+    ]
+
+
 def _day_text(data: dict) -> str:
     d = date.fromisoformat(data["date"])
     if data.get("responsible_id") is not None:
-        # Bitta operator ko'rinishi
         name = html.escape(data.get("responsible_name") or "Operator")
-        lines = [
-            f"🧲 <b>{name} — {d:%d.%m.%Y}</b>",
-            f"Umumiy gaplashilgan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
-            "",
-        ]
+        lines = [f"👤 <b>{name} — {d:%d.%m.%Y}</b>", *_summary_lines(data), ""]
+        lines.append("<b>Lid bosqichlari:</b>")
         lines.extend(_stages_block(data))
     else:
-        # Tashkilot jami
-        lines = [
-            f"🧲 <b>Lidlar statistikasi — {d:%d.%m.%Y}</b>",
-            f"Umumiy gaplashilgan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
-            "",
-        ]
+        lines = [f"🧲 <b>Lidlar statistikasi — {d:%d.%m.%Y}</b>", *_summary_lines(data), ""]
+        lines.append("<b>Lid bosqichlari:</b>")
         lines.extend(_stages_block(data))
         if data.get("operators"):
             lines.append("")
@@ -114,7 +114,7 @@ def _day_keyboard(data: dict) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="⬅️ Kun umumiysi", callback_data=f"leadstats:d:{d}")])
     else:
         for op in data.get("operators", []):
-            label = f"{op['responsible_name']} — {op['total']} lid"
+            label = f"{op['responsible_name']} — {op['calls']} gaplashildi, {op['total']} lid"
             rows.append(
                 [InlineKeyboardButton(text=label, callback_data=f"leadstats:op:{d}:{op['responsible_id']}")]
             )

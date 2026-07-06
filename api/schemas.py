@@ -383,23 +383,29 @@ class LeadStageRow(BaseModel):
 
 
 class LeadOperatorRow(BaseModel):
-    """Bir operatorning shu kundagi jami lid va tashrif soni — kunlik ko'rinishda
-    operator tanlash ro'yxati uchun."""
+    """Bir operatorning shu kundagi ko'rsatkichlari — kunlik ko'rinishda operator tanlash
+    ro'yxati uchun. `calls` — gaplashilgan (suhbatlar); `total` — ishlangan lidlar."""
 
     responsible_id: int
     responsible_name: str
-    total: int
+    calls: int  # gaplashilgan (kiruvchi+chiquvchi qo'ng'iroqlar)
+    calls_in: int
+    calls_out: int
+    total: int  # ishlangan (yangilangan) lidlar
     visits: int
 
 
 class LeadStageDayOut(BaseModel):
-    """Bir kunning lid statistikasi bosqichlar kesimida — botdagi "Lidlar
-    statistikasi" kun tafsiloti. `operators` — shu kun ishlagan operatorlar (tanlash
-    uchun). `responsible_id`/`responsible_name` — agar bitta operator uchun so'ralsa."""
+    """Bir kunning statistikasi — botdagi "Lidlar statistikasi" kun tafsiloti.
+    `calls*` — gaplashilgan (qo'ng'iroqlar); `total`/`stages` — lidlar. `operators` —
+    shu kun ishlagan operatorlar (tanlash uchun). `responsible_*` — bitta operator uchun."""
 
     date: date
+    calls: int  # gaplashilgan lidlar (jami qo'ng'iroq)
+    calls_in: int
+    calls_out: int
     total: int  # shu kunda ishlangan (yangilangan) lidlar jami
-    visits: int  # "Tashrif" bosqichidagi lidlar (CRM_UYSOT_VISIT_PIPE_STATUS_ID)
+    visits: int  # "Tashrif" bosqichidagi lidlar
     stages: list[LeadStageRow]
     operators: list[LeadOperatorRow] = []
     responsible_id: int | None = None
@@ -409,15 +415,16 @@ class LeadStageDayOut(BaseModel):
 
 class LeadStageDaySummary(BaseModel):
     date: date
+    calls: int
     total: int
     visits: int
 
 
 class LeadStageMonthOut(BaseModel):
-    """Oylik ko'rinish: har kun uchun jami lidlar va tashriflar (tafsilot kun
-    bo'yicha alohida so'raladi)."""
+    """Oylik ko'rinish: har kun uchun gaplashilgan (qo'ng'iroq), lidlar va tashriflar."""
 
     month: str  # "YYYY-MM"
+    calls: int
     total: int
     visits: int
     days: list[LeadStageDaySummary]

@@ -156,18 +156,23 @@ export interface LeadStageRow {
 export interface LeadOperatorRow {
   responsible_id: number;
   responsible_name: string;
+  calls: number;
+  calls_in: number;
+  calls_out: number;
   total: number;
   visits: number;
 }
 
 export interface LeadStageDaySummary {
   date: string;
+  calls: number;
   total: number;
   visits: number;
 }
 
 export interface LeadStageMonth {
   month: string;
+  calls: number;
   total: number;
   visits: number;
   days: LeadStageDaySummary[];
@@ -176,6 +181,9 @@ export interface LeadStageMonth {
 
 export interface LeadStageDay {
   date: string;
+  calls: number;
+  calls_in: number;
+  calls_out: number;
   total: number;
   visits: number;
   stages: LeadStageRow[];

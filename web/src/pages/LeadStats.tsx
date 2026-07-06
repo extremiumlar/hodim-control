@@ -92,13 +92,17 @@ export default function LeadStats() {
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">Oylik gaplashilgan lidlar</div>
+          <div className="text-xs text-slate-500">📞 Gaplashilgan lidlar</div>
+          <div className="text-2xl font-semibold">{monthData.calls}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-xs text-slate-500">🧲 Ishlangan lidlar</div>
           <div className="text-2xl font-semibold">{monthData.total}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">Oylik tashriflar</div>
+          <div className="text-xs text-slate-500">Tashriflar</div>
           <div className="text-2xl font-semibold">{monthData.visits}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
@@ -128,7 +132,7 @@ export default function LeadStats() {
                 >
                   <span>{formatDay(d.date)}</span>
                   <span className={selectedDay === d.date ? "text-indigo-100" : "text-slate-500"}>
-                    {d.total} lid{d.visits ? ` · ${d.visits} tashrif` : ""}
+                    {d.calls} gaplashildi · {d.total} lid
                   </span>
                 </button>
               ))}
@@ -145,8 +149,9 @@ export default function LeadStats() {
                     : "Barcha operatorlar"}{" "}
                   — {formatDay(dayData.date)}
                 </h3>
-                <div className="text-sm text-slate-500 mb-3">
-                  Jami: <b>{dayData.total}</b> lid · Tashrif: <b>{dayData.visits}</b>
+                <div className="text-sm text-slate-500 mb-3 space-y-0.5">
+                  <div>📞 Gaplashilgan: <b>{dayData.calls}</b> (kiruvchi {dayData.calls_in}, chiquvchi {dayData.calls_out})</div>
+                  <div>🧲 Ishlangan lidlar: <b>{dayData.total}</b> · Tashrif: <b>{dayData.visits}</b></div>
                 </div>
                 <div className="space-y-1">
                   {dayData.stages.length === 0 ? (
@@ -189,8 +194,8 @@ export default function LeadStats() {
                     }`}
                   >
                     <span className="truncate mr-2">{op.responsible_name}</span>
-                    <span className={selectedOperator === op.responsible_id ? "text-indigo-100" : "text-slate-500"}>
-                      {op.total}{op.visits ? ` · ${op.visits}T` : ""}
+                    <span className={`whitespace-nowrap ${selectedOperator === op.responsible_id ? "text-indigo-100" : "text-slate-500"}`}>
+                      📞{op.calls} · 🧲{op.total}
                     </span>
                   </button>
                 ))}

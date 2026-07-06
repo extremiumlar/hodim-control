@@ -26,6 +26,7 @@ from db.models import (
     MobilografStatus,
     MobilografVideo,
     Norm,
+    OperatorCallsDaily,
     Role,
     TaskModel,
     TaskStatus,
@@ -199,19 +200,68 @@ async def _lead_stats_actor(telegram_id: int, db: AsyncSession) -> User:
     return user
 
 
+async def _snapshot_calls(db: AsyncSession, adapter, today: date) -> int:
+    """Bugungi qo'ng'iroqlarni (kiruvchi/chiquvchi) operator kesimida `operator_calls_daily`ga
+    yozadi. `employeeNum` → `responsibleById` tizim foydalanuvchilarining CRM ID lari orqali
+    o'giriladi; bog'lanmagan qo'ng'iroqlar `responsible_id=0` ("Boshqa") ostida jamlanadi
+    (tashkilot jami to'g'ri bo'lishi uchun). CRM xatosida jadval o'zgarmaydi (-1 qaytaradi)."""
+    breakdown = await adapter.get_daily_call_breakdown(today)
+    if breakdown is None:
+        return -1
+
+    # employeeNum -> (responsible_id, name) — tizim foydalanuvchilaridan
+    users = list(
+        await db.scalars(
+            select(User).where(User.crm_external_id.isnot(None), User.crm_visit_external_id.isnot(None))
+        )
+    )
+    emp_to_operator: dict[str, tuple[int, str]] = {}
+    for u in users:
+        try:
+            emp_to_operator[u.crm_external_id] = (int(u.crm_visit_external_id), u.full_name)
+        except (TypeError, ValueError):
+            continue
+
+    # responsible_id -> {name, in, out}
+    agg: dict[int, dict] = {}
+    for employee_num, dirs in breakdown.items():
+        rid, name = emp_to_operator.get(employee_num, (0, "Boshqa operatorlar"))
+        entry = agg.setdefault(rid, {"name": name, "in": 0, "out": 0})
+        entry["in"] += dirs.get("in", 0)
+        entry["out"] += dirs.get("out", 0)
+
+    await db.execute(delete(OperatorCallsDaily).where(OperatorCallsDaily.date == today))
+    for rid, a in agg.items():
+        db.add(
+            OperatorCallsDaily(
+                date=today,
+                responsible_id=rid,
+                responsible_name=a["name"],
+                calls_in=a["in"],
+                calls_out=a["out"],
+            )
+        )
+    await db.commit()
+    return len(agg)
+
+
 async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
-    """Bugungi kunning operator×bosqich kesimini CRM'dan to'liq skanerlab (sekin —
-    fon ishi) `lead_stage_daily`ga yozadi. CRM xatosida yozmaydi (mavjud snapshot
-    saqlanib qoladi). Bu funksiya scheduler tomonidan chaqiriladi; bot bevosita
-    chaqirmaydi (skaner bir necha daqiqa davom etadi)."""
+    """Bugungi kunning operator×bosqich (lidlar) va operator (qo'ng'iroqlar) kesimini
+    CRM'dan skanerlab bazaga yozadi. Lid skaneri sekin (butun baza, bir necha daqiqa),
+    qo'ng'iroq skaneri tez (call-history vaqt bo'yicha tartiblangan). CRM xatosida
+    tegishli qism yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
     adapter = get_crm_adapter(settings.crm_type)
     if not adapter:
         return {"synced": False, "reason": "CRM sozlanmagan"}
 
     today = today_local()
+
+    # Qo'ng'iroqlar (tez) — avval, chunki lid skaneri uzoq
+    calls_rows = await _snapshot_calls(db, adapter, today)
+
     rows = await adapter.get_daily_lead_breakdown(today)
     if rows is None:
-        return {"synced": False, "reason": "CRM'dan olib bo'lmadi"}
+        return {"synced": calls_rows >= 0, "reason": "Lidlarni CRM'dan olib bo'lmadi", "call_operators": calls_rows}
 
     await db.execute(delete(LeadStageDaily).where(LeadStageDaily.date == today))
     for row in rows:
@@ -226,7 +276,7 @@ async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
             )
         )
     await db.commit()
-    return {"synced": True, "date": today.isoformat(), "rows": len(rows)}
+    return {"synced": True, "date": today.isoformat(), "lead_rows": len(rows), "call_operators": calls_rows}
 
 
 @router.post("/lead-stages/sync", dependencies=[Depends(verify_bot_secret)])
@@ -262,10 +312,9 @@ async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMon
     month_end = date(year + 1, 1, 1) if mon == 12 else date(year, mon + 1, 1)
     last_day = min(today, month_end - timedelta(days=1)) if month_start <= today else month_end - timedelta(days=1)
 
-    # Kun × (jami, tashrif) — operatorlar bo'yicha yig'indi, bitta so'rovda. Tashrif
-    # nom bo'yicha ("Tashrif") aniqlanadi (kunlik ko'rinishdagi hisob bilan bir xil).
+    # Kun × (lidlar jami, tashrif) — operatorlar bo'yicha yig'indi. Tashrif nom bo'yicha.
     is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == VISIT_STAGE_NAME
-    rows = (
+    lead_rows = (
         await db.execute(
             select(
                 LeadStageDaily.date,
@@ -277,10 +326,33 @@ async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMon
             .order_by(LeadStageDaily.date)
         )
     ).all()
+    # Kun × gaplashilgan (qo'ng'iroqlar) — alohida jadvaldan
+    call_rows = (
+        await db.execute(
+            select(
+                OperatorCallsDaily.date,
+                func.sum(OperatorCallsDaily.calls_in + OperatorCallsDaily.calls_out),
+            )
+            .where(OperatorCallsDaily.date >= month_start, OperatorCallsDaily.date < month_end)
+            .group_by(OperatorCallsDaily.date)
+        )
+    ).all()
+    calls_by_day = {d: int(c) for d, c in call_rows}
 
-    days = [LeadStageDaySummary(date=d, total=int(total), visits=int(visits)) for d, total, visits in rows]
+    days = [
+        LeadStageDaySummary(date=d, calls=calls_by_day.get(d, 0), total=int(total), visits=int(visits))
+        for d, total, visits in lead_rows
+    ]
+    # Faqat qo'ng'iroq bo'lgan (lid snapshotisiz) kunlar ham ko'rinsin
+    lead_days = {d.date for d in days}
+    for d, c in calls_by_day.items():
+        if d not in lead_days:
+            days.append(LeadStageDaySummary(date=d, calls=c, total=0, visits=0))
+    days.sort(key=lambda x: x.date)
+
     return LeadStageMonthOut(
         month=month_key,
+        calls=sum(d.calls for d in days),
         total=sum(d.total for d in days),
         visits=sum(d.visits for d in days),
         days=days,
@@ -290,14 +362,17 @@ async def _build_lead_month(db: AsyncSession, month: str | None) -> LeadStageMon
 
 async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | None) -> LeadStageDayOut:
     """Kunlik ko'rinishni bazadan quradi (bot va web uchun umumiy). `responsible_id`
-    berilmasa — tashkilot jami + operatorlar ro'yxati; berilsa — bitta operator."""
+    berilmasa — tashkilot jami + operatorlar ro'yxati; berilsa — bitta operator.
+    Gaplashilgan (qo'ng'iroq) va lidlar bosqichlari birga qaytariladi."""
     base = select(LeadStageDaily).where(LeadStageDaily.date == day)
+    call_q = select(OperatorCallsDaily).where(OperatorCallsDaily.date == day)
     if responsible_id is not None:
         base = base.where(LeadStageDaily.responsible_id == responsible_id)
+        call_q = call_q.where(OperatorCallsDaily.responsible_id == responsible_id)
     records = list(await db.scalars(base))
+    call_records = list(await db.scalars(call_q))
 
-    # Bosqichlarni nom bo'yicha birlashtiramiz (bir necha voronkada bir xil nomli
-    # bosqich bo'lishi mumkin) — o'qish uchun qulayroq.
+    # Bosqichlarni nom bo'yicha birlashtiramiz.
     stage_agg: dict[str, int] = {}
     for r in records:
         stage_agg[r.stage_name] = stage_agg.get(r.stage_name, 0) + r.leads_count
@@ -306,26 +381,49 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
         for name, cnt in sorted(stage_agg.items(), key=lambda x: -x[1])
     ]
 
+    calls_in = sum(c.calls_in for c in call_records)
+    calls_out = sum(c.calls_out for c in call_records)
+
     responsible_name = None
     operators: list[LeadOperatorRow] = []
     if responsible_id is not None:
-        responsible_name = records[0].responsible_name if records else str(responsible_id)
+        responsible_name = (
+            (records[0].responsible_name if records else None)
+            or (call_records[0].responsible_name if call_records else None)
+            or str(responsible_id)
+        )
     else:
+        # Operatorlarni lidlar va qo'ng'iroqlardan birlashtiramiz (responsible_id bo'yicha)
         op_agg: dict[int, dict] = {}
         for r in records:
-            agg = op_agg.setdefault(
-                r.responsible_id, {"name": r.responsible_name, "total": 0, "visits": 0}
-            )
-            agg["total"] += r.leads_count
+            a = op_agg.setdefault(r.responsible_id, {"name": r.responsible_name, "total": 0, "visits": 0, "cin": 0, "cout": 0})
+            a["total"] += r.leads_count
             if _is_visit_name(r.stage_name):
-                agg["visits"] += r.leads_count
+                a["visits"] += r.leads_count
+        for c in call_records:
+            a = op_agg.setdefault(c.responsible_id, {"name": c.responsible_name, "total": 0, "visits": 0, "cin": 0, "cout": 0})
+            a["cin"] += c.calls_in
+            a["cout"] += c.calls_out
+            if not a.get("name"):
+                a["name"] = c.responsible_name
         operators = [
-            LeadOperatorRow(responsible_id=rid, responsible_name=a["name"], total=a["total"], visits=a["visits"])
-            for rid, a in sorted(op_agg.items(), key=lambda x: -x[1]["total"])
+            LeadOperatorRow(
+                responsible_id=rid,
+                responsible_name=a["name"],
+                calls=a["cin"] + a["cout"],
+                calls_in=a["cin"],
+                calls_out=a["cout"],
+                total=a["total"],
+                visits=a["visits"],
+            )
+            for rid, a in sorted(op_agg.items(), key=lambda x: -(x[1]["cin"] + x[1]["cout"] + x[1]["total"]))
         ]
 
     return LeadStageDayOut(
         date=day,
+        calls=calls_in + calls_out,
+        calls_in=calls_in,
+        calls_out=calls_out,
         total=sum(r.leads_count for r in records),
         visits=sum(r.leads_count for r in records if _is_visit_name(r.stage_name)),
         stages=stages,

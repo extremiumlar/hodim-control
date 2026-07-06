@@ -108,6 +108,58 @@ class UysotAdapter(CRMAdapter):
         self._day_cache[day_key] = counts
         return counts
 
+    async def get_daily_call_breakdown(self, day: date) -> dict[str, dict] | None:
+        """Shu kundagi qo'ng'iroqlarni `employeeNum` bo'yicha kiruvchi/chiquvchi kesimida
+        sanaydi: {employeeNum: {"in": int, "out": int}}. call-history `startStamp` bo'yicha
+        kamayish tartibida keladi, shuning uchun bugungi yozuvlardan eskirgani chiqquncha
+        sahifalanadi (tez — butun baza skanerlanmaydi). CRM xatosida `None`."""
+        if not CRM_API_KEY:
+            return None
+
+        start_ts, end_ts = day_bounds_unix(day)
+        breakdown: dict[str, dict] = {}
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC:
+                    resp = await client.post(
+                        "/call-history/filter",
+                        json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+
+                    reached_older_record = False
+                    for record in records:
+                        ts = record.get("startStamp")
+                        if ts is None:
+                            continue
+                        if ts < start_ts:
+                            reached_older_record = True
+                            continue
+                        if start_ts <= ts <= end_ts:
+                            employee_num = record.get("employeeNum")
+                            if not employee_num:
+                                continue
+                            entry = breakdown.setdefault(employee_num, {"in": 0, "out": 0})
+                            if record.get("callDirection") == "INBOUND":
+                                entry["in"] += 1
+                            else:
+                                # OUTBOUND yoki noma'lum — chiquvchi deb hisoblaymiz
+                                entry["out"] += 1
+
+                    if reached_older_record or page >= body.get("totalPages", page):
+                        break
+                    page += 1
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan qo'ng'iroq breakdown olishda xatolik (day=%s)", day)
+                return None
+
+        return breakdown
+
     async def _load_day_visits(self, client: httpx.AsyncClient, day: date) -> dict[str, dict]:
         """"Tashrif" bosqichidagi (`CRM_UYSOT_VISIT_PIPE_STATUS_ID`) lidlarni sahifalab
         o'qib, `responsibleById` bo'yicha shu kunda tahrirlanganlarni sanaydi. Har bir

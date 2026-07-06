@@ -214,6 +214,28 @@ class LeadStageDaily(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class OperatorCallsDaily(Base):
+    """CRM (Uysot) qo'ng'iroqlarining kunlik snapshot'i — operator kesimida
+    (kiruvchi/chiquvchi). "Gaplashilgan lidlar" (suhbatlar) aynan shu — call-history'dan.
+
+    Qo'ng'iroqlar `employeeNum` (email) bo'yicha keladi; snapshot paytida u tizim
+    foydalanuvchisining `crm_external_id`i orqali `crm_visit_external_id`iga
+    (`responsibleById`) o'giriladi — shunda qo'ng'iroqlar lid bosqichlari bilan bir xil
+    operator qatoriga tushadi. Bog'lanmagan `employeeNum`lar `responsible_id=0`
+    ("Boshqa") ostida jamlanadi (tashkilot jami to'g'ri bo'lishi uchun)."""
+
+    __tablename__ = "operator_calls_daily"
+    __table_args__ = (UniqueConstraint("date", "responsible_id", name="uq_operator_calls_daily_grain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    responsible_id: Mapped[int] = mapped_column(Integer)  # 0 = bog'lanmagan (Boshqa)
+    responsible_name: Mapped[str] = mapped_column(String(255))
+    calls_in: Mapped[int] = mapped_column(Integer, default=0)
+    calls_out: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
