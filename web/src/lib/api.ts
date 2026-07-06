@@ -235,6 +235,8 @@ export const api = {
   listTasks: (dateFilter = "today") => apiFetch<Task[]>(`/tasks?date_filter=${dateFilter}`),
   createTask: (data: { assigned_to: number; title: string; description?: string; deadline?: string | null }) =>
     apiFetch<Task>("/tasks", { method: "POST", body: JSON.stringify(data) }),
+  cancelTask: (taskId: number) => apiFetch<Task>(`/tasks/${taskId}/cancel`, { method: "POST" }),
+  deleteTask: (taskId: number) => apiFetch<{ deleted: boolean }>(`/tasks/${taskId}`, { method: "DELETE" }),
   listExcusedDays: (statusFilter?: string) =>
     apiFetch<ExcusedDay[]>(`/excused-days${statusFilter ? `?status_filter=${statusFilter}` : ""}`),
   teamNorms: () => apiFetch<TeamNormRow[]>("/norms/team"),

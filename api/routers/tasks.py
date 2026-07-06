@@ -148,6 +148,26 @@ async def _resolve_assignee(db: AsyncSession, actor: User, assigned_to: int) -> 
     return assignee
 
 
+def _can_manage_existing_task(actor: User, assignee: User) -> bool:
+    """Mavjud vazifani bekor qilish uchun — `_can_assign` bilan bir xil rol
+    ierarxiyasi, lekin "yangi vazifa berish"ga xos cheklovlarsiz (masalan xodim
+    keyinchalik faolsizlantirilgan bo'lsa ham, avvalgi vazifasini bekor qilish
+    kerak bo'lishi mumkin): Dasturchi — hammaga; Boshliq — ROP/HR/xodimlarga;
+    ROP — o'z jamoasi yoki lavozimi orqali boshqaradigan xodimlarga."""
+    if actor.role == Role.dasturchi.value:
+        return True
+    if actor.role == Role.boss.value:
+        return assignee.role in {Role.employee.value, Role.rop.value, Role.hr.value}
+    if actor.role == Role.rop.value:
+        if assignee.role != Role.employee.value:
+            return False
+        if assignee.manager_id == actor.id:
+            return True
+        position = assignee.position
+        return bool(position and position.managed_by_roles and Role.rop.value in position.managed_by_roles)
+    return False
+
+
 @router.post("", response_model=TaskOut)
 async def create_task(
     payload: TaskCreate,
@@ -372,3 +392,73 @@ async def complete_task(task_id: int, payload: TaskCompleteRequest, db: AsyncSes
     await db.commit()
     await db.refresh(task)
     return await _to_out(task, db)
+
+
+@router.post("/{task_id}/cancel", response_model=TaskOut)
+async def cancel_task(
+    task_id: int,
+    actor: User = Depends(require_roles(Role.boss.value, Role.rop.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    """Vazifani bekor qiladi (status=cancelled) — o'chirilmaydi, tarix audit
+    jurnalida saqlanadi. Boshliq/ROP/Dasturchi uchun; ROP faqat o'zi boshqaradigan
+    xodimning vazifasini bekor qila oladi. Butunlay o'chirish uchun (Dasturchi)
+    `DELETE /tasks/{id}`dan foydalaning."""
+    task = await db.get(TaskModel, task_id)
+    if not task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vazifa topilmadi")
+
+    assignee = await db.get(User, task.assigned_to)
+    if not assignee or not _can_manage_existing_task(actor, assignee):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu vazifani bekor qilish huquqingiz yo'q")
+
+    if task.status == TaskStatus.cancelled.value:
+        return await _to_out(task, db)  # idempotent
+    if task.status == TaskStatus.done.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bajarilgan vazifani bekor qilib bo'lmaydi")
+
+    before_status = task.status
+    task.status = TaskStatus.cancelled.value
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="task_cancelled",
+            target_user_id=assignee.id,
+            before={"status": before_status},
+            after={"status": TaskStatus.cancelled.value},
+        )
+    )
+    await db.commit()
+    await db.refresh(task)
+
+    if assignee.telegram_id:
+        await send_message(assignee.telegram_id, f"❌ Vazifangiz bekor qilindi:\n{html.escape(task.title)}")
+
+    return await _to_out(task, db)
+
+
+@router.delete("/{task_id}")
+async def delete_task(
+    task_id: int,
+    actor: User = Depends(require_roles(Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Vazifani bazadan butunlay o'chiradi. Faqat Dasturchi uchun — Boshliq/ROP
+    "Bekor qilish" (`POST /{id}/cancel`, tarix saqlanadi) bilan cheklanadi."""
+    task = await db.get(TaskModel, task_id)
+    if not task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vazifa topilmadi")
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="task_deleted",
+            target_user_id=task.assigned_to,
+            before={"id": task.id, "title": task.title, "status": task.status},
+            after=None,
+        )
+    )
+    await db.delete(task)
+    await db.commit()
+    return {"deleted": True}

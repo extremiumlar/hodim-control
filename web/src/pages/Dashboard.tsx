@@ -37,12 +37,15 @@ const BULK_MODES: { key: string; label: string; targetType: "all_employees" | "r
 export default function Dashboard() {
   const { user } = useAuth();
   const canBulk = user?.role === "boss" || user?.role === "dasturchi";
+  const canCancel = user?.role === "boss" || user?.role === "rop" || user?.role === "dasturchi";
+  const isDasturchi = user?.role === "dasturchi";
   const [tasks, setTasks] = useState<Task[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<User[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [actingTaskId, setActingTaskId] = useState<number | null>(null);
 
   // "single" — bitta odamga; "all"/"rops"/"hrs"/"rophr" — ommaviy; "pos:<id>" — lavozimga
   const [targetMode, setTargetMode] = useState("single");
@@ -129,6 +132,34 @@ export default function Dashboard() {
       setError(e instanceof Error ? e.message : "Vazifa yaratishda xatolik");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleCancelTask = async (taskId: number) => {
+    if (!window.confirm("Bu vazifani bekor qilishni tasdiqlaysizmi?")) return;
+    setActingTaskId(taskId);
+    setError(null);
+    try {
+      await api.cancelTask(taskId);
+      await load(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bekor qilishda xatolik");
+    } finally {
+      setActingTaskId(null);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: number) => {
+    if (!window.confirm("Bu vazifani bazadan BUTUNLAY o'chirmoqchimisiz? Bu amalni ortga qaytarib bo'lmaydi.")) return;
+    setActingTaskId(taskId);
+    setError(null);
+    try {
+      await api.deleteTask(taskId);
+      await load(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Butunlay o'chirishda xatolik");
+    } finally {
+      setActingTaskId(null);
     }
   };
 
@@ -232,23 +263,51 @@ export default function Dashboard() {
                 <th className="py-2">Vazifa</th>
                 <th className="py-2">Muddat</th>
                 <th className="py-2">Holat</th>
+                {(canCancel || isDasturchi) && <th className="py-2"></th>}
               </tr>
             </thead>
             <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id} className="border-b last:border-0">
-                  <td className="py-2">
-                    <Link to={`/employees/${task.assigned_to}`} className="text-indigo-600 hover:underline">
-                      {task.assigned_to_name}
-                    </Link>
-                  </td>
-                  <td className="py-2">{task.title}</td>
-                  <td className="py-2">
-                    {task.deadline ? new Date(task.deadline).toLocaleString() : "—"}
-                  </td>
-                  <td className="py-2">{STATUS_LABELS[task.status] ?? task.status}</td>
-                </tr>
-              ))}
+              {tasks.map((task) => {
+                const canCancelThis = canCancel && task.status !== "done" && task.status !== "cancelled";
+                return (
+                  <tr key={task.id} className="border-b last:border-0">
+                    <td className="py-2">
+                      <Link to={`/employees/${task.assigned_to}`} className="text-indigo-600 hover:underline">
+                        {task.assigned_to_name}
+                      </Link>
+                    </td>
+                    <td className="py-2">{task.title}</td>
+                    <td className="py-2">
+                      {task.deadline ? new Date(task.deadline).toLocaleString() : "—"}
+                    </td>
+                    <td className="py-2">{STATUS_LABELS[task.status] ?? task.status}</td>
+                    {(canCancel || isDasturchi) && (
+                      <td className="py-2 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-3">
+                          {canCancelThis && (
+                            <button
+                              onClick={() => handleCancelTask(task.id)}
+                              disabled={actingTaskId === task.id}
+                              className="text-amber-600 hover:underline text-xs disabled:opacity-50"
+                            >
+                              Bekor qilish
+                            </button>
+                          )}
+                          {isDasturchi && (
+                            <button
+                              onClick={() => handleDeleteTask(task.id)}
+                              disabled={actingTaskId === task.id}
+                              className="text-red-800 hover:underline text-xs font-medium disabled:opacity-50"
+                            >
+                              Butunlay o'chirish
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
