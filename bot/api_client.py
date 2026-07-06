@@ -238,3 +238,27 @@ async def trigger_call_stats(chat_id: int | None = None) -> dict:
     resp = await _get_client().post("/reports/call-stats", json={"chat_id": chat_id})
     resp.raise_for_status()
     return resp.json()
+
+
+async def lead_stage_month(telegram_id: int, month: str | None = None) -> dict | None:
+    """Oylik lidlar statistikasi (CRM bosqichlari kesimida). Joriy oy uchun bugungi
+    ma'lumot CRM'dan jonli yangilanadi, shuning uchun so'rov sekin bo'lishi mumkin —
+    umumiy clientning 10s timeout'i o'rniga kengroq berilgan. Ruxsat bo'lmasa None."""
+    resp = await _get_client().get(
+        f"/stats/lead-stages/{telegram_id}",
+        params={"month": month} if month else None,
+        timeout=60,
+    )
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def lead_stage_day(telegram_id: int, day: str) -> dict | None:
+    """Bir kunning bosqich-kesimidagi lid statistikasi (day — ISO sana). Ruxsat bo'lmasa None."""
+    resp = await _get_client().get(f"/stats/lead-stages/{telegram_id}/day/{day}", timeout=60)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()

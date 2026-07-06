@@ -185,6 +185,25 @@ class Bonus(Base):
     breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class LeadStageDaily(Base):
+    """CRM (Uysot) lidlarining kunlik bosqich-kesimidagi snapshot'i — butun tashkilot
+    bo'yicha (xodimga bog'lanmagan). CRM API o'tgan kunlar tarixini bermaydi (faqat
+    lidning oxirgi `updatedTimestamp`i bor), shuning uchun har kunning yakuniy holati
+    shu jadvalda muzlatib qo'yiladi va oylik statistika shu yerdan o'qiladi."""
+
+    __tablename__ = "lead_stage_daily"
+    __table_args__ = (UniqueConstraint("date", "pipe_status_id", name="uq_lead_stage_daily_date_status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    pipe_status_id: Mapped[int] = mapped_column(Integer)
+    # Bosqich nomi snapshot paytida saqlanadi — CRM'da bosqich o'chirilsa/qayta nomlansa
+    # ham eski kunlar statistikasi o'qiladigan bo'lib qoladi.
+    stage_name: Mapped[str] = mapped_column(String(255))
+    leads_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

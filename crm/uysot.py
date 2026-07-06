@@ -51,6 +51,10 @@ class UysotAdapter(CRMAdapter):
         # tizimdagi foydalanuvchi bilan qo'lda (email o'rniga ism bo'yicha) bog'lashda
         # foydalaniladi (`get_all_daily_visit_operators`).
         self._visit_day_cache: dict[str, dict[str, dict]] = {}
+        # pipe_status_id -> bosqich nomi (/pipe/all dan, jarayon davomida bir marta olinadi)
+        self._pipe_status_names: dict[int, str] | None = None
+        # day_key -> {pipe_status_id: count} — shu kunda yangilangan lidlar bosqich kesimida
+        self._stage_day_cache: dict[str, dict[int, int]] = {}
 
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
@@ -147,6 +151,97 @@ class UysotAdapter(CRMAdapter):
 
         self._visit_day_cache[day_key] = entries
         return entries
+
+    async def _load_pipe_status_names(self, client: httpx.AsyncClient) -> dict[int, str]:
+        """`/pipe/all` dan barcha voronkalar bosqichlarining {id: nom} lug'ati.
+        Lid javobida faqat `pipeStatusId` keladi, nom shu lug'atdan olinadi."""
+        if self._pipe_status_names is not None:
+            return self._pipe_status_names
+
+        resp = await client.get("/pipe/all")
+        resp.raise_for_status()
+        names: dict[int, str] = {}
+        for pipe in resp.json().get("data") or []:
+            for stage in pipe.get("pipeStatuses") or []:
+                if stage.get("id") is not None and stage.get("name"):
+                    names[stage["id"]] = stage["name"]
+        self._pipe_status_names = names
+        return names
+
+    async def _load_day_stage_counts(self, client: httpx.AsyncClient, day: date) -> dict[int, int]:
+        """Shu kunda yangilangan (`updatedTimestamp`) barcha lidlarni bosqich bo'yicha
+        sanaydi — call-history bilan bir xil "eskirgan yozuvga yetguncha sahifala"
+        strategiyasi, lekin bosqich filtrisiz (barcha bosqichlar)."""
+        day_key = day.isoformat()
+        if day_key in self._stage_day_cache:
+            return self._stage_day_cache[day_key]
+
+        start_ts, end_ts = day_bounds_unix(day)
+        counts: dict[int, int] = {}
+        page = 1
+
+        while page <= MAX_PAGES_PER_SYNC:
+            resp = await client.post(
+                "/lead/filter",
+                json={"page": page, "size": LEAD_FILTER_PAGE_SIZE},
+            )
+            resp.raise_for_status()
+            body = resp.json()["data"]
+            records = body.get("data", [])
+            if not records:
+                break
+
+            reached_older_record = False
+            for record in records:
+                ts = record.get("updatedTimestamp")
+                if ts is None:
+                    continue
+                if ts < start_ts:
+                    reached_older_record = True
+                    continue
+                if start_ts <= ts <= end_ts:
+                    status_id = record.get("pipeStatusId")
+                    if status_id is not None:
+                        counts[status_id] = counts.get(status_id, 0) + 1
+
+            if reached_older_record or page >= body.get("totalPages", page):
+                break
+            page += 1
+        else:
+            logger.warning(
+                "Uysot lead (bosqich statistikasi) skanerlash %s sahifada to'xtatildi (xavfsizlik chegarasi)",
+                MAX_PAGES_PER_SYNC,
+            )
+
+        self._stage_day_cache[day_key] = counts
+        return counts
+
+    async def get_daily_stage_counts(self, day: date) -> list[dict] | None:
+        """Kunlik lid statistikasi bosqichlar kesimida (snapshot uchun).
+
+        Muhim cheklov: `updatedTimestamp` bo'yicha taxminiy hisob — lid keyingi kuni
+        yana tahrirlansa, avvalgi kun oynasidan "chiqib ketadi". Shuning uchun o'tgan
+        kunlar bu metod bilan qayta hisoblanmaydi — kun yakunidagi holat
+        `lead_stage_daily` jadvalida muzlatiladi."""
+        if not CRM_API_KEY:
+            return None
+
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                counts = await self._load_day_stage_counts(client, day)
+                names = await self._load_pipe_status_names(client)
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan bosqich statistikasini olishda xatolik (day=%s)", day)
+                return None
+
+        return [
+            {
+                "pipe_status_id": status_id,
+                "stage_name": names.get(status_id, f"Bosqich #{status_id}"),
+                "count": count,
+            }
+            for status_id, count in counts.items()
+        ]
 
     async def get_daily_results(self, user, day: date) -> dict | None:
         """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi

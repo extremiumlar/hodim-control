@@ -374,6 +374,40 @@ class MyStatsOut(BaseModel):
     excused_days: int  # shu oyda tasdiqlangan sababli kunlar
 
 
+class LeadStageRow(BaseModel):
+    """Bitta pipeline bosqichi bo'yicha kunlik lidlar soni (CRM snapshot'idan)."""
+
+    pipe_status_id: int
+    stage_name: str
+    count: int
+
+
+class LeadStageDayOut(BaseModel):
+    """Bir kunning lid statistikasi bosqichlar kesimida — botdagi "Lidlar
+    statistikasi" kun tafsiloti."""
+
+    date: date
+    total: int  # shu kunda ishlangan (yangilangan) lidlar jami
+    visits: int  # "Tashrif" bosqichidagi lidlar (CRM_UYSOT_VISIT_PIPE_STATUS_ID)
+    stages: list[LeadStageRow]
+
+
+class LeadStageDaySummary(BaseModel):
+    date: date
+    total: int
+    visits: int
+
+
+class LeadStageMonthOut(BaseModel):
+    """Oylik ko'rinish: har kun uchun jami lidlar va tashriflar (tafsilot kun
+    bo'yicha alohida so'raladi)."""
+
+    month: str  # "YYYY-MM"
+    total: int
+    visits: int
+    days: list[LeadStageDaySummary]
+
+
 class CRMWebhookPayload(BaseModel):
     crm_external_id: str
     date: date

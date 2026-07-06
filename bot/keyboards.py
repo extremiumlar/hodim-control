@@ -8,6 +8,7 @@ BTN_EXCUSED = "🙋 Sababli kun so'rash"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
+BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
 BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
 BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
 BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
@@ -22,12 +23,22 @@ MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 DEFAULT_MENU_FLAGS = {"tasks": True, "norm": True, "kpi": True, "excused": True}
 
 
-def main_menu(role: str, menu_flags: dict | None = None) -> ReplyKeyboardMarkup:
+def main_menu(
+    role: str, menu_flags: dict | None = None, metrics: list | None = None
+) -> ReplyKeyboardMarkup:
     """Asosiy menyu — xodimning lavozimiga (`menu_flags`) qarab moslashadi.
 
     "📈 Statistikam" har doim ko'rinadi (har bir xodim o'z statistikasini olishi
-    mumkin); rahbar rollarga qo'shimcha boshqaruv tugmalari chiqadi."""
+    mumkin); rahbar rollarga qo'shimcha boshqaruv tugmalari chiqadi.
+
+    "🧲 Lidlar statistikasi" — rahbar rollarga hamda sotuv operatorlariga (lavozim
+    ko'rsatkichlarida suhbat/tashrif borlarga; lavozim biriktirilmagan bo'lsa —
+    backend defaulti bilan mos ravishda ko'rinadi). Haqiqiy ruxsat backendda
+    tekshiriladi — tugma faqat qulaylik."""
     flags = {**DEFAULT_MENU_FLAGS, **(menu_flags or {})}
+    # Backend metrics_for() bilan bir xil default: lavozim yo'q — suhbat+tashrif
+    sales_metrics = {"suhbat", "tashrif"} & set(metrics if metrics is not None else ["suhbat", "tashrif"])
+    show_lead_stats = role in MANAGER_ROLES or bool(sales_metrics)
 
     rows: list[list[KeyboardButton]] = []
     if flags.get("tasks"):
@@ -46,9 +57,13 @@ def main_menu(role: str, menu_flags: dict | None = None) -> ReplyKeyboardMarkup:
         stats_row.append(KeyboardButton(text=BTN_EXCUSED))
     rows.append(stats_row)
 
+    if show_lead_stats and role not in MANAGER_ROLES:
+        rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
+
     if role in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
         rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
+        rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
         if role in {"boss", "dasturchi"}:
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
@@ -64,7 +79,7 @@ def menu_for_user(user: dict | None) -> ReplyKeyboardMarkup:
     quradi — barcha handlerlar uchun umumiy yordamchi."""
     role = user.get("role", "employee") if user else "employee"
     position = (user or {}).get("position") or {}
-    return main_menu(role, position.get("menu_flags"))
+    return main_menu(role, position.get("menu_flags"), position.get("metrics"))
 
 
 def cancel_menu() -> ReplyKeyboardMarkup:

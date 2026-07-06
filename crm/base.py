@@ -35,6 +35,14 @@ class CRMAdapter(ABC):
         buyrug'i uchun). Qo'llab-quvvatlamaydigan adapterlar bo'sh dict qaytaradi."""
         return {}
 
+    async def get_daily_stage_counts(self, day: date) -> list[dict] | None:
+        """Ixtiyoriy: shu kunda ishlangan (yangilangan) lidlarni pipeline bosqichlari
+        kesimida sanaydi — {"pipe_status_id": int, "stage_name": str, "count": int}
+        ro'yxati. CRM'dan olib bo'lmasa (xatolik) `None` — chaqiruvchi mavjud
+        snapshot'ni ustidan yozmasligi kerak. Qo'llab-quvvatlamaydigan adapterlar
+        `None` qaytaradi."""
+        return None
+
     async def get_all_daily_visit_operators(self, day: date) -> list[dict]:
         """Ixtiyoriy: shu kunda tashrif qayd etilgan har bir operator/managerning
         {"responsible_id": str, "responsible_name": str, "visits": int} ko'rinishidagi
