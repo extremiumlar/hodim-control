@@ -8,6 +8,7 @@ from api.routers import (
     bonuses,
     daily_results,
     excused_days,
+    hourly_plan,
     mobilograf,
     norms,
     positions,
@@ -41,6 +42,7 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
+app.include_router(hourly_plan.router)
 
 
 @app.get("/health")

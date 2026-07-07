@@ -75,6 +75,18 @@ async def snapshot_lead_stages() -> None:
             logger.exception("Lid statistikasi snapshot'ida xatolik")
 
 
+async def send_hourly_plan() -> None:
+    """Har soat boshida ish vaqtidagi xodimlarga soatlik reja + progressni yuboradi.
+    API ish oynasidan tashqarida/dam kunida hech kimga yubormaydi (o'zi filtrlaydi)."""
+    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
+        try:
+            resp = await client.post("/hourly-plan/send")
+            resp.raise_for_status()
+            logger.info("Soatlik reja yuborildi: %s", resp.json())
+        except httpx.HTTPError:
+            logger.exception("Soatlik rejani yuborishda xatolik")
+
+
 async def calculate_monthly_bonus() -> None:
     """Bu job muvaffaqiyatsiz bo'lsa, xodimlarga bonus umuman hisoblanmay qoladi —
     shuning uchun natija har doim (muvaffaqiyatli/muvaffaqiyatsiz) aniq log'ga yoziladi.
@@ -114,6 +126,15 @@ async def main() -> None:
     )
 
     scheduler.add_job(sync_daily_results, IntervalTrigger(seconds=CRM_SYNC_INTERVAL_SECONDS))
+
+    # Soatlik reja eslatmasi — har soat boshida (:00). API faqat ayni damда ish
+    # vaqtida bo'lgan, normasi bor xodimlarga yuboradi (off-hours hech kimga).
+    scheduler.add_job(
+        send_hourly_plan,
+        CronTrigger(minute=0, timezone=TIMEZONE),
+        misfire_grace_time=600,
+        coalesce=True,
+    )
 
     # Lid statistikasi snapshoti: butun bazani skanerlagani uchun sekin va og'ir
     # (rate-limit), shuning uchun tez-tez emas — har LEAD_SNAPSHOT_INTERVAL_MINUTES

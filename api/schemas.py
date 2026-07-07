@@ -527,3 +527,27 @@ class WorkWeekOut(BaseModel):
     user_id: int
     user_full_name: str
     days: list[EffectiveDay]
+
+
+# --- Soatlik reja (hourly plan) ---
+
+
+class HourlyMetricStatus(BaseModel):
+    key: str
+    label: str
+    norm: int  # kunlik norma
+    per_hour: float  # soatiga o'rtacha
+    this_hour_target: int  # bu soatda qilish kerak
+    cumulative_target: int  # shu paytgacha bo'lishi kerak
+    actual: int  # haqiqatda bajarilgan (CRM)
+    delta: int  # actual - cumulative_target (+ oldinda, - orqada)
+
+
+class HourlyPlanOut(BaseModel):
+    date: date
+    is_working: bool
+    start_time: str | None = None
+    end_time: str | None = None
+    now: str | None = None  # "HH:MM"
+    metrics: list[HourlyMetricStatus] = []
+    text: str  # botga tayyor HTML matn

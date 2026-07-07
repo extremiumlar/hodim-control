@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     crm_type: str = "none"
     crm_webhook_secret: str = ""
 
+    # Soatlik reja avtomatik eslatmasi — haqiqiy xodimlarga Telegram xabar yuboradi,
+    # shuning uchun default O'CHIQ. Ishga tushirishga tayyor bo'lganda .env'da
+    # HOURLY_PLAN_ENABLED=true qo'ying. (Botdagi "Bugungi rejam" tugmasi bundan
+    # qat'i nazar ishlaydi — u xodimning o'zi ochishi, push emas.)
+    hourly_plan_enabled: bool = False
+
     @field_validator("telegram_group_chat_id", mode="before")
     @classmethod
     def _empty_group_id_to_zero(cls, value: object) -> object:

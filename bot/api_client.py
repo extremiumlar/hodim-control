@@ -289,6 +289,15 @@ async def my_lead_stage_day(telegram_id: int, day: str) -> dict | None:
     return resp.json()
 
 
+async def my_hourly_plan(telegram_id: int) -> dict | None:
+    """Xodimning bugungi soatma-soat rejasi + progressi (hozirgi holatga qarab)."""
+    resp = await _get_client().get(f"/hourly-plan/{telegram_id}/me")
+    if resp.status_code in (400, 403, 404):
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def my_work_week(telegram_id: int, start: str | None = None) -> dict | None:
     """Xodimning O'Z haftalik ish jadvali (start — hafta ichidagi istalgan sana)."""
     resp = await _get_client().get(

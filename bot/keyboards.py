@@ -10,6 +10,7 @@ BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
 BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
 BTN_SCHEDULE = "🗓 Ish jadvali"
+BTN_HOURLY_PLAN = "📋 Bugungi rejam"
 BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
 BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
 BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
@@ -60,6 +61,10 @@ def main_menu(
 
     # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
     rows.append([KeyboardButton(text=BTN_SCHEDULE)])
+
+    # Soatlik reja — xodimlarga (kunlik normani soatlarga bo'lib ko'rsatadi)
+    if role not in MANAGER_ROLES:
+        rows.append([KeyboardButton(text=BTN_HOURLY_PLAN)])
 
     if show_lead_stats and role not in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
