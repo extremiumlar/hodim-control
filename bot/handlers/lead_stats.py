@@ -111,8 +111,8 @@ def _day_keyboard(data: dict, personal: bool = False) -> InlineKeyboardMarkup:
     d = data["date"]
     rows: list[list[InlineKeyboardButton]] = []
     if personal:
-        # Xodim o'z kunidan o'z oyiga qaytadi (operatorlar ro'yxati yo'q)
-        rows.append([InlineKeyboardButton(text="⬅️ Oyga qaytish", callback_data="leadstats:mmonth")])
+        # Xodim: o'z oyi / boshqa kunlar
+        rows.append([InlineKeyboardButton(text="📅 Boshqa kunlar", callback_data="leadstats:mmonth")])
     elif data.get("responsible_id") is not None:
         # Rahbar: operator ko'rinishidan kunning umumiysiga qaytish
         rows.append([InlineKeyboardButton(text="⬅️ Kun umumiysi", callback_data=f"leadstats:d:{d}")])
@@ -122,7 +122,7 @@ def _day_keyboard(data: dict, personal: bool = False) -> InlineKeyboardMarkup:
             rows.append(
                 [InlineKeyboardButton(text=label, callback_data=f"leadstats:op:{d}:{op['responsible_id']}")]
             )
-        rows.append([InlineKeyboardButton(text="⬅️ Oyga qaytish", callback_data="leadstats:month")])
+        rows.append([InlineKeyboardButton(text="📅 Boshqa kunlar", callback_data="leadstats:month")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -132,28 +132,52 @@ NO_CRM_ID = (
 )
 
 
+def _default_day(month_data: dict, today_iso: str) -> str:
+    """Boshlang'ich kun: bugun ma'lumoti bo'lsa bugun, aks holda eng so'nggi ma'lumotli
+    kun (ma'lumot umuman bo'lmasa — baribir bugun, bo'sh ko'rinish bilan)."""
+    days = [d["date"] for d in month_data.get("days", [])]
+    if today_iso in days:
+        return today_iso
+    return days[-1] if days else today_iso
+
+
 @router.message(F.text == BTN_LEAD_STATS)
 async def show_lead_stats(message: Message, state: FSMContext) -> None:
-    """Lidlar statistikasi. Rahbarlar (HR/ROP/Boshliq/Dasturchi) butun tashkilotni +
-    operator kesimini ko'radi; sotuv operatorlari faqat O'Z statistikasini ko'radi."""
+    """Lidlar statistikasi. Tugma bosilishi bilan darhol BUGUNGI to'liq kunlik
+    statistika chiqadi (oy/kun tanlamasdan). Rahbarlar (HR/ROP/Boshliq/Dasturchi)
+    butun tashkilot + operator kesimini ko'radi; sotuv operatorlari faqat O'Z
+    statistikasini. Boshqa kunlar/oy — "📅 Boshqa kunlar" tugmasi orqali."""
     await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or not user.get("is_active"):
         await message.answer(NO_PERMISSION)
         return
 
-    if user["role"] in MANAGER_ROLES:
-        data = await api_client.lead_stage_month(message.from_user.id)
-        if data is None:
-            await message.answer(NO_PERMISSION)
-            return
-        await message.answer(_month_text(data), reply_markup=_month_keyboard(data))
+    today = datetime.now(TASHKENT_TZ).date().isoformat()
+    is_manager = user["role"] in MANAGER_ROLES
+
+    # Oylik ma'lumotdan boshlang'ich kunni aniqlaymiz: bugun ma'lumoti bo'lsa bugun,
+    # aks holda eng so'nggi ma'lumotli kun (kun boshida bo'sh chiqmasligi uchun).
+    month = (
+        await api_client.lead_stage_month(message.from_user.id)
+        if is_manager
+        else await api_client.my_lead_stage_month(message.from_user.id)
+    )
+    if month is None:
+        await message.answer(NO_PERMISSION if is_manager else NO_CRM_ID)
+        return
+    day_iso = _default_day(month, today)
+
+    if is_manager:
+        data = await api_client.lead_stage_day(message.from_user.id, day_iso)
+        markup = _day_keyboard(data) if data else None
     else:
-        data = await api_client.my_lead_stage_month(message.from_user.id)
-        if data is None:
-            await message.answer(NO_CRM_ID)
-            return
-        await message.answer(_month_text(data), reply_markup=_month_keyboard(data, personal=True))
+        data = await api_client.my_lead_stage_day(message.from_user.id, day_iso)
+        markup = _day_keyboard(data, personal=True) if data else None
+    if data is None:
+        await message.answer(NO_PERMISSION if is_manager else NO_CRM_ID)
+        return
+    await message.answer(_day_text(data), reply_markup=markup)
 
 
 # --- Rahbar (tashkilot) oqimi ---
