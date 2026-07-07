@@ -19,6 +19,17 @@ router = APIRouter(prefix="/hourly-plan", tags=["hourly-plan"])
 WEEKDAYS_UZ = ["Dush", "Sesh", "Chor", "Pay", "Jum", "Shan", "Yak"]
 DEFAULT_START = "09:00"
 DEFAULT_END = "18:00"
+# Tushlik tanaffusi — reja hisobidan chiqariladi (ish soatiga kirmaydi).
+LUNCH_START = 13 * 60  # 13:00
+LUNCH_END = 14 * 60  # 14:00
+
+
+def _work_minutes(a: int, b: int) -> int:
+    """[a, b) oralig'idagi ish daqiqalari — tushlik (13:00–14:00) ayirilgan holda."""
+    if b <= a:
+        return 0
+    lunch_overlap = max(0, min(b, LUNCH_END) - max(a, LUNCH_START))
+    return (b - a) - lunch_overlap
 
 
 def _to_min(hm: str) -> int:
@@ -67,11 +78,12 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
         )
 
     start_min, end_min = _to_min(start), _to_min(end)
-    total = max(end_min - start_min, 1)
+    total = max(_work_minutes(start_min, end_min), 1)  # tushliksiz ish daqiqalari
     total_hours = total / 60
     now_min = now.hour * 60 + now.minute
-    elapsed = min(max(now_min - start_min, 0), total)
+    elapsed = _work_minutes(start_min, min(max(now_min, start_min), end_min))
     frac = elapsed / total
+    in_lunch = start_min <= now_min < end_min and LUNCH_START <= now_min < LUNCH_END
 
     metric_rows = await today_metric_rows(db, user)
     statuses: list[HourlyMetricStatus] = []
@@ -91,7 +103,7 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
         )
 
     now_hm = f"{now.hour:02d}:{now.minute:02d}"
-    lines = [header, f"🕘 Ish vaqti: {start}–{end} | Hozir: {now_hm}", ""]
+    lines = [header, f"🕘 Ish vaqti: {start}–{end} (tushlik 13:00–14:00) | Hozir: {now_hm}", ""]
 
     if not statuses:
         lines.append("Sizga hali kunlik norma belgilanmagan — rahbaringizga murojaat qiling.")
@@ -109,18 +121,24 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
                 lines.append(f"  Ish {start} da boshlanadi (soatiga ~{s.this_hour_target} ta)")
             elif after_end:
                 lines.append("  Ish vaqti tugadi")
+            elif in_lunch:
+                lines.append("  🍽 Hozir tushlik vaqti (13:00–14:00)")
             else:
                 lines.append(f"  ⏱ Bu soatda: ~{s.this_hour_target} ta")
             lines.append("")
-        # Soatlik reja jadvali (birinchi ko'rsatkich bo'yicha)
+        # Soatlik reja jadvali (birinchi ko'rsatkich bo'yicha) — tushlik blogi belgilanadi
         first = statuses[0]
         blocks = []
         b = start_min
         while b < end_min:
             b2 = min(b + 60, end_min)
-            blocks.append(f"{b // 60:02d}:{b % 60:02d}–{b2 // 60:02d}:{b2 % 60:02d}")
+            label = f"{b // 60:02d}:{b % 60:02d}–{b2 // 60:02d}:{b2 % 60:02d}"
+            if _work_minutes(b, b2) == 0:  # to'liq tushlik blogi
+                blocks.append(f"{label} 🍽")
+            else:
+                blocks.append(f"{label}: {first.this_hour_target}")
             b += 60
-        lines.append(f"📊 Soatlik reja ({first.label.lower()}): har blokda ~{first.this_hour_target} ta")
+        lines.append(f"📊 Soatlik reja ({first.label.lower()}):")
         lines.append(" · ".join(blocks))
 
     return HourlyPlanOut(
