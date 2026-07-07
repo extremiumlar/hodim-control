@@ -15,6 +15,7 @@ from api.routers import (
     stats,
     tasks,
     users,
+    work_schedule,
 )
 
 app = FastAPI(title="Xodimlar KPI/Bonus tizimi API")
@@ -39,6 +40,7 @@ app.include_router(bonuses.router)
 app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
+app.include_router(work_schedule.router)
 
 
 @app.get("/health")

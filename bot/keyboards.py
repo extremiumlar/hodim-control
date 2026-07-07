@@ -9,6 +9,7 @@ BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
 BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
+BTN_SCHEDULE = "🗓 Ish jadvali"
 BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
 BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
 BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
@@ -56,6 +57,9 @@ def main_menu(
     if flags.get("excused"):
         stats_row.append(KeyboardButton(text=BTN_EXCUSED))
     rows.append(stats_row)
+
+    # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
+    rows.append([KeyboardButton(text=BTN_SCHEDULE)])
 
     if show_lead_stats and role not in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_LEAD_STATS)])

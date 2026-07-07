@@ -193,6 +193,28 @@ export interface LeadStageDay {
   last_updated: string | null;
 }
 
+export interface WorkDayEntry {
+  weekday: number; // 0=Dush ... 6=Yak
+  is_working: boolean;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+export interface WorkWeekly {
+  user_id: number;
+  user_full_name: string;
+  days: WorkDayEntry[];
+}
+
+export interface WorkOverride {
+  id: number;
+  date: string;
+  is_working: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  note: string | null;
+}
+
 export interface AuditLog {
   id: number;
   actor_id: number | null;
@@ -320,6 +342,22 @@ export const api = {
   myLeadStageMonth: (month?: string) =>
     apiFetch<LeadStageMonth>(`/stats/web/lead-stages/me${month ? `?month=${month}` : ""}`),
   myLeadStageDay: (day: string) => apiFetch<LeadStageDay>(`/stats/web/lead-stages/me/day/${day}`),
+  getWeeklySchedule: (userId: number) => apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`),
+  setWeeklySchedule: (userId: number, days: WorkDayEntry[]) =>
+    apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`, { method: "PUT", body: JSON.stringify({ days }) }),
+  listScheduleOverrides: (userId: number, dateFrom?: string, dateTo?: string) => {
+    const p = new URLSearchParams();
+    if (dateFrom) p.set("date_from", dateFrom);
+    if (dateTo) p.set("date_to", dateTo);
+    const q = p.toString();
+    return apiFetch<WorkOverride[]>(`/work-schedule/${userId}/overrides${q ? `?${q}` : ""}`);
+  },
+  setScheduleOverride: (
+    userId: number,
+    data: { date: string; is_working: boolean; start_time?: string | null; end_time?: string | null; note?: string | null }
+  ) => apiFetch<WorkOverride>(`/work-schedule/${userId}/override`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteScheduleOverride: (userId: number, day: string) =>
+    apiFetch<{ deleted: boolean }>(`/work-schedule/${userId}/override/${day}`, { method: "DELETE" }),
   listAuditLogs: (params: { action?: string; date_from?: string; date_to?: string } = {}) => {
     const query = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v) as [string, string][]

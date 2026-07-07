@@ -36,6 +36,9 @@ export default function Layout() {
               <NavLink to="/lead-stats" className={navLinkClass}>
                 Lidlar
               </NavLink>
+              <NavLink to="/work-schedule" className={navLinkClass}>
+                Ish jadvali
+              </NavLink>
               <NavLink to="/users" className={navLinkClass}>
                 Foydalanuvchilar
               </NavLink>

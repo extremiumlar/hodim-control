@@ -236,6 +236,40 @@ class OperatorCallsDaily(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class WorkScheduleWeekly(Base):
+    """Xodimning haftalik takrorlanuvchi ish jadvali andozasi — hafta kuni bo'yicha
+    (0=Dushanba ... 6=Yakshanba). `is_working=False` — dam olish kuni. Vaqtlar "HH:MM"
+    matn ko'rinishida. Aniq sana uchun `WorkScheduleOverride` ustun keladi."""
+
+    __tablename__ = "work_schedule_weekly"
+    __table_args__ = (UniqueConstraint("user_id", "weekday", name="uq_work_schedule_weekly"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    weekday: Mapped[int] = mapped_column(Integer)  # 0=Dush ... 6=Yak
+    is_working: Mapped[bool] = mapped_column(Boolean, default=True)
+    start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "09:00"
+    end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)  # "18:00"
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WorkScheduleOverride(Base):
+    """Aniq sana uchun ish jadvali o'zgartirishi — haftalik andozadan ustun turadi
+    (bayram, almashtirilgan smena va h.k.). `is_working=False` — o'sha kuni dam olish."""
+
+    __tablename__ = "work_schedule_override"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_work_schedule_override"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    is_working: Mapped[bool] = mapped_column(Boolean, default=True)
+    start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

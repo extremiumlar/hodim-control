@@ -287,3 +287,25 @@ async def my_lead_stage_day(telegram_id: int, day: str) -> dict | None:
         return None
     resp.raise_for_status()
     return resp.json()
+
+
+async def my_work_week(telegram_id: int, start: str | None = None) -> dict | None:
+    """Xodimning O'Z haftalik ish jadvali (start — hafta ichidagi istalgan sana)."""
+    resp = await _get_client().get(
+        f"/work-schedule/{telegram_id}/me/week", params={"start": start} if start else None
+    )
+    if resp.status_code in (400, 403, 404):
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def all_work_week(telegram_id: int, start: str | None = None) -> list[dict] | None:
+    """Rahbar uchun: barcha faol xodimlarning haftalik ish jadvali."""
+    resp = await _get_client().get(
+        f"/work-schedule/{telegram_id}/all/week", params={"start": start} if start else None
+    )
+    if resp.status_code in (400, 403, 404):
+        return None
+    resp.raise_for_status()
+    return resp.json()

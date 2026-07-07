@@ -465,3 +465,65 @@ class AuditLogOut(BaseModel):
     before: dict | None
     after: dict | None
     created_at: datetime
+
+
+# --- Ish jadvali (work schedule) ---
+
+TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class WorkDayEntry(BaseModel):
+    """Haftalik andozaning bitta kuni (0=Dush ... 6=Yak)."""
+
+    weekday: int = Field(ge=0, le=6)
+    is_working: bool = True
+    start_time: str | None = Field(default=None, pattern=TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=TIME_PATTERN)
+
+
+class WorkWeeklyIn(BaseModel):
+    days: list[WorkDayEntry]
+
+
+class WorkWeeklyOut(BaseModel):
+    user_id: int
+    user_full_name: str
+    days: list[WorkDayEntry]
+
+
+class WorkOverrideIn(BaseModel):
+    date: date
+    is_working: bool = True
+    start_time: str | None = Field(default=None, pattern=TIME_PATTERN)
+    end_time: str | None = Field(default=None, pattern=TIME_PATTERN)
+    note: str | None = None
+
+
+class WorkOverrideOut(BaseModel):
+    id: int
+    date: date
+    is_working: bool
+    start_time: str | None
+    end_time: str | None
+    note: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class EffectiveDay(BaseModel):
+    """Aniq sana uchun amaldagi jadval: override bo'lsa undan, aks holda haftalik
+    andozadan; hech biri bo'lmasa `source="unset"`."""
+
+    date: date
+    weekday: int
+    is_working: bool
+    start_time: str | None
+    end_time: str | None
+    source: str  # "override" | "weekly" | "unset"
+    note: str | None = None
+
+
+class WorkWeekOut(BaseModel):
+    user_id: int
+    user_full_name: str
+    days: list[EffectiveDay]
