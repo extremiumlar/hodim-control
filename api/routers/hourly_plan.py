@@ -73,8 +73,124 @@ async def _effective_today(db: AsyncSession, user: User, day: date) -> tuple[boo
     return True, DEFAULT_START, DEFAULT_END
 
 
+async def build_ai_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanOut | None:
+    """Operator AI rejimi (2-bosqich): rejani qo'lda normadan emas, avto-hisoblangan
+    `hourly_target`dan (profil+benchmark+stretch) o'qiydi, haqiqiy natijani
+    `hourly_actual`dan (CRM soatlik qo'ng'iroq) oladi. Bugunga target yo'q bo'lsa
+    `None` qaytaradi — chaqiruvchi eski (norma) oqimga qaytadi."""
+    from db.models import HourlyActual, HourlyTarget  # circular importdan qochish
+
+    day = now.date()
+    targets = list(
+        await db.scalars(
+            select(HourlyTarget).where(HourlyTarget.user_id == user.id, HourlyTarget.date == day)
+        )
+    )
+    header = f"📋 <b>Bugungi rejam — {day:%d.%m} ({WEEKDAYS_UZ[day.weekday()]})</b>"
+    if not targets:
+        return None
+
+    is_working, start, end = await _effective_today(db, user, day)
+    if not is_working:
+        return HourlyPlanOut(
+            date=day, is_working=False,
+            text=f"{header}\n\n🌙 Bugun dam olish kuni (ish jadvali bo'yicha).",
+        )
+
+    targets_by_hour = {t.hour: t for t in targets}
+    actual_rows = list(
+        await db.scalars(
+            select(HourlyActual).where(HourlyActual.user_id == user.id, HourlyActual.date == day)
+        )
+    )
+    actual_by_hour = {a.hour: a for a in actual_rows}
+
+    start_min, end_min = _to_min(start), _to_min(end)
+    now_min = now.hour * 60 + now.minute
+    cur_hour = now.hour
+    frac = now.minute / 60
+    in_lunch = start_min <= now_min < end_min and LUNCH_START <= now_min < LUNCH_END
+
+    daily_target = sum(t.target_calls for t in targets)
+    cumulative_target = 0
+    for t in targets:
+        if t.hour < cur_hour:
+            cumulative_target += t.target_calls
+        elif t.hour == cur_hour:
+            cumulative_target += round(t.target_calls * frac)
+    actual_total = sum(a.calls for a in actual_rows)
+    this_hour_target = targets_by_hour[cur_hour].target_calls if cur_hour in targets_by_hour else 0
+
+    total_hours = max(len(targets), 1)
+    status = HourlyMetricStatus(
+        key="suhbat", label="Qo'ng'iroqlar", norm=daily_target, effective_norm=daily_target,
+        per_hour=round(daily_target / total_hours, 1), this_hour_target=this_hour_target,
+        cumulative_target=cumulative_target, actual=actual_total,
+        delta=actual_total - cumulative_target, tracked=True,
+    )
+
+    now_hm = f"{now.hour:02d}:{now.minute:02d}"
+    lines = [header, f"🕘 Ish vaqti: {start}–{end} (tushlik 13:00–14:00) | Hozir: {now_hm}",
+             "🤖 Reja avto-hisoblangan (30 kunlik tempingiz + jamoa + o'sish)", ""]
+    lines.append(f"<b>Qo'ng'iroqlar</b> — bugungi reja: {daily_target}")
+    before_start = now_min < start_min
+    after_end = now_min >= end_min
+    if status.delta >= 0:
+        mark = f"✅ +{status.delta}" if status.delta else "✅ rejada"
+    else:
+        mark = f"⚠️ {status.delta}"
+    lines.append(f"  Shu paytgacha: kerak {cumulative_target} / bajarildi {actual_total}  {mark}")
+    if before_start:
+        lines.append(f"  Ish {start} da boshlanadi")
+    elif after_end:
+        lines.append("  Ish vaqti tugadi")
+    elif in_lunch:
+        lines.append("  🍽 Hozir tushlik vaqti (13:00–14:00)")
+    else:
+        lines.append(f"  ⏱ Bu soatda reja: ~{this_hour_target} ta")
+
+    # Sifat holati (javob + o'rtacha suhbat) — bugungi actual asosida
+    ans = sum(a.answered for a in actual_rows)
+    talk = sum(a.talk_sec for a in actual_rows)
+    if actual_total:
+        avg_talk = round(talk / ans) if ans else 0
+        lines.append(f"  Sifat: {ans} javob berildi, o'rtacha suhbat {avg_talk}s")
+
+    # Soatlik reja jadvali
+    lines.append("")
+    lines.append("📊 Soatlik reja (qo'ng'iroq):")
+    blocks = []
+    h = start_min // 60
+    end_h = (end_min + 59) // 60
+    while h < end_h:
+        label = f"{h:02d}:00–{h + 1:02d}:00"
+        if h == LUNCH_START // 60:
+            blocks.append(f"{label} 🍽")
+        else:
+            t = targets_by_hour.get(h)
+            a = actual_by_hour.get(h)
+            cell = f"{label}: {t.target_calls if t else 0}"
+            if a is not None:
+                cell += f" (⟶{a.calls})"
+            blocks.append(cell)
+        h += 1
+    lines.append(" · ".join(blocks))
+
+    return HourlyPlanOut(
+        date=day, is_working=True, in_lunch=in_lunch, start_time=start, end_time=end, now=now_hm,
+        metrics=[status], text="\n".join(lines).strip(),
+    )
+
+
 async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanOut:
     from api.routers.stats import today_metric_rows  # circular importdan qochish
+
+    # Operator AI yoqilgan bo'lsa avval avto-reja (hourly_target)ni sinaymiz; bugunga
+    # target tuzilmagan bo'lsa (None) eski qo'lda-norma oqimiga tushamiz.
+    if settings.ai_enabled:
+        ai_plan = await build_ai_plan(db, user, now)
+        if ai_plan is not None:
+            return ai_plan
 
     day = now.date()
     is_working, start, end = await _effective_today(db, user, day)

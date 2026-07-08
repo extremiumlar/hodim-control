@@ -5,6 +5,7 @@ from api.config import settings
 from api.routers import (
     audit_logs,
     auth,
+    auto_plan,
     bonuses,
     daily_results,
     excused_days,
@@ -43,6 +44,7 @@ app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
 app.include_router(hourly_plan.router)
+app.include_router(auto_plan.router)
 
 
 @app.get("/health")

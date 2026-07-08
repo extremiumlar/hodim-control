@@ -236,6 +236,70 @@ class OperatorCallsDaily(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HourlyActual(Base):
+    """Operator AI — operatorning bir kundagi bir soatlik haqiqiy natijasi (CRM
+    call-history'dan kompozit sifat bilan). Ham real-vaqt "actual" (bugungi kun),
+    ham tarixiy manba (`OperatorProfile` shu jadvaldan 30 kunlik baseline hisoblaydi).
+
+    `user_id` — tizim foydalanuvchisi (`employeeNum`/email → `User.crm_external_id`
+    orqali bog'lanadi; bog'lanmagan qo'ng'iroqlar bu jadvalga yozilmaydi, chunki reja
+    faqat tizimdagi operatorlar uchun). Grain: (user_id, date, hour)."""
+
+    __tablename__ = "hourly_actual"
+    __table_args__ = (UniqueConstraint("user_id", "date", "hour", name="uq_hourly_actual_grain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    hour: Mapped[int] = mapped_column(Integer)  # 0–23, Asia/Tashkent
+    calls: Mapped[int] = mapped_column(Integer, default=0)
+    calls_in: Mapped[int] = mapped_column(Integer, default=0)
+    calls_out: Mapped[int] = mapped_column(Integer, default=0)
+    answered: Mapped[int] = mapped_column(Integer, default=0)  # missed==False
+    talk_sec: Mapped[int] = mapped_column(Integer, default=0)  # jami suhbat sekundi (javob berilganlar)
+    short_calls: Mapped[int] = mapped_column(Integer, default=0)  # javob berilgan, lekin < SHORT_CALL_SECONDS
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OperatorProfile(Base):
+    """Operator AI — operatorning soatlik "odatiy tempi" (oxirgi ~30 kun `HourlyActual`
+    dan hisoblangan, haftada yangilanadi). Bu TAVSIFIY (operator odatda nima qiladi) —
+    jamoa benchmarki va stretch reja tuzishda (`hourly_target`) qo'shiladi, bu yerda
+    saqlanmaydi. Grain: (user_id, hour)."""
+
+    __tablename__ = "operator_profile"
+    __table_args__ = (UniqueConstraint("user_id", "hour", name="uq_operator_profile_grain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    hour: Mapped[int] = mapped_column(Integer)  # 0–23
+    baseline_calls: Mapped[int] = mapped_column(Integer, default=0)  # shu soatdagi odatiy qo'ng'iroq (median)
+    baseline_answered: Mapped[int] = mapped_column(Integer, default=0)
+    baseline_talk_sec: Mapped[int] = mapped_column(Integer, default=0)  # odatiy jami suhbat sekundi
+    sample_days: Mapped[int] = mapped_column(Integer, default=0)  # necha kunlik data qatnashgani (ishonch darajasi)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HourlyTarget(Base):
+    """Operator AI — operatorga bir kun uchun tuzilgan soatlik reja (BUYRUQ: nima
+    qilinishi kerak). `OperatorProfile` (o'z imkoniyati) + jamoa benchmarki + kichik
+    stretch'dan tuziladi, ish jadvali oynasiga moslanadi (tushlik/dam chiqariladi).
+    Kechasi tuziladi va kun davomida o'zgarmaydi (kuzatuv shu barqaror rejaga
+    solishtiradi). Grain: (user_id, date, hour)."""
+
+    __tablename__ = "hourly_target"
+    __table_args__ = (UniqueConstraint("user_id", "date", "hour", name="uq_hourly_target_grain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    hour: Mapped[int] = mapped_column(Integer)  # 0–23
+    target_calls: Mapped[int] = mapped_column(Integer, default=0)
+    target_answered: Mapped[int] = mapped_column(Integer, default=0)
+    target_talk_sec: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class WorkScheduleWeekly(Base):
     """Xodimning haftalik takrorlanuvchi ish jadvali andozasi — hafta kuni bo'yicha
     (0=Dushanba ... 6=Yakshanba). `is_working=False` — dam olish kuni. Vaqtlar "HH:MM"

@@ -189,6 +189,70 @@ class UysotAdapter(CRMAdapter):
             if duration < SHORT_CALL_SECONDS:
                 bucket["short_calls"] += 1
 
+    async def get_hourly_call_quality_range(self, day_from: date, day_to: date) -> dict[str, dict] | None:
+        """`OperatorProfile` bootstrap (backfill) uchun: [day_from, day_to] oralig'idagi
+        qo'ng'iroqlarni BITTA skanerda `employeeNum` × sana × soat kesimida kompozit
+        sifat bilan sanaydi. Har kunni alohida o'qish o'rniga (bu holda eski kun uchun
+        ustidagi barcha kunlarni qayta varaqlash kerak bo'lardi) newest→oldest yagona
+        o'tishda day_from'dan eskirgan yozuvga yetguncha varaqlaydi.
+
+        Qaytaradi: {employeeNum: {"YYYY-MM-DD": {soat: bucket}}}. Uzoq skaner —
+        rate-limit (429) da kutadi, sahifalar orasi throttle. CRM xatosida `None`."""
+        if not CRM_API_KEY:
+            return None
+
+        start_ts, _ = day_bounds_unix(day_from)
+        _, end_ts = day_bounds_unix(day_to)
+        result: dict[str, dict] = {}
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                while page <= MAX_LEAD_SCAN_PAGES:
+                    resp = await client.post(
+                        "/call-history/filter",
+                        json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
+                    )
+                    if resp.status_code == 429:
+                        logger.warning("Uysot rate limit (call backfill) — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
+                        await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                        continue
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+
+                    reached_older_record = False
+                    for record in records:
+                        ts = record.get("startStamp")
+                        if ts is None:
+                            continue
+                        if ts < start_ts:
+                            reached_older_record = True
+                            continue
+                        if not (start_ts <= ts <= end_ts):
+                            continue  # day_to'dan yangi (oraliqdan tashqari) — o'tkazamiz
+                        employee_num = record.get("employeeNum")
+                        if not employee_num:
+                            continue
+                        local = datetime.fromtimestamp(ts, TASHKENT_TZ)
+                        emp = result.setdefault(employee_num, {})
+                        day_hours = emp.setdefault(local.date().isoformat(), {})
+                        bucket = day_hours.setdefault(local.hour, self._empty_quality_bucket())
+                        self._apply_call_to_bucket(bucket, record)
+
+                    if reached_older_record or page >= body.get("totalPages", page):
+                        break
+                    page += 1
+                    await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+                else:
+                    logger.warning("Uysot call backfill %s sahifada to'xtatildi (xavfsizlik chegarasi)", MAX_LEAD_SCAN_PAGES)
+            except httpx.HTTPError:
+                logger.exception("Uysot call backfill xatosi (%s..%s)", day_from, day_to)
+                return None
+
+        return result
+
     async def get_hourly_call_quality(self, day: date) -> dict[str, dict] | None:
         """Operator AI avto-reja/kuzatuvi uchun: shu kundagi qo'ng'iroqlarni
         `employeeNum` × soat (Asia/Tashkent, 0–23) kesimida KOMPOZIT sifat bilan
