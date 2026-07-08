@@ -1,203 +1,122 @@
+"""Scheduler bootstrap — deklarativ job reyestri.
+
+Barcha rejalashtirilgan ishlar `JOBS` ro'yxatida bitta joyda e'lon qilinadi
+(korutin + trigger + parametrlar). `main()` shu ro'yxatni aylanib scheduler'ga
+qo'shadi — yangi job qo'shish uchun `scheduler/jobs.py`ga korutin yozib, shu
+ro'yxatga bitta `JobSpec` qatorini qo'shish kifoya (main() o'zgarmaydi)."""
 import asyncio
 import logging
+from dataclasses import dataclass
+from typing import Awaitable, Callable
 
-import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from scheduler.config import API_BASE_URL, BOT_SHARED_SECRET, TIMEZONE
+from scheduler import config as cfg
+from scheduler import jobs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HEADERS = {"X-Bot-Secret": BOT_SHARED_SECRET}
 
-# "Kun davomida, oraliq kamayib boradi" (6.3-bo'lim): kunduzi bitta, kechga yaqin har soatda.
-REMINDER_HOURS = [13, 16, 17, 18]
-DAILY_SUMMARY_HOUR = 19
+@dataclass(frozen=True)
+class JobSpec:
+    """Bitta rejalashtirilgan ish. `None` parametrlar `add_job`ga uzatilmaydi
+    (apscheduler default'i qo'llanadi) — bu har job'ning aniq xatti-harakatini
+    saqlaydi."""
 
-# CRM webhook mavjud bo'lmagan holat uchun zaxira. Deyarli real-vaqtli bo'lishi uchun
-# har 30 soniyada so'raladi — amoCRM ulanganda API so'rov chegarasiga (rate limit)
-# e'tibor bering, xodimlar soni ko'p bo'lsa oraliqni kattalashtirish kerak bo'lishi mumkin.
-CRM_SYNC_INTERVAL_SECONDS = 30
-
-# Lid statistikasi snapshoti oralig'i (daqiqa). Skaner butun bazani sahifalab o'qiydi
-# va sekin — juda tez-tez yugurtirsa rate-limitni band qiladi, shuning uchun 30 daqiqa.
-LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
-
-# "Har oy oxirida, 1 marta" (8-bo'lim).
-MONTHLY_BONUS_DAY = "last"
-MONTHLY_BONUS_HOUR = 23
-MONTHLY_BONUS_MINUTE = 30
+    name: str
+    func: Callable[[], Awaitable[None]]
+    trigger: BaseTrigger
+    max_instances: int | None = None
+    misfire_grace_time: int | None = None
+    coalesce: bool | None = None
 
 
-async def send_reminders() -> None:
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=30) as client:
-        try:
-            resp = await client.post("/tasks/send-reminders")
-            resp.raise_for_status()
-            logger.info("Eslatmalar yuborildi: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("Eslatmalarni yuborishda xatolik")
+def _cron(**kwargs) -> CronTrigger:
+    return CronTrigger(timezone=cfg.TIMEZONE, **kwargs)
 
 
-async def send_daily_summary() -> None:
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=30) as client:
-        try:
-            resp = await client.post("/reports/daily-summary")
-            resp.raise_for_status()
-            logger.info("Kunlik xulosa yuborildi: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("Kunlik xulosani yuborishda xatolik")
+def _build_jobs() -> list[JobSpec]:
+    specs: list[JobSpec] = []
+
+    # Vazifa eslatmalari — belgilangan soatlarda
+    for hour in cfg.REMINDER_HOURS:
+        specs.append(
+            JobSpec(
+                f"reminders@{hour:02d}", jobs.send_reminders, _cron(hour=hour, minute=0),
+                misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+            )
+        )
+
+    specs += [
+        # Kunlik xulosa
+        JobSpec(
+            "daily_summary", jobs.send_daily_summary,
+            _cron(hour=cfg.DAILY_SUMMARY_HOUR, minute=0),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+        # Guruhga kunlik lid statistikasi — vaqt bazadan sozlangani uchun har daqiqa
+        # tekshiriladi (API vaqt kelganini va shu kuni yuborilmaganini o'zi hal qiladi).
+        JobSpec(
+            "group_post_tick", jobs.group_post_tick, IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
+        # CRM natijalarini deyarli real-vaqtli sinxronlash
+        JobSpec(
+            "crm_sync", jobs.sync_daily_results,
+            IntervalTrigger(seconds=cfg.CRM_SYNC_INTERVAL_SECONDS),
+        ),
+        # Soatlik reja eslatmasi — har soat boshida (API ish oynasini o'zi filtrlaydi)
+        JobSpec(
+            "hourly_plan", jobs.send_hourly_plan, _cron(minute=0),
+            misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
+        ),
+        # Lid statistikasi snapshoti — davriy + kun yakunida "muzlatish"
+        JobSpec(
+            "lead_snapshot", jobs.snapshot_lead_stages,
+            IntervalTrigger(minutes=cfg.LEAD_SNAPSHOT_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
+        JobSpec(
+            "lead_snapshot_freeze", jobs.snapshot_lead_stages,
+            _cron(hour=cfg.LEAD_SNAPSHOT_FREEZE_HOUR, minute=cfg.LEAD_SNAPSHOT_FREEZE_MINUTE),
+            max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
+        ),
+        # Oylik bonus — oyning oxirgi kuni
+        JobSpec(
+            "monthly_bonus", jobs.calculate_monthly_bonus,
+            _cron(day=cfg.MONTHLY_BONUS_DAY, hour=cfg.MONTHLY_BONUS_HOUR, minute=cfg.MONTHLY_BONUS_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+    ]
+    return specs
 
 
-async def sync_daily_results() -> None:
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=30) as client:
-        try:
-            resp = await client.post("/daily-results/sync")
-            resp.raise_for_status()
-            logger.info("CRM sinxronizatsiyasi: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("CRM sinxronizatsiyasida xatolik")
+JOBS = _build_jobs()
 
 
-async def snapshot_lead_stages() -> None:
-    """Bugungi operator×bosqich lid kesimini CRM'dan to'liq skanerlab bazaga yozadi.
-    Skaner sekin (Uysot rate-limitiga rioya qilib butun bazani sahifalab o'qiydi, bir
-    necha daqiqa) — shuning uchun timeout katta. Bot bazadan tez o'qiydi."""
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=600) as client:
-        try:
-            resp = await client.post("/stats/lead-stages/sync")
-            resp.raise_for_status()
-            logger.info("Lid statistikasi snapshot'i: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("Lid statistikasi snapshot'ida xatolik")
-
-
-async def group_post_tick() -> None:
-    """Har daqiqa: boss belgilagan vaqt kelganda kunlik lid statistikasini guruhga
-    yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
-        try:
-            resp = await client.post("/stats/lead-stages/group-tick")
-            resp.raise_for_status()
-            body = resp.json()
-            if body.get("fired"):
-                logger.info("Lid statistikasi guruhga yuborildi: %s", body)
-        except httpx.HTTPError:
-            logger.exception("Guruh tick xatosi")
-
-
-async def send_hourly_plan() -> None:
-    """Har soat boshida ish vaqtidagi xodimlarga soatlik reja + progressni yuboradi.
-    API ish oynasidan tashqarida/dam kunida hech kimga yubormaydi (o'zi filtrlaydi)."""
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
-        try:
-            resp = await client.post("/hourly-plan/send")
-            resp.raise_for_status()
-            logger.info("Soatlik reja yuborildi: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("Soatlik rejani yuborishda xatolik")
-
-
-async def calculate_monthly_bonus() -> None:
-    """Bu job muvaffaqiyatsiz bo'lsa, xodimlarga bonus umuman hisoblanmay qoladi —
-    shuning uchun natija har doim (muvaffaqiyatli/muvaffaqiyatsiz) aniq log'ga yoziladi.
-    Kelajakda: muvaffaqiyatsizlikda bossga Telegram orqali darhol xabar yuborish tavsiya
-    qilinadi (masalan alohida "/scheduler/notify-boss" API endpointi orqali) — hozircha
-    faqat log orqali kuzatiladi."""
-    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
-        try:
-            resp = await client.post("/bonuses/calculate-monthly", json={})
-            resp.raise_for_status()
-            logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", resp.json())
-        except httpx.HTTPError:
-            logger.exception("[BONUS FAILED] Oylik bonus hisoblashda xatolik yuz berdi")
+def _register(scheduler: AsyncIOScheduler, spec: JobSpec) -> None:
+    kwargs: dict = {}
+    if spec.max_instances is not None:
+        kwargs["max_instances"] = spec.max_instances
+    if spec.misfire_grace_time is not None:
+        kwargs["misfire_grace_time"] = spec.misfire_grace_time
+    if spec.coalesce is not None:
+        kwargs["coalesce"] = spec.coalesce
+    scheduler.add_job(spec.func, spec.trigger, id=spec.name, name=spec.name, **kwargs)
 
 
 async def main() -> None:
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-
-    # misfire_grace_time + coalesce: agar scheduler band/o'chiq bo'lgani sabab job o'z
-    # vaqtida ishga tushmasa, uni butunlay o'tkazib yubormasdan (default xatti-harakat),
-    # imkon bo'lganda (grace davri ichida) kechroq bitta marta ishga tushiradi.
-    MISFIRE_GRACE_TIME = 3600
-
-    for hour in REMINDER_HOURS:
-        scheduler.add_job(
-            send_reminders,
-            CronTrigger(hour=hour, minute=0, timezone=TIMEZONE),
-            misfire_grace_time=MISFIRE_GRACE_TIME,
-            coalesce=True,
-        )
-
-    scheduler.add_job(
-        send_daily_summary,
-        CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=0, timezone=TIMEZONE),
-        misfire_grace_time=MISFIRE_GRACE_TIME,
-        coalesce=True,
-    )
-
-    # Kunlik lid statistikasini guruhga (har xodimga alohida). Vaqt boss tomonidan
-    # bazadan sozlanadi, shuning uchun scheduler har daqiqa tekshiradi (API vaqt
-    # kelganini va shu kuni yuborilmaganini o'zi hal qiladi).
-    scheduler.add_job(
-        group_post_tick,
-        IntervalTrigger(minutes=1),
-        max_instances=1,
-        coalesce=True,
-    )
-
-    scheduler.add_job(sync_daily_results, IntervalTrigger(seconds=CRM_SYNC_INTERVAL_SECONDS))
-
-    # Soatlik reja eslatmasi — har soat boshida (:00). API faqat ayni damда ish
-    # vaqtida bo'lgan, normasi bor xodimlarga yuboradi (off-hours hech kimga).
-    scheduler.add_job(
-        send_hourly_plan,
-        CronTrigger(minute=0, timezone=TIMEZONE),
-        misfire_grace_time=600,
-        coalesce=True,
-    )
-
-    # Lid statistikasi snapshoti: butun bazani skanerlagani uchun sekin va og'ir
-    # (rate-limit), shuning uchun tez-tez emas — har LEAD_SNAPSHOT_INTERVAL_MINUTES
-    # daqiqada + kun yakunida (23:57) oxirgi holatni muzlatish uchun. max_instances=1:
-    # oldingi skaner tugamasdan yangisi boshlanmaydi.
-    scheduler.add_job(
-        snapshot_lead_stages,
-        IntervalTrigger(minutes=LEAD_SNAPSHOT_INTERVAL_MINUTES),
-        max_instances=1,
-        coalesce=True,
-    )
-    scheduler.add_job(
-        snapshot_lead_stages,
-        CronTrigger(hour=23, minute=57, timezone=TIMEZONE),
-        max_instances=1,
-        misfire_grace_time=600,
-        coalesce=True,
-    )
-
-    scheduler.add_job(
-        calculate_monthly_bonus,
-        CronTrigger(
-            day=MONTHLY_BONUS_DAY, hour=MONTHLY_BONUS_HOUR, minute=MONTHLY_BONUS_MINUTE, timezone=TIMEZONE
-        ),
-        misfire_grace_time=MISFIRE_GRACE_TIME,
-        coalesce=True,
-    )
+    scheduler = AsyncIOScheduler(timezone=cfg.TIMEZONE)
+    for spec in JOBS:
+        _register(scheduler, spec)
 
     scheduler.start()
-    logger.info(
-        "Scheduler ishga tushdi (%s). Eslatma soatlari: %s, kunlik xulosa: %02d:00, "
-        "CRM sync: har %d soniyada, oylik bonus: oyning oxirgi kuni %02d:%02d",
-        TIMEZONE,
-        REMINDER_HOURS,
-        DAILY_SUMMARY_HOUR,
-        CRM_SYNC_INTERVAL_SECONDS,
-        MONTHLY_BONUS_HOUR,
-        MONTHLY_BONUS_MINUTE,
-    )
+    logger.info("Scheduler ishga tushdi (%s). Ro'yxatga olingan ishlar: %s",
+                cfg.TIMEZONE, ", ".join(s.name for s in JOBS))
 
     try:
         await asyncio.Event().wait()
