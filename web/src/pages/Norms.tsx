@@ -95,11 +95,21 @@ export default function Norms() {
                           <span className="text-slate-500 text-xs">{m.label}:</span>
                           <span
                             className={`text-xs font-medium ${
-                              m.norm === null ? "text-slate-400" : metNorm ? "text-emerald-600" : "text-amber-600"
+                              !m.tracked
+                                ? "text-slate-400"
+                                : m.norm === null
+                                ? "text-slate-400"
+                                : metNorm
+                                ? "text-emerald-600"
+                                : "text-amber-600"
                             }`}
-                            title="Bugungi haqiqiy qiymat (CRM/qo'lda)"
+                            title={
+                              m.tracked
+                                ? "Bugungi haqiqiy qiymat (CRM/qo'lda)"
+                                : "Kuzatilmayapti — CRM bog'lanmagan"
+                            }
                           >
-                            {m.value}
+                            {m.tracked ? m.value : "❔"}
                           </span>
                           <span className="text-slate-300">/</span>
                           {row.can_edit ? (

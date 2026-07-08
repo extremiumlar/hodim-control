@@ -118,6 +118,7 @@ export interface MetricProgressRow {
   label: string;
   value: number; // bugungi haqiqiy (CRM/qo'lda) qiymat
   norm: number | null; // belgilangan norma
+  tracked: boolean; // false — ma'lumot manbai (CRM ID) yo'q, value doim 0
 }
 
 export interface TeamNormRow {

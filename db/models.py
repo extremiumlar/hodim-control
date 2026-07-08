@@ -270,6 +270,20 @@ class WorkScheduleOverride(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class GroupPostConfig(Base):
+    """Guruhga kunlik lid statistikasini yuborish sozlamasi (yagona qator, id=1).
+    Boss vaqtni o'zgartira oladi; scheduler har daqiqa tekshiradi va shu vaqt kelganда
+    yuboradi. `last_posted_date` — bir kunda ikki marta yubormaslik uchun qo'riqchi."""
+
+    __tablename__ = "group_post_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
+    post_hour: Mapped[int] = mapped_column(Integer, default=19)
+    post_minute: Mapped[int] = mapped_column(Integer, default=10)
+    last_posted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

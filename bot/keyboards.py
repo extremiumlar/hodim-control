@@ -11,6 +11,7 @@ BTN_GLOBAL_STATS = "📊 Umumiy statistika"
 BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
 BTN_SCHEDULE = "🗓 Ish jadvali"
 BTN_HOURLY_PLAN = "📋 Bugungi rejam"
+BTN_HOURLY_PLAN_CONTROL = "📋 Xodim rejasi"
 BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
 BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
 BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
@@ -62,8 +63,11 @@ def main_menu(
     # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
     rows.append([KeyboardButton(text=BTN_SCHEDULE)])
 
-    # Soatlik reja — xodimlarga (kunlik normani soatlarga bo'lib ko'rsatadi)
-    if role not in MANAGER_ROLES:
+    # Soatlik reja — kunlik normasi kuzatiladigan (suhbat/tashrif/video) xodimlarga
+    has_trackable_metric = bool(
+        set(metrics if metrics is not None else ["suhbat", "tashrif"]) & {"suhbat", "tashrif", "video"}
+    )
+    if role not in MANAGER_ROLES and has_trackable_metric:
         rows.append([KeyboardButton(text=BTN_HOURLY_PLAN)])
 
     if show_lead_stats and role not in MANAGER_ROLES:
@@ -72,7 +76,7 @@ def main_menu(
     if role in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
         rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
-        rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
+        rows.append([KeyboardButton(text=BTN_LEAD_STATS), KeyboardButton(text=BTN_HOURLY_PLAN_CONTROL)])
         if role in {"boss", "dasturchi"}:
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])

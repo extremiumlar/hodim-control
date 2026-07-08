@@ -104,6 +104,14 @@ def _day_text(data: dict) -> str:
             lines.append("👤 Operatorni tanlab, alohida statistikasini ko'ring:")
     lines.append("")
     lines.append(_last_updated_line(data.get("last_updated")))
+    if d == datetime.now(TASHKENT_TZ).date():
+        # "Bugungi rejam" (soatlik reja) suhbatlar sonini har ~30 soniyada,
+        # bu yerdagi son esa davriy snapshot (har ~30 daqiqada) yangilanadi —
+        # shuning uchun bugungi kunda ikkalasi orasida ozgina farq normal.
+        lines.append(
+            "ℹ️ Bu son davriy (har ~30 daqiqada) yangilanadi — \"Bugungi rejam\"dagi "
+            "son bilan ozgina farq qilishi normal holat."
+        )
     return "\n".join(lines)
 
 

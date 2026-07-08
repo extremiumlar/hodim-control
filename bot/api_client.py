@@ -41,6 +41,31 @@ async def get_user_by_telegram(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def post_lead_stats_to_group() -> dict:
+    """Har bir xodimning kunlik lid bosqich statistikasini guruhga darhol yuboradi."""
+    resp = await _get_client().post("/stats/lead-stages/post-to-group")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def get_group_post_time(telegram_id: int) -> dict:
+    resp = await _get_client().get(f"/stats/lead-stages/group-time/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_group_post_time(telegram_id: int, hour: int, minute: int) -> dict | None:
+    """Guruhga yuborish vaqtini o'zgartirish (faqat Boshliq). Ruxsat yo'q — None."""
+    resp = await _get_client().post(
+        "/stats/lead-stages/group-time",
+        params={"telegram_id": telegram_id, "hour": hour, "minute": minute},
+    )
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def list_my_tasks(telegram_id: int) -> list[dict]:
     resp = await _get_client().get(f"/tasks/my/{telegram_id}")
     resp.raise_for_status()
@@ -292,6 +317,16 @@ async def my_lead_stage_day(telegram_id: int, day: str) -> dict | None:
 async def my_hourly_plan(telegram_id: int) -> dict | None:
     """Xodimning bugungi soatma-soat rejasi + progressi (hozirgi holatga qarab)."""
     resp = await _get_client().get(f"/hourly-plan/{telegram_id}/me")
+    if resp.status_code in (400, 403, 404):
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def employee_hourly_plan(telegram_id: int, user_id: int) -> dict | None:
+    """Rahbar uchun: bitta xodimning bugungi soatma-soat rejasi (norma boshqarish
+    doirasi bilan bir xil)."""
+    resp = await _get_client().get(f"/hourly-plan/{telegram_id}/employee/{user_id}")
     if resp.status_code in (400, 403, 404):
         return None
     resp.raise_for_status()

@@ -37,9 +37,15 @@ def _to_min(hm: str) -> int:
     return int(h) * 60 + int(m)
 
 
+# To'liq (standart) ish kuni uzunligi — qisqa/yarim kunlarda normani shunga
+# nisbatan proporsional kamaytirish uchun (09:00-18:00, tushliksiz = 8 soat).
+FULL_DAY_MINUTES = _work_minutes(_to_min(DEFAULT_START), _to_min(DEFAULT_END))
+
+
 async def _effective_today(db: AsyncSession, user: User, day: date) -> tuple[bool, str, str]:
     """Bugungi amaldagi ish oynasi: (is_working, start, end). Override > haftalik >
-    default. Vaqt belgilanmagan ish kuni uchun default 09:00–18:00."""
+    default. Jadval umuman belgilanmagan bo'lsa — dushanba-jumada default 09:00-18:00,
+    shanba-yakshanbada dam olish kuni deb hisoblanadi."""
     ov = await db.scalar(
         select(WorkScheduleOverride).where(
             WorkScheduleOverride.user_id == user.id, WorkScheduleOverride.date == day
@@ -60,7 +66,10 @@ async def _effective_today(db: AsyncSession, user: User, day: date) -> tuple[boo
             return False, "", ""
         return True, w.start_time or DEFAULT_START, w.end_time or DEFAULT_END
 
-    # Jadval belgilanmagan — default ish oynasi (soatlik reja baribir ishlashi uchun)
+    # Jadval belgilanmagan — dam olish kunlari (shanba/yakshanba) ishlanmaydi deb
+    # hisoblanadi, ish kunlarida default ish oynasi qo'llanadi.
+    if day.weekday() >= 5:
+        return False, "", ""
     return True, DEFAULT_START, DEFAULT_END
 
 
@@ -82,23 +91,39 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
     total_hours = total / 60
     now_min = now.hour * 60 + now.minute
     elapsed = _work_minutes(start_min, min(max(now_min, start_min), end_min))
-    frac = elapsed / total
     in_lunch = start_min <= now_min < end_min and LUNCH_START <= now_min < LUNCH_END
+
+    def cum_target(effective_norm: int, up_to_min: int) -> int:
+        """[start, up_to_min) oralig'ida (tushliksiz) kumulyativ qilinishi kerak
+        bo'lgan miqdor — soatlik bloklar va joriy soat maqsadi shundan farq
+        sifatida hisoblanadi, shuning uchun ular yig'indisi har doim aniq
+        effective_norm'ga teng chiqadi (yaxlitlash qoldig'i yo'qolmaydi)."""
+        clipped = min(max(up_to_min, start_min), end_min)
+        return round(effective_norm * _work_minutes(start_min, clipped) / total)
 
     metric_rows = await today_metric_rows(db, user)
     statuses: list[HourlyMetricStatus] = []
     for r in metric_rows:
         if not r.norm or r.norm <= 0:
             continue
-        per_hour = r.norm / total_hours
+        # Qisqa/yarim ish kunida normani to'liq kunga (8 soat) nisbatan
+        # proporsional kamaytiramiz — aks holda soatlik maqsad sun'iy shishadi.
+        proration = min(total, FULL_DAY_MINUTES) / FULL_DAY_MINUTES
+        effective_norm = max(round(r.norm * proration), 0) if proration < 1 else r.norm
+
+        cumulative_target = cum_target(effective_norm, now_min)
+        hour_start_clock = (now_min // 60) * 60
+        this_hour_target = cumulative_target - cum_target(effective_norm, hour_start_clock)
+
         statuses.append(
             HourlyMetricStatus(
-                key=r.key, label=r.label, norm=r.norm,
-                per_hour=round(per_hour, 1),
-                this_hour_target=max(round(per_hour), 1),
-                cumulative_target=round(r.norm * frac),
+                key=r.key, label=r.label, norm=r.norm, effective_norm=effective_norm,
+                per_hour=round(effective_norm / total_hours, 1),
+                this_hour_target=max(this_hour_target, 0),
+                cumulative_target=cumulative_target,
                 actual=r.value,
-                delta=r.value - round(r.norm * frac),
+                delta=r.value - cumulative_target,
+                tracked=r.tracked,
             )
         )
 
@@ -111,14 +136,23 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
         before_start = now_min < start_min
         after_end = now_min >= end_min
         for s in statuses:
-            if s.delta >= 0:
-                mark = f"✅ +{s.delta}" if s.delta else "✅ rejada"
+            norm_line = f"<b>{s.label}</b> — kunlik reja: {s.norm}"
+            if s.effective_norm != s.norm:
+                norm_line += f" (bugun qisqa kun uchun: {s.effective_norm})"
+            lines.append(norm_line)
+
+            if not s.tracked:
+                lines.append("  ❔ Bu ko'rsatkich hozircha kuzatilmayapti (CRM bog'lanmagan)")
             else:
-                mark = f"⚠️ {s.delta}"
-            lines.append(f"<b>{s.label}</b> — kunlik reja: {s.norm}")
-            lines.append(f"  Shu paytgacha: kerak {s.cumulative_target} / bajarildi {s.actual}  {mark}")
+                if s.delta >= 0:
+                    mark = f"✅ +{s.delta}" if s.delta else "✅ rejada"
+                else:
+                    mark = f"⚠️ {s.delta}"
+                lines.append(f"  Shu paytgacha: kerak {s.cumulative_target} / bajarildi {s.actual}  {mark}")
+
             if before_start:
-                lines.append(f"  Ish {start} da boshlanadi (soatiga ~{s.this_hour_target} ta)")
+                first_hour_target = cum_target(s.effective_norm, start_min + 60)
+                lines.append(f"  Ish {start} da boshlanadi (birinchi soatda ~{first_hour_target} ta)")
             elif after_end:
                 lines.append("  Ish vaqti tugadi")
             elif in_lunch:
@@ -126,7 +160,8 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
             else:
                 lines.append(f"  ⏱ Bu soatda: ~{s.this_hour_target} ta")
             lines.append("")
-        # Soatlik reja jadvali (birinchi ko'rsatkich bo'yicha) — tushlik blogi belgilanadi
+        # Soatlik reja jadvali (birinchi ko'rsatkich bo'yicha) — har blok kumulyativ
+        # qoldiqdan hisoblanadi, shuning uchun yig'indisi aniq normaga teng chiqadi.
         first = statuses[0]
         blocks = []
         b = start_min
@@ -136,13 +171,14 @@ async def build_plan(db: AsyncSession, user: User, now: datetime) -> HourlyPlanO
             if _work_minutes(b, b2) == 0:  # to'liq tushlik blogi
                 blocks.append(f"{label} 🍽")
             else:
-                blocks.append(f"{label}: {first.this_hour_target}")
+                block_target = cum_target(first.effective_norm, b2) - cum_target(first.effective_norm, b)
+                blocks.append(f"{label}: {block_target}")
             b += 60
         lines.append(f"📊 Soatlik reja ({first.label.lower()}):")
         lines.append(" · ".join(blocks))
 
     return HourlyPlanOut(
-        date=day, is_working=True, start_time=start, end_time=end, now=now_hm,
+        date=day, is_working=True, in_lunch=in_lunch, start_time=start, end_time=end, now=now_hm,
         metrics=statuses, text="\n".join(lines).strip(),
     )
 
@@ -154,6 +190,30 @@ async def my_hourly_plan(telegram_id: int, db: AsyncSession = Depends(get_db)) -
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await build_plan(db, user, datetime.now(TASHKENT_TZ))
+
+
+@router.get(
+    "/{telegram_id}/employee/{user_id}", response_model=HourlyPlanOut, dependencies=[Depends(verify_bot_secret)]
+)
+async def employee_hourly_plan(telegram_id: int, user_id: int, db: AsyncSession = Depends(get_db)) -> HourlyPlanOut:
+    """Rahbar (ROP/HR/Boshliq/Dasturchi) uchun: bitta xodimning bugungi soatma-soat
+    rejasi — norma boshqaruvi bilan bir xil doira (norma o'rnata oladigan rahbar
+    reja ham ko'radi)."""
+    from api.routers.norms import can_manage_norms  # circular importdan qochish
+
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or actor.role not in (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
+
+    target = await db.get(User, user_id)
+    if not target or target.role != Role.employee.value or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    is_privileged = actor.role in (Role.boss.value, Role.dasturchi.value)
+    if not is_privileged and not can_manage_norms(actor, target):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
+
+    return await build_plan(db, target, datetime.now(TASHKENT_TZ))
 
 
 @router.post("/send", dependencies=[Depends(verify_bot_secret)])
@@ -177,7 +237,7 @@ async def send_hourly_plan(db: AsyncSession = Depends(get_db)) -> dict:
     sent = 0
     for user in users:
         plan = await build_plan(db, user, now)
-        if not plan.is_working or not plan.metrics:
+        if not plan.is_working or not plan.metrics or plan.in_lunch:
             continue
         # Faqat ish oynasi ichida (rejada boshlanmagan/tugagan bo'lsa yubormaymiz)
         if plan.start_time and plan.end_time:

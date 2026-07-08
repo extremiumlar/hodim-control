@@ -1,5 +1,5 @@
 import html
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, delete, func, select
@@ -18,13 +18,14 @@ from api.schemas import (
     MetricProgressRow,
     MyStatsOut,
 )
-from api.timeutil import local_range_utc_naive, today_local
+from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from crm import get_crm_adapter
 from db.models import (
     DailyResult,
     DailyResultSource,
     ExcusedDay,
     ExcusedStatus,
+    GroupPostConfig,
     LeadStageDaily,
     MobilografStatus,
     MobilografVideo,
@@ -620,12 +621,10 @@ def _format_group_stat(name: str, day: date, data: LeadStageDayOut) -> str:
     return "\n".join(lines)
 
 
-@router.post("/lead-stages/post-to-group", dependencies=[Depends(verify_bot_secret)])
-async def post_lead_stages_to_group(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler har kuni belgilangan vaqtda chaqiradi: har bir sotuv operatorining
-    bugungi lid bosqich statistikasini guruhga ALOHIDA xabar qilib yuboradi. Faoliyatsiz
-    (lid ham, qo'ng'iroq ham yo'q) xodim tashlab ketiladi. `dry_run` — yubormasdan
-    matnlarni qaytaradi (sinov uchun)."""
+async def _do_post_to_group(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Har bir sotuv operatorining bugungi lid bosqich statistikasini guruhga ALOHIDA
+    xabar qilib yuboradi. Faoliyatsiz (lid ham, qo'ng'iroq ham yo'q) xodim tashlab
+    ketiladi. `dry_run` — yubormasdan matnlarni qaytaradi."""
     group = settings.telegram_group_chat_id
     if not group and not dry_run:
         return {"posted": 0, "reason": "Guruh chat ID sozlanmagan"}
@@ -662,3 +661,57 @@ async def post_lead_stages_to_group(dry_run: bool = False, db: AsyncSession = De
     if dry_run:
         return {"dry_run": True, "count": len(items), "items": items}
     return {"posted": posted, "date": today.isoformat()}
+
+
+@router.post("/lead-stages/post-to-group", dependencies=[Depends(verify_bot_secret)])
+async def post_lead_stages_to_group(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
+    """Darhol yuborish (guruhdagi /statistika buyrug'i yoki qo'lda). `dry_run` — sinov."""
+    return await _do_post_to_group(db, dry_run=dry_run)
+
+
+async def _get_group_config(db: AsyncSession) -> GroupPostConfig:
+    cfg = await db.get(GroupPostConfig, 1)
+    if cfg is None:
+        cfg = GroupPostConfig(id=1, post_hour=19, post_minute=10)
+        db.add(cfg)
+        await db.commit()
+        await db.refresh(cfg)
+    return cfg
+
+
+@router.post("/lead-stages/group-tick", dependencies=[Depends(verify_bot_secret)])
+async def group_post_tick(db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler har daqiqa chaqiradi. Sozlangan vaqt (boss belgilagan) kelganda va shu
+    kuni hali yuborilmagan bo'lsa — guruhga yuboradi (`last_posted_date` qo'riqchi)."""
+    cfg = await _get_group_config(db)
+    now = datetime.now(TASHKENT_TZ)
+    today = now.date()
+    if now.hour == cfg.post_hour and now.minute == cfg.post_minute and cfg.last_posted_date != today:
+        result = await _do_post_to_group(db)
+        cfg.last_posted_date = today
+        await db.commit()
+        return {"fired": True, **result}
+    return {"fired": False, "time": f"{cfg.post_hour:02d}:{cfg.post_minute:02d}"}
+
+
+@router.get("/lead-stages/group-time/{telegram_id}", dependencies=[Depends(verify_bot_secret)])
+async def get_group_time(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    cfg = await _get_group_config(db)
+    return {"hour": cfg.post_hour, "minute": cfg.post_minute}
+
+
+@router.post("/lead-stages/group-time", dependencies=[Depends(verify_bot_secret)])
+async def set_group_time(
+    telegram_id: int, hour: int, minute: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Guruhga yuborish vaqtini o'zgartirish — faqat Boshliq (yoki Dasturchi)."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or actor.role not in (Role.boss.value, Role.dasturchi.value):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Vaqtni faqat Boshliq o'zgartira oladi")
+    if not (0 <= hour <= 23) or not (0 <= minute <= 59):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Vaqt noto'g'ri (soat 0-23, daqiqa 0-59)")
+    cfg = await _get_group_config(db)
+    cfg.post_hour = hour
+    cfg.post_minute = minute
+    await db.commit()
+    return {"hour": hour, "minute": minute}

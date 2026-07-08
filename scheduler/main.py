@@ -75,16 +75,18 @@ async def snapshot_lead_stages() -> None:
             logger.exception("Lid statistikasi snapshot'ida xatolik")
 
 
-async def post_lead_stats_to_group() -> None:
-    """Har kuni: har bir sotuv operatorining kunlik lid bosqich statistikasini
-    guruhga alohida xabar qilib yuboradi."""
+async def group_post_tick() -> None:
+    """Har daqiqa: boss belgilagan vaqt kelganda kunlik lid statistikasini guruhga
+    yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""
     async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
         try:
-            resp = await client.post("/stats/lead-stages/post-to-group")
+            resp = await client.post("/stats/lead-stages/group-tick")
             resp.raise_for_status()
-            logger.info("Lid statistikasi guruhga yuborildi: %s", resp.json())
+            body = resp.json()
+            if body.get("fired"):
+                logger.info("Lid statistikasi guruhga yuborildi: %s", body)
         except httpx.HTTPError:
-            logger.exception("Lid statistikasini guruhga yuborishda xatolik")
+            logger.exception("Guruh tick xatosi")
 
 
 async def send_hourly_plan() -> None:
@@ -137,12 +139,13 @@ async def main() -> None:
         coalesce=True,
     )
 
-    # Kunlik lid statistikasini guruhga (har xodimga alohida) — kunlik xulosadan biroz
-    # keyin, snapshot yangilangan bo'lishi uchun.
+    # Kunlik lid statistikasini guruhga (har xodimga alohida). Vaqt boss tomonidan
+    # bazadan sozlanadi, shuning uchun scheduler har daqiqa tekshiradi (API vaqt
+    # kelganini va shu kuni yuborilmaganini o'zi hal qiladi).
     scheduler.add_job(
-        post_lead_stats_to_group,
-        CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=10, timezone=TIMEZONE),
-        misfire_grace_time=MISFIRE_GRACE_TIME,
+        group_post_tick,
+        IntervalTrigger(minutes=1),
+        max_instances=1,
         coalesce=True,
     )
 

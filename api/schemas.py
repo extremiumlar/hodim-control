@@ -287,6 +287,7 @@ class MetricProgressRow(BaseModel):
     label: str
     value: int  # bugungi haqiqiy qiymat (CRM yoki qo'lda kiritilgan)
     norm: int | None  # joriy belgilangan norma (yo'q bo'lsa None)
+    tracked: bool = True  # False — bu ko'rsatkich uchun ma'lumot manbai (CRM ID) yo'q, value har doim 0
 
 
 class TeamNormRow(BaseModel):
@@ -535,17 +536,20 @@ class WorkWeekOut(BaseModel):
 class HourlyMetricStatus(BaseModel):
     key: str
     label: str
-    norm: int  # kunlik norma
-    per_hour: float  # soatiga o'rtacha
-    this_hour_target: int  # bu soatda qilish kerak
-    cumulative_target: int  # shu paytgacha bo'lishi kerak
+    norm: int  # kunlik norma (nominal, to'liq kun uchun belgilangan)
+    effective_norm: int  # bugungi ish soatiga moslashtirilgan norma (qisqa kunda kamaytiriladi)
+    per_hour: float  # soatiga o'rtacha (effective_norm asosida)
+    this_hour_target: int  # bu soatda qilish kerak (kumulyativ qoldiqni taqsimlash orqali, min-1 majburlanmaydi)
+    cumulative_target: int  # shu paytgacha bo'lishi kerak (effective_norm asosida)
     actual: int  # haqiqatda bajarilgan (CRM)
-    delta: int  # actual - cumulative_target (+ oldinda, - orqada)
+    delta: int  # actual - cumulative_target (+ oldinda, - orqada) — faqat tracked bo'lsa ma'noli
+    tracked: bool = True  # False — ma'lumot manbai (CRM ID) yo'q, actual/delta e'tiborga olinmasin
 
 
 class HourlyPlanOut(BaseModel):
     date: date
     is_working: bool
+    in_lunch: bool = False
     start_time: str | None = None
     end_time: str | None = None
     now: str | None = None  # "HH:MM"
