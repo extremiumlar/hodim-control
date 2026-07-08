@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime
 
 import httpx
 
-from crm.base import CRMAdapter, day_bounds_unix
+from crm.base import CRMAdapter, TASHKENT_TZ, day_bounds_unix
 from crm.config import CRM_API_KEY, CRM_UYSOT_VISIT_PIPE_STATUS_ID
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,14 @@ UYSOT_BASE_URL = "https://api.service.app.uysot.uz/v1/open-api"
 CALL_HISTORY_PAGE_SIZE = 100
 LEAD_FILTER_PAGE_SIZE = 50  # /lead/filter uchun API'ning ruxsat etilgan maksimal "size"si
 MAX_PAGES_PER_SYNC = 20  # xavfsizlik chegarasi — kunlik qo'ng'iroqlar/lidlar juda ko'p bo'lib ketsa ham to'xtaydi
+
+# Operator AI kompozit sifat o'lchovi (1-bosqich tekshiruvi asosida, 2026-07-08):
+# Uysot call-history'da `contacted` va `qualityScore` maydonlari bu instansiyada
+# doim bo'sh (false/0) — ishlatib bo'lmaydi. Haqiqiy signallar: `missed` (javob
+# berildimi: missed==False ⟺ duration>0) va `duration` (=userTalkTime, suhbat
+# sekundi). "Qisqa qo'ng'iroq" (aldash/sayoz suhbat anomaliyasi) — javob berilgan,
+# lekin bu chegaradan qisqa qo'ng'iroqlar.
+SHORT_CALL_SECONDS = 15
 
 # Fon (scheduler) lead breakdown skaneri uchun: butun bazani sahifalab o'qiydi.
 # Uysot rate limiti daqiqasiga 60 so'rov — 30s CRM sync ham shu endpointdan
@@ -159,6 +167,86 @@ class UysotAdapter(CRMAdapter):
                 return None
 
         return breakdown
+
+    @staticmethod
+    def _empty_quality_bucket() -> dict[str, int]:
+        return {"calls": 0, "calls_in": 0, "calls_out": 0, "answered": 0, "talk_sec": 0, "short_calls": 0}
+
+    def _apply_call_to_bucket(self, bucket: dict[str, int], record: dict) -> None:
+        """Bitta qo'ng'iroqni kompozit sifat chelakiga qo'shadi (miqdor + sifat +
+        anomaliya). `missed`/`duration` haqiqiy signallar (1-bosqich tekshiruviga
+        qarang) — `contacted`/`qualityScore` ishlatilmaydi (bu instansiyada bo'sh)."""
+        bucket["calls"] += 1
+        if record.get("callDirection") == "INBOUND":
+            bucket["calls_in"] += 1
+        else:  # OUTBOUND yoki noma'lum — chiquvchi deb hisoblaymiz
+            bucket["calls_out"] += 1
+        # Javob berildimi: missed==False ⟺ duration>0 (tekshiruvda ziddiyat topilmadi).
+        if record.get("missed") is False:
+            duration = record.get("duration") or 0
+            bucket["answered"] += 1
+            bucket["talk_sec"] += duration
+            if duration < SHORT_CALL_SECONDS:
+                bucket["short_calls"] += 1
+
+    async def get_hourly_call_quality(self, day: date) -> dict[str, dict] | None:
+        """Operator AI avto-reja/kuzatuvi uchun: shu kundagi qo'ng'iroqlarni
+        `employeeNum` × soat (Asia/Tashkent, 0–23) kesimida KOMPOZIT sifat bilan
+        sanaydi. Har chelak: calls, calls_in, calls_out, answered (javob berilgan),
+        talk_sec (jami suhbat sekundi), short_calls (qisqa/sayoz qo'ng'iroq anomaliyasi).
+
+        Qaytaradi: {employeeNum: {"total": {...}, "hours": {soat: {...}}}}.
+        call-history `startStamp` bo'yicha kamayish tartibida keladi — bugungidan
+        eskirgan yozuvga yetguncha sahifalanadi (tez, butun baza emas). CRM xatosida
+        yoki kalit yo'q bo'lsa `None` (chaqiruvchi eski snapshotni ustidan yozmasin)."""
+        if not CRM_API_KEY:
+            return None
+
+        start_ts, end_ts = day_bounds_unix(day)
+        result: dict[str, dict] = {}
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC:
+                    resp = await client.post(
+                        "/call-history/filter",
+                        json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+
+                    reached_older_record = False
+                    for record in records:
+                        ts = record.get("startStamp")
+                        if ts is None:
+                            continue
+                        if ts < start_ts:
+                            reached_older_record = True
+                            continue
+                        if not (start_ts <= ts <= end_ts):
+                            continue
+                        employee_num = record.get("employeeNum")
+                        if not employee_num:
+                            continue
+                        hour = datetime.fromtimestamp(ts, TASHKENT_TZ).hour
+                        emp = result.setdefault(
+                            employee_num, {"total": self._empty_quality_bucket(), "hours": {}}
+                        )
+                        hour_bucket = emp["hours"].setdefault(hour, self._empty_quality_bucket())
+                        self._apply_call_to_bucket(emp["total"], record)
+                        self._apply_call_to_bucket(hour_bucket, record)
+
+                    if reached_older_record or page >= body.get("totalPages", page):
+                        break
+                    page += 1
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan soatlik sifat olishda xatolik (day=%s)", day)
+                return None
+
+        return result
 
     async def _load_day_visits(self, client: httpx.AsyncClient, day: date) -> dict[str, dict]:
         """"Tashrif" bosqichidagi (`CRM_UYSOT_VISIT_PIPE_STATUS_ID`) lidlarni sahifalab

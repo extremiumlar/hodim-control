@@ -42,6 +42,14 @@ class CRMAdapter(ABC):
         Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
         return None
 
+    async def get_hourly_call_quality(self, day: date) -> dict[str, dict] | None:
+        """Ixtiyoriy (Operator AI uchun): shu kundagi qo'ng'iroqlarni CRM xodim
+        identifikatori (`employeeNum`) × soat kesimida kompozit sifat bilan qaytaradi —
+        {employee_id: {"total": {...}, "hours": {soat: {...}}}}, har chelak calls,
+        calls_in, calls_out, answered, talk_sec, short_calls. CRM'dan olib bo'lmasa
+        `None`. Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
+        return None
+
     async def get_daily_lead_breakdown(self, day: date) -> list[dict] | None:
         """Ixtiyoriy: shu kunda ishlangan (yangilangan) lidlarni operator×bosqich
         kesimida sanaydi — har element {"responsible_id": int, "responsible_name": str,

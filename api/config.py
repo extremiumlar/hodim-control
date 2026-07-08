@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # qat'i nazar ishlaydi — u xodimning o'zi ochishi, push emas.)
     hourly_plan_enabled: bool = False
 
+    # Operator AI tizimi (Claude Opus 4.8) — avto-reja, kompozit kuzatuv, sabab
+    # halqasi va guruh xulosasini odam tiliga o'giradi. Default O'CHIQ: yoqilmaganda
+    # butun AI qatlami deterministik (kod) shablonlarga qaytadi va Claude API'ga
+    # umuman murojaat qilmaydi (xarajat/xavfsizlik). Yoqish uchun .env'da
+    # AI_ENABLED=true + ANTHROPIC_API_KEY qo'ying.
+    ai_enabled: bool = False
+    anthropic_api_key: str = ""
+    ai_model: str = "claude-opus-4-8"
+
     @field_validator("telegram_group_chat_id", mode="before")
     @classmethod
     def _empty_group_id_to_zero(cls, value: object) -> object:
@@ -61,6 +70,15 @@ class Settings(BaseSettings):
                 "(placeholder) qiymatda turibdi — .env faylida haqiqiy maxfiy "
                 "qiymatlar bilan almashtiring."
             )
+            if self.debug:
+                logger.error(message)
+            else:
+                raise RuntimeError(message)
+
+        # AI yoqilgan bo'lsa kalit shart — aks holda har chaqiruv jimgina fallback'ga
+        # tushib, "AI ishlayapti" degan noto'g'ri taassurot beradi. Erta va aniq xato.
+        if self.ai_enabled and not self.anthropic_api_key:
+            message = "AI_ENABLED=true, lekin ANTHROPIC_API_KEY bo'sh — .env' da kalit qo'ying yoki AI_ENABLED=false qiling."
             if self.debug:
                 logger.error(message)
             else:
