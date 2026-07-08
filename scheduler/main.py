@@ -75,6 +75,18 @@ async def snapshot_lead_stages() -> None:
             logger.exception("Lid statistikasi snapshot'ida xatolik")
 
 
+async def post_lead_stats_to_group() -> None:
+    """Har kuni: har bir sotuv operatorining kunlik lid bosqich statistikasini
+    guruhga alohida xabar qilib yuboradi."""
+    async with httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=60) as client:
+        try:
+            resp = await client.post("/stats/lead-stages/post-to-group")
+            resp.raise_for_status()
+            logger.info("Lid statistikasi guruhga yuborildi: %s", resp.json())
+        except httpx.HTTPError:
+            logger.exception("Lid statistikasini guruhga yuborishda xatolik")
+
+
 async def send_hourly_plan() -> None:
     """Har soat boshida ish vaqtidagi xodimlarga soatlik reja + progressni yuboradi.
     API ish oynasidan tashqarida/dam kunida hech kimga yubormaydi (o'zi filtrlaydi)."""
@@ -121,6 +133,15 @@ async def main() -> None:
     scheduler.add_job(
         send_daily_summary,
         CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=0, timezone=TIMEZONE),
+        misfire_grace_time=MISFIRE_GRACE_TIME,
+        coalesce=True,
+    )
+
+    # Kunlik lid statistikasini guruhga (har xodimga alohida) — kunlik xulosadan biroz
+    # keyin, snapshot yangilangan bo'lishi uchun.
+    scheduler.add_job(
+        post_lead_stats_to_group,
+        CronTrigger(hour=DAILY_SUMMARY_HOUR, minute=10, timezone=TIMEZONE),
         misfire_grace_time=MISFIRE_GRACE_TIME,
         coalesce=True,
     )

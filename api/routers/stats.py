@@ -1,3 +1,4 @@
+import html
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -6,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, verify_bot_secret
+from api.telegram_notify import send_message
 from api.routers.norms import METRIC_LABELS, metrics_for
 from api.schemas import (
     LeadOperatorRow,
@@ -20,6 +22,7 @@ from api.timeutil import local_range_utc_naive, today_local
 from crm import get_crm_adapter
 from db.models import (
     DailyResult,
+    DailyResultSource,
     ExcusedDay,
     ExcusedStatus,
     LeadStageDaily,
@@ -75,6 +78,17 @@ async def today_metric_rows(db: AsyncSession, user: User) -> list[MetricProgress
         "tashrif": result.visits_count if result else 0,
     }
 
+    # suhbat/tashrif CRM bog'lanishiga muhtoj — bog'lanmagan bo'lsa value doim 0
+    # bo'ladi, buni "orqada qoldi" deb ko'rsatmaslik uchun alohida belgilaymiz.
+    # Bugun uchun qo'lda kiritilgan yozuv bo'lsa (source=manual), CRM ID yo'q
+    # bo'lsa ham haqiqiy ma'lumot bor hisoblanadi. video mobilograf orqali keladi
+    # va CRM bog'lanishiga bog'liq emas.
+    has_manual_today = bool(result and result.source == DailyResultSource.manual.value)
+    tracked_by_key = {
+        "suhbat": user.crm_external_id is not None or has_manual_today,
+        "tashrif": user.crm_visit_external_id is not None or has_manual_today,
+    }
+
     rows = []
     for key in metrics_for(user):
         if key == "video":
@@ -87,6 +101,7 @@ async def today_metric_rows(db: AsyncSession, user: User) -> list[MetricProgress
                 label=METRIC_LABELS.get(key, key),
                 value=value,
                 norm=await _current_norm(db, user.id, key),
+                tracked=tracked_by_key.get(key, True),
             )
         )
     return rows
@@ -585,3 +600,65 @@ async def web_my_lead_stage_day(
     """Sayt uchun xodimning O'Z kunlik statistikasi."""
     rid = _resolve_self_responsible_id(user)
     return await _build_lead_day(db, day, rid)
+
+
+# --- Guruhga kunlik lid statistikasini yuborish (har xodimga alohida xabar) ---
+
+
+def _format_group_stat(name: str, day: date, data: LeadStageDayOut) -> str:
+    """Bir xodimning kunlik lid bosqich statistikasi — guruhga yuboriladigan standart
+    ko'rinish (botdagi shaxsiy ko'rinish bilan bir xil)."""
+    lines = [
+        f"👤 <b>{html.escape(name)} — {day:%d.%m.%Y}</b>",
+        f"📞 Gaplashilgan: {data.calls} | 🧲 Ishlangan: {data.total} | Tashrif: {data.visits}",
+        "",
+    ]
+    if data.stages:
+        lines.extend(f"• {html.escape(s.stage_name)}: {s.count}" for s in data.stages)
+    else:
+        lines.append("Bugun lidlar bo'yicha ma'lumot yo'q.")
+    return "\n".join(lines)
+
+
+@router.post("/lead-stages/post-to-group", dependencies=[Depends(verify_bot_secret)])
+async def post_lead_stages_to_group(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler har kuni belgilangan vaqtda chaqiradi: har bir sotuv operatorining
+    bugungi lid bosqich statistikasini guruhga ALOHIDA xabar qilib yuboradi. Faoliyatsiz
+    (lid ham, qo'ng'iroq ham yo'q) xodim tashlab ketiladi. `dry_run` — yubormasdan
+    matnlarni qaytaradi (sinov uchun)."""
+    group = settings.telegram_group_chat_id
+    if not group and not dry_run:
+        return {"posted": 0, "reason": "Guruh chat ID sozlanmagan"}
+
+    today = today_local()
+    employees = list(
+        await db.scalars(
+            select(User)
+            .where(
+                User.role == Role.employee.value,
+                User.is_active == True,  # noqa: E712
+                User.crm_visit_external_id.isnot(None),
+            )
+            .order_by(User.full_name)
+        )
+    )
+
+    items: list[dict] = []
+    posted = 0
+    for emp in employees:
+        try:
+            rid = int(emp.crm_visit_external_id)
+        except (TypeError, ValueError):
+            continue
+        data = await _build_lead_day(db, today, rid)
+        if data.total == 0 and data.calls == 0:
+            continue  # bugun faoliyatsiz — yubormaymiz
+        text = _format_group_stat(emp.full_name, today, data)
+        if dry_run:
+            items.append({"name": emp.full_name, "text": text})
+        elif await send_message(group, text) is not None:
+            posted += 1
+
+    if dry_run:
+        return {"dry_run": True, "count": len(items), "items": items}
+    return {"posted": posted, "date": today.isoformat()}
