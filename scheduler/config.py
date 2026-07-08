@@ -29,6 +29,15 @@ MONTHLY_BONUS_DAY = "last"
 MONTHLY_BONUS_HOUR = 23
 MONTHLY_BONUS_MINUTE = 30
 
+# ─── Operator AI (avto-reja dvigateli) ─────────────────────────────────────────
+# API tomonda `AI_ENABLED` o'chiq bo'lsa bu endpointlar no-op (`disabled`) — CRM/DB
+# ga yuk tushmaydi. Yoqilganda: har necha daqiqada bugungi actual snapshoti; har kuni
+# ertalab kunlik reja tuziladi; haftada bir marta profillar qayta hisoblanadi.
+AI_SNAPSHOT_INTERVAL_MINUTES = 15  # bugungi soatlik actual (yengil, early-stop skan)
+AI_BUILD_TARGETS_HOUR = 6  # kunlik reja ish boshlanishidan oldin tuziladi
+AI_COMPUTE_PROFILES_DOW = "sun"  # profillar haftada (yakshanba) qayta hisoblanadi
+AI_COMPUTE_PROFILES_HOUR = 5  # build-targets (06:00) dan oldin ishlashi uchun
+
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.
 MISFIRE_GRACE_DEFAULT = 3600

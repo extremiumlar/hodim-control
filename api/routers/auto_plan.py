@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.services import auto_plan
 from api.timeutil import today_local
@@ -20,7 +21,11 @@ def _parse_day(day: str | None) -> date:
 
 @router.post("/snapshot")
 async def snapshot(day: str | None = None, db: AsyncSession = Depends(get_db)) -> dict:
-    """Bitta kun (default bugun) uchun soatlik actual'ni CRM'dan o'qib yozadi."""
+    """Bitta kun (default bugun) uchun soatlik actual'ni CRM'dan o'qib yozadi.
+    Scheduler har necha daqiqada chaqiradi — AI o'chiq bo'lsa (default) CRM'ga yuk
+    tushmasligi uchun no-op (`disabled`)."""
+    if not settings.ai_enabled:
+        return {"disabled": True}
     d = _parse_day(day)
     written = await auto_plan.snapshot_hourly_actual(db, d)
     return {"date": d.isoformat(), "rows": written, "crm_ok": written >= 0}
@@ -38,14 +43,20 @@ async def backfill(days: int = auto_plan.PROFILE_LOOKBACK_DAYS, db: AsyncSession
 
 @router.post("/compute-profiles")
 async def compute_profiles(db: AsyncSession = Depends(get_db)) -> dict:
-    """Oxirgi ~30 kun actual'dan operator/soat baseline profilini (median) yangilaydi."""
+    """Oxirgi ~30 kun actual'dan operator/soat baseline profilini (median) yangilaydi.
+    Scheduler haftada chaqiradi — AI o'chiq bo'lsa no-op."""
+    if not settings.ai_enabled:
+        return {"disabled": True}
     count = await auto_plan.compute_profiles(db, today_local())
     return {"profiles": count}
 
 
 @router.post("/build-targets")
 async def build_targets(day: str | None = None, db: AsyncSession = Depends(get_db)) -> dict:
-    """Berilgan kun (default bugun) uchun soatlik rejani profil+benchmark+stretch'dan tuzadi."""
+    """Berilgan kun (default bugun) uchun soatlik rejani profil+benchmark+stretch'dan
+    tuzadi. Scheduler har kuni ertalab chaqiradi — AI o'chiq bo'lsa no-op."""
+    if not settings.ai_enabled:
+        return {"disabled": True}
     d = _parse_day(day)
     count = await auto_plan.build_daily_targets(db, d)
     return {"date": d.isoformat(), "targets": count}

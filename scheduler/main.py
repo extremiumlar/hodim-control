@@ -91,6 +91,25 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_BONUS_DAY, hour=cfg.MONTHLY_BONUS_HOUR, minute=cfg.MONTHLY_BONUS_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # ─── Operator AI (avto-reja) — API o'chiq bo'lsa no-op ───────────────────
+        # Bugungi actual snapshoti — davomiy (reja vs haqiqiy + ertangi tarix)
+        JobSpec(
+            "ai_snapshot", jobs.ai_snapshot_actuals,
+            IntervalTrigger(minutes=cfg.AI_SNAPSHOT_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
+        # Kunlik reja — har kuni ertalab, ish boshlanishidan oldin
+        JobSpec(
+            "ai_build_targets", jobs.ai_build_targets,
+            _cron(hour=cfg.AI_BUILD_TARGETS_HOUR, minute=0),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+        # Profillarni haftada qayta hisoblash (build-targets'dan oldin ishlaydi)
+        JobSpec(
+            "ai_compute_profiles", jobs.ai_compute_profiles,
+            _cron(day_of_week=cfg.AI_COMPUTE_PROFILES_DOW, hour=cfg.AI_COMPUTE_PROFILES_HOUR, minute=0),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
     ]
     return specs
 

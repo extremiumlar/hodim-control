@@ -59,3 +59,27 @@ async def calculate_monthly_bonus() -> None:
     body = await call_api("/bonuses/calculate-monthly", json={}, timeout=60, label="[BONUS FAILED] Oylik bonus")
     if body is not None:
         logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", body)
+
+
+# ─── Operator AI (avto-reja dvigateli) — API tomonda AI o'chiq bo'lsa no-op ──────
+async def ai_snapshot_actuals() -> None:
+    """Bugungi soatlik actual'ni CRM'dan o'qib `hourly_actual`ga yozadi (reja vs
+    haqiqiy va ertangi tarix uchun)."""
+    body = await call_api("/auto-plan/snapshot", timeout=120, label="AI actual snapshot")
+    if body is not None and not body.get("disabled"):
+        logger.info("AI actual snapshot: %s", body)
+
+
+async def ai_build_targets() -> None:
+    """Bugungi kunlik rejani (profil+benchmark+stretch) tuzadi — ish boshlanishidan oldin."""
+    body = await call_api("/auto-plan/build-targets", timeout=120, label="AI reja tuzish")
+    if body is not None and not body.get("disabled"):
+        logger.info("AI kunlik reja tuzildi: %s", body)
+
+
+async def ai_compute_profiles() -> None:
+    """Operatorlarning soatlik baseline profilini oxirgi ~30 kundan qayta hisoblaydi
+    (haftada, operator o'ssa reja ham o'sadi)."""
+    body = await call_api("/auto-plan/compute-profiles", timeout=120, label="AI profil hisob")
+    if body is not None and not body.get("disabled"):
+        logger.info("AI profillar yangilandi: %s", body)
