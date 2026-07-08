@@ -300,6 +300,23 @@ class HourlyTarget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AiMessageLog(Base):
+    """Operator AI — Claude (yoki fallback) yozgan har bir matn. Audit va xotira:
+    keyingi murojaatlarda "kecha shu soatda past eding" kabi trendni eslash uchun
+    saqlanadi. `context` — Claude'ga berilgan agregat kirish (PII yo'q), qayta
+    tekshirish uchun."""
+
+    __tablename__ = "ai_message_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # nudge | group_summary | weekly
+    source: Mapped[str] = mapped_column(String(16), default="ai")  # ai | fallback
+    text: Mapped[str] = mapped_column(Text)
+    context: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # agregat kirish (PII yo'q)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class WorkScheduleWeekly(Base):
     """Xodimning haftalik takrorlanuvchi ish jadvali andozasi — hafta kuni bo'yicha
     (0=Dushanba ... 6=Yakshanba). `is_working=False` — dam olish kuni. Vaqtlar "HH:MM"
