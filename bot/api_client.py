@@ -353,3 +353,13 @@ async def all_work_week(telegram_id: int, start: str | None = None) -> list[dict
         return None
     resp.raise_for_status()
     return resp.json()
+
+
+async def post_shortfall_reason(telegram_id: int, day: str, hour: int, code: str) -> dict:
+    """Operator AI sabab tugmasi javobini API'ga yozadi; {"label": ...} qaytaradi."""
+    resp = await _get_client().post(
+        "/ai-watch/reason",
+        json={"telegram_id": telegram_id, "date": day, "hour": hour, "code": code},
+    )
+    resp.raise_for_status()
+    return resp.json()

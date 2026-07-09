@@ -83,3 +83,14 @@ async def ai_compute_profiles() -> None:
     body = await call_api("/auto-plan/compute-profiles", timeout=120, label="AI profil hisob")
     if body is not None and not body.get("disabled"):
         logger.info("AI profillar yangilandi: %s", body)
+
+
+async def ai_watch_tick() -> None:
+    """Soatlik kuzatuv: reja vs haqiqiy — orqada qolgan/anomaliyali operatorlarga
+    AI nudge + sabab tugmalari. Joyida bo'lganlarga jim. API AI_ENABLED va
+    AI_NUDGE_ENABLED bayroqlarini o'zi tekshiradi (o'chiqda no-op)."""
+    body = await call_api("/ai-watch/tick", timeout=180, label="AI kuzatuv tick")
+    if body is not None and not body.get("disabled"):
+        if body.get("nudge_disabled"):
+            return  # push o'chiq — jimgina o'tamiz (log shovqin qilmasin)
+        logger.info("AI kuzatuv: triggered=%s sent=%s", body.get("triggered"), body.get("sent"))

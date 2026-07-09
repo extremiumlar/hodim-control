@@ -110,6 +110,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day_of_week=cfg.AI_COMPUTE_PROFILES_DOW, hour=cfg.AI_COMPUTE_PROFILES_HOUR, minute=0),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Soatlik kuzatuv — orqada qolganlarga nudge + sabab so'rovi (API bayroqlarni
+        # o'zi tekshiradi; AI_NUDGE_ENABLED o'chiq bo'lsa hech kimga yubormaydi)
+        JobSpec(
+            "ai_watch_tick", jobs.ai_watch_tick,
+            _cron(minute=cfg.AI_WATCH_MINUTE),
+            max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
+        ),
     ]
     return specs
 

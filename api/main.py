@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.config import settings
 from api.routers import (
     ai_coach,
+    ai_watch,
     audit_logs,
     auth,
     auto_plan,
@@ -47,6 +48,7 @@ app.include_router(work_schedule.router)
 app.include_router(hourly_plan.router)
 app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
+app.include_router(ai_watch.router)
 
 
 @app.get("/health")

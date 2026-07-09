@@ -300,6 +300,25 @@ class HourlyTarget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ShortfallReason(Base):
+    """Operator AI — reja ortda qolganda operatordan tugma orqali yig'ilgan sabab
+    ("Mijozlar ko'tarmadi", "Baza tugadi" va h.k.). Sabablar jamlanib rahbarga
+    tizimli xulosa beriladi ("3 operator 'baza tugadi' dedi") va operator
+    adolatli baholanadi (aybi bo'lmagan pasayish ko'rinadi).
+
+    Grain: (user_id, date, hour) — bir soatga bitta sabab (qayta bosilsa yangilanadi)."""
+
+    __tablename__ = "shortfall_reason"
+    __table_args__ = (UniqueConstraint("user_id", "date", "hour", name="uq_shortfall_reason_grain"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    hour: Mapped[int] = mapped_column(Integer)  # sabab so'ralgan soat (0-23)
+    reason: Mapped[str] = mapped_column(String(64))  # tayyor yorliq matni ("Baza tugadi")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AiMessageLog(Base):
     """Operator AI — Claude (yoki fallback) yozgan har bir matn. Audit va xotira:
     keyingi murojaatlarda "kecha shu soatda past eding" kabi trendni eslash uchun

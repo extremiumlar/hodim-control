@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     ai_model: str = "claude-opus-4-8"
     gemini_api_key: str = Field("", validation_alias="OPERATOR_GEMINI_API_KEY")
     gemini_model: str = "gemini-3.5-flash"
+    # Nudge PUSH alohida bayroq (hourly_plan_enabled naqshi): AI_ENABLED faqat matn
+    # generatsiyasini yoqadi; haqiqiy operatorlarga Telegram xabar yuborish uchun
+    # .env'da AI_NUDGE_ENABLED=true ham kerak. Tick endpointi dry_run=true bilan
+    # yubormasdan sinash imkonini beradi.
+    ai_nudge_enabled: bool = False
 
     @field_validator("telegram_group_chat_id", mode="before")
     @classmethod

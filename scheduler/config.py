@@ -37,6 +37,10 @@ AI_SNAPSHOT_INTERVAL_MINUTES = 15  # bugungi soatlik actual (yengil, early-stop 
 AI_BUILD_TARGETS_HOUR = 6  # kunlik reja ish boshlanishidan oldin tuziladi
 AI_COMPUTE_PROFILES_DOW = "sun"  # profillar haftada (yakshanba) qayta hisoblanadi
 AI_COMPUTE_PROFILES_HOUR = 5  # build-targets (06:00) dan oldin ishlashi uchun
+# Soatlik kuzatuv (nudge) daqiqasi: soat boshidan keyin — endpoint o'zi yangi
+# snapshot oladi, shuning uchun :00 bilan to'qnashuv muhim emas, lekin soat
+# yakunlangach baholagan ma'qul.
+AI_WATCH_MINUTE = 5
 
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.

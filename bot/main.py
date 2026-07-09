@@ -10,6 +10,7 @@ from aiogram.types import ErrorEvent
 from bot import api_client
 from bot.config import BOT_TOKEN
 from bot.handlers import (
+    ai_watch,
     assign_task,
     excused,
     group_stats,
@@ -45,6 +46,7 @@ async def main() -> None:
     dp.include_router(lead_stats.router)
     dp.include_router(work_schedule.router)
     dp.include_router(hourly_plan.router)
+    dp.include_router(ai_watch.router)
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
     dp.include_router(norms.router)

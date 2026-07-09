@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db, verify_bot_secret
 from api.services import ai_coach
 from api.timeutil import TASHKENT_TZ, today_local
-from db.models import HourlyActual, HourlyTarget, Role, User
+from db.models import HourlyActual, HourlyTarget, Role, ShortfallReason, User
 
 router = APIRouter(prefix="/ai-coach", tags=["ai-coach"], dependencies=[Depends(verify_bot_secret)])
 
@@ -100,10 +100,24 @@ async def group_summary(db: AsyncSession = Depends(get_db)) -> dict:
     if operators:
         best = max(operators, key=lambda o: o["done"])
         best["top"] = True
+    # Bugun operatorlardan yig'ilgan sabablar — jamlanib rahbarga tizimli ko'rinadi
+    # ("3 operator 'baza tugadi' dedi"). Bir operator bir sababni bir necha soatda
+    # bosgan bo'lsa ham bir marta sanaladi (operator kesimida noyob).
+    reason_rows = list(
+        await db.scalars(select(ShortfallReason).where(ShortfallReason.date == day))
+    )
+    by_reason: dict[str, set[int]] = {}
+    for r in reason_rows:
+        by_reason.setdefault(r.reason, set()).add(r.user_id)
+    reasons = sorted(
+        ({"reason": k, "count": len(v)} for k, v in by_reason.items()),
+        key=lambda x: -x["count"],
+    )
+
     payload = {
         "date": day.isoformat(),
         "team_completion_pct": round(total_done / total_target * 100) if total_target else 0,
         "operators": operators,
-        "reasons": [],  # sabablar yig'ilishi 4-bosqichda (shortfall_reason)
+        "reasons": reasons,
     }
     return await ai_coach.daily_group_summary(db, payload)
