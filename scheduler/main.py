@@ -117,6 +117,17 @@ def _build_jobs() -> list[JobSpec]:
             _cron(minute=cfg.AI_WATCH_MINUTE),
             max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
         ),
+        # Kun yakuni AI xulosasi — vaqt bazadan (boss) sozlanadi, har daqiqa tekshiriladi
+        JobSpec(
+            "ai_summary_tick", jobs.ai_summary_tick, IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
+        # Haftalik trend — yakshanba kechqurun
+        JobSpec(
+            "ai_weekly", jobs.ai_weekly_run,
+            _cron(day_of_week=cfg.AI_WEEKLY_DOW, hour=cfg.AI_WEEKLY_HOUR, minute=0),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
     ]
     return specs
 

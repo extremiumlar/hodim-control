@@ -300,6 +300,26 @@ class HourlyTarget(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class AiConfig(Base):
+    """Operator AI ish vaqtida (runtime) rahbar boshqaradigan sozlamalar (yagona
+    qator, id=1). Env bayroqlari (AI_ENABLED, AI_NUDGE_ENABLED) deploy darajasidagi
+    bosh kalit; bu jadval esa boss botdan turib alohida qismlarni yoqib-o'chirishi
+    uchun — ikkalasi HAM yoqiq bo'lsagina yuboriladi."""
+
+    __tablename__ = "ai_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
+    nudges_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    weekly_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    summary_hour: Mapped[int] = mapped_column(Integer, default=19)
+    summary_minute: Mapped[int] = mapped_column(Integer, default=0)
+    # Bir kunda/haftada ikki marta yubormaslik qo'riqchilari
+    summary_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
+    weekly_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ShortfallReason(Base):
     """Operator AI — reja ortda qolganda operatordan tugma orqali yig'ilgan sabab
     ("Mijozlar ko'tarmadi", "Baza tugadi" va h.k.). Sabablar jamlanib rahbarga

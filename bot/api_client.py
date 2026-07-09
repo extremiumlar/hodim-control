@@ -363,3 +363,21 @@ async def post_shortfall_reason(telegram_id: int, day: str, hour: int, code: str
     )
     resp.raise_for_status()
     return resp.json()
+
+
+async def get_ai_config(telegram_id: int) -> dict | None:
+    """Operator AI sozlamalari (rahbar uchun). Ruxsat yo'q — None."""
+    resp = await _get_client().get(f"/ai-watch/config/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_ai_config(telegram_id: int, **fields) -> dict | None:
+    """AI sozlamasini o'zgartirish (faqat boss/dasturchi). Ruxsat yo'q — None."""
+    resp = await _get_client().post(f"/ai-watch/config/{telegram_id}", json=fields)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()

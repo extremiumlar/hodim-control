@@ -94,3 +94,18 @@ async def ai_watch_tick() -> None:
         if body.get("nudge_disabled"):
             return  # push o'chiq — jimgina o'tamiz (log shovqin qilmasin)
         logger.info("AI kuzatuv: triggered=%s sent=%s", body.get("triggered"), body.get("sent"))
+
+
+async def ai_summary_tick() -> None:
+    """Har daqiqa: boss belgilagan vaqt kelganda kun yakuni AI xulosasini guruhga
+    yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""
+    body = await call_api("/ai-watch/summary-tick", timeout=120, label="AI kun yakuni tick")
+    if body and body.get("fired"):
+        logger.info("AI kun yakuni guruhga yuborildi: %s", body)
+
+
+async def ai_weekly_run() -> None:
+    """Haftalik trend: har operatorga shaxsiy xulosa + guruhga jamoa ko'rinishi."""
+    body = await call_api("/ai-watch/weekly-run", timeout=300, label="AI haftalik")
+    if body is not None and not body.get("disabled") and not body.get("weekly_disabled"):
+        logger.info("AI haftalik: operators=%s sent=%s", body.get("operators"), body.get("sent"))

@@ -41,6 +41,9 @@ AI_COMPUTE_PROFILES_HOUR = 5  # build-targets (06:00) dan oldin ishlashi uchun
 # snapshot oladi, shuning uchun :00 bilan to'qnashuv muhim emas, lekin soat
 # yakunlangach baholagan ma'qul.
 AI_WATCH_MINUTE = 5
+# Haftalik trend — yakshanba kechqurun (kun yakuni xulosasidan keinroq).
+AI_WEEKLY_DOW = "sun"
+AI_WEEKLY_HOUR = 20
 
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.
