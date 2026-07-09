@@ -23,18 +23,20 @@ logger = logging.getLogger(__name__)
 _SYSTEM_BASE = (
     "Sen sotuv operatorlariga yordam beradigan qisqa, aniq murabbiysan. O'zbek tilida "
     "yozasan. Senga FAQAT agregat raqamlar beriladi (mijoz ismi/telefoni/audio yo'q) — "
-    "berilgan raqamlardan boshqa raqam O'YLAB TOPMA, hisob-kitob qilma. Ohang: avval "
-    "qo'llab-quvvatlovchi ('keling birga tuzataylik'), lekin natija bo'lmasa kun oxirida "
-    "guruhda statistika e'lon qilinishini ochiq, xotirjam ayt (do'q emas, real oqibat). "
+    "berilgan raqamlardan boshqa raqam O'YLAB TOPMA, hisob-kitob qilma. Ohang tartibi "
+    "qat'iy: (1) holatni xotirjam ayt, (2) yordam taklif qil ('keling birga tuzataylik' "
+    "ruhida, aniq keyingi qadam bilan), (3) faqat oxirida, orqada bo'lsa, kun oxirida "
+    "guruhda statistika e'lon qilinishini bir jumlada ayt (do'q emas, real oqibat). "
+    "Ayblovchi/kamsituvchi so'zlardan ('atigi', 'qoniqarsiz', 'yomon') qoch. "
     "Faqat matn qaytar, izohsiz. Emoji kam ishlat."
 )
 
 _MAX_TOKENS = 350
 
 
-def _client():
-    """AsyncAnthropic klienti — AI yoqilgan va kalit bor bo'lsa; aks holda None."""
-    if not settings.ai_enabled or not settings.anthropic_api_key:
+def _anthropic_client():
+    """AsyncAnthropic klienti — kalit bor bo'lsa; aks holda None."""
+    if not settings.anthropic_api_key:
         return None
     try:
         from anthropic import AsyncAnthropic
@@ -44,13 +46,10 @@ def _client():
     return AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
-async def _generate(system: str, payload: dict, instruction: str) -> tuple[str, str] | None:
-    """Claude'ga (system + JSON payload + ko'rsatma) yuborib matn oladi.
-    (text, "ai") qaytaradi; AI o'chiq/xato bo'lsa None (chaqiruvchi fallback qiladi)."""
-    client = _client()
+async def _generate_anthropic(system: str, user: str) -> str | None:
+    client = _anthropic_client()
     if client is None:
         return None
-    user = f"{instruction}\n\nMa'lumot (JSON):\n{json.dumps(payload, ensure_ascii=False)}"
     try:
         resp = await client.messages.create(
             model=settings.ai_model,
@@ -59,13 +58,7 @@ async def _generate(system: str, payload: dict, instruction: str) -> tuple[str, 
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
-        if not text:
-            return None
-        return text, "ai"
-    except Exception:  # noqa: BLE001 — har qanday API/tarmoq xatosida fallback
-        logger.exception("Claude chaqiruvida xatolik — fallback ishlatiladi")
-        return None
+        return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip() or None
     finally:
         close = getattr(client, "aclose", None)
         if close is not None:
@@ -73,6 +66,66 @@ async def _generate(system: str, payload: dict, instruction: str) -> tuple[str, 
                 await close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+async def _generate_gemini(system: str, user: str) -> str | None:
+    """Gemini REST (generateContent) — SDK'siz, httpx orqali. `thinkingBudget: 0`
+    flash modellarda o'ylashni o'chiradi (aks holda output tokenni o'ylashga sarflab
+    bo'sh matn qaytarishi mumkin). Bepul tier RPM limiti tor (daqiqasiga ~10 so'rov),
+    shuning uchun 429'da bir marta kutib qayta uriniladi — nudge/xulosa interaktiv
+    emas (scheduler yuboradi), 20-30s kutish zarar qilmaydi."""
+    if not settings.gemini_api_key:
+        return None
+    import asyncio
+
+    import httpx
+
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
+        "generationConfig": {"maxOutputTokens": 800, "thinkingConfig": {"thinkingBudget": 0}},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        for attempt in range(2):
+            resp = await client.post(
+                f"{_GEMINI_BASE}/models/{settings.gemini_model}:generateContent",
+                headers={"x-goog-api-key": settings.gemini_api_key},
+                json=body,
+            )
+            if resp.status_code == 429 and attempt == 0:
+                wait = min(float(resp.headers.get("retry-after", 25)), 60)
+                logger.warning("Gemini rate limit (429) — %ss kutib qayta urinish", wait)
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            candidates = resp.json().get("candidates") or []
+            if not candidates:
+                return None
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            return "".join(p.get("text", "") for p in parts).strip() or None
+    return None
+
+
+async def _generate(system: str, payload: dict, instruction: str) -> tuple[str, str] | None:
+    """Tanlangan provayderga (system + JSON payload + ko'rsatma) yuborib matn oladi.
+    (text, "ai") qaytaradi; AI o'chiq/xato bo'lsa None (chaqiruvchi fallback qiladi)."""
+    if not settings.ai_enabled:
+        return None
+    user = f"{instruction}\n\nMa'lumot (JSON):\n{json.dumps(payload, ensure_ascii=False)}"
+    try:
+        if settings.ai_provider == "gemini":
+            text = await _generate_gemini(system, user)
+        else:
+            text = await _generate_anthropic(system, user)
+        if not text:
+            return None
+        return text, "ai"
+    except Exception:  # noqa: BLE001 — har qanday API/tarmoq xatosida fallback
+        logger.exception("AI (%s) chaqiruvida xatolik — fallback ishlatiladi", settings.ai_provider)
+        return None
 
 
 async def _log(db: AsyncSession, user_id: int | None, kind: str, source: str, text: str, context: dict) -> None:

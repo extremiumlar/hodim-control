@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -40,14 +40,26 @@ class Settings(BaseSettings):
     # qat'i nazar ishlaydi — u xodimning o'zi ochishi, push emas.)
     hourly_plan_enabled: bool = False
 
-    # Operator AI tizimi (Claude Opus 4.8) — avto-reja, kompozit kuzatuv, sabab
-    # halqasi va guruh xulosasini odam tiliga o'giradi. Default O'CHIQ: yoqilmaganda
-    # butun AI qatlami deterministik (kod) shablonlarga qaytadi va Claude API'ga
-    # umuman murojaat qilmaydi (xarajat/xavfsizlik). Yoqish uchun .env'da
-    # AI_ENABLED=true + ANTHROPIC_API_KEY qo'ying.
+    # Operator AI tizimi — avto-reja, kompozit kuzatuv, sabab halqasi va guruh
+    # xulosasini odam tiliga o'giradi. Default O'CHIQ: yoqilmaganda butun AI qatlami
+    # deterministik (kod) shablonlarga qaytadi va tashqi API'ga umuman murojaat
+    # qilmaydi (xarajat/xavfsizlik). Yoqish: .env'da AI_ENABLED=true + tanlangan
+    # provayder kaliti.
+    #
+    # Provayder tanlovi: "anthropic" (Claude, tavsiya — sabab tahlili/ohang kuchli)
+    # yoki "gemini" (bepul tier, oddiy matnlar uchun yetarli). Matn yozishdan boshqa
+    # hech narsa modelga topshirilmaydi (hisob-qarorlar kodda), shuning uchun
+    # provayderni almashtirish xavfsiz — bitta env qator.
+    # DIQQAT: `AI_PROVIDER` va `GEMINI_API_KEY` nomlari juda umumiy — foydalanuvchi
+    # kompyuterida boshqa vositalar (masalan ollama) shu nomdagi global muhit
+    # o'zgaruvchilarini qo'ygan bo'lishi mumkin va OS env .env'dan USTUN turadi.
+    # Shuning uchun bu ikkisi OPERATOR_ prefiksli nom bilan o'qiladi.
     ai_enabled: bool = False
+    ai_provider: str = Field("anthropic", validation_alias="OPERATOR_AI_PROVIDER")  # anthropic | gemini
     anthropic_api_key: str = ""
     ai_model: str = "claude-opus-4-8"
+    gemini_api_key: str = Field("", validation_alias="OPERATOR_GEMINI_API_KEY")
+    gemini_model: str = "gemini-3.5-flash"
 
     @field_validator("telegram_group_chat_id", mode="before")
     @classmethod
@@ -75,14 +87,21 @@ class Settings(BaseSettings):
             else:
                 raise RuntimeError(message)
 
-        # AI yoqilgan bo'lsa kalit shart — aks holda har chaqiruv jimgina fallback'ga
-        # tushib, "AI ishlayapti" degan noto'g'ri taassurot beradi. Erta va aniq xato.
-        if self.ai_enabled and not self.anthropic_api_key:
-            message = "AI_ENABLED=true, lekin ANTHROPIC_API_KEY bo'sh — .env' da kalit qo'ying yoki AI_ENABLED=false qiling."
-            if self.debug:
-                logger.error(message)
-            else:
-                raise RuntimeError(message)
+        # AI yoqilgan bo'lsa tanlangan provayder kaliti shart — aks holda har chaqiruv
+        # jimgina fallback'ga tushib, "AI ishlayapti" degan noto'g'ri taassurot beradi.
+        if self.ai_enabled:
+            message = None
+            if self.ai_provider == "anthropic" and not self.anthropic_api_key:
+                message = "AI_ENABLED=true (provider=anthropic), lekin ANTHROPIC_API_KEY bo'sh — .env'da kalit qo'ying."
+            elif self.ai_provider == "gemini" and not self.gemini_api_key:
+                message = "AI_ENABLED=true (provider=gemini), lekin GEMINI_API_KEY bo'sh — .env'da kalit qo'ying."
+            elif self.ai_provider not in ("anthropic", "gemini"):
+                message = f"AI_PROVIDER noto'g'ri: {self.ai_provider!r} (anthropic yoki gemini bo'lishi kerak)."
+            if message:
+                if self.debug:
+                    logger.error(message)
+                else:
+                    raise RuntimeError(message)
         return self
 
 
