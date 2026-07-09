@@ -117,6 +117,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(minute=cfg.AI_WATCH_MINUTE),
             max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
         ),
+        # Issiq lid (speed-to-lead) — yangi lidni tez ilg'ash uchun qisqa interval
+        # (API HOT_LEAD_ENABLED o'chiq bo'lsa no-op, CRM/DB yuk yo'q)
+        JobSpec(
+            "hot_lead_tick", jobs.hot_lead_tick,
+            IntervalTrigger(minutes=cfg.HOT_LEAD_POLL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
         # Kun yakuni AI xulosasi — vaqt bazadan (boss) sozlanadi, har daqiqa tekshiriladi
         JobSpec(
             "ai_summary_tick", jobs.ai_summary_tick, IntervalTrigger(minutes=1),

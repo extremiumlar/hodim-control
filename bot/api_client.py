@@ -356,10 +356,25 @@ async def all_work_week(telegram_id: int, start: str | None = None) -> list[dict
 
 
 async def post_shortfall_reason(telegram_id: int, day: str, hour: int, code: str) -> dict:
-    """Operator AI sabab tugmasi javobini API'ga yozadi; {"label": ...} qaytaradi."""
+    """Operator AI sabab tugmasi javobini API'ga yozadi; {"label": ...} qaytaradi.
+    (Eski tugmali xabarlar uchun orqaga moslik — yangi oqim erkin matn.)"""
     resp = await _get_client().post(
         "/ai-watch/reason",
         json={"telegram_id": telegram_id, "date": day, "hour": hour, "code": code},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def post_shortfall_reason_text(telegram_id: int, text: str) -> dict:
+    """Operator yozgan erkin matnli sababni API'ga yuboradi. API'da AI tasnif +
+    CRM/fakt tekshiruvi ketma-ket ishlaydi — default 10s yetmasligi mumkin, shuning
+    uchun timeout bu chaqiruvga alohida kengaytirilgan. Qaytaradi:
+    {"handled": bool, "reply": str, ...} — handled=false bo'lsa bot jim qoladi."""
+    resp = await _get_client().post(
+        "/ai-watch/reason-text",
+        json={"telegram_id": telegram_id, "text": text},
+        timeout=120,
     )
     resp.raise_for_status()
     return resp.json()
@@ -377,6 +392,19 @@ async def get_ai_config(telegram_id: int) -> dict | None:
 async def set_ai_config(telegram_id: int, **fields) -> dict | None:
     """AI sozlamasini o'zgartirish (faqat boss/dasturchi). Ruxsat yo'q — None."""
     resp = await _get_client().post(f"/ai-watch/config/{telegram_id}", json=fields)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
+    """Operator issiq lidni qabul qildi (✅ tugmasi). Boshqa operatorga tayinlangan
+    bo'lsa — None (bot ogohlantiradi)."""
+    resp = await _get_client().post(
+        "/hot-lead/claim",
+        json={"telegram_id": telegram_id, "hot_lead_id": hot_lead_id},
+    )
     if resp.status_code == 403:
         return None
     resp.raise_for_status()

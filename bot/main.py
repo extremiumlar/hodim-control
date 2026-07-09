@@ -14,6 +14,7 @@ from bot.handlers import (
     assign_task,
     excused,
     group_stats,
+    hot_lead,
     hourly_plan,
     lead_stats,
     menu,
@@ -47,12 +48,16 @@ async def main() -> None:
     dp.include_router(work_schedule.router)
     dp.include_router(hourly_plan.router)
     dp.include_router(ai_watch.router)
+    dp.include_router(hot_lead.router)
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
     dp.include_router(norms.router)
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(group_stats.router)
+    # ENG OXIRIDA: erkin matnli sabab ushlagichi — yuqoridagi hech bir handler
+    # olmagan shaxsiy matnlargina yetib keladi (menyu/FSM/buyruqlar ustun turadi).
+    dp.include_router(ai_watch.reason_text_router)
 
     @dp.error()
     async def on_error(event: ErrorEvent) -> None:

@@ -58,6 +58,33 @@ class CRMAdapter(ABC):
         Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
         return None
 
+    async def count_open_leads(self, responsible_id: str) -> int | None:
+        """Ixtiyoriy (Operator AI sabab tekshiruvi uchun): operatorga biriktirilgan
+        hali ishlanmagan ("ochiq"/yangi bosqichdagi) lidlar sonini qaytaradi —
+        "lid/baza tugadi" da'vosini faktlar bilan solishtirish uchun. `None` —
+        tekshirib bo'lmadi (sozlanmagan yoki CRM xatosi); chaqiruvchi bu holda
+        hukm chiqarmasligi kerak. Qo'llab-quvvatlamaydigan adapterlar `None`."""
+        return None
+
+    async def get_leads_created_between(self, ts_from: int, ts_to: int) -> list[dict] | None:
+        """Ixtiyoriy (issiq lid uchun): berilgan unix-sekund oralig'ida YARATILGAN
+        lidlar ro'yxati — har element kamida {"id", "responsible_id", "responsible_name",
+        "created_ts"} maydonlariga ega. `None` — CRM xatosi (chaqiruvchi hukm
+        chiqarmasin). Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
+        return None
+
+    async def get_lead_detail(self, lead_id: int) -> dict | None:
+        """Ixtiyoriy (issiq lid uchun): bitta lidning kontakt ma'lumoti —
+        {"id", "name", "contact_name", "phone", "source", "responsible_id"}.
+        `None` — topilmadi yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
+        return None
+
+    async def find_first_outbound_call(self, phone: str, since_ts: int) -> int | None:
+        """Ixtiyoriy (issiq lid speed-to-lead uchun): shu raqamga `since_ts`dan keyin
+        qilingan ENG BIRINCHI chiquvchi qo'ng'iroqning unix-sekund vaqti. `None` —
+        hali qo'ng'iroq yo'q yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
+        return None
+
     async def get_all_daily_visit_operators(self, day: date) -> list[dict]:
         """Ixtiyoriy: shu kunda tashrif qayd etilgan har bir operator/managerning
         {"responsible_id": str, "responsible_name": str, "visits": int} ko'rinishidagi

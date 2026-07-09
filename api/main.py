@@ -11,6 +11,7 @@ from api.routers import (
     bonuses,
     daily_results,
     excused_days,
+    hot_lead,
     hourly_plan,
     mobilograf,
     norms,
@@ -49,6 +50,7 @@ app.include_router(hourly_plan.router)
 app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
+app.include_router(hot_lead.router)
 
 
 @app.get("/health")

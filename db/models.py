@@ -312,6 +312,7 @@ class AiConfig(Base):
     nudges_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     group_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     weekly_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    hot_leads_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     summary_hour: Mapped[int] = mapped_column(Integer, default=19)
     summary_minute: Mapped[int] = mapped_column(Integer, default=0)
     # Bir kunda/haftada ikki marta yubormaslik qo'riqchilari
@@ -321,12 +322,14 @@ class AiConfig(Base):
 
 
 class ShortfallReason(Base):
-    """Operator AI — reja ortda qolganda operatordan tugma orqali yig'ilgan sabab
-    ("Mijozlar ko'tarmadi", "Baza tugadi" va h.k.). Sabablar jamlanib rahbarga
-    tizimli xulosa beriladi ("3 operator 'baza tugadi' dedi") va operator
-    adolatli baholanadi (aybi bo'lmagan pasayish ko'rinadi).
+    """Operator AI — reja ortda qolganda operatordan yig'ilgan sabab. Nudge yuborilganda
+    kutish (pending) yozuvi ochiladi (`reason` NULL); operator sababini ERKIN MATN bilan
+    botga yozadi, AI matnni tasniflaydi (`ai_category`) va tekshiriladigan da'volarni
+    kod/CRM tasdiqlaydi (`verified`): "lid tugadi" → CRM'dagi ochiq lidlar,
+    "ko'tarmadi" → terilgan raqamlar soni. Sabablar jamlanib rahbarga tizimli xulosa
+    beriladi va zid chiqqan da'vo rahbarga darhol ko'rinadi (aldashning oldi olinadi).
 
-    Grain: (user_id, date, hour) — bir soatga bitta sabab (qayta bosilsa yangilanadi)."""
+    Grain: (user_id, date, hour) — bir soatga bitta sabab (qayta yozilsa yangilanadi)."""
 
     __tablename__ = "shortfall_reason"
     __table_args__ = (UniqueConstraint("user_id", "date", "hour", name="uq_shortfall_reason_grain"),)
@@ -335,7 +338,15 @@ class ShortfallReason(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     hour: Mapped[int] = mapped_column(Integer)  # sabab so'ralgan soat (0-23)
-    reason: Mapped[str] = mapped_column(String(64))  # tayyor yorliq matni ("Baza tugadi")
+    # Yakuniy yorliq ("Lid/baza tugadi"). NULL — operator javobi hali kutilmoqda (pending).
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # operatorning o'z so'zlari
+    ai_category: Mapped[str | None] = mapped_column(String(32), nullable=True)  # no_answer|no_base|tech|meeting|other
+    # True — da'vo tekshiruvda tasdiqlandi; False — faktlarga ZID (ehtimoliy aldash);
+    # NULL — tekshirib bo'lmaydi (yig'ilish kabi) yoki CRM javob bermadi.
+    verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    verify_note: Mapped[str | None] = mapped_column(String(255), nullable=True)  # tekshiruv fakti ("CRM: 42 ta ochiq lid")
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -354,6 +365,39 @@ class AiMessageLog(Base):
     text: Mapped[str] = mapped_column(Text)
     context: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # agregat kirish (PII yo'q)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class HotLead(Base):
+    """Operator AI — issiq lid (speed-to-lead, 5-bosqich). CRM'da yangi yaratilgan
+    lid aniqlanishi bilan CRM tayinlagan operatorga darhol xabar beriladi va javob
+    tezligi o'lchanadi. Uch vaqt farqi metrika beradi: lid yaratilishi → aniqlash
+    (tizim tezligi), aniqlash → qabul (operator reaksiyasi), yaratilish → birinchi
+    chiquvchi qo'ng'iroq (haqiqiy speed-to-lead, call-history phoneSearch'dan).
+
+    `status`: baseline (tizim yoqilganda mavjud bo'lgan eski lid — kuzatilmaydi) |
+    notified (operatorga yuborildi) | claimed (operator qabul qildi) | called
+    (birinchi qo'ng'iroq qayd etildi — yakuniy). Taqsimotni CRM o'zi qiladi
+    (`responsibleById`), biz uni buzmaymiz — faqat tezlik va javobgarlik qatlami."""
+
+    __tablename__ = "hot_lead"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    crm_lead_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    lead_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # CRM "#8323326"
+    contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FACEBOOK_FORM ...
+    responsible_crm_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # responsibleById
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_ts: Mapped[int] = mapped_column(Integer)  # CRM createdTimestamp (unix sekund)
+    detected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    first_call_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Lid yaratilishidan birinchi chiquvchi qo'ng'iroqqacha sekund (speed-to-lead)
+    first_call_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="notified", index=True)
 
 
 class WorkScheduleWeekly(Base):

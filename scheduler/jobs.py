@@ -96,6 +96,23 @@ async def ai_watch_tick() -> None:
         logger.info("AI kuzatuv: triggered=%s sent=%s", body.get("triggered"), body.get("sent"))
 
 
+async def hot_lead_tick() -> None:
+    """Issiq lid: yangi CRM lidini aniqlab mas'ul operatorga darhol DM, birinchi
+    qo'ng'iroq (speed-to-lead) o'lchovi, kechikkanini guruhga eskalatsiya. API
+    HOT_LEAD_ENABLED va runtime toggle'ni o'zi tekshiradi (o'chiqda no-op)."""
+    body = await call_api("/hot-lead/tick", timeout=120, label="Issiq lid tick")
+    if body is None or body.get("disabled") or body.get("off"):
+        return
+    detect = body.get("detect") or {}
+    if detect.get("seeded"):
+        logger.info("Issiq lid baseline: %s ta mavjud lid qayd etildi", detect["seeded"])
+    if detect.get("new"):
+        logger.info("Issiq lid: %s ta yangi lid yuborildi", detect["new"])
+    escalation = body.get("escalation") or {}
+    if escalation.get("escalated"):
+        logger.info("Issiq lid eskalatsiya: %s ta", escalation["escalated"])
+
+
 async def ai_summary_tick() -> None:
     """Har daqiqa: boss belgilagan vaqt kelganda kun yakuni AI xulosasini guruhga
     yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""

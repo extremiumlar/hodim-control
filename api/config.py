@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # .env'da AI_NUDGE_ENABLED=true ham kerak. Tick endpointi dry_run=true bilan
     # yubormasdan sinash imkonini beradi.
     ai_nudge_enabled: bool = False
+    # Issiq lid (speed-to-lead, 5-bosqich) — yangi CRM lidi haqida operatorga darhol
+    # DM + javob tezligi o'lchovi + kechiksa guruhga eskalatsiya. Haqiqiy xabar
+    # yuborgani uchun alohida opt-in (default O'CHIQ); AI matni ishlatilmaydi
+    # (tezlik uchun shablon), shuning uchun AI_ENABLED'dan MUSTAQIL. Runtime'da
+    # boss /ai_sozlama'dan alohida o'chira oladi (ai_config.hot_leads_enabled).
+    hot_lead_enabled: bool = False
 
     @field_validator("telegram_group_chat_id", mode="before")
     @classmethod

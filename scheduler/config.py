@@ -44,6 +44,9 @@ AI_WATCH_MINUTE = 5
 # Haftalik trend — yakshanba kechqurun (kun yakuni xulosasidan keinroq).
 AI_WEEKLY_DOW = "sun"
 AI_WEEKLY_HOUR = 20
+# Issiq lid (speed-to-lead): yangi lidni tez ilg'ash uchun qisqa interval. Har tick
+# ~1 filter so'rovi (+ yangi lid bo'lsa detal), rate limit (60/min)ga bemalol sig'adi.
+HOT_LEAD_POLL_MINUTES = 2
 
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.

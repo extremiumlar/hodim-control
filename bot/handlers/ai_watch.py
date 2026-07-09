@@ -1,35 +1,45 @@
-"""Operator AI bot tomonlari: sabab so'rovi tugmalari (4-bosqich) va rahbar
-boshqaruvi /ai_sozlama + /ai_vaqt (6-bosqich).
+"""Operator AI bot tomonlari: erkin matnli sabab oqimi (7-bosqich), eski sabab
+tugmalari (orqaga moslik) va rahbar boshqaruvi /ai_sozlama + /ai_vaqt (6-bosqich).
 
-Sabab oqimi: API (ai-watch/tick) orqada qolgan operatorga nudge + sabab
-tugmalarini yuboradi; operator tugmani bosganda sabab API'ga yoziladi, tugmalar
-olib tashlanadi va tasdiq ko'rsatiladi. Yorliq matnlari API'da (bitta manba).
+Sabab oqimi: API (ai-watch/tick) orqada qolgan operatorga nudge + "sababini yozib
+yuboring" so'rovini yuboradi; operator O'Z SO'ZLARI bilan yozadi, matn API'ga
+boradi — u yerda AI tasniflaydi va da'vo faktlar (CRM'dagi ochiq lidlar, terilgan
+raqamlar) bilan solishtiriladi. Matn ushlagich `reason_text_router`da bo'lib, u
+dispatcherga ENG OXIRIDA ulanadi — menyu tugmalari, buyruqlar va FSM oqimlaridan
+o'tmagan xabarlargina yetib keladi (StateFilter(None) FSM'dagi foydalanuvchiga
+tegmaslikni kafolatlaydi).
 
 Boshqaruv: rahbar AI qismlarini (nudge/kun yakuni/haftalik) yoqib-o'chiradi va
 xulosa vaqtini o'zgartiradi — odam-qaror tamoyili."""
 import logging
 
+import httpx
 from aiogram import F, Router
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
 
 logger = logging.getLogger(__name__)
 router = Router()
+# Alohida router — bot/main.py da ENG OXIRIDA include qilinadi (pastga qarang).
+reason_text_router = Router()
 
 _TOGGLE_LABELS = {
     "nudges_enabled": "🔔 Soatlik nudge",
     "group_summary_enabled": "📊 Kun yakuni (guruh)",
     "weekly_enabled": "📈 Haftalik xulosa",
+    "hot_leads_enabled": "🔥 Issiq lid",
 }
 
 
 def _config_view(cfg: dict) -> tuple[str, InlineKeyboardMarkup]:
     master = "yoqiq ✅" if cfg.get("ai_enabled") and cfg.get("push_enabled") else "O'CHIQ ❌ (.env: AI_ENABLED/AI_NUDGE_ENABLED)"
+    hot_lead_master = "yoqiq ✅" if cfg.get("hot_lead_push_enabled") else "O'CHIQ ❌ (.env: HOT_LEAD_ENABLED)"
     lines = [
         "🤖 <b>Operator AI sozlamalari</b>",
         f"Bosh kalit (server): {master}",
+        f"Issiq lid (server): {hot_lead_master}",
         f"Provayder: {cfg.get('provider')}",
         f"Kun yakuni vaqti: {cfg.get('summary_hour', 0):02d}:{cfg.get('summary_minute', 0):02d}"
         " (o'zgartirish: /ai_vaqt 19:30)",
@@ -105,8 +115,44 @@ async def cmd_ai_time(message: Message, command: CommandObject) -> None:
     await message.reply(f"✅ Kun yakuni vaqti: {updated['summary_hour']:02d}:{updated['summary_minute']:02d}")
 
 
+@reason_text_router.message(
+    F.chat.type == "private",
+    F.text,
+    ~F.text.startswith("/"),
+    StateFilter(None),
+)
+async def on_reason_text(message: Message) -> None:
+    """Boshqa hech bir handler olmagan oddiy matn — sabab kutilayotgan operatorniki
+    bo'lishi mumkin. API tekshiradi: pending so'rov bo'lsa AI tahlil + fakt tekshiruv
+    natijasini qaytaradi, bo'lmasa {"handled": false} — bot jim qoladi (hozirgi
+    "notanish matnga javob yo'q" xatti-harakati saqlanadi)."""
+    try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
+    except Exception:  # noqa: BLE001 — chat action bezak, xatosi oqimni to'xtatmasin
+        pass
+
+    try:
+        result = await api_client.post_shortfall_reason_text(message.from_user.id, message.text)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return  # ro'yxatdan o'tmagan foydalanuvchi — jim
+        logger.exception("Sabab matnini yuborishda API xatosi")
+        await message.reply("⚠️ Xabarni qayta ishlashda xatolik — birozdan keyin qayta yozib ko'ring.")
+        return
+    except httpx.HTTPError:
+        logger.exception("Sabab matnini yuborishda tarmoq xatosi")
+        await message.reply("⚠️ Xabarni qayta ishlashda xatolik — birozdan keyin qayta yozib ko'ring.")
+        return
+
+    if not result.get("handled"):
+        return  # sabab kutilmayotgan edi — oddiy matn, aralashmaymiz
+
+    await message.reply(result.get("reply") or "✅ Sabab qayd etildi.")
+
+
 @router.callback_query(F.data.startswith("sfr:"))
 async def on_shortfall_reason(callback: CallbackQuery) -> None:
+    # ESKI tugmali xabarlar uchun orqaga moslik (yangi nudge'lar tugmasiz).
     # callback_data: "sfr:<YYYY-MM-DD>:<soat>:<kod>"
     try:
         _, day, hour_s, code = callback.data.split(":", 3)

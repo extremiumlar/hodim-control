@@ -5,7 +5,11 @@ from datetime import date, datetime
 import httpx
 
 from crm.base import CRMAdapter, TASHKENT_TZ, day_bounds_unix
-from crm.config import CRM_API_KEY, CRM_UYSOT_VISIT_PIPE_STATUS_ID
+from crm.config import (
+    CRM_API_KEY,
+    CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
+    CRM_UYSOT_VISIT_PIPE_STATUS_ID,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +500,186 @@ class UysotAdapter(CRMAdapter):
             }
             for (responsible_id, status_id), entry in entries.items()
         ]
+
+    async def count_open_leads(self, responsible_id: str) -> int | None:
+        """Operatorga (`responsibleById`) biriktirilgan, "ochiq" bosqichlardagi
+        (`CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS`) lidlar soni — "lid/baza tugadi"
+        da'vosini tekshirish uchun. `/lead/filter` bosqich bo'yicha server tomonda
+        filtrlaydi (kichik to'plam), mas'ul bo'yicha esa mijoz tomonda sanaladi.
+
+        Interaktiv chaqiruv (operator javob kutyapti) — shuning uchun sahifa
+        chegarasi kichik (MAX_PAGES_PER_SYNC) va throttle yo'q; chegaraga yetsa
+        ham shu paytgacha topilgan son yetarli ("0 emas"ligi muhim). `None` —
+        sozlanmagan yoki CRM xatosi (hukm chiqarilmaydi)."""
+        if not CRM_API_KEY or not CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS:
+            return None
+
+        try:
+            responsible_key = int(responsible_id)
+        except (TypeError, ValueError):
+            return None
+
+        count = 0
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC:
+                    resp = await client.post(
+                        "/lead/filter",
+                        json={
+                            "page": page,
+                            "size": LEAD_FILTER_PAGE_SIZE,
+                            "pipeStatusIds": CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
+                        },
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+                    count += sum(1 for r in records if r.get("responsibleById") == responsible_key)
+                    if page >= (body.get("totalPages") or page):
+                        break
+                    page += 1
+                else:
+                    logger.warning(
+                        "Uysot ochiq lid sanovi %s sahifada to'xtadi (xavfsizlik chegarasi) — son to'liq bo'lmasligi mumkin",
+                        MAX_PAGES_PER_SYNC,
+                    )
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan ochiq lidlarni sanashda xatolik (responsible_id=%s)", responsible_id)
+                return None
+
+        return count
+
+    # ─── Issiq lid (speed-to-lead, 5-bosqich) ────────────────────────────────────
+    # 2026-07-09 jonli tekshiruvdan tasdiqlangan faktlar:
+    #   - `/lead/filter` `start`/`finish`ni unix-SEKUND (yaratilgan vaqt) sifatida
+    #     qabul qiladi (ISO sana 400 qaytaradi) va natija ID bo'yicha KAMAYISH
+    #     tartibida keladi (eng yangi lid birinchi).
+    #   - `GET /lead/{id}` to'liq detal beradi: contacts (ism + phones), attributions
+    #     (manba kanali) — ro'yxat javobida bu maydonlar YO'Q, alohida so'rov shart.
+    #   - `/call-history/filter` `phoneSearch`ni qo'llab-quvvatlaydi — lid raqamiga
+    #     qilingan qo'ng'iroqlar kichik to'plam bo'lib keladi (birinchi chiquvchi
+    #     qo'ng'iroq = speed-to-lead o'lchovi).
+
+    async def get_leads_created_between(self, ts_from: int, ts_to: int) -> list[dict] | None:
+        """Oraliqda YARATILGAN lidlar (yangi lid aniqlash uchun — oraliq qisqa,
+        odatda bir sahifa). Har element: {"id", "responsible_id", "responsible_name",
+        "pipe_status_id", "created_ts"}. `None` — CRM xatosi."""
+        if not CRM_API_KEY:
+            return None
+
+        leads: list[dict] = []
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC:
+                    resp = await client.post(
+                        "/lead/filter",
+                        json={"page": page, "size": LEAD_FILTER_PAGE_SIZE, "start": ts_from, "finish": ts_to},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+                    for r in records:
+                        if r.get("id") is None:
+                            continue
+                        leads.append(
+                            {
+                                "id": r["id"],
+                                "name": r.get("name"),
+                                "responsible_id": r.get("responsibleById"),
+                                "responsible_name": r.get("responsibleBy"),
+                                "pipe_status_id": r.get("pipeStatusId"),
+                                "created_ts": r.get("createdTimestamp"),
+                            }
+                        )
+                    if page >= (body.get("totalPages") or page):
+                        break
+                    page += 1
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan yangi lidlarni o'qishda xatolik (%s..%s)", ts_from, ts_to)
+                return None
+        return leads
+
+    async def get_lead_detail(self, lead_id: int) -> dict | None:
+        """Bitta lidning kontakt detali (`GET /lead/{id}`): kontakt ismi, telefon,
+        manba kanali. `None` — topilmadi/xatolik."""
+        if not CRM_API_KEY:
+            return None
+
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+            try:
+                resp = await client.get(f"/lead/{lead_id}")
+                if resp.status_code == 404:
+                    return None
+                resp.raise_for_status()
+                data = resp.json().get("data") or {}
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan lid detalini olishda xatolik (lead_id=%s)", lead_id)
+                return None
+
+        contact_name = None
+        phone = None
+        for contact in data.get("contacts") or []:
+            contact_name = contact_name or contact.get("name")
+            for p in contact.get("phones") or []:
+                if p:
+                    phone = phone or p
+        source = None
+        for attribution in data.get("attributions") or []:
+            channel = attribution.get("channel") or {}
+            source = source or channel.get("source")
+
+        return {
+            "id": data.get("id"),
+            "name": data.get("name"),
+            "contact_name": contact_name,
+            "phone": phone,
+            "source": source,
+            "responsible_id": data.get("responsibleById"),
+        }
+
+    async def find_first_outbound_call(self, phone: str, since_ts: int) -> int | None:
+        """Shu raqamga `since_ts`dan keyingi ENG BIRINCHI chiquvchi qo'ng'iroq vaqti
+        (unix sekund). `phoneSearch` kichik to'plam qaytargani uchun sahifalar kam;
+        `start` parametri o'rniga mijoz tomonda filtrlanadi (format riskisiz).
+        `None` — hali qo'ng'iroq yo'q yoki CRM xatosi."""
+        if not CRM_API_KEY or not phone:
+            return None
+
+        earliest: int | None = None
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC:
+                    resp = await client.post(
+                        "/call-history/filter",
+                        json={"page": page, "size": CALL_HISTORY_PAGE_SIZE, "phoneSearch": phone},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+                    for r in records:
+                        ts = r.get("startStamp")
+                        if ts is None or ts < since_ts:
+                            continue
+                        if r.get("callDirection") != "OUTBOUND":
+                            continue
+                        if earliest is None or ts < earliest:
+                            earliest = ts
+                    if page >= (body.get("totalPages") or page):
+                        break
+                    page += 1
+            except httpx.HTTPError:
+                logger.exception("Uysot'da raqam bo'yicha qo'ng'iroq izlashda xatolik")
+                return None
+        return earliest
 
     async def get_daily_results(self, user, day: date) -> dict | None:
         """`None` qaytarsa — CRM'dan ma'lumot olib bo'lmadi (xatolik), chaqiruvchi
