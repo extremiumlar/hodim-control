@@ -52,17 +52,18 @@ def _build_jobs() -> list[JobSpec]:
         )
 
     specs += [
-        # Kunlik xulosa
-        JobSpec(
-            "daily_summary", jobs.send_daily_summary,
-            _cron(hour=cfg.DAILY_SUMMARY_HOUR, minute=0),
-            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
-        ),
-        # Guruhga kunlik lid statistikasi — vaqt bazadan sozlangani uchun har daqiqa
+        # Kunlik yagona digest (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa, bitta
+        # xabar) — vaqt bazadan (/statistika_vaqt) sozlangani uchun har daqiqa
         # tekshiriladi (API vaqt kelganini va shu kuni yuborilmaganini o'zi hal qiladi).
         JobSpec(
             "group_post_tick", jobs.group_post_tick, IntervalTrigger(minutes=1),
             max_instances=1, coalesce=True,
+        ),
+        # Haftalik raqamli yakun — yakshanba kechqurun, AI'siz ham ishlaydi
+        JobSpec(
+            "weekly_digest", jobs.send_weekly_digest,
+            _cron(day_of_week=cfg.WEEKLY_DIGEST_DOW, hour=cfg.WEEKLY_DIGEST_HOUR, minute=cfg.WEEKLY_DIGEST_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
         # CRM natijalarini deyarli real-vaqtli sinxronlash
         JobSpec(
@@ -124,15 +125,11 @@ def _build_jobs() -> list[JobSpec]:
             IntervalTrigger(minutes=cfg.HOT_LEAD_POLL_MINUTES),
             max_instances=1, coalesce=True,
         ),
-        # Kun yakuni AI xulosasi — vaqt bazadan (boss) sozlanadi, har daqiqa tekshiriladi
-        JobSpec(
-            "ai_summary_tick", jobs.ai_summary_tick, IntervalTrigger(minutes=1),
-            max_instances=1, coalesce=True,
-        ),
-        # Haftalik trend — yakshanba kechqurun
+        # Haftalik AI trend (shaxsiy xabarlar) — haftalik digestdan keyinroq,
+        # operator avval guruhdagi raqamlarni, keyin shaxsiy xulosasini ko'radi
         JobSpec(
             "ai_weekly", jobs.ai_weekly_run,
-            _cron(day_of_week=cfg.AI_WEEKLY_DOW, hour=cfg.AI_WEEKLY_HOUR, minute=0),
+            _cron(day_of_week=cfg.AI_WEEKLY_DOW, hour=cfg.AI_WEEKLY_HOUR, minute=cfg.AI_WEEKLY_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
     ]

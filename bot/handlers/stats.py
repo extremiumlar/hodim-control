@@ -74,6 +74,13 @@ async def show_my_stats(message: Message, state: FSMContext) -> None:
             norm_part = f"/{m['norm']}" if m.get("norm") is not None else ""
             lines.append(f"  {m['label']}: {m['value']}{norm_part}")
 
+    week_totals = stats.get("week_totals") or {}
+    if week_totals:
+        lines.append("")
+        lines.append("<b>Shu haftada jami:</b>")
+        for key, total in week_totals.items():
+            lines.append(f"  {METRIC_MONTH_LABELS.get(key, key)}: {total}")
+
     month_totals = stats.get("month_totals") or {}
     if month_totals:
         lines.append("")
@@ -206,29 +213,21 @@ async def show_audit_logs(message: Message, state: FSMContext) -> None:
 
 
 async def send_global_stats(message: Message, *, to_group: bool) -> None:
-    """Kunlik xulosa + qo'ng'iroqlar statistikasini yuboradi — "📊 Umumiy
-    statistika" tugmasi (shaxsiy chatga) va guruhdagi /statistika buyrug'i
-    (sozlangan guruhga) uchun umumiy qism; farq faqat nishon chat va
-    xato-xabar formatida."""
+    """Kunlik yagona digestni (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa — BITTA
+    xabar) yuboradi — "📊 Umumiy statistika" tugmasi (shaxsiy chatga) va guruhdagi
+    /statistika buyrug'i (sozlangan guruhga) uchun umumiy qism; farq faqat nishon
+    chat va xato-xabar formatida."""
     chat_id = None if to_group else message.chat.id
     respond = message.reply if to_group else message.answer
 
-    summary_result = await api_client.trigger_daily_summary(chat_id=chat_id)
-    if not summary_result.get("sent"):
+    result = await api_client.trigger_daily_digest(chat_id=chat_id)
+    if not result.get("sent"):
+        reason = result.get("reason") or "ma'lumot topilmadi"
         await respond(
-            "Kunlik xulosani yuborib bo'lmadi — guruh sozlamalarini tekshiring."
+            f"Kunlik digestni yuborib bo'lmadi: {reason}"
             if to_group
-            else "Kunlik xulosani tayyorlab bo'lmadi."
+            else f"Kunlik digestni tayyorlab bo'lmadi: {reason}"
         )
-
-    call_stats_result = await api_client.trigger_call_stats(chat_id=chat_id)
-    if not call_stats_result.get("sent"):
-        reason = call_stats_result.get("reason")
-        if to_group:
-            reason_text = reason or "CRM ma'lumoti topilmadi"
-            await respond(f"Qo'ng'iroqlar statistikasi yuborilmadi: {reason_text}")
-        elif reason and reason != "CRM sozlanmagan":
-            await respond(f"Qo'ng'iroqlar statistikasi: {reason}")
 
 
 @router.message(F.text == BTN_GLOBAL_STATS)

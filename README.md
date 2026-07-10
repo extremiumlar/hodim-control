@@ -114,9 +114,9 @@ Bu qadam ixtiyoriy — sozlanmagan bo'lsa, mobilograf va kunlik xulosa funksiyal
 python -m scheduler.main
 ```
 
-Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan vazifalar uchun eslatma yuboradi, 19:00'da esa guruhga kunlik xulosani jo'natadi. Bu vaqtlarni tezroq sinash uchun `scheduler/main.py` ichidagi `REMINDER_HOURS`/`DAILY_SUMMARY_HOUR` o'zgaruvchilarini vaqtincha o'zgartirishingiz mumkin, yoki API'dagi `/tasks/send-reminders` va `/reports/daily-summary` endpointlarini to'g'ridan-to'g'ri (Swagger orqali, `X-Bot-Secret` header bilan) chaqirib sinang.
+Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan vazifalar uchun eslatma yuboradi. Kechqurun esa guruhga **kunlik yagona digest** (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa — bitta xabar) jo'natiladi; vaqti bazadan boshqariladi, boss botda `/statistika_vaqt 19:30` bilan o'zgartiradi (standart 19:10). Yakshanba kechqurun (`scheduler/config.py` dagi `WEEKLY_DIGEST_*`) guruhga **haftalik raqamli yakun** (shu hafta vs o'tgan hafta) boradi. Eslatma vaqtlarini tezroq sinash uchun `REMINDER_HOURS`ni vaqtincha o'zgartiring, yoki API'dagi `/tasks/send-reminders`, `/reports/daily-digest` va `/reports/weekly-digest` endpointlarini to'g'ridan-to'g'ri (Swagger orqali, `X-Bot-Secret` header bilan, `dry_run=true` parametri yubormasdan matnni ko'rsatadi) chaqirib sinang.
 
-**Talab bo'yicha statistika:** 19:00'ni kutmasdan, HR/ROP/Boshliq sozlangan guruhda `/statistika` buyrug'ini yuborsa, bot darhol kunlik xulosani hisoblab, guruhga jo'natadi (aynan shu `/reports/daily-summary` endpointini chaqiradi).
+**Talab bo'yicha statistika:** belgilangan vaqtni kutmasdan, HR/ROP/Boshliq sozlangan guruhda `/statistika` buyrug'ini yuborsa (yoki botdagi "📊 Umumiy statistika" tugmasi), bot darhol kunlik digestni hisoblab jo'natadi (aynan shu `/reports/daily-digest` endpointini chaqiradi).
 
 **Muhim eslatma — Telegram Login Widget lokal muhitda:** Telegram Login Widget odatda faqat BotFather orqali ro'yxatdan o'tkazilgan haqiqiy domenda ishlaydi (`/setdomain`), `localhost`da ko'pincha ishlamaydi. Shu sababli lokal sinov uchun login sahifasida **"Dev-login"** blokini qo'shdik — u faqat `.env`da `DEBUG=true` bo'lganda ko'rinadi. O'zingizning (yoki HR/ROP sifatida yaratilgan foydalanuvchining) Telegram ID'ini kiritib, parolsiz kirasiz. Production'ga chiqishda `DEBUG=false` qiling — bu blok avtomatik yashiriladi va faqat haqiqiy Telegram Login ishlaydi (buning uchun avval BotFather'da `/setdomain` orqali saytingiz domenini ro'yxatdan o'tkazing).
 
@@ -142,7 +142,7 @@ Scheduler kun davomida (13:00, 16:00, 17:00, 18:00 `Asia/Tashkent`) bajarilmagan
 2. Manager (`manager_id` shu xodimga ishora qiladigan foydalanuvchi) yoki `boss` roli o'sha video xabariga ✅ emoji-reaksiya qo'ysin — bu tasdiq hisoblanadi.
 3. Reaksiyani olib tashlasa, tasdiq ham bekor bo'ladi (qayta ✅ bosilmaguncha `pending` holatida qoladi).
 
-**Kunlik eslatma va xulosa:** 2.9-bo'limdagi scheduler ishga tushirilgan bo'lsa, belgilangan soatlarda avtomatik ishlaydi; tezroq sinash uchun Swagger (`/docs`) orqali `/tasks/send-reminders` va `/reports/daily-summary` endpointlarini `X-Bot-Secret` header bilan qo'lda chaqiring.
+**Kunlik eslatma va digest:** 2.9-bo'limdagi scheduler ishga tushirilgan bo'lsa, belgilangan soatlarda avtomatik ishlaydi; tezroq sinash uchun Swagger (`/docs`) orqali `/tasks/send-reminders` va `/reports/daily-digest` endpointlarini `X-Bot-Secret` header bilan qo'lda chaqiring (`dry_run=true` — yubormasdan matnni qaytaradi).
 
 ## 3.2. 3-bosqich oqimlarini sinash
 

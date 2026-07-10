@@ -369,6 +369,8 @@ class MyStatsOut(BaseModel):
 
     period: str  # joriy oy, "YYYY-MM"
     today: list[MetricProgressRow]
+    # Shu hafta (dushanbadan bugungacha) jami — kalitlar month_totals bilan bir xil.
+    week_totals: dict[str, int] = {}
     month_totals: dict[str, int]  # {"suhbat": 120, "tashrif": 8, "video": 5}
     tasks_done: int
     tasks_total: int

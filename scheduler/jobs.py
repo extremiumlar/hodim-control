@@ -17,10 +17,12 @@ async def send_reminders() -> None:
         logger.info("Eslatmalar yuborildi: %s", body)
 
 
-async def send_daily_summary() -> None:
-    body = await call_api("/reports/daily-summary", label="Kunlik xulosa")
+async def send_weekly_digest() -> None:
+    """Haftalik raqamli yakun (shu hafta vs o'tgan hafta, operator kesimida) — guruhga
+    bitta xabar. Sof kod hisobi — AI o'chiq bo'lsa ham ishlaydi."""
+    body = await call_api("/reports/weekly-digest", timeout=120, label="Haftalik digest")
     if body is not None:
-        logger.info("Kunlik xulosa yuborildi: %s", body)
+        logger.info("Haftalik digest: %s", body)
 
 
 async def sync_daily_results() -> None:
@@ -38,11 +40,13 @@ async def snapshot_lead_stages() -> None:
 
 
 async def group_post_tick() -> None:
-    """Har daqiqa: boss belgilagan vaqt kelganda kunlik lid statistikasini guruhga
-    yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""
-    body = await call_api("/stats/lead-stages/group-tick", timeout=60, label="Guruh tick")
+    """Har daqiqa: boss belgilagan vaqt kelganda kunlik yagona digestni (vazifa +
+    qo'ng'iroq/lid/tashrif + AI xulosa, bitta xabar) guruhga yuboradi (API vaqtni
+    va "bugun yuborilganmi"ni o'zi tekshiradi). Digest AI xulosani ham kutishi
+    mumkin — timeout shunga yarasha."""
+    body = await call_api("/stats/lead-stages/group-tick", timeout=120, label="Kunlik digest tick")
     if body and body.get("fired"):
-        logger.info("Lid statistikasi guruhga yuborildi: %s", body)
+        logger.info("Kunlik digest guruhga yuborildi: %s", body)
 
 
 async def send_hourly_plan() -> None:
@@ -113,16 +117,9 @@ async def hot_lead_tick() -> None:
         logger.info("Issiq lid eskalatsiya: %s ta", escalation["escalated"])
 
 
-async def ai_summary_tick() -> None:
-    """Har daqiqa: boss belgilagan vaqt kelganda kun yakuni AI xulosasini guruhga
-    yuboradi (API vaqtni va "bugun yuborilganmi"ni o'zi tekshiradi)."""
-    body = await call_api("/ai-watch/summary-tick", timeout=120, label="AI kun yakuni tick")
-    if body and body.get("fired"):
-        logger.info("AI kun yakuni guruhga yuborildi: %s", body)
-
-
 async def ai_weekly_run() -> None:
-    """Haftalik trend: har operatorga shaxsiy xulosa + guruhga jamoa ko'rinishi."""
+    """Haftalik AI trend: har operatorga SHAXSIY xulosa (guruhga jamoa ko'rinishini
+    endi raqamli haftalik digest beradi — send_weekly_digest)."""
     body = await call_api("/ai-watch/weekly-run", timeout=300, label="AI haftalik")
     if body is not None and not body.get("disabled") and not body.get("weekly_disabled"):
         logger.info("AI haftalik: operators=%s sent=%s", body.get("operators"), body.get("sent"))

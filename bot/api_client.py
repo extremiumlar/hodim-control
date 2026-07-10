@@ -41,13 +41,6 @@ async def get_user_by_telegram(telegram_id: int) -> dict | None:
     return resp.json()
 
 
-async def post_lead_stats_to_group() -> dict:
-    """Har bir xodimning kunlik lid bosqich statistikasini guruhga darhol yuboradi."""
-    resp = await _get_client().post("/stats/lead-stages/post-to-group")
-    resp.raise_for_status()
-    return resp.json()
-
-
 async def get_group_post_time(telegram_id: int) -> dict:
     resp = await _get_client().get(f"/stats/lead-stages/group-time/{telegram_id}")
     resp.raise_for_status()
@@ -253,14 +246,13 @@ async def trigger_bonus_calculation(period: str | None = None) -> dict:
     return resp.json()
 
 
-async def trigger_daily_summary(chat_id: int | None = None) -> dict:
-    resp = await _get_client().post("/reports/daily-summary", json={"chat_id": chat_id})
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def trigger_call_stats(chat_id: int | None = None) -> dict:
-    resp = await _get_client().post("/reports/call-stats", json={"chat_id": chat_id})
+async def trigger_daily_digest(chat_id: int | None = None) -> dict:
+    """Kunlik yagona digest (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa — bitta xabar).
+    `chat_id` berilmasa sozlangan umumiy guruhga yuboriladi. Digest AI xulosani ham
+    kutishi mumkinligi uchun timeout kengaytirilgan."""
+    resp = await _get_client().post(
+        "/reports/daily-digest", json={"chat_id": chat_id}, timeout=90
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -362,6 +354,19 @@ async def post_shortfall_reason(telegram_id: int, day: str, hour: int, code: str
         "/ai-watch/reason",
         json={"telegram_id": telegram_id, "date": day, "hour": hour, "code": code},
     )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def post_reason_verify(telegram_id: int, reason_id: int, approve: bool) -> dict | None:
+    """Rahbar (ROP/Boshliq) operator sababini tasdiqlaydi/rad etadi. Ruxsat yo'q — None.
+    Qaytaradi: {"already": bool, "verified": bool, "label": ...}."""
+    resp = await _get_client().post(
+        "/ai-watch/reason-verify",
+        json={"telegram_id": telegram_id, "reason_id": reason_id, "approve": approve},
+    )
+    if resp.status_code == 403:
+        return None
     resp.raise_for_status()
     return resp.json()
 

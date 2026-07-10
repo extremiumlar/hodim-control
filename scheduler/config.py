@@ -12,7 +12,12 @@ TIMEZONE = os.getenv("TIMEZONE", "Asia/Tashkent")
 # ─── Vaqt/interval sozlamalari (barcha jadval tunablari shu yerda) ───────────────
 # Vazifa eslatmalari (6.3-bo'lim): kunduzi bitta, kechga yaqin har soatda.
 REMINDER_HOURS = [13, 16, 17, 18]
-DAILY_SUMMARY_HOUR = 19
+
+# Haftalik raqamli yakun (kod digesti, AI'siz ham ishlaydi) — yakshanba kechqurun.
+# Kunlik digest vaqti bu yerda EMAS — bazadan (boss, /statistika_vaqt) sozlanadi.
+WEEKLY_DIGEST_DOW = "sun"
+WEEKLY_DIGEST_HOUR = 20
+WEEKLY_DIGEST_MINUTE = 0
 
 # CRM webhook o'rniga zaxira: deyarli real-vaqtli bo'lishi uchun tez-tez so'raladi.
 # amoCRM ulanganda API rate-limitga e'tibor bering (oraliqni kattalashtirish kerak
@@ -41,9 +46,11 @@ AI_COMPUTE_PROFILES_HOUR = 5  # build-targets (06:00) dan oldin ishlashi uchun
 # snapshot oladi, shuning uchun :00 bilan to'qnashuv muhim emas, lekin soat
 # yakunlangach baholagan ma'qul.
 AI_WATCH_MINUTE = 5
-# Haftalik trend — yakshanba kechqurun (kun yakuni xulosasidan keinroq).
+# Haftalik AI trend (shaxsiy xabarlar) — haftalik digestdan 10 daqiqa keyin:
+# operator avval guruhdagi raqamli yakunni, keyin shaxsiy AI xulosasini ko'radi.
 AI_WEEKLY_DOW = "sun"
 AI_WEEKLY_HOUR = 20
+AI_WEEKLY_MINUTE = 10
 # Issiq lid (speed-to-lead): yangi lidni tez ilg'ash uchun qisqa interval. Har tick
 # ~1 filter so'rovi (+ yangi lid bo'lsa detal), rate limit (60/min)ga bemalol sig'adi.
 HOT_LEAD_POLL_MINUTES = 2

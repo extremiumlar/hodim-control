@@ -394,13 +394,13 @@ _MANAGER_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi
 
 
 def _config_out(cfg: AiConfig) -> dict:
+    # summary_hour/minute endi ishlatilmaydi: AI xulosa kunlik digest ichida chiqadi,
+    # digest vaqtini esa GroupPostConfig (/statistika_vaqt) boshqaradi.
     return {
         "nudges_enabled": cfg.nudges_enabled,
         "group_summary_enabled": cfg.group_summary_enabled,
         "weekly_enabled": cfg.weekly_enabled,
         "hot_leads_enabled": cfg.hot_leads_enabled,
-        "summary_hour": cfg.summary_hour,
-        "summary_minute": cfg.summary_minute,
         # env bosh kalitlari — bot holatni to'liq ko'rsata olishi uchun
         "ai_enabled": settings.ai_enabled,
         "push_enabled": settings.ai_nudge_enabled,
@@ -423,25 +423,19 @@ class ConfigIn(BaseModel):
     group_summary_enabled: bool | None = None
     weekly_enabled: bool | None = None
     hot_leads_enabled: bool | None = None
-    summary_hour: int | None = None
-    summary_minute: int | None = None
 
 
 @router.post("/config/{telegram_id}")
 async def set_config(telegram_id: int, payload: ConfigIn, db: AsyncSession = Depends(get_db)) -> dict:
-    """AI qismlarini yoqish/o'chirish va xulosa vaqtini o'zgartirish — faqat
-    Boshliq/Dasturchi (odam-qaror tamoyili: AI'ni rahbar boshqaradi)."""
+    """AI qismlarini yoqish/o'chirish — faqat Boshliq/Dasturchi (odam-qaror
+    tamoyili: AI'ni rahbar boshqaradi). Kun yakuni AI xulosasining alohida vaqti
+    yo'q — u kunlik digest bilan birga chiqadi (vaqt: /statistika_vaqt)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not actor or actor.role not in (Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Sozlamani faqat Boshliq o'zgartira oladi")
 
     cfg = await _get_ai_config(db)
-    if payload.summary_hour is not None and not (0 <= payload.summary_hour <= 23):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Soat 0-23 oralig'ida bo'lishi kerak")
-    if payload.summary_minute is not None and not (0 <= payload.summary_minute <= 59):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Daqiqa 0-59 oralig'ida bo'lishi kerak")
-
-    for field in ("nudges_enabled", "group_summary_enabled", "weekly_enabled", "hot_leads_enabled", "summary_hour", "summary_minute"):
+    for field in ("nudges_enabled", "group_summary_enabled", "weekly_enabled", "hot_leads_enabled"):
         value = getattr(payload, field)
         if value is not None:
             setattr(cfg, field, value)
@@ -450,38 +444,18 @@ async def set_config(telegram_id: int, payload: ConfigIn, db: AsyncSession = Dep
     return _config_out(cfg)
 
 
-# ─── Kun yakuni xulosasini guruhga yuborish ─────────────────────────────────────
-@router.post("/summary-tick")
-async def summary_tick(db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler har daqiqa chaqiradi: sozlangan vaqt kelganda kun yakuni AI
-    xulosasini guruhga yuboradi (`summary_last_posted` qo'riqchi — kuniga bir marta)."""
-    if not settings.ai_enabled or not settings.ai_nudge_enabled:
-        return {"fired": False, "disabled": True}
-    cfg = await _get_ai_config(db)
-    if not cfg.group_summary_enabled:
-        return {"fired": False, "off": True}
-    if not settings.telegram_group_chat_id:
-        return {"fired": False, "no_group": True}
-
-    now = datetime.now(TASHKENT_TZ)
-    today = now.date()
-    if not (now.hour == cfg.summary_hour and now.minute == cfg.summary_minute and cfg.summary_last_posted != today):
-        return {"fired": False, "time": f"{cfg.summary_hour:02d}:{cfg.summary_minute:02d}"}
-
-    from api.routers.ai_coach import group_summary  # circular importdan qochish
-
-    result = await group_summary(db)
-    ok = await send_message(settings.telegram_group_chat_id, f"📊 <b>Kun yakuni</b>\n\n{result['text']}")
-    cfg.summary_last_posted = today
-    await db.commit()
-    return {"fired": True, "delivered": ok is not None, "source": result["source"]}
+# Eslatma: eski /summary-tick endpointi olib tashlandi — kun yakuni AI xulosasi
+# endi kunlik digest ichida chiqadi (api/services/daily_digest.py, vaqti
+# GroupPostConfig'dan /statistika_vaqt bilan boshqariladi).
 
 
 # ─── Haftalik trend ─────────────────────────────────────────────────────────────
 @router.post("/weekly-run")
 async def weekly_run(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
-    """Haftalik trend xulosalari: har operatorga shaxsiy xabar + guruhga jamoa
-    ko'rinishi. Scheduler yakshanba kechqurun chaqiradi; `weekly_last_posted`
+    """Haftalik AI trend xulosalari: har operatorga SHAXSIY xabar (suhbat trendi,
+    zaif kun). Guruhga jamoa ko'rinishini endi raqamli haftalik digest beradi
+    (/reports/weekly-digest — scheduler alohida yuboradi, AI'siz ham ishlaydi),
+    shuning uchun bu yerdan guruhga hech narsa yuborilmaydi. `weekly_last_posted`
     qo'riqchi bir haftada ikki marta yuborilishdan saqlaydi. dry_run — yubormasdan
     matnlarni qaytaradi."""
     if not settings.ai_enabled:
@@ -497,7 +471,6 @@ async def weekly_run(dry_run: bool = False, db: AsyncSession = Depends(get_db)) 
     payloads = await weekly_stats.build_weekly_payloads(db, today)
     results = []
     sent = 0
-    team_lines = []
     for user, payload in payloads:
         r = await ai_coach.weekly_trend(db, user.id, payload)
         item = {"user_id": user.id, "name": user.full_name, "source": r["source"], "text": r["text"]}
@@ -507,22 +480,9 @@ async def weekly_run(dry_run: bool = False, db: AsyncSession = Depends(get_db)) 
             if ok is not None:
                 sent += 1
         results.append(item)
-        # Jamoa ko'rinishi — qo'shimcha AI chaqiruvsiz, kod jamlaydi
-        t0, t1 = payload.get("talk_start_sec"), payload.get("talk_end_sec")
-        trend = f"{t0}s→{t1}s" if (t0 is not None and t1 is not None) else "—"
-        weak = f", zaif: {payload['weak_slot']}" if payload.get("weak_slot") else ""
-        team_lines.append(f"• {payload['name']}: suhbat {trend}, kuniga ~{payload['calls_avg']} qo'ng'iroq{weak}")
-
-    group_delivered = None
-    if team_lines and not dry_run and settings.telegram_group_chat_id:
-        text = "📈 <b>Haftalik jamoa ko'rinishi</b>\n\n" + "\n".join(team_lines)
-        group_delivered = (await send_message(settings.telegram_group_chat_id, text)) is not None
 
     if not dry_run:
         cfg.weekly_last_posted = today
         await db.commit()
 
-    return {
-        "operators": len(payloads), "sent": sent, "dry_run": dry_run,
-        "group_delivered": group_delivered, "results": results, "team_lines": team_lines,
-    }
+    return {"operators": len(payloads), "sent": sent, "dry_run": dry_run, "results": results}

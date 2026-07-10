@@ -1,4 +1,3 @@
-import html
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, verify_bot_secret
-from api.telegram_notify import send_message
 from api.routers.norms import METRIC_LABELS, metrics_for
+from api.services.daily_digest import send_daily_digest
 from api.schemas import (
     LeadOperatorRow,
     LeadStageDayOut,
@@ -118,28 +117,34 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
 
     today = today_local()
     month_start = today.replace(day=1)
+    week_start = today - timedelta(days=today.weekday())  # shu hafta dushanbasi
     metric_keys = metrics_for(user)
 
-    # Joriy oy jami (suhbat/tashrif — daily_results dan bitta so'rovda)
-    sums = (
-        await db.execute(
-            select(
-                func.coalesce(func.sum(DailyResult.conversations_count), 0),
-                func.coalesce(func.sum(DailyResult.visits_count), 0),
-            ).where(
-                DailyResult.user_id == user.id,
-                DailyResult.date >= month_start,
-                DailyResult.date <= today,
+    async def _range_totals(day_from: date) -> dict[str, int]:
+        """[day_from, bugun] oralig'i jami — lavozim ko'rsatkichlariga qarab."""
+        sums = (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(DailyResult.conversations_count), 0),
+                    func.coalesce(func.sum(DailyResult.visits_count), 0),
+                ).where(
+                    DailyResult.user_id == user.id,
+                    DailyResult.date >= day_from,
+                    DailyResult.date <= today,
+                )
             )
-        )
-    ).one()
-    month_totals: dict[str, int] = {}
-    if "suhbat" in metric_keys:
-        month_totals["suhbat"] = int(sums[0])
-    if "tashrif" in metric_keys:
-        month_totals["tashrif"] = int(sums[1])
-    if "video" in metric_keys:
-        month_totals["video"] = await _confirmed_videos_count(db, user.id, month_start, today)
+        ).one()
+        totals: dict[str, int] = {}
+        if "suhbat" in metric_keys:
+            totals["suhbat"] = int(sums[0])
+        if "tashrif" in metric_keys:
+            totals["tashrif"] = int(sums[1])
+        if "video" in metric_keys:
+            totals["video"] = await _confirmed_videos_count(db, user.id, day_from, today)
+        return totals
+
+    week_totals = await _range_totals(week_start)
+    month_totals = await _range_totals(month_start)
 
     # Vazifalar (joriy oyda berilganlar; created_at naive-UTC)
     start_utc, end_utc = local_range_utc_naive(month_start, today)
@@ -177,6 +182,7 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
     return MyStatsOut(
         period=today.strftime("%Y-%m"),
         today=await today_metric_rows(db, user),
+        week_totals=week_totals,
         month_totals=month_totals,
         tasks_done=tasks_done,
         tasks_total=tasks_total,
@@ -603,70 +609,10 @@ async def web_my_lead_stage_day(
     return await _build_lead_day(db, day, rid)
 
 
-# --- Guruhga kunlik lid statistikasini yuborish (har xodimga alohida xabar) ---
-
-
-def _format_group_stat(name: str, day: date, data: LeadStageDayOut) -> str:
-    """Bir xodimning kunlik lid bosqich statistikasi — guruhga yuboriladigan standart
-    ko'rinish (botdagi shaxsiy ko'rinish bilan bir xil)."""
-    lines = [
-        f"👤 <b>{html.escape(name)} — {day:%d.%m.%Y}</b>",
-        f"📞 Gaplashilgan: {data.calls} | 🧲 Ishlangan: {data.total} | Tashrif: {data.visits}",
-        "",
-    ]
-    if data.stages:
-        lines.extend(f"• {html.escape(s.stage_name)}: {s.count}" for s in data.stages)
-    else:
-        lines.append("Bugun lidlar bo'yicha ma'lumot yo'q.")
-    return "\n".join(lines)
-
-
-async def _do_post_to_group(db: AsyncSession, dry_run: bool = False) -> dict:
-    """Har bir sotuv operatorining bugungi lid bosqich statistikasini guruhga ALOHIDA
-    xabar qilib yuboradi. Faoliyatsiz (lid ham, qo'ng'iroq ham yo'q) xodim tashlab
-    ketiladi. `dry_run` — yubormasdan matnlarni qaytaradi."""
-    group = settings.telegram_group_chat_id
-    if not group and not dry_run:
-        return {"posted": 0, "reason": "Guruh chat ID sozlanmagan"}
-
-    today = today_local()
-    employees = list(
-        await db.scalars(
-            select(User)
-            .where(
-                User.role == Role.employee.value,
-                User.is_active == True,  # noqa: E712
-                User.crm_visit_external_id.isnot(None),
-            )
-            .order_by(User.full_name)
-        )
-    )
-
-    items: list[dict] = []
-    posted = 0
-    for emp in employees:
-        try:
-            rid = int(emp.crm_visit_external_id)
-        except (TypeError, ValueError):
-            continue
-        data = await _build_lead_day(db, today, rid)
-        if data.total == 0 and data.calls == 0:
-            continue  # bugun faoliyatsiz — yubormaymiz
-        text = _format_group_stat(emp.full_name, today, data)
-        if dry_run:
-            items.append({"name": emp.full_name, "text": text})
-        elif await send_message(group, text) is not None:
-            posted += 1
-
-    if dry_run:
-        return {"dry_run": True, "count": len(items), "items": items}
-    return {"posted": posted, "date": today.isoformat()}
-
-
-@router.post("/lead-stages/post-to-group", dependencies=[Depends(verify_bot_secret)])
-async def post_lead_stages_to_group(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
-    """Darhol yuborish (guruhdagi /statistika buyrug'i yoki qo'lda). `dry_run` — sinov."""
-    return await _do_post_to_group(db, dry_run=dry_run)
+# --- Guruhga kunlik digest yuborish (bitta jamlangan xabar) ---
+# Eski oqim (har operatorga ALOHIDA lid xabari + alohida vazifa jadvali + alohida AI
+# xulosa) api/services/daily_digest.py dagi yagona digest bilan almashtirilgan —
+# guruhga endi bitta kompakt xabar tushadi, AI xulosa uning oxirida.
 
 
 async def _get_group_config(db: AsyncSession) -> GroupPostConfig:
@@ -681,13 +627,17 @@ async def _get_group_config(db: AsyncSession) -> GroupPostConfig:
 
 @router.post("/lead-stages/group-tick", dependencies=[Depends(verify_bot_secret)])
 async def group_post_tick(db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler har daqiqa chaqiradi. Sozlangan vaqt (boss belgilagan) kelganda va shu
-    kuni hali yuborilmagan bo'lsa — guruhga yuboradi (`last_posted_date` qo'riqchi)."""
+    """Scheduler har daqiqa chaqiradi. Sozlangan vaqt YETGAN yoki O'TGAN va bugun hali
+    yuborilmagan bo'lsa — kunlik digestni guruhga yuboradi. `>=` semantikasi ataylab:
+    scheduler aynan sozlangan daqiqani o'tkazib yuborsa ham (restart, kechikish)
+    keyingi tick'da baribir yuboriladi; `last_posted_date` qo'riqchi bir kunda ikki
+    marta yuborilishdan saqlaydi."""
     cfg = await _get_group_config(db)
     now = datetime.now(TASHKENT_TZ)
     today = now.date()
-    if now.hour == cfg.post_hour and now.minute == cfg.post_minute and cfg.last_posted_date != today:
-        result = await _do_post_to_group(db)
+    due = (now.hour, now.minute) >= (cfg.post_hour, cfg.post_minute)
+    if due and cfg.last_posted_date != today:
+        result = await send_daily_digest(db)
         cfg.last_posted_date = today
         await db.commit()
         return {"fired": True, **result}

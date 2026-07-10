@@ -307,7 +307,9 @@ async def reason_reply(db: AsyncSession, user_id: int | None, payload: dict) -> 
         "verified=false bo'lsa: xushmuomala lekin qat'iy ohangda tekshiruv fakti ('verify_note') izoh bilan "
         "mos kelmasligini ayt, ishni davom ettirishga chaqir va bu holat rahbarga yuborilganini ayt — ayblovchi "
         "so'z ishlatma, faqat faktni ko'rsat. verified=true bo'lsa: sababi tasdiqlanganini, aybi yo'qligini va "
-        "rahbar xabardor qilinishini ayt. verified=null bo'lsa: sabab qayd etilganini va rahbar ko'rishini ayt."
+        "rahbar xabardor qilinishini ayt. verified=null va pending_manager=true bo'lsa: sabab qayd etilgani, "
+        "avtomatik tekshirib bo'lmagani uchun tasdiqlash rahbarga yuborilgani va natija haqida xabar berilishini "
+        "ayt. verified=null va pending_manager yo'q bo'lsa: sabab qayd etilganini va rahbar ko'rishini ayt."
     )
     result = await _generate(_SYSTEM_BASE, payload, instruction)
     text, source = result if result else (_fallback_reason_reply(payload), "fallback")

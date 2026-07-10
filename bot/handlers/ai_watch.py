@@ -27,8 +27,8 @@ reason_text_router = Router()
 
 _TOGGLE_LABELS = {
     "nudges_enabled": "🔔 Soatlik nudge",
-    "group_summary_enabled": "📊 Kun yakuni (guruh)",
-    "weekly_enabled": "📈 Haftalik xulosa",
+    "group_summary_enabled": "🤖 AI xulosa (kunlik digest ichida)",
+    "weekly_enabled": "📈 Haftalik xulosa (shaxsiy)",
     "hot_leads_enabled": "🔥 Issiq lid",
 }
 
@@ -41,8 +41,8 @@ def _config_view(cfg: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"Bosh kalit (server): {master}",
         f"Issiq lid (server): {hot_lead_master}",
         f"Provayder: {cfg.get('provider')}",
-        f"Kun yakuni vaqti: {cfg.get('summary_hour', 0):02d}:{cfg.get('summary_minute', 0):02d}"
-        " (o'zgartirish: /ai_vaqt 19:30)",
+        "AI xulosa kunlik digest bilan birga guruhga chiqadi"
+        " (vaqti: /statistika_vaqt).",
         "",
         "Qismlarni tugma bilan yoqing/o'chiring:",
     ]
@@ -91,28 +91,12 @@ async def on_toggle(callback: CallbackQuery) -> None:
 
 @router.message(Command("ai_vaqt"))
 async def cmd_ai_time(message: Message, command: CommandObject) -> None:
-    """Kun yakuni xulosasi vaqtini o'zgartirish: /ai_vaqt 19:30 (faqat Boshliq)."""
-    if not command.args:
-        cfg = await api_client.get_ai_config(message.from_user.id)
-        if cfg is None:
-            await message.reply("Bu buyruq faqat rahbarlar uchun.")
-            return
-        await message.reply(
-            f"Kun yakuni vaqti: {cfg['summary_hour']:02d}:{cfg['summary_minute']:02d}\n"
-            "O'zgartirish: /ai_vaqt 19:30"
-        )
-        return
-    try:
-        hour_s, minute_s = command.args.strip().split(":")
-        hour, minute = int(hour_s), int(minute_s)
-    except ValueError:
-        await message.reply("Format noto'g'ri. Masalan: /ai_vaqt 19:30")
-        return
-    updated = await api_client.set_ai_config(message.from_user.id, summary_hour=hour, summary_minute=minute)
-    if updated is None:
-        await message.reply("Vaqtni faqat Boshliq o'zgartira oladi.")
-        return
-    await message.reply(f"✅ Kun yakuni vaqti: {updated['summary_hour']:02d}:{updated['summary_minute']:02d}")
+    """ESKI buyruq — AI xulosaning alohida vaqti endi yo'q: u kunlik digest bilan
+    birga chiqadi. Foydalanuvchini yagona vaqt buyrug'iga yo'naltiramiz."""
+    await message.reply(
+        "AI xulosa endi kunlik digest bilan BITTA xabarda chiqadi.\n"
+        "Yuborish vaqtini o'zgartirish: /statistika_vaqt 19:30"
+    )
 
 
 @reason_text_router.message(
@@ -148,6 +132,49 @@ async def on_reason_text(message: Message) -> None:
         return  # sabab kutilmayotgan edi — oddiy matn, aralashmaymiz
 
     await message.reply(result.get("reply") or "✅ Sabab qayd etildi.")
+
+
+@router.callback_query(F.data.startswith("sfv:"))
+async def on_reason_verify(callback: CallbackQuery) -> None:
+    """Rahbar (ROP/Boshliq) avtomatik tekshirib bo'lmagan sababni tasdiqlaydi yoki
+    rad etadi. callback_data: "sfv:<reason_id>:<1|0>". Birinchi qaror yakuniy —
+    keyin bosgan rahbarga "allaqachon hal qilingan" ko'rsatiladi."""
+    try:
+        _, reason_id_s, decision_s = callback.data.split(":", 2)
+        reason_id = int(reason_id_s)
+        approve = decision_s == "1"
+    except ValueError:
+        await callback.answer("Xato ma'lumot")
+        return
+
+    try:
+        result = await api_client.post_reason_verify(callback.from_user.id, reason_id, approve)
+    except Exception:  # noqa: BLE001 — API xatosida rahbarni jim qoldirmaymiz
+        logger.exception("Sabab tasdiqlashda xatolik")
+        await callback.answer("Xatolik — birozdan keyin urinib ko'ring", show_alert=True)
+        return
+
+    if result is None:
+        await callback.answer("Bu amal faqat ROP/Boshliq uchun", show_alert=True)
+        return
+
+    if result.get("already"):
+        status = "tasdiqlangan ✅" if result.get("verified") else "rad etilgan ❌"
+        suffix = f"\n\n☑️ Allaqachon hal qilingan: <b>{status}</b>"
+        await callback.answer("Bu sabab allaqachon hal qilingan")
+    else:
+        status = "tasdiqlandi ✅" if approve else "rad etildi ❌"
+        suffix = f"\n\n☑️ Sizning qaroringiz: <b>{status}</b> (operatorga xabar yuborildi)"
+        await callback.answer(f"Sabab {status}")
+
+    # Tugmalarni olib tashlab, qarorni xabar ostiga yozamiz (qayta bosilmasin)
+    try:
+        if callback.message:
+            await callback.message.edit_text(
+                f"{callback.message.html_text}{suffix}", reply_markup=None
+            )
+    except Exception:  # noqa: BLE001 — edit ishlamasa toast yetadi
+        logger.debug("Tasdiqlash xabarini tahrirlab bo'lmadi", exc_info=True)
 
 
 @router.callback_query(F.data.startswith("sfr:"))
