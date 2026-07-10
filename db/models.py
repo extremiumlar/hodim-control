@@ -372,7 +372,8 @@ class HotLead(Base):
     lid aniqlanishi bilan CRM tayinlagan operatorga darhol xabar beriladi va javob
     tezligi o'lchanadi. Uch vaqt farqi metrika beradi: lid yaratilishi → aniqlash
     (tizim tezligi), aniqlash → qabul (operator reaksiyasi), yaratilish → birinchi
-    chiquvchi qo'ng'iroq (haqiqiy speed-to-lead, call-history phoneSearch'dan).
+    aloqa qo'ng'irog'i (haqiqiy speed-to-lead, call-history phoneSearch'dan;
+    chiquvchi urinish yoki kiruvchi javob berilgan qo'ng'iroq sanaladi).
 
     `status`: baseline (tizim yoqilganda mavjud bo'lgan eski lid — kuzatilmaydi) |
     notified (operatorga yuborildi) | claimed (operator qabul qildi) | called
@@ -394,7 +395,7 @@ class HotLead(Base):
     notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_call_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Lid yaratilishidan birinchi chiquvchi qo'ng'iroqqacha sekund (speed-to-lead)
+    # Lid yaratilishidan birinchi aloqa qo'ng'irog'igacha sekund (speed-to-lead)
     first_call_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="notified", index=True)

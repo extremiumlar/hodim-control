@@ -663,9 +663,12 @@ class UysotAdapter(CRMAdapter):
             "responsible_id": data.get("responsibleById"),
         }
 
-    async def find_first_outbound_call(self, phone: str, since_ts: int) -> int | None:
-        """Shu raqamga `since_ts`dan keyingi ENG BIRINCHI chiquvchi qo'ng'iroq vaqti
-        (unix sekund). `phoneSearch` kichik to'plam qaytargani uchun sahifalar kam;
+    async def find_first_contact_call(self, phone: str, since_ts: int) -> int | None:
+        """Shu raqam bilan `since_ts`dan keyingi ENG BIRINCHI "aloqa" qo'ng'irog'i
+        vaqti (unix sekund). Aloqa = CHIQUVCHI (urinishning o'zi kifoya, mijoz
+        ko'tarmasa operator aybdor emas) YOKI KIRUVCHI javob berilgan (missed=False —
+        mijoz o'zi chaldi va operator gaplashdi; kiruvchi o'tkazib yuborilgani
+        sanalmaydi). `phoneSearch` kichik to'plam qaytargani uchun sahifalar kam;
         `start` parametri o'rniga mijoz tomonda filtrlanadi (format riskisiz).
         `None` — hali qo'ng'iroq yo'q yoki CRM xatosi."""
         if not CRM_API_KEY or not phone:
@@ -689,7 +692,11 @@ class UysotAdapter(CRMAdapter):
                         ts = r.get("startStamp")
                         if ts is None or ts < since_ts:
                             continue
-                        if r.get("callDirection") != "OUTBOUND":
+                        direction = r.get("callDirection")
+                        is_contact = direction == "OUTBOUND" or (
+                            direction == "INBOUND" and r.get("missed") is False
+                        )
+                        if not is_contact:
                             continue
                         if earliest is None or ts < earliest:
                             earliest = ts

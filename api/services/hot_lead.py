@@ -11,7 +11,8 @@ Oqim (har tick):
      "Qabul qildim" tugmasi. Mos operator topilmasa guruhga tushadi (egasiz lid
      ko'rinmay qolmasin). Taqsimotni CRM qiladi — biz buzmaymiz.
   3. BIRINCHI QO'NG'IROQ — javob kutayotgan lidlar uchun call-history'dan
-     (phoneSearch) lid raqamiga birinchi chiquvchi qo'ng'iroq izlanadi; topilsa
+     (phoneSearch) lid raqamiga birinchi ALOQA qo'ng'irog'i izlanadi (chiquvchi —
+     urinish kifoya, yoki kiruvchi javob berilgan); topilsa
      speed-to-lead sekundi yozilib yakunlanadi (status=called).
   4. ESKALATSIYA — ish soatlarida ESCALATE_AFTER_MINUTES dan beri qo'ng'iroqsiz
      turgan lid guruhga chiqariladi (qo'llab-quvvatlovchi ohang + real oqibat).
@@ -36,10 +37,11 @@ logger = logging.getLogger(__name__)
 # Aniqlash oynasi: watermark asosiy filtr, oyna faqat so'rovni kichik tutadi.
 # 6 soat — scheduler uzoq o'chib qolsa ham oradagi lidlar yo'qolmasin.
 LOOKBACK_SECONDS = 6 * 3600
-# Qabul muddati: lid tushgandan shuncha daqiqa ichida CRM'da birinchi chiquvchi
-# qo'ng'iroq ko'rinmasa — kechikkan hisoblanadi va guruhga eskalatsiya. "Qabul"
-# mezoni HAQIQIY qo'ng'iroq (call-history phoneSearch), Telegram tugmasi emas —
-# tugmani bosib qo'ng'iroq qilmagan operator ham shu yerda ushlanadi.
+# Qabul muddati: lid tushgandan shuncha daqiqa ichida CRM'da aloqa qo'ng'irog'i
+# (chiquvchi urinish yoki kiruvchi javob berilgan) ko'rinmasa — kechikkan
+# hisoblanadi va guruhga eskalatsiya. "Qabul" mezoni HAQIQIY qo'ng'iroq
+# (call-history phoneSearch), Telegram tugmasi emas — tugmani bosib qo'ng'iroq
+# qilmagan operator ham shu yerda ushlanadi.
 ESCALATE_AFTER_MINUTES = 5
 # Eskalatsiya faqat shu mahalliy soat oralig'ida (kechasi kelgan lid uchun
 # operatorni ayblamaymiz — adolat tamoyili).
@@ -193,7 +195,7 @@ async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
 
     found = []
     for lead in pending:
-        call_ts = await adapter.find_first_outbound_call(
+        call_ts = await adapter.find_first_contact_call(
             lead.phone, lead.created_ts - PRE_CREATION_GRACE_SECONDS
         )
         if call_ts is None:

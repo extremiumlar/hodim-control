@@ -79,10 +79,11 @@ class CRMAdapter(ABC):
         `None` — topilmadi yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
         return None
 
-    async def find_first_outbound_call(self, phone: str, since_ts: int) -> int | None:
-        """Ixtiyoriy (issiq lid speed-to-lead uchun): shu raqamga `since_ts`dan keyin
-        qilingan ENG BIRINCHI chiquvchi qo'ng'iroqning unix-sekund vaqti. `None` —
-        hali qo'ng'iroq yo'q yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
+    async def find_first_contact_call(self, phone: str, since_ts: int) -> int | None:
+        """Ixtiyoriy (issiq lid speed-to-lead uchun): shu raqam bilan `since_ts`dan
+        keyingi ENG BIRINCHI "aloqa" qo'ng'irog'ining unix-sekund vaqti — chiquvchi
+        (urinish kifoya) yoki kiruvchi javob berilgan. `None` — hali qo'ng'iroq yo'q
+        yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
         return None
 
     async def get_all_daily_visit_operators(self, day: date) -> list[dict]:
