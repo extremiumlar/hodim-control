@@ -28,6 +28,7 @@ from db.models import (
     AiConfig,
     ExcusedDay,
     ExcusedStatus,
+    HourlyActual,
     LeadStageDaily,
     OperatorCallsDaily,
     Role,
@@ -42,6 +43,26 @@ _VISIT_STAGE_NAME = "tashrif"
 
 def _is_visit(stage_name: str) -> bool:
     return stage_name.strip().lower() == _VISIT_STAGE_NAME
+
+
+def _fmt_talk(sec: int) -> str:
+    """Gaplashgan vaqtni ixcham ko'rinishga o'giradi: 5977s → '1s 39d', 1004s → '16d'
+    (s=soat, d=daqiqa). Sekundlar tashlanadi — kunlik jami uchun ahamiyatsiz."""
+    minutes = sec // 60
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}s {minutes}d" if hours else f"{minutes}d"
+
+
+async def _talk_by_user(db: AsyncSession, day: date) -> dict[int, int]:
+    """Har operatorning shu kundagi jami gaplashgan sekundi: {user_id: talk_sec}.
+    `HourlyActual` (AI snapshot — CRM call-history sifatidan) dan; javob berilgan
+    qo'ng'iroqlar suhbat davomiyligi. Bo'sh bo'lsa (AI o'chiq/snapshot yo'q) — jim."""
+    rows = await db.execute(
+        select(HourlyActual.user_id, func.sum(HourlyActual.talk_sec))
+        .where(HourlyActual.date == day)
+        .group_by(HourlyActual.user_id)
+    )
+    return {uid: int(talk or 0) for uid, talk in rows.all()}
 
 
 async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
@@ -102,6 +123,7 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     today_ops = await _day_by_operator(db, day)
     yesterday_ops = await _day_by_operator(db, day - timedelta(days=1))
     tasks = await _tasks_by_user(db, day)
+    talk_by_user = await _talk_by_user(db, day)
 
     employees = list(
         await db.scalars(
@@ -134,6 +156,13 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         mark = "✅" if done == total else "🕓"
         return f" · {mark} {done}/{total}"
 
+    def _talk_part(user: User | None) -> str:
+        """🗣 gaplashgan vaqt — faqat ma'lumoti bo'lgan operator uchun."""
+        if user is None:
+            return ""
+        sec = talk_by_user.get(user.id, 0)
+        return f" · 🗣 {_fmt_talk(sec)}" if sec else ""
+
     # Operator qatorlari — bugun faoliyati borlar, qo'ng'iroq bo'yicha kamayish tartibida
     active = {rid: a for rid, a in today_ops.items() if a["calls"] or a["leads"]}
     lines: list[str] = []
@@ -142,7 +171,8 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         name = html.escape((user.full_name if user else a["name"]) or str(rid))
         delta = _delta(a["calls"], yesterday_ops.get(rid))
         lines.append(
-            f"• <b>{name}</b> — 📞 {a['calls']}{delta} · 🧲 {a['leads']} · 🏠 {a['visits']}{_task_part(user)}"
+            f"• <b>{name}</b> — 📞 {a['calls']}{delta}{_talk_part(user)} · "
+            f"🧲 {a['leads']} · 🏠 {a['visits']}{_task_part(user)}"
         )
 
     # CRM faoliyati yo'q, lekin bugun vazifa olgan xodimlar (masalan mobilograf)
@@ -160,10 +190,15 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     total_calls = sum(a["calls"] for a in active.values())
     total_leads = sum(a["leads"] for a in active.values())
     total_visits = sum(a["visits"] for a in active.values())
+    # Jami gaplashgan vaqt — faqat digestda ko'rsatilgan (faol) operatorlarники
+    active_uids = {user_by_rid[rid].id for rid in active if rid in user_by_rid}
+    total_talk = sum(sec for uid, sec in talk_by_user.items() if uid in active_uids)
     y_calls = sum(a["calls"] for a in yesterday_ops.values())
     totals = f"<b>Jami:</b> 📞 {total_calls}"
     if yesterday_ops:
         totals += f" (kecha {y_calls})"
+    if total_talk:
+        totals += f" · 🗣 {_fmt_talk(total_talk)}"
     totals += f" · 🧲 {total_leads} · 🏠 {total_visits}"
 
     excused_names = [html.escape(u.full_name) for u in employees if u.id in excused_ids]
@@ -179,7 +214,10 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     if idle_names:
         parts.append("😴 Bugun faoliyat qayd etilmagan: " + ", ".join(idle_names))
     parts.append("")
-    parts.append("<i>📞 qo'ng'iroq (kechaga nisbatan) · 🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>")
+    parts.append(
+        "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "
+        "🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>"
+    )
     parts.append("<i>Operator kesimidagi bosqichlar: botda 🧲 Lidlar statistikasi</i>")
 
     return {"text": "\n".join(parts), "operators": len(active)}
