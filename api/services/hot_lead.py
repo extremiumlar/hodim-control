@@ -49,6 +49,11 @@ ESCALATE_HOUR_FROM, ESCALATE_HOUR_TO = 8, 21
 FIRST_CALL_CHECKS_PER_TICK = 10
 # Shuncha soatdan keyin birinchi qo'ng'iroqni izlashni to'xtatamiz (eski lid).
 FIRST_CALL_GIVE_UP_HOURS = 72
+# Qo'ng'iroq lid yaratilishidan OLDIN ham bo'lishi mumkin: MOI_ZVONKI kabi
+# manbalarda lid aynan qo'ng'iroqdan keyin avto-yaraladi (jonli misol: qo'ng'iroq
+# liddan 27s oldin — 13547494). Shu oynadagi oldingi qo'ng'iroq ham "qabul"
+# hisoblanadi (first_call_sec 0 ga qisqartiriladi), soxta eskalatsiya bo'lmaydi.
+PRE_CREATION_GRACE_SECONDS = 10 * 60
 
 
 def _adapter():
@@ -188,16 +193,16 @@ async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
 
     found = []
     for lead in pending:
-        call_ts = await adapter.find_first_outbound_call(lead.phone, lead.created_ts)
+        call_ts = await adapter.find_first_outbound_call(
+            lead.phone, lead.created_ts - PRE_CREATION_GRACE_SECONDS
+        )
         if call_ts is None:
             continue
-        entry = {
-            "crm_lead_id": lead.crm_lead_id,
-            "speed_sec": call_ts - lead.created_ts,
-        }
+        speed_sec = max(0, call_ts - lead.created_ts)
+        entry = {"crm_lead_id": lead.crm_lead_id, "speed_sec": speed_sec}
         if not dry_run:
             lead.first_call_at = datetime.utcfromtimestamp(call_ts)
-            lead.first_call_sec = call_ts - lead.created_ts
+            lead.first_call_sec = speed_sec
             lead.status = "called"
         found.append(entry)
 
