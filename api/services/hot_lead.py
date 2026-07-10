@@ -200,6 +200,11 @@ async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
         )
         if call_ts is None:
             continue
+        # Ba'zi operator qurilmalarining soati noto'g'ri — call-history'da
+        # KELAJAKDAGI startStamp ko'rilgan (jonli misol: +5-10 soat siljigan).
+        # Yozuv borligi "aloqa bo'ldi" faktini beradi, lekin tezlik metrikasi
+        # buzilmasligi uchun hozirgi vaqtdan yuqorisi kesiladi.
+        call_ts = min(call_ts, int(time.time()))
         speed_sec = max(0, call_ts - lead.created_ts)
         entry = {"crm_lead_id": lead.crm_lead_id, "speed_sec": speed_sec}
         if not dry_run:
