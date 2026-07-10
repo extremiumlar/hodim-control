@@ -501,16 +501,24 @@ class UysotAdapter(CRMAdapter):
             for (responsible_id, status_id), entry in entries.items()
         ]
 
+    # "Lid tugadi" tekshiruvi sozlamalari: da'voni rad etish uchun shuncha ochiq lid
+    # topilishi kifoya (erta to'xtash — skan tez tugaydi, sahifa chegarasiga bog'liq
+    # emas). Sahifa chegarasi kattaroq (jonli bazada ochiq bosqichlarda ~1600 lid,
+    # ya'ni ~32 sahifa) — "haqiqatan bo'sh" (True) hukmi to'liq skan talab qiladi.
+    OPEN_LEAD_ENOUGH = 5
+    MAX_OPEN_LEAD_PAGES = 60
+    OPEN_LEAD_THROTTLE_SECONDS = 0.4  # 60/min rate limitda 30s CRM sync bilan yonma-yon sig'ishi uchun
+
     async def count_open_leads(self, responsible_id: str) -> int | None:
         """Operatorga (`responsibleById`) biriktirilgan, "ochiq" bosqichlardagi
         (`CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS`) lidlar soni — "lid/baza tugadi"
         da'vosini tekshirish uchun. `/lead/filter` bosqich bo'yicha server tomonda
-        filtrlaydi (kichik to'plam), mas'ul bo'yicha esa mijoz tomonda sanaladi.
+        filtrlaydi, mas'ul bo'yicha mijoz tomonda sanaladi.
 
-        Interaktiv chaqiruv (operator javob kutyapti) — shuning uchun sahifa
-        chegarasi kichik (MAX_PAGES_PER_SYNC) va throttle yo'q; chegaraga yetsa
-        ham shu paytgacha topilgan son yetarli ("0 emas"ligi muhim). `None` —
-        sozlanmagan yoki CRM xatosi (hukm chiqarilmaydi)."""
+        Hukm adolati: `OPEN_LEAD_ENOUGH` ta topilgach darhol qaytadi (da'vo rad —
+        aniq); skan sahifa chegarasiga urilib 0 topgan bo'lsa `None` (chala skan
+        asosida "lid bor edi-ku" ham, "haqiqatan bo'sh" ham deb bo'lmaydi); faqat
+        TO'LIQ skan 0 bersa 0 (da'vo tasdiq). `None` — sozlanmagan/CRM xatosi ham."""
         if not CRM_API_KEY or not CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS:
             return None
 
@@ -521,9 +529,10 @@ class UysotAdapter(CRMAdapter):
 
         count = 0
         page = 1
+        completed = False
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
-                while page <= MAX_PAGES_PER_SYNC:
+                while page <= self.MAX_OPEN_LEAD_PAGES:
                     resp = await client.post(
                         "/lead/filter",
                         json={
@@ -532,24 +541,35 @@ class UysotAdapter(CRMAdapter):
                             "pipeStatusIds": CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
                         },
                     )
+                    if resp.status_code == 429:
+                        logger.warning("Uysot rate limit (ochiq lid sanovi) — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
+                        await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+                        continue
                     resp.raise_for_status()
                     body = resp.json().get("data") or {}
                     records = body.get("data") or []
                     if not records:
+                        completed = True
                         break
                     count += sum(1 for r in records if r.get("responsibleById") == responsible_key)
+                    if count >= self.OPEN_LEAD_ENOUGH:
+                        return count  # da'voni rad etishga yetarli — davom etish shart emas
                     if page >= (body.get("totalPages") or page):
+                        completed = True
                         break
                     page += 1
-                else:
-                    logger.warning(
-                        "Uysot ochiq lid sanovi %s sahifada to'xtadi (xavfsizlik chegarasi) — son to'liq bo'lmasligi mumkin",
-                        MAX_PAGES_PER_SYNC,
-                    )
+                    await asyncio.sleep(self.OPEN_LEAD_THROTTLE_SECONDS)
             except httpx.HTTPError:
                 logger.exception("Uysot'dan ochiq lidlarni sanashda xatolik (responsible_id=%s)", responsible_id)
                 return None
 
+        if count == 0 and not completed:
+            # Chala skanda hech narsa topilmadi — "bo'sh" deb hukm chiqarib bo'lmaydi
+            logger.warning(
+                "Uysot ochiq lid sanovi %s sahifada to'xtadi, 0 topildi — hukmsiz (None)",
+                self.MAX_OPEN_LEAD_PAGES,
+            )
+            return None
         return count
 
     # ─── Issiq lid (speed-to-lead, 5-bosqich) ────────────────────────────────────

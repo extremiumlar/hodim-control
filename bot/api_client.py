@@ -373,13 +373,14 @@ async def post_reason_verify(telegram_id: int, reason_id: int, approve: bool) ->
 
 async def post_shortfall_reason_text(telegram_id: int, text: str) -> dict:
     """Operator yozgan erkin matnli sababni API'ga yuboradi. API'da AI tasnif +
-    CRM/fakt tekshiruvi ketma-ket ishlaydi — default 10s yetmasligi mumkin, shuning
-    uchun timeout bu chaqiruvga alohida kengaytirilgan. Qaytaradi:
+    CRM/fakt tekshiruvi ketma-ket ishlaydi — jonli o'lchov: Gemini rate-limit
+    retry'lari + to'liq CRM skan bilan ~75s ko'rilgan, shuning uchun timeout bu
+    chaqiruvga alohida keng (180s). Qaytaradi:
     {"handled": bool, "reply": str, ...} — handled=false bo'lsa bot jim qoladi."""
     resp = await _get_client().post(
         "/ai-watch/reason-text",
         json={"telegram_id": telegram_id, "text": text},
-        timeout=120,
+        timeout=180,
     )
     resp.raise_for_status()
     return resp.json()
