@@ -289,29 +289,37 @@ async def save_reason_text(payload: ReasonTextIn, db: AsyncSession = Depends(get
         return {"handled": False}
 
     today = datetime.now(TASHKENT_TZ).date()
-    pending = await db.scalar(
-        select(ShortfallReason)
-        .where(
-            ShortfallReason.user_id == user.id,
-            ShortfallReason.date == today,
-            ShortfallReason.reason.is_(None),
+    # Kunning BARCHA ochiq so'rovlari olinadi: bot o'chiq turgan/operator kechikkan
+    # holatda bir kunda bir nechta javobsiz so'rov yig'ilib qolishi mumkin — bitta
+    # javob hammasini yopadi (aks holda digestda "Sabab yozilmagan" bo'lib adolatsiz
+    # ko'rinadi). Tahlil eng oxirgi (eng dolzarb) soat kontekstida qilinadi.
+    pendings = list(
+        await db.scalars(
+            select(ShortfallReason)
+            .where(
+                ShortfallReason.user_id == user.id,
+                ShortfallReason.date == today,
+                ShortfallReason.reason.is_(None),
+            )
+            .order_by(ShortfallReason.hour.desc())
         )
-        .order_by(ShortfallReason.hour.desc())
-        .limit(1)
     )
-    if pending is None:
+    if not pendings:
         return {"handled": False}
+    pending = pendings[0]
 
     classification = await ai_coach.classify_reason_text(text)
     effort = await _today_effort(db, user.id, today, pending.hour)
     verified, note = await _verify_claim(db, user, classification["category"], effort)
 
-    pending.reason = classification["label"]
-    pending.raw_text = text[:1000]
-    pending.ai_category = classification["category"]
-    pending.verified = verified
-    pending.verify_note = note
-    pending.answered_at = datetime.utcnow()
+    answered_at = datetime.utcnow()
+    for row in pendings:
+        row.reason = classification["label"]
+        row.raw_text = text[:1000]
+        row.ai_category = classification["category"]
+        row.verified = verified
+        row.verify_note = note
+        row.answered_at = answered_at
     await db.commit()
 
     # Avtomatik hukm chiqmagan sabab rahbarga (ROP) tasdiqlashga boradi

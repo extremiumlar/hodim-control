@@ -79,7 +79,12 @@ async def main() -> None:
             except Exception:
                 logger.exception("Foydalanuvchiga xato haqida xabar berib bo'lmadi")
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    # drop_pending_updates=False — bot o'chiq paytda kelgan xabarlar restartdan
+    # keyin QAYTA ISHLANADI. Bu ataylab: operator AI sabab so'roviga javobni bot
+    # o'lik paytda yozsa, xabari yo'qolmasligi shart (jonli holat: Shahnozaning
+    # sababi shu tufayli o'qilmay qolgan edi). Eski tugma bosishlari qayta kelsa
+    # ham handlerlar upsert/idempotent — zarar qilmaydi.
+    await bot.delete_webhook(drop_pending_updates=False)
 
     # message_reaction 2-bosqichda (mobilograf) kerak bo'ladi, lekin uni oldindan
     # yoqib qo'yamiz — aks holda Telegram guruhdagi reaksiyalarni botga umuman yubormaydi.
