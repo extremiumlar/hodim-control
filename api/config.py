@@ -59,7 +59,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     ai_model: str = "claude-opus-4-8"
     gemini_api_key: str = Field("", validation_alias="OPERATOR_GEMINI_API_KEY")
-    gemini_model: str = "gemini-3.5-flash"
+    # gemini-2.5-flash: tez (~1s) va barqaror. gemini-3.5-flash yuk ostida sekin
+    # (6-18s) va 503 berardi — interaktiv /statistika digestini osiб qo'yardi.
+    gemini_model: str = Field("gemini-2.5-flash", validation_alias="OPERATOR_GEMINI_MODEL")
     # Nudge PUSH alohida bayroq (hourly_plan_enabled naqshi): AI_ENABLED faqat matn
     # generatsiyasini yoqadi; haqiqiy operatorlarga Telegram xabar yuborish uchun
     # .env'da AI_NUDGE_ENABLED=true ham kerak. Tick endpointi dry_run=true bilan

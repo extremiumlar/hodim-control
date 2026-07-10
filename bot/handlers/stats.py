@@ -220,6 +220,13 @@ async def send_global_stats(message: Message, *, to_group: bool) -> None:
     chat_id = None if to_group else message.chat.id
     respond = message.reply if to_group else message.answer
 
+    # Digest bir necha soniya olishi mumkin (CRM + AI xulosa) — foydalanuvchi
+    # "jim qoldi, ishlamadi" deb o'ylamasligi uchun darhol "yozmoqda" belgisi.
+    try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
+    except Exception:  # noqa: BLE001 — chat action bezak, xatosi oqimni to'xtatmasin
+        pass
+
     result = await api_client.trigger_daily_digest(chat_id=chat_id)
     if not result.get("sent"):
         reason = result.get("reason") or "ma'lumot topilmadi"

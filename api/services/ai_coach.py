@@ -74,9 +74,13 @@ _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 async def _generate_gemini(system: str, user: str) -> str | None:
     """Gemini REST (generateContent) — SDK'siz, httpx orqali. `thinkingBudget: 0`
     flash modellarda o'ylashni o'chiradi (aks holda output tokenni o'ylashga sarflab
-    bo'sh matn qaytarishi mumkin). Bepul tier RPM limiti tor (daqiqasiga ~10 so'rov),
-    shuning uchun 429'da bir marta kutib qayta uriniladi — nudge/xulosa interaktiv
-    emas (scheduler yuboradi), 20-30s kutish zarar qilmaydi."""
+    bo'sh matn qaytarishi mumkin).
+
+    Vaqt cheklovi QAT'IY (18s): xulosa/nudge ham bot buyrug'i orqali INTERAKTIV
+    chaqirilishi mumkin (guruhdagi /statistika → digest), shuning uchun Gemini
+    osilib qolsa (503/ReadTimeout) tez taslim bo'lib chaqiruvchini fallback matnга
+    o'tkazamiz — fallback allaqachon faktlarni (pasayish epizodlari) o'z ichiga oladi.
+    429'da bir marta qisqa kutib qayta uriniladi (bepul tier RPM tor)."""
     if not settings.gemini_api_key:
         return None
     import asyncio
@@ -88,7 +92,9 @@ async def _generate_gemini(system: str, user: str) -> str | None:
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"maxOutputTokens": 800, "thinkingConfig": {"thinkingBudget": 0}},
     }
-    async with httpx.AsyncClient(timeout=60) as client:
+    # connect tez, read biroz uzunroq (model javobi) — lekin jami ~18s dan oshmasin
+    timeout = httpx.Timeout(18.0, connect=6.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(2):
             resp = await client.post(
                 f"{_GEMINI_BASE}/models/{settings.gemini_model}:generateContent",
@@ -96,7 +102,7 @@ async def _generate_gemini(system: str, user: str) -> str | None:
                 json=body,
             )
             if resp.status_code == 429 and attempt == 0:
-                wait = min(float(resp.headers.get("retry-after", 25)), 60)
+                wait = min(float(resp.headers.get("retry-after", 8)), 8)
                 logger.warning("Gemini rate limit (429) — %ss kutib qayta urinish", wait)
                 await asyncio.sleep(wait)
                 continue
