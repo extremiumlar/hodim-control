@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 # Aniqlash oynasi: watermark asosiy filtr, oyna faqat so'rovni kichik tutadi.
 # 6 soat — scheduler uzoq o'chib qolsa ham oradagi lidlar yo'qolmasin.
 LOOKBACK_SECONDS = 6 * 3600
-# Shuncha daqiqadan beri birinchi qo'ng'iroq bo'lmasa guruhga eskalatsiya.
-ESCALATE_AFTER_MINUTES = 15
+# Qabul muddati: lid tushgandan shuncha daqiqa ichida CRM'da birinchi chiquvchi
+# qo'ng'iroq ko'rinmasa — kechikkan hisoblanadi va guruhga eskalatsiya. "Qabul"
+# mezoni HAQIQIY qo'ng'iroq (call-history phoneSearch), Telegram tugmasi emas —
+# tugmani bosib qo'ng'iroq qilmagan operator ham shu yerda ushlanadi.
+ESCALATE_AFTER_MINUTES = 5
 # Eskalatsiya faqat shu mahalliy soat oralig'ida (kechasi kelgan lid uchun
 # operatorni ayblamaymiz — adolat tamoyili).
 ESCALATE_HOUR_FROM, ESCALATE_HOUR_TO = 8, 21
@@ -65,7 +68,10 @@ def _notify_text(lead: HotLead) -> str:
     if lead.source:
         lines.append(f"🌐 Manba: {lead.source}")
     lines.append("")
-    lines.append("⏱ Iloji boricha tez bog'laning — birinchi daqiqalarda lid eng issiq bo'ladi. Javob tezligi hisobga yoziladi.")
+    lines.append(
+        f"⏱ {ESCALATE_AFTER_MINUTES} daqiqa ichida qo'ng'iroq qiling — birinchi daqiqalarda lid eng issiq bo'ladi. "
+        "Qo'ng'iroq CRM'dan avtomatik tekshiriladi, kechikkani guruhga chiqadi."
+    )
     return "\n".join(lines)
 
 
@@ -205,29 +211,32 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
     if not (ESCALATE_HOUR_FROM <= now_local.hour < ESCALATE_HOUR_TO):
         return {"escalated": 0, "off_hours": True}
 
-    threshold = datetime.utcnow() - timedelta(minutes=ESCALATE_AFTER_MINUTES)
+    # Muddat lid CRM'da YARATILGAN paytdan sanaladi (created_ts) — first_call_sec
+    # bilan bir xil boshlanish nuqtasi, "tizim kech aniqladi" degan yumshoqlik yo'q.
+    threshold_ts = int(time.time()) - ESCALATE_AFTER_MINUTES * 60
     stale = list(
         await db.scalars(
             select(HotLead).where(
                 HotLead.status.in_(("notified", "claimed")),
                 HotLead.first_call_at.is_(None),
                 HotLead.escalated_at.is_(None),
-                HotLead.detected_at <= threshold,
+                HotLead.created_ts <= threshold_ts,
             )
         )
     )
 
     escalated = []
     for lead in stale:
-        minutes = int((datetime.utcnow() - lead.detected_at).total_seconds() // 60)
+        minutes = int((int(time.time()) - lead.created_ts) // 60)
         operator = None
         if lead.user_id:
             operator = await db.get(User, lead.user_id)
         who = operator.full_name if operator else "mas'ul topilmadi"
         text = (
-            "⚠️ <b>Issiq lid hali javobsiz</b>\n"
-            f"👤 {_lead_label(lead)} — {minutes} daqiqadan beri qo'ng'iroq yo'q.\n"
-            f"Mas'ul: {who}. Keling, sovib qolmasin — birinchi bo'lib biz bog'lanaylik."
+            "⚠️ <b>Issiq lid kechikdi</b>\n"
+            f"👤 {_lead_label(lead)} — lid tushganiga {minutes} daqiqa bo'ldi, "
+            f"qo'ng'iroq hali yo'q ({ESCALATE_AFTER_MINUTES} daqiqalik qabul muddati o'tdi).\n"
+            f"Mas'ul: {who}. Keling, sovib qolmasin — hoziroq bog'lanaylik."
         )
         entry = {"crm_lead_id": lead.crm_lead_id, "operator": who, "minutes": minutes, "text": text}
         if not dry_run:
