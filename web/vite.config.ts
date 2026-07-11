@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // 0.0.0.0 — boshqa qurilmalar (telefon, hotspot) ham kira olishi uchun.
+    // Telefondan: http://<kompyuter-IP>:5173 (hotspotда odatda 192.168.137.1).
+    host: true,
     // hodim_crm (verifix) ni bitta manzil ostida ko'rsatish uchun dev-proxy:
     //   localhost:5173/         -> hodimlar_tizimi (shu Vite ilovasi)
     //   localhost:5173/verifix  -> verifix Next.js (:3000, basePath=/verifix)

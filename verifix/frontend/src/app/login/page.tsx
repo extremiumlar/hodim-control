@@ -76,6 +76,17 @@ export default function LoginPage() {
             API: {API_BASE}
           </p>
         </form>
+
+        {/* Asosiy tizimga qaytish — "/" (bir origin) = hodimlar_tizimi.
+            Next Link basePath qo'shgani uchun oddiy <a>. */}
+        <div className="mt-6 pt-4 border-t border-slate-100 text-center">
+          <a href="/" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-primary-700">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Xodimlar tizimiga qaytish
+          </a>
+        </div>
       </div>
     </div>
   );

@@ -47,3 +47,17 @@ if (-not (Test-PortBusy 5173)) {
     Start-Hidden "cmd.exe" "/c npm run dev" (Join-Path $root "web") "web"
     "Sayt ishga tushirildi"
 } else { "Sayt allaqachon ishlayapti (port 5173)" }
+
+# 5) verifix backend (hodim_crm Django, port 8002) — /verifix davomat tizimi
+$verifixPy = Join-Path $root "verifix\backend\venv\Scripts\python.exe"
+if ((Test-Path $verifixPy) -and (-not (Test-PortBusy 8002))) {
+    Start-Hidden $verifixPy "manage.py runserver 0.0.0.0:8002 --noreload" (Join-Path $root "verifix\backend") "verifix-api"
+    "verifix backend ishga tushirildi (8002)"
+} elseif (Test-PortBusy 8002) { "verifix backend allaqachon ishlayapti (8002)" }
+
+# 6) verifix frontend (Next.js PRODUCTION, port 3000) — 'npm run build' oldindan bajarilishi kerak.
+#    Dev emas, production: barqaror (worker qulamaydi) va xatoda kod ko'rsatmaydi.
+if (-not (Test-PortBusy 3000)) {
+    Start-Hidden "cmd.exe" "/c npm run start" (Join-Path $root "verifix\frontend") "verifix-web"
+    "verifix frontend ishga tushirildi (3000)"
+} else { "verifix frontend allaqachon ishlayapti (3000)" }

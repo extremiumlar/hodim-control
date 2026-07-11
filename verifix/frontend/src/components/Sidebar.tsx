@@ -71,6 +71,19 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
           </button>
         </div>
 
+        {/* Asosiy tizimga qaytish — ikkala ilova bir origin'da (localhost:5173):
+            "/" = hodimlar_tizimi. Next <Link> basePath (/verifix) qo'shgani uchun
+            bu yerda oddiy <a> ishlatiladi (to'liq sahifa o'tishi). */}
+        <a
+          href="/"
+          className="mx-3 mt-1 mb-2 flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-primary-700 bg-primary-50 hover:bg-primary-100 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+          Xodimlar tizimiga qaytish
+        </a>
+
         {/* Nav */}
         <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
           <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
