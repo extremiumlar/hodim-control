@@ -190,6 +190,13 @@ def _fallback_group_summary(p: dict) -> str:
             lines.append(
                 f"{o.get('name')} {dip.get('from')}–{dip.get('to')} oralig'ida orqada qoldi, {outcome}."
             )
+    # Oxirgi 10 kunlik o'rtachadan orqada qolgan soatlar — aniq "normani bajarmadi"
+    for o in ops:
+        for mh in o.get("missed_hours") or []:
+            lines.append(
+                f"{o.get('name')} soat {mh.get('hour')} da normani bajarmadi "
+                f"(odatda ~{mh.get('avg')}, bugun {mh.get('actual')})."
+            )
     reasons = p.get("reasons") or []
     if reasons:
         r = reasons[0]
@@ -199,18 +206,22 @@ def _fallback_group_summary(p: dict) -> str:
 
 async def daily_group_summary(db: AsyncSession, payload: dict) -> dict:
     """Guruhga kun yakuni xulosasi. `payload`: date, team_completion_pct,
-    operators[{name,done,target,avg_talk,dips,top}], reasons[{reason,count}].
-    `dips` — kod hisoblagan kun ichidagi pasayish epizodlari (from/to soat,
-    recovered, max_gap_calls): AI shulardan ANIQ faktli xulosa yozadi."""
+    operators[{name,done,target,avg_talk,dips,missed_hours,top}], reasons[{reason,count}].
+    `dips` — kun ichidagi pasayish epizodlari (kumulyativ reja vs haqiqiy);
+    `missed_hours` — operatorning OXIRGI 10 KUNLIK o'rtachasidan sezilarli orqada
+    qolgan soatlari ({hour, avg, actual}). AI shulardan ANIQ faktli xulosa yozadi."""
     instruction = (
-        "Guruhga kun yakuni xulosasini yoz (3-5 jumla): jamoa foizi, eng kuchli operator, "
-        "orqada qolganlar va (bo'lsa) jamlangan sabab. Har operatordagi 'dips' ro'yxati — kun "
-        "ichidagi pasayish epizodlari (from/to soat oralig'i, recovered, max_gap_calls). Dips "
-        "bo'lgan operatorni ANIQ VAQTI bilan ayt: recovered=true bo'lsa \"14:00–16:00 oralig'ida "
-        "orqada qoldi, keyin to'g'irladi\" ruhida (bu yaxshi holat — ta'kidla), recovered=false "
-        "bo'lsa pasayish kun oxirigacha to'g'irlanmaganini ayt. Dips bo'sh bo'lsa u operator "
-        "haqida pasayish yozma. FAQAT berilgan raqam, soat va ismlarni ishlat — taxmin qilma, "
-        "yangi raqam hisoblama. Ayblovsiz, faktlarga asoslangan."
+        "Guruhga kun yakuni xulosasini yoz (3-6 jumla): jamoa foizi, eng kuchli operator, "
+        "orqada qolganlar va (bo'lsa) jamlangan sabab.\n"
+        "1) Har operatordagi 'dips' — kun ichidagi pasayish epizodlari (from/to soat, recovered). "
+        "recovered=true bo'lsa \"14:00–16:00 oralig'ida orqada qoldi, keyin to'g'irladi\" (yaxshi "
+        "holat — ta'kidla), recovered=false bo'lsa kun oxirigacha to'g'irlanmaganini ayt.\n"
+        "2) Har operatordagi 'missed_hours' — o'zining oxirgi 10 kunlik o'rtacha tempidan orqada "
+        "qolgan soatlar. Har biri uchun ANIQ ayt: \"<ism> soat <hour> da normani bajarmadi "
+        "(odatda ~<avg>, bugun <actual>)\". Bu operatorning O'Z odatiy tempiga nisbatan, shuning "
+        "uchun aniq va adolatli.\n"
+        "dips/missed_hours bo'sh operator haqida orqada qolish yozma. FAQAT berilgan raqam, soat "
+        "va ismlarni ishlat — taxmin qilma, yangi raqam hisoblama. Ayblovsiz, faktlarga asoslangan."
     )
     result = await _generate(_SYSTEM_BASE, payload, instruction)
     text, source = result if result else (_fallback_group_summary(payload), "fallback")

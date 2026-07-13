@@ -4,7 +4,8 @@ Bu yerda faqat AGREGATLAR quriladi (PII yo'q) va `ai_coach` servisiga beriladi.
 Servis AI o'chiq bo'lsa deterministik fallback matn qaytaradi, shuning uchun bu
 endpointlar AI yoqilmagan holatda ham ishlaydi (matn hosil qiladi, lekin hech
 kimga yubormaydi — yuborish 4/6-bosqichda scheduler/bot orqali)."""
-from datetime import datetime
+from datetime import date as date_type
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -78,6 +79,69 @@ def _dip_episodes(targets: dict[int, int], actuals: dict[int, int], upto_hour: i
     return episodes
 
 
+# "Oxirgi 10 kunlik o'rtachadan orqada" mezonlari: operatorning shu soatdagi odatiy
+# tempi (10 faol kun o'rtachasi) kamida shuncha bo'lsa VA bugungi shu soat undan
+# sezilarli past bo'lsa — o'sha soat "normani bajarmadi" deb belgilanadi.
+_BASELINE_LOOKBACK_DAYS = 10
+_BASELINE_MIN_ACTIVE_DAYS = 3  # ishonchli o'rtacha uchun kamida shuncha faol kun
+_BASELINE_MIN_HOUR_NORM = 3  # o'rtacha shundan past soat "norma" deb sanalmaydi (shovqin)
+_BASELINE_MISS_RATIO = 0.7  # bugungi < o'rtachaning 70%i bo'lsa — orqada
+
+
+# Reja umuman tuzilmagan kunda ishlatiladigan standart ish soatlari (tushlik 13
+# chiqarilgan) — CRM'dagi yarim tun/tushlik artefaktlari "norma" bo'lib ketmasligi uchun.
+_DEFAULT_WORK_HOURS = set(range(9, 18)) - {13}
+
+
+async def _missed_hours_vs_baseline(
+    db: AsyncSession,
+    user_id: int,
+    day: date_type,
+    today_actuals: dict[int, int],
+    targets: dict[int, int],
+    upto_hour: int,
+) -> list[dict]:
+    """Operatorning oxirgi 10 faol kunidagi HAR SOAT o'rtacha qo'ng'irog'ini hisoblab,
+    bugungi shu soatdagi haqiqiy bilan solishtiradi. Odatda ishlaydigan (o'rtacha
+    >= min) soatda bugun sezilarli kam qilgan bo'lsa — o'sha soatni qaytaradi.
+
+    Faqat REJA soatlari tekshiriladi (`targets` — jadval + tushlik allaqachon hisobga
+    olingan); reja yo'q bo'lsa standart 09–18 (tushliksiz). Bu yarim tun/tushlikdagi
+    CRM artefaktlari "norma bajarilmadi" bo'lib chiqmasligini kafolatlaydi.
+    Qaytaradi: [{"hour": "16:00", "avg": 12, "actual": 4}, ...] (KOD hisoblaydi)."""
+    work_hours = {h for h, t in targets.items() if t > 0} or _DEFAULT_WORK_HOURS
+    start = day - timedelta(days=_BASELINE_LOOKBACK_DAYS)
+    rows = list(
+        await db.scalars(
+            select(HourlyActual).where(
+                HourlyActual.user_id == user_id,
+                HourlyActual.date >= start,
+                HourlyActual.date < day,
+            )
+        )
+    )
+    by_day: dict[date_type, dict[int, int]] = {}
+    for r in rows:
+        by_day.setdefault(r.date, {})[r.hour] = r.calls
+    # Faqat faoliyat bo'lgan kunlar (dam/ta'til kunlari o'rtachani pasaytirmasin)
+    active_days = [d for d, hrs in by_day.items() if sum(hrs.values()) > 0]
+    if len(active_days) < _BASELINE_MIN_ACTIVE_DAYS:
+        return []
+
+    missed: list[dict] = []
+    # < upto_hour: ayni davom etayotgan (tugallanmagan) soatni "bajarmadi" demaymiz;
+    # kun oxiri digestida (19:10) barcha ish soatlari allaqachon tugagan bo'ladi.
+    for hour in sorted(h for h in work_hours if h < upto_hour):
+        samples = [by_day[d].get(hour, 0) for d in active_days]
+        avg = sum(samples) / len(samples)
+        if avg < _BASELINE_MIN_HOUR_NORM:
+            continue  # bu soat odatda ishlanmaydi — norma yo'q
+        actual = today_actuals.get(hour, 0)
+        if actual < avg * _BASELINE_MISS_RATIO:
+            missed.append({"hour": f"{hour:02d}:00", "avg": round(avg), "actual": actual})
+    return missed
+
+
 @router.post("/nudge/{telegram_id}")
 async def nudge(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Bitta operator uchun hozirgi holatga (reja vs haqiqiy) qarab yo'naltiruvchi matn."""
@@ -142,12 +206,16 @@ async def group_summary(db: AsyncSession = Depends(get_db)) -> dict:
             }
             for e in _dip_episodes(agg["targets"], agg["actuals"], upto_hour)
         ]
+        missed_hours = await _missed_hours_vs_baseline(
+            db, u.id, day, agg["actuals"], agg["targets"], upto_hour
+        )
         operators.append({
             "name": u.full_name.split()[0] if u.full_name else "",
             "done": agg["day_done"],
             "target": agg["day_target"],
             "avg_talk": agg["avg_talk_sec"],
             "dips": dips,
+            "missed_hours": missed_hours,
             "top": False,
         })
     if operators:

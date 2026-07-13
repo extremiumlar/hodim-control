@@ -1,4 +1,5 @@
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -24,28 +25,43 @@ async def show_hourly_plan(message: Message, state: FSMContext) -> None:
     await message.answer(data["text"])
 
 
-@router.message(F.text == BTN_HOURLY_PLAN_CONTROL)
-async def choose_employee_for_plan(message: Message, state: FSMContext) -> None:
-    """Rahbar uchun: nazoratidagi xodimlar ro'yxatidan birini tanlab, uning bugungi
-    soatma-soat rejasini ko'radi — norma belgilash bilan bir xil doira (norm_targets)."""
-    await state.clear()
+async def _send_employee_picker(message: Message) -> None:
+    """Rahbarga nazoratidagi xodimlar ro'yxatini (inline tugmalar) yuboradi — birini
+    tanlagach o'sha xodimning bugungi soatma-soat normasi/rejasi ko'rsatiladi. Inline
+    tugmalar guruhda ham ishlaydi, shuning uchun buyruq guruhda ham qo'llanadi."""
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user["role"] not in MANAGER_ROLES:
-        await message.answer("Bu buyruq faqat rahbarlar (ROP/HR/Boshliq) uchun mavjud.")
+        await message.reply("Bu buyruq faqat rahbarlar (ROP/HR/Boshliq) uchun mavjud.")
         return
 
     employees = await api_client.norm_targets(message.from_user.id)
     if not employees:
-        await message.answer("Nazoratingizdagi xodimlar topilmadi.")
+        await message.reply("Nazoratingizdagi xodimlar topilmadi.")
         return
 
     buttons = [
         [InlineKeyboardButton(text=emp["full_name"], callback_data=f"hourlyempl:{emp['id']}")]
         for emp in employees
     ]
-    await message.answer(
-        "Kimning bugungi rejasini ko'ramiz?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.reply(
+        "Kimning soatlik normasi/rejasini ko'ramiz?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+
+
+@router.message(F.text == BTN_HOURLY_PLAN_CONTROL)
+async def choose_employee_for_plan(message: Message, state: FSMContext) -> None:
+    """Rahbar menyu tugmasi orqali: xodim tanlab uning soatma-soat rejasini ko'radi."""
+    await state.clear()
+    await _send_employee_picker(message)
+
+
+@router.message(Command("reja"))
+async def cmd_reja(message: Message, state: FSMContext) -> None:
+    """/reja buyrug'i — "📋 Xodim rejasi" tugmasining buyruq ko'rinishi. Guruhda ham
+    ishlaydi (inline piker): rahbar xodim tanlab uning soatlik normasini ko'radi."""
+    await state.clear()
+    await _send_employee_picker(message)
 
 
 @router.callback_query(F.data.startswith("hourlyempl:"))
