@@ -103,3 +103,13 @@ async def monthly_digest(
     from api.services.monthly_digest import send_monthly_digest
 
     return await send_monthly_digest(db, chat_id=payload.chat_id if payload else None, dry_run=dry_run)
+
+
+@router.post("/yesterday-correction", dependencies=[Depends(verify_bot_secret)])
+async def yesterday_correction(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dict:
+    """Ertalabki "kecha yakuni" tuzatishi: kechagi yakuniy (23:57 muzlatilgan)
+    raqamlar kechqurungi digestda ko'rsatilganidan sezilarli oshgan bo'lsagina
+    guruh(lar)ga qisqa xabar. Scheduler har kuni ertalab chaqiradi."""
+    from api.services.daily_digest import send_yesterday_correction
+
+    return await send_yesterday_correction(db, dry_run=dry_run)

@@ -71,6 +71,12 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_DIGEST_DAY, hour=cfg.MONTHLY_DIGEST_HOUR, minute=cfg.MONTHLY_DIGEST_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Ertalabki "kecha yakuni" tuzatishi — faqat farq sezilarli bo'lsa yuboriladi
+        JobSpec(
+            "yesterday_correction", jobs.send_yesterday_correction,
+            _cron(hour=cfg.YESTERDAY_CORRECTION_HOUR, minute=cfg.YESTERDAY_CORRECTION_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # CRM natijalarini deyarli real-vaqtli sinxronlash
         JobSpec(
             "crm_sync", jobs.sync_daily_results,

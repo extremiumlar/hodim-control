@@ -28,6 +28,7 @@ from db.models import (
     AiConfig,
     ExcusedDay,
     ExcusedStatus,
+    GroupPostConfig,
     HourlyActual,
     LeadStageDaily,
     OperatorCallsDaily,
@@ -240,7 +241,13 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         )
     parts.append("<i>Operator kesimidagi bosqichlar: botda 🧲 Lidlar statistikasi</i>")
 
-    return {"text": "\n".join(parts), "operators": len(active)}
+    return {
+        "text": "\n".join(parts),
+        "operators": len(active),
+        # Digest yuborilgan paytdagi jami — ertangi "kecha yakuni" tuzatish xabari
+        # yakuniy raqamlarni shu bilan solishtiradi (group_post_tick saqlaydi).
+        "totals": {"calls": total_calls, "leads": total_leads, "visits": total_visits},
+    }
 
 
 async def _ai_summary_text(db: AsyncSession) -> str | None:
@@ -281,4 +288,79 @@ async def send_daily_digest(db: AsyncSession, chat_id: int | None = None, dry_ru
     for chat in targets:
         ok = await send_message(chat, text)
         sent_any = sent_any or ok is not None
-    return {"sent": sent_any, "operators": digest["operators"], "targets": targets}
+    return {"sent": sent_any, "operators": digest["operators"], "targets": targets, "totals": digest["totals"]}
+
+
+# ─── Ertalabki "kecha yakuni" tuzatish xabari ───────────────────────────────────
+# Digest kechqurun (odatda 19:10) chiqadi, snapshot esa 23:57 gacha yangilanadi —
+# digestdan keyingi faollik kunlik xabarda ko'rinmay qoladi. Ertasi ertalab yakuniy
+# raqam digestda ko'rsatilganidan SEZILARLI oshgan bo'lsagina qisqa tuzatish
+# yuboriladi — har kuni emas, faqat haqiqatan farq bo'lganda (spam bo'lmasin).
+_CORRECTION_MIN_ABS_CALLS = 5  # kamida shuncha qo'ng'iroq farqi (kichik bazada shovqin emas)
+_CORRECTION_MIN_PCT = 10  # yoki digestdagi songa nisbatan kamida shu % o'sish
+
+
+async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Kechagi yakuniy (muzlatilgan) raqamlarni kechqurungi digestda ko'rsatilgan
+    bilan solishtiradi; farq sezilarli bo'lsa guruh(lar)ga qisqa tuzatish yuboradi.
+    Scheduler har kuni ertalab chaqiradi; `correction_last_posted` — bir kunda bir
+    marta qo'riqchisi (farq sezilarli bo'lmasa ham belgilanadi — qayta urinmaydi)."""
+    today = today_local()
+    yesterday = today - timedelta(days=1)
+
+    cfg = await db.get(GroupPostConfig, 1)
+    if cfg is None or cfg.last_posted_date != yesterday or cfg.last_posted_calls is None:
+        return {"sent": False, "reason": "Kecha avtomatik digest yuborilmagan (yoki jami saqlanmagan)"}
+    if not dry_run and cfg.correction_last_posted == today:
+        return {"sent": False, "reason": "Bugun allaqachon tekshirilgan"}
+
+    final_ops = await _day_by_operator(db, yesterday)
+    active = {rid: a for rid, a in final_ops.items() if a["calls"] or a["leads"]}
+    final = {
+        "calls": sum(a["calls"] for a in active.values()),
+        "leads": sum(a["leads"] for a in active.values()),
+        "visits": sum(a["visits"] for a in active.values()),
+    }
+    posted = {
+        "calls": cfg.last_posted_calls or 0,
+        "leads": cfg.last_posted_leads or 0,
+        "visits": cfg.last_posted_visits or 0,
+    }
+
+    diff_calls = final["calls"] - posted["calls"]
+    threshold = max(_CORRECTION_MIN_ABS_CALLS, round(posted["calls"] * _CORRECTION_MIN_PCT / 100))
+    significant = diff_calls >= threshold
+
+    if not dry_run:
+        # Qo'riqchi natijadan qat'i nazar yoziladi — bir kunda bitta tekshiruv
+        cfg.correction_last_posted = today
+        await db.commit()
+
+    result = {"posted": posted, "final": final, "diff_calls": diff_calls, "threshold": threshold}
+    if not significant:
+        return {"sent": False, "reason": "Farq sezilarli emas", **result}
+
+    # Faqat o'zgargan ko'rsatkichlar qatorga kiradi (qo'ng'iroq har doim — trigger o'zi)
+    pieces = [f"📞 {posted['calls']} → {final['calls']} (+{diff_calls})"]
+    if final["leads"] != posted["leads"]:
+        pieces.append(f"🧲 {posted['leads']} → {final['leads']}")
+    if final["visits"] != posted["visits"]:
+        pieces.append(f"🏠 {posted['visits']} → {final['visits']}")
+    text = (
+        f"🌙 <b>Kecha yakuni (to'liq) — {yesterday:%d.%m.%Y}</b>\n"
+        "Kechagi digestdan keyin ham faollik davom etgan; yakuniy raqamlar:\n"
+        + " · ".join(pieces)
+    )
+
+    if dry_run:
+        return {"sent": False, "dry_run": True, "text": text, **result}
+
+    targets = digest_group_targets(None)
+    if not targets:
+        return {"sent": False, "reason": "Guruh chat ID sozlanmagan", **result}
+
+    sent_any = False
+    for chat in targets:
+        ok = await send_message(chat, text)
+        sent_any = sent_any or ok is not None
+    return {"sent": sent_any, "targets": targets, **result}

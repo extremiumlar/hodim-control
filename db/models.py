@@ -44,6 +44,13 @@ class MobilografSource(str, enum.Enum):
     manual = "manual"
 
 
+class AttendanceStatus(str, enum.Enum):
+    present = "present"  # keldi (o'z vaqtida)
+    late = "late"  # kechikdi
+    absent = "absent"  # kelmadi (ish kuni bo'lsa-yu, check-in yo'q)
+    weekend = "weekend"  # dam olish kuni (ish jadvali bo'yicha ishlanmaydi)
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -97,11 +104,20 @@ class User(Base):
     # ("responsibleById", lid pipeline'idagi mas'ul xodim) hisoblanadi — shuning uchun
     # alohida ustun kerak.
     crm_visit_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    # Face ID (davomat) — face-api.js 128-o'lchamli deskriptor JSON matn ko'rinishida.
+    # Web check-in'da xodim yuzi shunga solishtiriladi (verifix/hodim_crm'dan
+    # birlashtirilgan yagona backend qismi).
+    face_descriptor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    face_registered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
     manager: Mapped["User | None"] = relationship(remote_side=[id])
     position: Mapped["Position | None"] = relationship(back_populates="users", lazy="selectin")
+
+    @property
+    def has_face(self) -> bool:
+        return bool(self.face_descriptor)
 
 
 class TaskModel(Base):
@@ -438,7 +454,12 @@ class WorkScheduleOverride(Base):
 class GroupPostConfig(Base):
     """Guruhga kunlik lid statistikasini yuborish sozlamasi (yagona qator, id=1).
     Boss vaqtni o'zgartira oladi; scheduler har daqiqa tekshiradi va shu vaqt kelganда
-    yuboradi. `last_posted_date` — bir kunda ikki marta yubormaslik uchun qo'riqchi."""
+    yuboradi. `last_posted_date` — bir kunda ikki marta yubormaslik uchun qo'riqchi.
+
+    `last_posted_*` jami raqamlar — kechqurungi avtomatik digest yuborilgan paytdagi
+    holat: ma'lumot 23:57 gacha yangilanib boradi, ertasi 09:00 dagi "kecha yakuni"
+    tuzatish xabari yakuniy raqamlarni aynan shu saqlangan sonlar bilan solishtiradi.
+    `correction_last_posted` — tuzatish xabarining bir-kunda-bir-marta qo'riqchisi."""
 
     __tablename__ = "group_post_config"
 
@@ -446,6 +467,10 @@ class GroupPostConfig(Base):
     post_hour: Mapped[int] = mapped_column(Integer, default=19)
     post_minute: Mapped[int] = mapped_column(Integer, default=10)
     last_posted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_posted_calls: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_posted_leads: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_posted_visits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    correction_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -459,3 +484,56 @@ class AuditLog(Base):
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OfficeLocation(Base):
+    """Ofis joyi — kelib-ketish (davomat) GPS tekshiruvi uchun markaz + radius.
+    Xodim check-in/out qilganda joylashuvi FAOL ofislardan biriga (radius ichida)
+    tushishi shart; bir nechta ofis bo'lsa eng yaqini olinadi. verifix (hodim_crm)
+    `OfficeLocation` modelidan yagona backendga birlashtirildi."""
+
+    __tablename__ = "office_locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    latitude: Mapped[float] = mapped_column(Numeric(9, 6))
+    longitude: Mapped[float] = mapped_column(Numeric(9, 6))
+    radius_meters: Mapped[int] = mapped_column(Integer, default=150)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Attendance(Base):
+    """Bir kunlik davomat yozuvi (bitta xodim, bitta sana). `late_minutes`,
+    `early_leave_minutes`, `worked_minutes`, `status` check-in/out vaqtlari va
+    xodimning o'sha kungi ish jadvali (WorkScheduleWeekly/Override) asosida
+    hisoblanadi (api/services/attendance.py). verifix (hodim_crm) `Attendance`
+    modelidan yagona backendga birlashtirildi; kechikish alohida `Shift` emas,
+    mavjud ish jadvali oynasidan hisoblanadi."""
+
+    __tablename__ = "attendance"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_attendance_user_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+
+    check_in_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    check_in_lat: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+    check_in_lng: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+    check_in_distance_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    check_out_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    check_out_lat: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+    check_out_lng: Mapped[float | None] = mapped_column(Numeric(9, 6), nullable=True)
+
+    late_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    early_leave_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    worked_minutes: Mapped[int] = mapped_column(Integer, default=0)
+
+    status: Mapped[str] = mapped_column(String(20), default=AttendanceStatus.present.value, index=True)
+    is_weekend: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

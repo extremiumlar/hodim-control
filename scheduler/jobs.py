@@ -33,6 +33,14 @@ async def send_monthly_digest() -> None:
         logger.info("Oylik digest: %s", body)
 
 
+async def send_yesterday_correction() -> None:
+    """Ertalab: kechagi yakuniy raqam kechqurungi digestdagidan sezilarli oshgan
+    bo'lsa guruhga qisqa "kecha yakuni" tuzatishi (API taqqoslab o'zi hal qiladi)."""
+    body = await call_api("/reports/yesterday-correction", timeout=60, label="Kecha yakuni tuzatish")
+    if body is not None and body.get("sent"):
+        logger.info("Kecha yakuni tuzatishi yuborildi: %s", body)
+
+
 async def sync_daily_results() -> None:
     body = await call_api("/daily-results/sync", label="CRM sync")
     if body is not None:

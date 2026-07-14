@@ -40,6 +40,11 @@ MONTHLY_DIGEST_DAY = "last"
 MONTHLY_DIGEST_HOUR = 20
 MONTHLY_DIGEST_MINUTE = 30
 
+# Ertalabki "kecha yakuni" tuzatishi: kechagi yakuniy raqam kechqurungi digestdagidan
+# sezilarli oshgan bo'lsagina guruhga qisqa xabar (API o'zi taqqoslaydi va hal qiladi).
+YESTERDAY_CORRECTION_HOUR = 9
+YESTERDAY_CORRECTION_MINUTE = 0
+
 # ─── Operator AI (avto-reja dvigateli) ─────────────────────────────────────────
 # API tomonda `AI_ENABLED` o'chiq bo'lsa bu endpointlar no-op (`disabled`) — CRM/DB
 # ga yuk tushmaydi. Yoqilganda: har necha daqiqada bugungi actual snapshoti; har kuni

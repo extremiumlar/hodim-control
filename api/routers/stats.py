@@ -837,6 +837,12 @@ async def group_post_tick(db: AsyncSession = Depends(get_db)) -> dict:
     if due and cfg.last_posted_date != today:
         result = await send_daily_digest(db)
         cfg.last_posted_date = today
+        # Digest ko'rsatgan jami raqamlar — ertalabki "kecha yakuni" tuzatish xabari
+        # (send_yesterday_correction) yakuniy sonlarni shu bilan solishtiradi.
+        totals = result.get("totals") or {}
+        cfg.last_posted_calls = totals.get("calls")
+        cfg.last_posted_leads = totals.get("leads")
+        cfg.last_posted_visits = totals.get("visits")
         await db.commit()
         return {"fired": True, **result}
     return {"fired": False, "time": f"{cfg.post_hour:02d}:{cfg.post_minute:02d}"}
