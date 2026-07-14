@@ -25,12 +25,14 @@ from db.models import (
     ExcusedDay,
     ExcusedStatus,
     GroupPostConfig,
+    HourlyActual,
     LeadStageDaily,
     MobilografStatus,
     MobilografVideo,
     Norm,
     OperatorCallsDaily,
     Role,
+    ShortfallReason,
     TaskModel,
     TaskStatus,
     User,
@@ -607,6 +609,186 @@ async def web_my_lead_stage_day(
     """Sayt uchun xodimning O'Z kunlik statistikasi."""
     rid = _resolve_self_responsible_id(user)
     return await _build_lead_day(db, day, rid)
+
+
+# --- Sayt "Statistika" paneli: trend, operator kesimi, sabablar (faqat rahbarlar) ---
+
+_OVERVIEW_MIN_DAYS = 7
+_OVERVIEW_MAX_DAYS = 90
+_REASONS_DAYS = 7
+# Davr kesimi: joriy davr vs oldingi TENG uzunlikdagi davr (halol % uchun).
+_SUMMARY_PERIOD_DAYS = {"today": 1, "week": 7, "month": 30}
+
+
+@router.get("/web/overview")
+async def web_stats_overview(
+    days: int = 30,
+    _: User = Depends(_require_lead_stats_manager_web),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Sayt statistika paneli: kunlik trend seriyasi (qo'ng'iroq / gaplashgan vaqt /
+    lid / tashrif) + oxirgi 7 kun sabablari. Hammasi bazadagi kunlik snapshotlardan
+    (CRM'ga murojaat yo'q) — 3 ta grouped so'rov."""
+    days = max(_OVERVIEW_MIN_DAYS, min(days, _OVERVIEW_MAX_DAYS))
+    today = today_local()
+    start = today - timedelta(days=days - 1)
+
+    call_rows = await db.execute(
+        select(
+            OperatorCallsDaily.date,
+            func.sum(OperatorCallsDaily.calls_in + OperatorCallsDaily.calls_out),
+        )
+        .where(OperatorCallsDaily.date >= start, OperatorCallsDaily.date <= today)
+        .group_by(OperatorCallsDaily.date)
+    )
+    is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == VISIT_STAGE_NAME
+    lead_rows = await db.execute(
+        select(
+            LeadStageDaily.date,
+            func.sum(LeadStageDaily.leads_count),
+            func.sum(case((is_visit, LeadStageDaily.leads_count), else_=0)),
+        )
+        .where(LeadStageDaily.date >= start, LeadStageDaily.date <= today)
+        .group_by(LeadStageDaily.date)
+    )
+    talk_rows = await db.execute(
+        select(HourlyActual.date, func.sum(HourlyActual.talk_sec))
+        .where(HourlyActual.date >= start, HourlyActual.date <= today)
+        .group_by(HourlyActual.date)
+    )
+
+    calls_by = {d: int(v or 0) for d, v in call_rows.all()}
+    leads_by = {d: (int(t or 0), int(v or 0)) for d, t, v in lead_rows.all()}
+    talk_by = {d: int(v or 0) for d, v in talk_rows.all()}
+
+    series = []
+    for i in range(days):
+        d = start + timedelta(days=i)
+        leads, visits = leads_by.get(d, (0, 0))
+        series.append(
+            {
+                "date": d.isoformat(),
+                "calls": calls_by.get(d, 0),
+                "talk_sec": talk_by.get(d, 0),
+                "leads": leads,
+                "visits": visits,
+            }
+        )
+
+    # Sabablar — oxirgi 7 kun, yangi birinchi. reason NULL — operator hali yozmagan.
+    reason_rows = await db.execute(
+        select(ShortfallReason, User.full_name)
+        .join(User, User.id == ShortfallReason.user_id)
+        .where(ShortfallReason.date >= today - timedelta(days=_REASONS_DAYS - 1))
+        .order_by(ShortfallReason.date.desc(), ShortfallReason.hour.desc())
+    )
+    reasons = [
+        {
+            "date": r.date.isoformat(),
+            "hour": r.hour,
+            "user_name": full_name,
+            "reason": r.reason,
+            "ai_category": r.ai_category,
+            "raw_text": (r.raw_text or "")[:200] or None,
+            "verified": r.verified,
+            "verify_note": r.verify_note,
+        }
+        for r, full_name in reason_rows.all()
+    ]
+
+    return {"days": days, "date_from": start.isoformat(), "date_to": today.isoformat(),
+            "series": series, "reasons": reasons}
+
+
+@router.get("/web/operator-summary")
+async def web_operator_summary(
+    period: str = "week",
+    _: User = Depends(_require_lead_stats_manager_web),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Davr kesimida operator jadvali: qo'ng'iroq (oldingi teng davrga % farq bilan),
+    gaplashgan vaqt, lid, tashrif, vazifa. period: today (bugun vs kecha) | week
+    (oxirgi 7 kun vs oldingi 7) | month (oxirgi 30 kun vs oldingi 30)."""
+    # Servisdagi yig'uvchilar bilan bir xil hisob — digest va sayt raqamlari mos kelsin
+    from api.services.weekly_digest import _pct_change, _range_by_operator, _tasks_by_user
+
+    length = _SUMMARY_PERIOD_DAYS.get(period)
+    if length is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "period: today | week | month")
+
+    today = today_local()
+    cur_start = today - timedelta(days=length - 1)
+    prev_end = cur_start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=length - 1)
+
+    current = await _range_by_operator(db, cur_start, today)
+    previous = await _range_by_operator(db, prev_start, prev_end)
+    tasks = await _tasks_by_user(db, cur_start, today)
+
+    talk_rows = await db.execute(
+        select(HourlyActual.user_id, func.sum(HourlyActual.talk_sec))
+        .where(HourlyActual.date >= cur_start, HourlyActual.date <= today)
+        .group_by(HourlyActual.user_id)
+    )
+    talk_by_user = {uid: int(v or 0) for uid, v in talk_rows.all()}
+
+    employees = list(
+        await db.scalars(
+            select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
+        )
+    )
+    user_by_rid: dict[int, User] = {}
+    for u in employees:
+        try:
+            if u.crm_visit_external_id:
+                user_by_rid[int(u.crm_visit_external_id)] = u
+        except (TypeError, ValueError):
+            continue
+
+    active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"]}
+    operators = []
+    for rid, a in sorted(active.items(), key=lambda x: -(x[1]["calls"] + x[1]["leads"])):
+        user = user_by_rid.get(rid)
+        prev = previous.get(rid)
+        prev_calls = prev["calls"] if prev else None
+        row = {
+            "responsible_id": rid,
+            "name": (user.full_name if user else a["name"]) or str(rid),
+            "is_system_user": user is not None,
+            "calls": a["calls"],
+            "prev_calls": prev_calls,
+            "calls_pct": _pct_change(a["calls"], prev_calls),
+            "talk_sec": talk_by_user.get(user.id, 0) if user else 0,
+            "leads": a["leads"],
+            "visits": a["visits"],
+            "tasks_done": None,
+            "tasks_total": None,
+        }
+        if user is not None and user.id in tasks:
+            row["tasks_done"], row["tasks_total"] = tasks[user.id]
+        operators.append(row)
+
+    total_calls = sum(a["calls"] for a in active.values())
+    prev_total_calls = sum(a["calls"] for a in previous.values())
+    active_uids = {user_by_rid[rid].id for rid in active if rid in user_by_rid}
+    totals = {
+        "calls": total_calls,
+        "prev_calls": prev_total_calls if previous else None,
+        "calls_pct": _pct_change(total_calls, prev_total_calls if previous else None),
+        "talk_sec": sum(sec for uid, sec in talk_by_user.items() if uid in active_uids),
+        "leads": sum(a["leads"] for a in active.values()),
+        "visits": sum(a["visits"] for a in active.values()),
+    }
+
+    return {
+        "period": period,
+        "date_from": cur_start.isoformat(),
+        "date_to": today.isoformat(),
+        "prev_from": prev_start.isoformat(),
+        "prev_to": prev_end.isoformat(),
+        "operators": operators,
+        "totals": totals,
+    }
 
 
 # --- Guruhga kunlik digest yuborish (bitta jamlangan xabar) ---

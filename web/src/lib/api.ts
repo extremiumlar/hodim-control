@@ -194,6 +194,66 @@ export interface LeadStageDay {
   last_updated: string | null;
 }
 
+// --- "Statistika" paneli (faqat rahbarlar) ---
+
+export interface StatsSeriesPoint {
+  date: string;
+  calls: number;
+  talk_sec: number;
+  leads: number;
+  visits: number;
+}
+
+export interface StatsReason {
+  date: string;
+  hour: number;
+  user_name: string;
+  reason: string | null; // null — operator hali javob yozmagan
+  ai_category: string | null;
+  raw_text: string | null;
+  verified: boolean | null; // false — faktlarga zid chiqqan
+  verify_note: string | null;
+}
+
+export interface StatsOverview {
+  days: number;
+  date_from: string;
+  date_to: string;
+  series: StatsSeriesPoint[];
+  reasons: StatsReason[];
+}
+
+export interface OperatorSummaryRow {
+  responsible_id: number;
+  name: string;
+  is_system_user: boolean;
+  calls: number;
+  prev_calls: number | null;
+  calls_pct: number | null;
+  talk_sec: number;
+  leads: number;
+  visits: number;
+  tasks_done: number | null;
+  tasks_total: number | null;
+}
+
+export interface OperatorSummary {
+  period: string;
+  date_from: string;
+  date_to: string;
+  prev_from: string;
+  prev_to: string;
+  operators: OperatorSummaryRow[];
+  totals: {
+    calls: number;
+    prev_calls: number | null;
+    calls_pct: number | null;
+    talk_sec: number;
+    leads: number;
+    visits: number;
+  };
+}
+
 export interface WorkDayEntry {
   weekday: number; // 0=Dush ... 6=Yak
   is_working: boolean;
@@ -343,6 +403,9 @@ export const api = {
   myLeadStageMonth: (month?: string) =>
     apiFetch<LeadStageMonth>(`/stats/web/lead-stages/me${month ? `?month=${month}` : ""}`),
   myLeadStageDay: (day: string) => apiFetch<LeadStageDay>(`/stats/web/lead-stages/me/day/${day}`),
+  statsOverview: (days = 30) => apiFetch<StatsOverview>(`/stats/web/overview?days=${days}`),
+  operatorSummary: (period: string) =>
+    apiFetch<OperatorSummary>(`/stats/web/operator-summary?period=${period}`),
   getWeeklySchedule: (userId: number) => apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`),
   setWeeklySchedule: (userId: number, days: WorkDayEntry[]) =>
     apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`, { method: "PUT", body: JSON.stringify({ days }) }),
