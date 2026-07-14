@@ -14,7 +14,7 @@ from datetime import date, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import settings
+from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
 from api.timeutil import local_range_utc_naive, today_local
 from db.models import (
@@ -190,9 +190,12 @@ async def send_weekly_digest(db: AsyncSession, chat_id: int | None = None, dry_r
     if dry_run:
         return {"sent": False, "dry_run": True, "operators": digest["operators"], "text": digest["text"]}
 
-    target_chat = chat_id or settings.telegram_group_chat_id
-    if not target_chat:
+    targets = digest_group_targets(chat_id)
+    if not targets:
         return {"sent": False, "reason": "Guruh chat ID sozlanmagan", "operators": digest["operators"]}
 
-    ok = await send_message(target_chat, digest["text"])
-    return {"sent": ok is not None, "operators": digest["operators"]}
+    sent_any = False
+    for chat in targets:
+        ok = await send_message(chat, digest["text"])
+        sent_any = sent_any or ok is not None
+    return {"sent": sent_any, "operators": digest["operators"], "targets": targets}

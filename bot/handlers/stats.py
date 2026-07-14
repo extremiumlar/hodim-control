@@ -215,9 +215,13 @@ async def show_audit_logs(message: Message, state: FSMContext) -> None:
 async def send_global_stats(message: Message, *, to_group: bool) -> None:
     """Kunlik yagona digestni (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa — BITTA
     xabar) yuboradi — "📊 Umumiy statistika" tugmasi (shaxsiy chatga) va guruhdagi
-    /statistika buyrug'i (sozlangan guruhga) uchun umumiy qism; farq faqat nishon
-    chat va xato-xabar formatida."""
-    chat_id = None if to_group else message.chat.id
+    /statistika buyrug'i (aynan SHU guruhga) uchun umumiy qism; farq faqat javob
+    (reply/answer) va xato-xabar formatida.
+
+    Nishon har doim buyruq yozilgan chat (message.chat.id) — /statistika qaysi
+    guruhda yozilsa faqat o'sha guruhga tushadi (bir necha sozlangan guruhga
+    tarqalmaydi; avtomatik kunlik digest bundan farqli — u hammasiga boradi)."""
+    chat_id = message.chat.id
     respond = message.reply if to_group else message.answer
 
     # Digest bir necha soniya olishi mumkin (CRM + AI xulosa) — foydalanuvchi

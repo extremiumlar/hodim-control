@@ -29,7 +29,12 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:5173"
     telegram_login_bot_username: str = ""
+    # Asosiy guruh — mobilograf videolari va issiq lid xabarlari shu yerga tushadi.
     telegram_group_chat_id: int = 0
+    # Statistika uchun QO'SHIMCHA guruh(lar). Kunlik/haftalik digest doim asosiy
+    # guruhga chiqadi; bu yerga yozilgan guruh(lar)ga ham HAM yuboriladi (nusxa).
+    # Bir nechta bo'lsa vergul bilan: "-100111,-100222". Bo'sh — faqat asosiy guruh.
+    telegram_stats_group_chat_id: str = ""
 
     crm_type: str = "none"
     crm_webhook_secret: str = ""
@@ -80,6 +85,24 @@ class Settings(BaseSettings):
         if value == "":
             return 0
         return value
+
+    @property
+    def stats_group_ids(self) -> list[int]:
+        """Qo'shimcha statistika guruhlari ID'lari — vergul bilan ajratilgan
+        `telegram_stats_group_chat_id` dan parse qilinadi. Noto'g'ri/bo'sh qismlar
+        tashlanadi, takrorlar chiqariladi."""
+        out: list[int] = []
+        for part in str(self.telegram_stats_group_chat_id).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                val = int(part)
+            except ValueError:
+                continue
+            if val and val not in out:
+                out.append(val)
+        return out
 
     @model_validator(mode="after")
     def _warn_on_placeholder_secrets(self) -> "Settings":

@@ -3,18 +3,23 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from bot import api_client
-from bot.config import TELEGRAM_GROUP_CHAT_ID
+from bot.config import TELEGRAM_GROUP_CHAT_ID, TELEGRAM_STATS_GROUP_CHAT_IDS
 from bot.handlers.stats import send_global_stats
 
 router = Router(name="group_stats")
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 
+# /statistika asosiy guruhda ham, qo'shimcha statistika guruh(lar)ida ham ishlaydi
+# (0'lar chiqarib tashlanadi — sozlanmagan guruh hech qachon mos kelmasin).
+STATS_COMMAND_CHATS = {cid for cid in (TELEGRAM_GROUP_CHAT_ID, *TELEGRAM_STATS_GROUP_CHAT_IDS) if cid}
 
-@router.message(Command("statistika"), F.chat.id == TELEGRAM_GROUP_CHAT_ID)
+
+@router.message(Command("statistika"), F.chat.id.in_(STATS_COMMAND_CHATS))
 async def cmd_statistika(message: Message) -> None:
     """Guruhda /statistika — kunlik yagona digestni (vazifa + qo'ng'iroq/lid/tashrif
-    + AI xulosa, bitta xabar) guruhga darhol yuboradi."""
+    + AI xulosa, bitta xabar) sozlangan guruh(lar)ga darhol yuboradi (asosiy +
+    qo'shimcha statistika guruhi)."""
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user["role"] not in MANAGER_ROLES:
         await message.reply("Bu buyruq faqat HR/ROP/Boshliq uchun mavjud.")

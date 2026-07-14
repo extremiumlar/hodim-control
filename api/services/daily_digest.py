@@ -41,6 +41,20 @@ from db.models import (
 _VISIT_STAGE_NAME = "tashrif"
 
 
+def digest_group_targets(chat_id: int | None = None) -> list[int]:
+    """Statistika digesti yuboriladigan guruh(lar). `chat_id` aniq berilsa (rahbar
+    shaxsiy chatda so'raganda) — faqat o'sha. Aks holda: asosiy guruh + statistika
+    guruhi (ikkovi ham sozlangan bo'lsa) — digest asosiy guruhda ham, statistika
+    guruhida ham chiqadi. Takrorlanmaydigan, nol bo'lmagan ID'lar tartibda."""
+    if chat_id:
+        return [chat_id]
+    targets: list[int] = []
+    for cid in (settings.telegram_group_chat_id, *settings.stats_group_ids):
+        if cid and cid not in targets:
+            targets.append(cid)
+    return targets
+
+
 def _is_visit(stage_name: str) -> bool:
     return stage_name.strip().lower() == _VISIT_STAGE_NAME
 
@@ -253,9 +267,12 @@ async def send_daily_digest(db: AsyncSession, chat_id: int | None = None, dry_ru
     if dry_run:
         return {"sent": False, "dry_run": True, "operators": digest["operators"], "text": text}
 
-    target_chat = chat_id or settings.telegram_group_chat_id
-    if not target_chat:
+    targets = digest_group_targets(chat_id)
+    if not targets:
         return {"sent": False, "reason": "Guruh chat ID sozlanmagan", "operators": digest["operators"]}
 
-    ok = await send_message(target_chat, text)
-    return {"sent": ok is not None, "operators": digest["operators"]}
+    sent_any = False
+    for chat in targets:
+        ok = await send_message(chat, text)
+        sent_any = sent_any or ok is not None
+    return {"sent": sent_any, "operators": digest["operators"], "targets": targets}
