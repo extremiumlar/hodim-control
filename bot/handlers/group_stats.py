@@ -28,6 +28,28 @@ async def cmd_statistika(message: Message) -> None:
     await send_global_stats(message, to_group=True)
 
 
+@router.message(Command("oylik"))
+async def cmd_oylik(message: Message) -> None:
+    """/oylik — oylik yakun digestini (joriy oy vs o'tgan oy, operator kesimida,
+    bonus hisoblangan bo'lsa u ham) SHU chatga yuboradi. Faqat rahbarlar; shaxsiy
+    chatda ham, guruhda ham ishlaydi."""
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or user["role"] not in MANAGER_ROLES:
+        await message.reply("Bu buyruq faqat HR/ROP/Boshliq uchun mavjud.")
+        return
+
+    try:
+        await message.bot.send_chat_action(message.chat.id, "typing")
+    except Exception:  # noqa: BLE001 — chat action bezak, xatosi oqimni to'xtatmasin
+        pass
+
+    result = await api_client.trigger_monthly_digest(chat_id=message.chat.id)
+    if not result.get("sent"):
+        await message.reply(
+            f"Oylik digestni yuborib bo'lmadi: {result.get('reason') or 'ma`lumot topilmadi'}"
+        )
+
+
 @router.message(Command("statistika_vaqt"))
 async def cmd_statistika_vaqt(message: Message, command: CommandObject) -> None:
     """Boshliq kunlik digest (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa) guruhga

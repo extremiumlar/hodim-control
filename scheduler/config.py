@@ -34,6 +34,12 @@ MONTHLY_BONUS_DAY = "last"
 MONTHLY_BONUS_HOUR = 23
 MONTHLY_BONUS_MINUTE = 30
 
+# Oylik digest — oyning oxirgi kuni kechqurun (bonus hisobidan OLDIN chiqadi,
+# shuning uchun bonus qatori odatda keyingi oy boshida qo'lda /oylik bilan ko'rinadi).
+MONTHLY_DIGEST_DAY = "last"
+MONTHLY_DIGEST_HOUR = 20
+MONTHLY_DIGEST_MINUTE = 30
+
 # ─── Operator AI (avto-reja dvigateli) ─────────────────────────────────────────
 # API tomonda `AI_ENABLED` o'chiq bo'lsa bu endpointlar no-op (`disabled`) — CRM/DB
 # ga yuk tushmaydi. Yoqilganda: har necha daqiqada bugungi actual snapshoti; har kuni

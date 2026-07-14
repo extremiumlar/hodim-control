@@ -91,3 +91,15 @@ async def weekly_digest(
     hisobi, AI o'chiq bo'lsa ham ishlaydi. Scheduler yakshanba kechqurun chaqiradi;
     AI'ning shaxsiy haftalik trend xabarlari (/ai-watch/weekly-run) bunga qo'shimcha."""
     return await send_weekly_digest(db, chat_id=payload.chat_id if payload else None, dry_run=dry_run)
+
+
+@router.post("/monthly-digest", dependencies=[Depends(verify_bot_secret)])
+async def monthly_digest(
+    payload: SummaryTarget | None = None, dry_run: bool = False, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Oylik yakun (joriy oy vs o'tgan kalendar oy, operator kesimida, bonus bilan) —
+    sof kod hisobi. Scheduler oyning oxirgi kuni kechqurun chaqiradi; bot /oylik
+    buyrug'i bilan istalgan payt so'ralishi mumkin (chat_id — o'sha chatga)."""
+    from api.services.monthly_digest import send_monthly_digest
+
+    return await send_monthly_digest(db, chat_id=payload.chat_id if payload else None, dry_run=dry_run)

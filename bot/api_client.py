@@ -257,6 +257,16 @@ async def trigger_daily_digest(chat_id: int | None = None) -> dict:
     return resp.json()
 
 
+async def trigger_monthly_digest(chat_id: int | None = None) -> dict:
+    """Oylik yakun digesti (joriy oy vs o'tgan oy, bonus bilan). `chat_id` berilsa
+    o'sha chatga, berilmasa sozlangan guruh(lar)ga yuboriladi."""
+    resp = await _get_client().post(
+        "/reports/monthly-digest", json={"chat_id": chat_id}, timeout=90
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def lead_stage_month(telegram_id: int, month: str | None = None) -> dict | None:
     """Oylik lidlar statistikasi (CRM bosqichlari kesimida). Ma'lumot bazadagi fon
     snapshotdan tez o'qiladi. Ruxsat bo'lmasa None."""

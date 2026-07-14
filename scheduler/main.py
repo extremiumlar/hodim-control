@@ -65,6 +65,12 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day_of_week=cfg.WEEKLY_DIGEST_DOW, hour=cfg.WEEKLY_DIGEST_HOUR, minute=cfg.WEEKLY_DIGEST_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Oylik yakun — oyning oxirgi kuni kechqurun (bonus hisobidan oldin)
+        JobSpec(
+            "monthly_digest", jobs.send_monthly_digest,
+            _cron(day=cfg.MONTHLY_DIGEST_DAY, hour=cfg.MONTHLY_DIGEST_HOUR, minute=cfg.MONTHLY_DIGEST_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # CRM natijalarini deyarli real-vaqtli sinxronlash
         JobSpec(
             "crm_sync", jobs.sync_daily_results,

@@ -25,6 +25,14 @@ async def send_weekly_digest() -> None:
         logger.info("Haftalik digest: %s", body)
 
 
+async def send_monthly_digest() -> None:
+    """Oylik yakun (joriy oy vs o'tgan oy, operator kesimida, bonus bilan) — guruhga
+    bitta xabar, oyning oxirgi kuni kechqurun. Sof kod hisobi."""
+    body = await call_api("/reports/monthly-digest", timeout=120, label="Oylik digest")
+    if body is not None:
+        logger.info("Oylik digest: %s", body)
+
+
 async def sync_daily_results() -> None:
     body = await call_api("/daily-results/sync", label="CRM sync")
     if body is not None:
