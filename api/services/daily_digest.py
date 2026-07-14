@@ -232,6 +232,12 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "
         "🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>"
     )
+    if 0 in active:
+        # rid=0 — CRM'da employeeNum'i tizim foydalanuvchisiga bog'lanmagan qo'ng'iroqlar
+        # yig'indisi (aniq ro'yxat API logida "CRM ID bog'lanmagan" WARNING'ida).
+        parts.append(
+            "<i>«Boshqa operatorlar» — CRM ID tizimda bog'lanmagan xodimlar qo'ng'iroqlari</i>"
+        )
     parts.append("<i>Operator kesimidagi bosqichlar: botda 🧲 Lidlar statistikasi</i>")
 
     return {"text": "\n".join(parts), "operators": len(active)}

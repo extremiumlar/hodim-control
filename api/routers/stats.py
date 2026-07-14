@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -37,6 +38,8 @@ from db.models import (
     TaskStatus,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -275,11 +278,24 @@ async def _snapshot_calls(db: AsyncSession, adapter, today: date) -> int:
 
     # responsible_id -> {name, in, out}
     agg: dict[int, dict] = {}
+    unmapped: dict[str, int] = {}  # employeeNum -> qo'ng'iroqlar soni (diagnostika)
     for employee_num, dirs in breakdown.items():
         rid, name = emp_to_operator.get(employee_num, (0, "Boshqa operatorlar"))
+        if rid == 0:
+            unmapped[employee_num] = dirs.get("in", 0) + dirs.get("out", 0)
         entry = agg.setdefault(rid, {"name": name, "in": 0, "out": 0})
         entry["in"] += dirs.get("in", 0)
         entry["out"] += dirs.get("out", 0)
+
+    if unmapped:
+        # Bog'lanmagan qo'ng'iroqlar "Boshqa operatorlar" (rid=0) ostiga tushadi —
+        # qaysi employeeNum'lar ekani log'da ko'rinsin (CRM ID to'ldirish uchun signal).
+        logger.warning(
+            "CRM ID bog'lanmagan employeeNum'lar (%d ta, jami %d qo'ng'iroq): %s",
+            len(unmapped),
+            sum(unmapped.values()),
+            ", ".join(f"{k}={v}" for k, v in sorted(unmapped.items(), key=lambda x: -x[1])),
+        )
 
     await db.execute(delete(OperatorCallsDaily).where(OperatorCallsDaily.date == today))
     for rid, a in agg.items():
