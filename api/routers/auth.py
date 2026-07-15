@@ -12,7 +12,11 @@ from db.models import Role, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-SITE_ROLES = {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}
+# Barcha faol foydalanuvchilar saytga kira oladi: rahbarlar (boss/rop/hr/dasturchi)
+# to'liq boshqaruv panelini, xodimlar (employee) esa faqat o'z davomat (Face ID
+# check-in) sahifasini ko'radi. Ruxsat har bir endpointda rol bo'yicha tekshiriladi
+# (manager endpointlari employee'ga 403 beradi).
+SITE_ROLES = {r.value for r in Role}
 
 
 async def _issue_token(user: User) -> TokenOut:

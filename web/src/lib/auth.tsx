@@ -5,6 +5,7 @@ interface AuthContextValue {
   user: User | null;
   loading: boolean;
   loginWithToken: (token: string, user: User) => void;
+  refreshUser: () => Promise<void>;
   logout: () => void;
 }
 
@@ -43,13 +44,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(user);
   };
 
+  const refreshUser = async () => {
+    try {
+      setUser(await api.me());
+    } catch {
+      /* jim — 401 bo'lsa UNAUTHORIZED_EVENT hal qiladi */
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem("access_token");
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithToken, logout }}>
+    <AuthContext.Provider value={{ user, loading, loginWithToken, refreshUser, logout }}>
       {children}
     </AuthContext.Provider>
   );

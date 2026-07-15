@@ -70,7 +70,67 @@ export interface User {
   is_active: boolean;
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
+  has_face: boolean;
   created_at: string;
+}
+
+export interface Attendance {
+  id: number;
+  user_id: number;
+  user_full_name: string | null;
+  date: string;
+  check_in_time: string | null;
+  check_out_time: string | null;
+  check_in_distance_m: number | null;
+  late_minutes: number;
+  early_leave_minutes: number;
+  worked_minutes: number;
+  status: "present" | "late" | "absent" | "weekend";
+  is_weekend: boolean;
+  note: string | null;
+}
+
+export interface Office {
+  id: number;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AttendanceDashboard {
+  today: string;
+  summary: {
+    total_employees: number;
+    working_today: number;
+    checked_in_today: number;
+    present_now: number;
+    late_today: number;
+    left_today: number;
+    not_checked_in: number;
+    month_late_minutes: number;
+    month_worked_hours: number;
+  };
+  in_office: { user_name: string; check_in_time: string; late_minutes: number }[];
+  recent: {
+    user_name: string;
+    check_in_time: string;
+    check_out_time: string | null;
+    late_minutes: number;
+    status: string;
+  }[];
+}
+
+export interface EmployeeAttendanceSummary {
+  user_id: number;
+  full_name: string;
+  present_days: number;
+  late_count: number;
+  late_minutes: number;
+  early_minutes: number;
+  worked_minutes: number;
 }
 
 export interface Task {
@@ -290,6 +350,33 @@ export interface AuditLog {
 
 export const api = {
   me: () => apiFetch<User>("/users/me"),
+  // --- Davomat (kelib-ketish) ---
+  myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
+  myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number }) =>
+    apiFetch<Attendance>("/attendance/me/check-in", { method: "POST", body: JSON.stringify(data) }),
+  myCheckOut: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number }) =>
+    apiFetch<Attendance>("/attendance/me/check-out", { method: "POST", body: JSON.stringify(data) }),
+  registerMyFace: (faceDescriptor: number[]) =>
+    apiFetch<User>("/attendance/me/register-face", {
+      method: "POST",
+      body: JSON.stringify({ face_descriptor: faceDescriptor }),
+    }),
+  attendanceDashboard: () => apiFetch<AttendanceDashboard>("/attendance/dashboard"),
+  listAttendance: (params: { user_id?: number; date_from?: string; date_to?: string; status_filter?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+    ).toString();
+    return apiFetch<Attendance[]>(`/attendance${q ? `?${q}` : ""}`);
+  },
+  attendanceEmployeeSummary: (days = 30) =>
+    apiFetch<EmployeeAttendanceSummary[]>(`/attendance/employee-summary?days=${days}`),
+  listOffices: () => apiFetch<Office[]>("/attendance/offices"),
+  createOffice: (data: { name: string; latitude: number; longitude: number; radius_meters: number; is_active: boolean }) =>
+    apiFetch<Office>("/attendance/offices", { method: "POST", body: JSON.stringify(data) }),
+  updateOffice: (officeId: number, data: Partial<Omit<Office, "id" | "created_at">>) =>
+    apiFetch<Office>(`/attendance/offices/${officeId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteOffice: (officeId: number) =>
+    apiFetch<{ deleted: boolean }>(`/attendance/offices/${officeId}`, { method: "DELETE" }),
   getUser: (userId: number) => apiFetch<User>(`/users/${userId}`),
   listUsers: (role?: string, includeInactive = false) => {
     const params = new URLSearchParams();
@@ -403,9 +490,12 @@ export const api = {
   myLeadStageMonth: (month?: string) =>
     apiFetch<LeadStageMonth>(`/stats/web/lead-stages/me${month ? `?month=${month}` : ""}`),
   myLeadStageDay: (day: string) => apiFetch<LeadStageDay>(`/stats/web/lead-stages/me/day/${day}`),
-  statsOverview: (days = 30) => apiFetch<StatsOverview>(`/stats/web/overview?days=${days}`),
-  operatorSummary: (period: string) =>
-    apiFetch<OperatorSummary>(`/stats/web/operator-summary?period=${period}`),
+  statsOverview: (days = 30, month?: string) =>
+    apiFetch<StatsOverview>(`/stats/web/overview?days=${days}${month ? `&month=${month}` : ""}`),
+  operatorSummary: (period: string, month?: string) =>
+    apiFetch<OperatorSummary>(
+      month ? `/stats/web/operator-summary?month=${month}` : `/stats/web/operator-summary?period=${period}`
+    ),
   getWeeklySchedule: (userId: number) => apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`),
   setWeeklySchedule: (userId: number, days: WorkDayEntry[]) =>
     apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`, { method: "PUT", body: JSON.stringify({ days }) }),

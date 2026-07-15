@@ -94,6 +94,7 @@ class UserOut(BaseModel):
     is_active: bool
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
+    has_face: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -557,3 +558,79 @@ class HourlyPlanOut(BaseModel):
     now: str | None = None  # "HH:MM"
     metrics: list[HourlyMetricStatus] = []
     text: str  # botga tayyor HTML matn
+
+
+# --- Davomat (kelib-ketish, verifix'dan birlashtirilgan) ---
+
+
+class OfficeBase(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_meters: int = Field(default=150, ge=10, le=5000)
+    is_active: bool = True
+
+
+class OfficeCreate(OfficeBase):
+    pass
+
+
+class OfficeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    radius_meters: int | None = Field(default=None, ge=10, le=5000)
+    is_active: bool | None = None
+
+
+class OfficeOut(BaseModel):
+    id: int
+    name: str
+    latitude: float
+    longitude: float
+    radius_meters: int
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class MeCheckRequest(BaseModel):
+    """Web (kirgan xodim) orqali Keldim/Ketdim — GPS + Face ID."""
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    face_descriptor: list[float] = Field(min_length=128, max_length=128)
+    liveness: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class RegisterFaceRequest(BaseModel):
+    """Yuzni ro'yxatdan o'tkazish — 128-o'lchamli deskriptor (face-api.js)."""
+
+    face_descriptor: list[float] = Field(min_length=128, max_length=128)
+
+
+class AttendanceOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str | None = None
+    date: dt.date
+    check_in_time: datetime | None
+    check_out_time: datetime | None
+    check_in_distance_m: int | None
+    late_minutes: int
+    early_leave_minutes: int
+    worked_minutes: int
+    status: str
+    is_weekend: bool
+    note: str | None = None
+
+
+class EmployeeAttendanceSummary(BaseModel):
+    user_id: int
+    full_name: str
+    present_days: int
+    late_count: int
+    late_minutes: int
+    early_minutes: int
+    worked_minutes: int

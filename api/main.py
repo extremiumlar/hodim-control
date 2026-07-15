@@ -5,6 +5,7 @@ from api.config import settings
 from api.routers import (
     ai_coach,
     ai_watch,
+    attendance,
     audit_logs,
     auth,
     auto_plan,
@@ -35,6 +36,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(attendance.router)
 app.include_router(tasks.router)
 app.include_router(excused_days.router)
 app.include_router(norms.router)
@@ -51,6 +53,18 @@ app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
+
+
+@app.get("/")
+async def root() -> dict:
+    """Brauzerda localhost:8000 ochilganda 404 o'rniga tushunarli holat —
+    aks holda backend "ishlamayapti" degan taassurot qoldiradi."""
+    return {
+        "status": "ok",
+        "service": "Xodimlar KPI/Bonus tizimi API",
+        "docs": "/docs",
+        "eslatma": "Bu backend (API). Sayt: https://localhost:5173",
+    }
 
 
 @app.get("/health")

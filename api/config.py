@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     crm_type: str = "none"
     crm_webhook_secret: str = ""
 
+    # Kelib-ketish davomati (verifix'dan birlashtirilgan) — kechikishga ruxsat (grace).
+    # Ish oynasi boshlanishidan shu daqiqadan keyin kelinsagina kechikish hisoblanadi.
+    attendance_grace_minutes: int = 5
+    # Face ID chegaralari (hodim_crm bilan bir xil): similarity = 1 - evklid masofa;
+    # liveness = tiriklik (bir nechta freym harakati). Ikkalasi ham >= bo'lishi shart.
+    face_similarity_threshold: float = 0.5
+    face_liveness_threshold: float = 0.5
+
     # Soatlik reja avtomatik eslatmasi — haqiqiy xodimlarga Telegram xabar yuboradi,
     # shuning uchun default O'CHIQ. Ishga tushirishga tayyor bo'lganda .env'da
     # HOURLY_PLAN_ENABLED=true qo'ying. (Botdagi "Bugungi rejam" tugmasi bundan

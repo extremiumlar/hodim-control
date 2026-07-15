@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "./lib/auth";
 
 const ROLE_LABELS: Record<string, string> = {
+  employee: "Xodim",
   hr: "HR",
   rop: "ROP",
   boss: "Boshliq",
@@ -24,50 +25,53 @@ export default function Layout() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-lg">Xodimlar KPI/Bonus</span>
-            <nav className="flex gap-1 ml-6">
-              <NavLink to="/" end className={navLinkClass}>
-                Bosh sahifa
-              </NavLink>
-              <NavLink to="/excused-days" className={navLinkClass}>
-                Sababli kunlar
-              </NavLink>
-              <NavLink to="/norms" className={navLinkClass}>
-                Normalar
-              </NavLink>
-              <NavLink to="/lead-stats" className={navLinkClass}>
-                Lidlar
+            <nav className="flex flex-wrap gap-1 ml-6">
+              {/* Mening davomatim — barchaga (rahbar ham jismonan keladi) */}
+              <NavLink to="/check-in" className={navLinkClass}>
+                Mening davomatim
               </NavLink>
               {isManager && (
-                <NavLink to="/statistics" className={navLinkClass}>
-                  Statistika
-                </NavLink>
+                <>
+                  <NavLink to="/" end className={navLinkClass}>
+                    Bosh sahifa
+                  </NavLink>
+                  <NavLink to="/attendance" className={navLinkClass}>
+                    Davomat
+                  </NavLink>
+                  <NavLink to="/excused-days" className={navLinkClass}>
+                    Sababli kunlar
+                  </NavLink>
+                  <NavLink to="/norms" className={navLinkClass}>
+                    Normalar
+                  </NavLink>
+                  <NavLink to="/lead-stats" className={navLinkClass}>
+                    Lidlar
+                  </NavLink>
+                  <NavLink to="/statistics" className={navLinkClass}>
+                    Statistika
+                  </NavLink>
+                  <NavLink to="/work-schedule" className={navLinkClass}>
+                    Ish jadvali
+                  </NavLink>
+                  <NavLink to="/offices" className={navLinkClass}>
+                    Ofislar
+                  </NavLink>
+                  <NavLink to="/users" className={navLinkClass}>
+                    Foydalanuvchilar
+                  </NavLink>
+                  {canManagePositions && (
+                    <NavLink to="/positions" className={navLinkClass}>
+                      Lavozimlar
+                    </NavLink>
+                  )}
+                  <NavLink to="/reports" className={navLinkClass}>
+                    Hisobotlar
+                  </NavLink>
+                  <NavLink to="/audit-logs" className={navLinkClass}>
+                    Audit
+                  </NavLink>
+                </>
               )}
-              <NavLink to="/work-schedule" className={navLinkClass}>
-                Ish jadvali
-              </NavLink>
-              <NavLink to="/users" className={navLinkClass}>
-                Foydalanuvchilar
-              </NavLink>
-              {canManagePositions && (
-                <NavLink to="/positions" className={navLinkClass}>
-                  Lavozimlar
-                </NavLink>
-              )}
-              <NavLink to="/reports" className={navLinkClass}>
-                Hisobotlar
-              </NavLink>
-              <NavLink to="/audit-logs" className={navLinkClass}>
-                Audit
-              </NavLink>
-              {/* Verifix (Face ID davomat) — boshqa ilova, shuning uchun oddiy <a>
-                  (react-router NavLink /verifix'ni ushlab, catch-all bilan "/" ga
-                  qaytarardi). Bir origin'da to'liq sahifa o'tishi. */}
-              <a
-                href="/verifix"
-                className="px-3 py-2 rounded-md text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1"
-              >
-                Davomat (Verifix) ↗
-              </a>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm">
