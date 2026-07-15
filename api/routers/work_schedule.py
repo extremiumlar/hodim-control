@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, verify_bot_secret
+from api.timeutil import today_local
 from api.schemas import (
     EffectiveDay,
     WorkDayEntry,
@@ -231,7 +232,8 @@ async def my_week(
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-    return await _effective_week(db, user, start or date.today())
+    # date.today() server (UTC) sanasini olardi — yarim tunda noto'g'ri hafta chiqardi
+    return await _effective_week(db, user, start or today_local())
 
 
 @router.get("/{telegram_id}/all/week", response_model=list[WorkWeekOut], dependencies=[Depends(verify_bot_secret)])
@@ -250,4 +252,4 @@ async def all_week(
             .order_by(User.full_name)
         )
     )
-    return [await _effective_week(db, u, start or date.today()) for u in users]
+    return [await _effective_week(db, u, start or today_local()) for u in users]
