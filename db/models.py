@@ -537,3 +537,24 @@ class Attendance(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LoginToken(Base):
+    """Saytga Telegram bot orqali kirish (deep-link login) uchun bir martalik kod.
+
+    Oqim: sayt kod so'raydi (telegram_id=None, consumed=False) -> foydalanuvchiga
+    bot deep-link (`t.me/<bot>?start=login_<code>`) ko'rsatiladi -> botda /start
+    bosilganda bot API'ga shu kodni va bosgan odamning telegram_id'sini yuboradi
+    (`telegram_id` shu yerda to'ldiriladi) -> sayt poll qilib telegram_id
+    to'ldirilganini ko'rib JWT so'raydi, shu payt `consumed=True` bo'ladi (qayta
+    ishlatib bo'lmaydi). Telegram Login Widget (telefon raqami so'rovi) o'rniga —
+    foydalanuvchi faqat botda /start bosadi, browser OAuth ekrani chiqmaydi."""
+
+    __tablename__ = "login_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    telegram_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

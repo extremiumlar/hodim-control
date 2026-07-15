@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
+import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,42 +9,60 @@ import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
-declare global {
-  interface Window {
-    onTelegramAuth?: (user: Record<string, string | number>) => void;
-  }
-}
-
-const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_LOGIN_BOT_USERNAME;
 const DEV_MODE = import.meta.env.VITE_DEBUG === "true";
+
+type DeeplinkState =
+  | { phase: "loading" }
+  | { phase: "ready"; botUrl: string; code: string }
+  | { phase: "error" };
 
 export default function Login() {
   const { user, loginWithToken } = useAuth();
-  const widgetRef = useRef<HTMLDivElement>(null);
+  const [deeplink, setDeeplink] = useState<DeeplinkState>({ phase: "loading" });
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [devTelegramId, setDevTelegramId] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
 
-  useEffect(() => {
-    if (!BOT_USERNAME || !widgetRef.current) return;
+  const startDeeplink = useCallback(async () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setDeeplink({ phase: "loading" });
+    try {
+      const { code, bot_url } = await api.startTelegramDeeplink();
+      setDeeplink({ phase: "ready", botUrl: bot_url, code });
 
-    window.onTelegramAuth = async (tgUser) => {
-      try {
-        const { access_token, user } = await api.telegramLogin(tgUser);
-        loginWithToken(access_token, user);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Kirishda xatolik");
-      }
-    };
-
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.async = true;
-    script.setAttribute("data-telegram-login", BOT_USERNAME);
-    script.setAttribute("data-size", "large");
-    script.setAttribute("data-onauth", "onTelegramAuth(user)");
-    script.setAttribute("data-request-access", "write");
-    widgetRef.current.appendChild(script);
+      pollRef.current = setInterval(async () => {
+        try {
+          const res = await api.pollTelegramDeeplink(code);
+          if (res.status === "ready" && res.access_token && res.user) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            loginWithToken(res.access_token, res.user);
+          } else if (res.status === "expired" || res.status === "used") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setDeeplink({ phase: "error" });
+          } else if (res.status === "invalid_user") {
+            if (pollRef.current) clearInterval(pollRef.current);
+            toast.error("Bu Telegram akkaunt saytga kira olmaydi. Administratorga murojaat qiling.");
+            setDeeplink({ phase: "error" });
+          }
+          // "pending" — kutishda davom etamiz
+        } catch {
+          // vaqtinchalik tarmoq xatosi — keyingi tikda qayta urinamiz
+        }
+      }, 2000);
+    } catch {
+      setDeeplink({ phase: "error" });
+    }
   }, [loginWithToken]);
+
+  useEffect(() => {
+    startDeeplink();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [startDeeplink]);
 
   if (user) return <Navigate to="/" replace />;
 
@@ -66,12 +85,34 @@ export default function Login() {
           <CardTitle className="text-xl">Xodimlar KPI/Bonus tizimi</CardTitle>
         </CardHeader>
         <CardContent className="text-center">
-          {BOT_USERNAME ? (
-            <div ref={widgetRef} className="mb-4 flex justify-center" />
-          ) : (
-            <p className="mb-4 text-sm text-slate-500">
-              TELEGRAM_LOGIN_BOT_USERNAME sozlanmagan — Telegram Login Widget ko'rsatilmayapti.
-            </p>
+          {deeplink.phase === "loading" && (
+            <p className="mb-4 text-sm text-slate-500">Havola tayyorlanmoqda...</p>
+          )}
+
+          {deeplink.phase === "ready" && (
+            <div className="mb-4 space-y-3">
+              <p className="text-sm text-slate-600">
+                Telegram botni oching va <b>Start</b> tugmasini bosing — sayt avtomatik kirishni kuting.
+              </p>
+              <Button asChild className="w-full" size="lg">
+                <a href={deeplink.botUrl} target="_blank" rel="noreferrer">
+                  <Send className="mr-2 h-4 w-4" />
+                  Telegram botda ochish
+                </a>
+              </Button>
+              <p className="animate-pulse text-xs text-slate-400">Tasdiqlash kutilmoqda...</p>
+            </div>
+          )}
+
+          {deeplink.phase === "error" && (
+            <div className="mb-4 space-y-2">
+              <p className="text-sm text-rose-600">
+                Havola muddati o'tdi yoki xatolik yuz berdi.
+              </p>
+              <Button variant="outline" className="w-full" onClick={startDeeplink}>
+                Qaytadan urinish
+              </Button>
+            </div>
           )}
 
           {DEV_MODE && (
