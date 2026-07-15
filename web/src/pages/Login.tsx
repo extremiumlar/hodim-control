@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { api } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 declare global {
   interface Window {
@@ -16,7 +21,7 @@ export default function Login() {
   const { user, loginWithToken } = useAuth();
   const widgetRef = useRef<HTMLDivElement>(null);
   const [devTelegramId, setDevTelegramId] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     if (!BOT_USERNAME || !widgetRef.current) return;
@@ -26,7 +31,7 @@ export default function Login() {
         const { access_token, user } = await api.telegramLogin(tgUser);
         loginWithToken(access_token, user);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Kirishda xatolik");
+        toast.error(e instanceof Error ? e.message : "Kirishda xatolik");
       }
     };
 
@@ -43,51 +48,59 @@ export default function Login() {
   if (user) return <Navigate to="/" replace />;
 
   const handleDevLogin = async () => {
-    setError(null);
+    setLoggingIn(true);
     try {
       const { access_token, user } = await api.devLogin(Number(devTelegramId));
       loginWithToken(access_token, user);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Kirishda xatolik");
+      toast.error(e instanceof Error ? e.message : "Kirishda xatolik");
+    } finally {
+      setLoggingIn(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="bg-white shadow rounded-lg p-8 w-full max-w-sm text-center">
-        <h1 className="text-xl font-semibold mb-6">Xodimlar KPI/Bonus tizimi</h1>
-
-        {BOT_USERNAME ? (
-          <div ref={widgetRef} className="flex justify-center mb-4" />
-        ) : (
-          <p className="text-sm text-slate-500 mb-4">
-            TELEGRAM_LOGIN_BOT_USERNAME sozlanmagan — Telegram Login Widget ko'rsatilmayapti.
-          </p>
-        )}
-
-        {DEV_MODE && (
-          <div className="border-t pt-4 mt-4">
-            <p className="text-xs text-amber-600 mb-2">
-              Dev-login (faqat lokal sinov uchun, DEBUG=true bo'lganda ishlaydi)
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <CardTitle className="text-xl">Xodimlar KPI/Bonus tizimi</CardTitle>
+        </CardHeader>
+        <CardContent className="text-center">
+          {BOT_USERNAME ? (
+            <div ref={widgetRef} className="mb-4 flex justify-center" />
+          ) : (
+            <p className="mb-4 text-sm text-slate-500">
+              TELEGRAM_LOGIN_BOT_USERNAME sozlanmagan — Telegram Login Widget ko'rsatilmayapti.
             </p>
-            <input
-              type="text"
-              placeholder="Telegram ID"
-              value={devTelegramId}
-              onChange={(e) => setDevTelegramId(e.target.value)}
-              className="border rounded px-3 py-2 w-full mb-2 text-sm"
-            />
-            <button
-              onClick={handleDevLogin}
-              className="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700"
-            >
-              Dev sifatida kirish
-            </button>
-          </div>
-        )}
+          )}
 
-        {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
-      </div>
+          {DEV_MODE && (
+            <>
+              <Separator className="my-4" />
+              <p className="mb-2 text-xs text-amber-600">
+                Dev-login (faqat lokal sinov uchun, DEBUG=true bo'lganda ishlaydi)
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleDevLogin();
+                }}
+                className="space-y-2"
+              >
+                <Input
+                  type="text"
+                  placeholder="Telegram ID"
+                  value={devTelegramId}
+                  onChange={(e) => setDevTelegramId(e.target.value)}
+                />
+                <Button type="submit" disabled={loggingIn} className="w-full">
+                  {loggingIn ? "Kirilmoqda..." : "Dev sifatida kirish"}
+                </Button>
+              </form>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
