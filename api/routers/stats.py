@@ -636,25 +636,46 @@ _REASONS_DAYS = 7
 _SUMMARY_PERIOD_DAYS = {"today": 1, "week": 7, "month": 30}
 
 
+def _parse_month_range(month: str, today: date) -> tuple[date, date]:
+    """"YYYY-MM" → (oy boshi, oy oxiri) — oxiri bugundan oshmaydi (joriy oy uchun)."""
+    try:
+        y_s, m_s = month.split("-")
+        start = date(int(y_s), int(m_s), 1)
+    except (ValueError, TypeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "month formati: YYYY-MM")
+    if start > today:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kelajak oy uchun ma'lumot yo'q")
+    next_month = date(start.year + 1, 1, 1) if start.month == 12 else date(start.year, start.month + 1, 1)
+    return start, min(next_month - timedelta(days=1), today)
+
+
 @router.get("/web/overview")
 async def web_stats_overview(
     days: int = 30,
+    month: str | None = None,
     _: User = Depends(_require_lead_stats_manager_web),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Sayt statistika paneli: kunlik trend seriyasi (qo'ng'iroq / gaplashgan vaqt /
-    lid / tashrif) + oxirgi 7 kun sabablari. Hammasi bazadagi kunlik snapshotlardan
-    (CRM'ga murojaat yo'q) — 3 ta grouped so'rov."""
-    days = max(_OVERVIEW_MIN_DAYS, min(days, _OVERVIEW_MAX_DAYS))
+    lid / tashrif) + sabablar. Hammasi bazadagi kunlik snapshotlardan (CRM'ga murojaat
+    yo'q) — 3 ta grouped so'rov. month (YYYY-MM) berilsa — o'sha kalendar oy (days
+    e'tiborga olinmaydi), sabablar ham butun oy uchun; aks holda oxirgi `days` kun,
+    sabablar oxirgi 7 kun."""
     today = today_local()
-    start = today - timedelta(days=days - 1)
+    if month:
+        start, end = _parse_month_range(month, today)
+        days = (end - start).days + 1
+    else:
+        days = max(_OVERVIEW_MIN_DAYS, min(days, _OVERVIEW_MAX_DAYS))
+        end = today
+        start = end - timedelta(days=days - 1)
 
     call_rows = await db.execute(
         select(
             OperatorCallsDaily.date,
             func.sum(OperatorCallsDaily.calls_in + OperatorCallsDaily.calls_out),
         )
-        .where(OperatorCallsDaily.date >= start, OperatorCallsDaily.date <= today)
+        .where(OperatorCallsDaily.date >= start, OperatorCallsDaily.date <= end)
         .group_by(OperatorCallsDaily.date)
     )
     is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == VISIT_STAGE_NAME
@@ -664,12 +685,12 @@ async def web_stats_overview(
             func.sum(LeadStageDaily.leads_count),
             func.sum(case((is_visit, LeadStageDaily.leads_count), else_=0)),
         )
-        .where(LeadStageDaily.date >= start, LeadStageDaily.date <= today)
+        .where(LeadStageDaily.date >= start, LeadStageDaily.date <= end)
         .group_by(LeadStageDaily.date)
     )
     talk_rows = await db.execute(
         select(HourlyActual.date, func.sum(HourlyActual.talk_sec))
-        .where(HourlyActual.date >= start, HourlyActual.date <= today)
+        .where(HourlyActual.date >= start, HourlyActual.date <= end)
         .group_by(HourlyActual.date)
     )
 
@@ -691,12 +712,15 @@ async def web_stats_overview(
             }
         )
 
-    # Sabablar — oxirgi 7 kun, yangi birinchi. reason NULL — operator hali yozmagan.
+    # Sabablar — month rejimida butun oy, aks holda oxirgi 7 kun. Yangi birinchi.
+    # reason NULL — operator hali yozmagan.
+    reasons_start = start if month else end - timedelta(days=_REASONS_DAYS - 1)
     reason_rows = await db.execute(
         select(ShortfallReason, User.full_name)
         .join(User, User.id == ShortfallReason.user_id)
-        .where(ShortfallReason.date >= today - timedelta(days=_REASONS_DAYS - 1))
+        .where(ShortfallReason.date >= reasons_start, ShortfallReason.date <= end)
         .order_by(ShortfallReason.date.desc(), ShortfallReason.hour.desc())
+        .limit(200)
     )
     reasons = [
         {
@@ -712,38 +736,46 @@ async def web_stats_overview(
         for r, full_name in reason_rows.all()
     ]
 
-    return {"days": days, "date_from": start.isoformat(), "date_to": today.isoformat(),
+    return {"days": days, "date_from": start.isoformat(), "date_to": end.isoformat(),
             "series": series, "reasons": reasons}
 
 
 @router.get("/web/operator-summary")
 async def web_operator_summary(
     period: str = "week",
+    month: str | None = None,
     _: User = Depends(_require_lead_stats_manager_web),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Davr kesimida operator jadvali: qo'ng'iroq (oldingi teng davrga % farq bilan),
     gaplashgan vaqt, lid, tashrif, vazifa. period: today (bugun vs kecha) | week
-    (oxirgi 7 kun vs oldingi 7) | month (oxirgi 30 kun vs oldingi 30)."""
+    (oxirgi 7 kun vs oldingi 7) | month (oxirgi 30 kun vs oldingi 30). month (YYYY-MM)
+    berilsa — o'sha kalendar oy (period e'tiborga olinmaydi), % — oldingi teng
+    uzunlikdagi davrga nisbatan."""
     # Servisdagi yig'uvchilar bilan bir xil hisob — digest va sayt raqamlari mos kelsin
     from api.services.weekly_digest import _pct_change, _range_by_operator, _tasks_by_user
 
-    length = _SUMMARY_PERIOD_DAYS.get(period)
-    if length is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "period: today | week | month")
-
     today = today_local()
-    cur_start = today - timedelta(days=length - 1)
+    if month:
+        cur_start, cur_end = _parse_month_range(month, today)
+        length = (cur_end - cur_start).days + 1
+        period = month
+    else:
+        length = _SUMMARY_PERIOD_DAYS.get(period)
+        if length is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "period: today | week | month")
+        cur_end = today
+        cur_start = cur_end - timedelta(days=length - 1)
     prev_end = cur_start - timedelta(days=1)
     prev_start = prev_end - timedelta(days=length - 1)
 
-    current = await _range_by_operator(db, cur_start, today)
+    current = await _range_by_operator(db, cur_start, cur_end)
     previous = await _range_by_operator(db, prev_start, prev_end)
-    tasks = await _tasks_by_user(db, cur_start, today)
+    tasks = await _tasks_by_user(db, cur_start, cur_end)
 
     talk_rows = await db.execute(
         select(HourlyActual.user_id, func.sum(HourlyActual.talk_sec))
-        .where(HourlyActual.date >= cur_start, HourlyActual.date <= today)
+        .where(HourlyActual.date >= cur_start, HourlyActual.date <= cur_end)
         .group_by(HourlyActual.user_id)
     )
     talk_by_user = {uid: int(v or 0) for uid, v in talk_rows.all()}
@@ -799,7 +831,7 @@ async def web_operator_summary(
     return {
         "period": period,
         "date_from": cur_start.isoformat(),
-        "date_to": today.isoformat(),
+        "date_to": cur_end.isoformat(),
         "prev_from": prev_start.isoformat(),
         "prev_to": prev_end.isoformat(),
         "operators": operators,

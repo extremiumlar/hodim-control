@@ -13,6 +13,21 @@ const PERIOD_LABELS: Record<string, string> = {
   month: "Oxirgi 30 kun",
 };
 
+const MONTH_NAMES = [
+  "Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun",
+  "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr",
+];
+
+function currentMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthTitle(monthKey: string): string {
+  const [y, m] = monthKey.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1] ?? monthKey} ${y}`;
+}
+
 function fmtTalk(sec: number): string {
   const minutes = Math.floor(sec / 60);
   const h = Math.floor(minutes / 60);
@@ -210,6 +225,11 @@ export default function Statistics() {
   const [overview, setOverview] = useState<StatsOverview | null>(null);
   const [summary, setSummary] = useState<OperatorSummary | null>(null);
   const [period, setPeriod] = useState<string>("week");
+  // Joriy oy tanlangan bo'lsa — odatiy rejim (oxirgi 30 kun + davr tugmalari);
+  // o'tgan oy tanlansa — o'sha kalendar oy ko'rsatiladi.
+  const [month, setMonth] = useState<string>(currentMonthKey());
+  const isPastMonth = month !== "" && month !== currentMonthKey();
+  const monthParam = isPastMonth ? month : undefined;
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,28 +237,30 @@ export default function Statistics() {
   useEffect(() => {
     setLoading(true);
     api
-      .statsOverview(30)
+      .statsOverview(30, monthParam)
       .then(setOverview)
       .catch((e) => {
         const status = e instanceof ApiError ? e.status : 0;
         setError(status === 403 ? "Bu bo'lim faqat rahbarlar uchun." : "Yuklashda xatolik.");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [monthParam]);
 
   useEffect(() => {
     setSummaryLoading(true);
     api
-      .operatorSummary(period)
+      .operatorSummary(period, monthParam)
       .then(setSummary)
       .catch(() => setSummary(null))
       .finally(() => setSummaryLoading(false));
-  }, [period]);
+  }, [period, monthParam]);
 
   if (loading) return <div className="p-8 text-center text-slate-500">Yuklanmoqda...</div>;
   if (error) return <div className="bg-white rounded-lg shadow p-6 text-slate-600">{error}</div>;
   if (!overview) return null;
 
+  const rangeLabel = isPastMonth ? monthTitle(month) : "30 kun";
+  const lastLabel = isPastMonth ? "oxirgi kun" : "bugun";
   const last = overview.series[overview.series.length - 1];
   const totals30 = overview.series.reduce(
     (acc, p) => ({
@@ -253,39 +275,59 @@ export default function Statistics() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-lg font-semibold">📊 Statistika</h2>
-        <span className="text-xs text-slate-400">
-          {fmtDay(overview.date_from)} – {fmtDay(overview.date_to)} · ma'lumot fon snapshotlaridan
-        </span>
+        <h2 className="text-lg font-semibold">
+          📊 Statistika{isPastMonth ? ` — ${monthTitle(month)}` : ""}
+        </h2>
+        <div className="flex items-center gap-3">
+          <input
+            type="month"
+            value={month}
+            max={currentMonthKey()}
+            onChange={(e) => setMonth(e.target.value || currentMonthKey())}
+            className="border border-slate-300 rounded-md px-2 py-1 text-sm"
+            title="O'tgan oyni tanlab tarixiy statistikani ko'rish mumkin"
+          />
+          {isPastMonth && (
+            <button
+              onClick={() => setMonth(currentMonthKey())}
+              className="text-sm text-indigo-600 hover:underline"
+            >
+              Joriy davrga qaytish
+            </button>
+          )}
+          <span className="text-xs text-slate-400">
+            {fmtDay(overview.date_from)} – {fmtDay(overview.date_to)} · ma'lumot fon snapshotlaridan
+          </span>
+        </div>
       </div>
 
-      {/* Yuqori kartalar — 30 kunlik jami */}
+      {/* Yuqori kartalar — davr jami */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">📞 Qo'ng'iroqlar (30 kun)</div>
+          <div className="text-xs text-slate-500">📞 Qo'ng'iroqlar ({rangeLabel})</div>
           <div className="text-2xl font-semibold">{totals30.calls}</div>
-          <div className="text-xs text-slate-400 mt-0.5">bugun: {last?.calls ?? 0}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{lastLabel}: {last?.calls ?? 0}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">🗣 Gaplashgan vaqt (30 kun)</div>
+          <div className="text-xs text-slate-500">🗣 Gaplashgan vaqt ({rangeLabel})</div>
           <div className="text-2xl font-semibold">{fmtTalk(totals30.talk)}</div>
-          <div className="text-xs text-slate-400 mt-0.5">bugun: {fmtTalk(last?.talk_sec ?? 0)}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{lastLabel}: {fmtTalk(last?.talk_sec ?? 0)}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">🧲 Ishlangan lidlar (30 kun)</div>
+          <div className="text-xs text-slate-500">🧲 Ishlangan lidlar ({rangeLabel})</div>
           <div className="text-2xl font-semibold">{totals30.leads}</div>
-          <div className="text-xs text-slate-400 mt-0.5">bugun: {last?.leads ?? 0}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{lastLabel}: {last?.leads ?? 0}</div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">🏠 Tashriflar (30 kun)</div>
+          <div className="text-xs text-slate-500">🏠 Tashriflar ({rangeLabel})</div>
           <div className="text-2xl font-semibold">{totals30.visits}</div>
-          <div className="text-xs text-slate-400 mt-0.5">bugun: {last?.visits ?? 0}</div>
+          <div className="text-xs text-slate-400 mt-0.5">{lastLabel}: {last?.visits ?? 0}</div>
         </div>
       </div>
 
       {/* Trend grafigi — sonlar */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-medium text-sm text-slate-600 mb-2">Kunlik trend (30 kun)</h3>
+        <h3 className="font-medium text-sm text-slate-600 mb-2">Kunlik trend ({rangeLabel})</h3>
         <TrendChart
           points={overview.series}
           series={[
@@ -298,7 +340,7 @@ export default function Statistics() {
 
       {/* Trend grafigi — gaplashgan vaqt (daqiqa) */}
       <div className="bg-white rounded-lg shadow p-4">
-        <h3 className="font-medium text-sm text-slate-600 mb-2">Gaplashgan vaqt, daqiqa (30 kun)</h3>
+        <h3 className="font-medium text-sm text-slate-600 mb-2">Gaplashgan vaqt, daqiqa ({rangeLabel})</h3>
         <TrendChart
           height={140}
           points={overview.series}
@@ -316,20 +358,24 @@ export default function Statistics() {
       {/* Operator kesimi */}
       <div className="bg-white rounded-lg shadow p-4">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <h3 className="font-medium text-sm text-slate-600">Operator kesimi</h3>
-          <div className="flex gap-1">
-            {Object.entries(PERIOD_LABELS).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setPeriod(key)}
-                className={`px-3 py-1.5 rounded text-sm ${
-                  period === key ? "bg-indigo-600 text-white" : "hover:bg-slate-100 text-slate-600"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <h3 className="font-medium text-sm text-slate-600">
+            Operator kesimi{isPastMonth ? ` — ${monthTitle(month)}` : ""}
+          </h3>
+          {!isPastMonth && (
+            <div className="flex gap-1">
+              {Object.entries(PERIOD_LABELS).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setPeriod(key)}
+                  className={`px-3 py-1.5 rounded text-sm ${
+                    period === key ? "bg-indigo-600 text-white" : "hover:bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {summaryLoading ? (
@@ -401,7 +447,7 @@ export default function Statistics() {
       {/* Sabablar — oxirgi 7 kun */}
       <div className="bg-white rounded-lg shadow p-4">
         <h3 className="font-medium text-sm text-slate-600 mb-3">
-          Orqada qolish sabablari (oxirgi 7 kun)
+          Orqada qolish sabablari ({isPastMonth ? monthTitle(month) : "oxirgi 7 kun"})
         </h3>
         {overview.reasons.length === 0 ? (
           <p className="text-sm text-slate-400">Bu davrda sabab so'ralmagan.</p>
