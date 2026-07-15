@@ -1,0 +1,30 @@
+# cPanel (shared hosting) — BITTA venv: API + bot (webhook) + a2wsgi.
+# Docker'dagi alohida api/bot/scheduler requirements o'rniga hammasi birga,
+# chunki cPanel'da bitta "Python App" (bitta virtualenv) ishlaydi.
+#
+# asyncpg (PostgreSQL) ATAYLAB yo'q — u kompilyatsiya (pg_config + C kompilyator)
+# talab qiladi, shared hostingda ko'pincha yo'q. cPanel'da SQLite ishlatamiz
+# (aiosqlite). Agar hostingizda PostgreSQL + build vositalari bo'lsa, qo'lda
+# `pip install asyncpg` qiling va DATABASE_URL'ni o'zgartiring.
+
+# --- Web (Passenger ASGI o'rami) ---
+a2wsgi==1.10.7
+
+# --- API (FastAPI) ---
+fastapi==0.115.6
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+alembic==1.14.0
+pydantic-settings==2.7.0
+pyjwt==2.10.1
+httpx==0.28.1
+python-dotenv==1.0.1
+python-multipart==0.0.20
+openpyxl==3.1.5
+anthropic==0.116.0
+
+# --- Bot (webhook rejimida shu ilova ichida) ---
+aiogram==3.15.0
+
+# --- Vaqt mintaqasi (slim muhitda Asia/Tashkent uchun) ---
+tzdata==2024.2

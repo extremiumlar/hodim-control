@@ -54,6 +54,14 @@ app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
 
+# cPanel deploy: bot shu API ichida webhook orqali ishlaydi. Faqat yoqilganda
+# ulanadi — shunda bot/ paketi import qilinadi (Docker api image'da bot/ yo'q,
+# shuning uchun bayroq o'chiq bo'lsa import umuman bo'lmaydi).
+if settings.bot_webhook_enabled:
+    from api.routers import bot_webhook
+
+    app.include_router(bot_webhook.router)
+
 
 @app.get("/")
 async def root() -> dict:

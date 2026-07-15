@@ -1,83 +1,19 @@
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ErrorEvent
-
 from bot import api_client
-from bot.config import BOT_TOKEN
-from bot.handlers import (
-    ai_watch,
-    assign_task,
-    excused,
-    group_stats,
-    hot_lead,
-    hourly_plan,
-    lead_stats,
-    menu,
-    mobilograf,
-    norms,
-    start,
-    stats,
-    tasks,
-    work_schedule,
-)
+from bot.setup import allowed_update_types, build_bot, build_dispatcher
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN sozlanmagan. .env faylida BOT_TOKEN qiymatini kiriting.")
-
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(storage=MemoryStorage())
-
-    # menu/stats routerlari FSM oqimlaridan (norms, assign_task) OLDIN turadi:
-    # asosiy menyu tugmasi bosilganda u FSMning "istalgan matn" bosqichiga
-    # tushib qolmasdan, tegishli handlerda ushlanadi va (handler ichida
-    # state.clear() bilan) chala qolgan oqimni tozalaydi.
-    dp.include_router(start.router)
-    dp.include_router(menu.router)
-    dp.include_router(stats.router)
-    dp.include_router(lead_stats.router)
-    dp.include_router(work_schedule.router)
-    dp.include_router(hourly_plan.router)
-    dp.include_router(ai_watch.router)
-    dp.include_router(hot_lead.router)
-    dp.include_router(tasks.router)
-    dp.include_router(excused.router)
-    dp.include_router(norms.router)
-    dp.include_router(mobilograf.router)
-    dp.include_router(assign_task.router)
-    dp.include_router(group_stats.router)
-    # ENG OXIRIDA: erkin matnli sabab ushlagichi — yuqoridagi hech bir handler
-    # olmagan shaxsiy matnlargina yetib keladi (menyu/FSM/buyruqlar ustun turadi).
-    dp.include_router(ai_watch.reason_text_router)
-
-    @dp.error()
-    async def on_error(event: ErrorEvent) -> None:
-        """Har qanday handler ichida ushlanmagan xatolikni tutadi — aks holda bot
-        jim qolib, foydalanuvchi hech qanday javob olmasdi (masalan backend
-        ishlamay qolganda)."""
-        logger.exception("Botda kutilmagan xatolik", exc_info=event.exception)
-
-        update = event.update
-        chat_id = None
-        if update.message:
-            chat_id = update.message.chat.id
-        elif update.callback_query and update.callback_query.message:
-            chat_id = update.callback_query.message.chat.id
-
-        if chat_id:
-            try:
-                await bot.send_message(chat_id, "⚠️ Xatolik yuz berdi, birozdan keyin urinib ko'ring.")
-            except Exception:
-                logger.exception("Foydalanuvchiga xato haqida xabar berib bo'lmadi")
+    """Polling rejimi (lokal, Docker/VPS). cPanel webhook rejimi uchun
+    api/routers/bot_webhook.py — ikkalasi bot/setup.py'dan bir xil dispatcher
+    quradi."""
+    bot = build_bot()
+    dp = build_dispatcher(bot)
 
     # drop_pending_updates=False — bot o'chiq paytda kelgan xabarlar restartdan
     # keyin QAYTA ISHLANADI. Bu ataylab: operator AI sabab so'roviga javobni bot
@@ -86,14 +22,8 @@ async def main() -> None:
     # ham handlerlar upsert/idempotent — zarar qilmaydi.
     await bot.delete_webhook(drop_pending_updates=False)
 
-    # message_reaction 2-bosqichda (mobilograf) kerak bo'ladi, lekin uni oldindan
-    # yoqib qo'yamiz — aks holda Telegram guruhdagi reaksiyalarni botga umuman yubormaydi.
-    allowed_updates = dp.resolve_used_update_types()
-    if "message_reaction" not in allowed_updates:
-        allowed_updates = [*allowed_updates, "message_reaction"]
-
     try:
-        await dp.start_polling(bot, allowed_updates=allowed_updates)
+        await dp.start_polling(bot, allowed_updates=allowed_update_types(dp))
     finally:
         await api_client.close_client()
 

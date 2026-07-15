@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     bot_shared_secret: str = _PLACEHOLDER_BOT_SECRET
+    # cPanel deploy: bot alohida polling jarayoni sifatida emas, shu API ichida
+    # webhook orqali ishlaydi (shared hostingda doimiy jarayon yo'q). Default
+    # O'CHIQ — Docker/VPS'da bot alohida polling qiladi, ikki marta ishlanmasin.
+    bot_webhook_enabled: bool = False
 
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
