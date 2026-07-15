@@ -1,5 +1,8 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { format } from "date-fns";
+import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
+import { toast } from "sonner";
 import {
   CartesianGrid,
   Legend,
@@ -10,55 +13,57 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, Bonus, DailyResult, User } from "../lib/api";
-import { toLocalDateString } from "../lib/date";
+import { type ColumnDef } from "@tanstack/react-table";
+import DataTable from "@/components/DataTable";
+import PageHeader from "@/components/PageHeader";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { type DailyResult } from "@/lib/api";
+import {
+  useBonuses,
+  useCreateManualDailyResult,
+  useDailyResults,
+  useSetManualMobilografVideos,
+  useUser,
+} from "@/lib/queries";
 
 const SOURCE_LABELS: Record<string, string> = { crm: "CRM", manual: "Qo'lda" };
+
+const resultColumns: ColumnDef<DailyResult>[] = [
+  {
+    accessorKey: "date",
+    header: "Sana",
+    cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
+  },
+  { accessorKey: "conversations_count", header: "Suhbatlar" },
+  { accessorKey: "visits_count", header: "Tashriflar" },
+  {
+    accessorKey: "source",
+    header: "Manba",
+    cell: ({ row }) => SOURCE_LABELS[row.original.source] ?? row.original.source,
+  },
+];
 
 export default function EmployeeProfile() {
   const { id } = useParams<{ id: string }>();
   const userId = Number(id);
 
-  const [employee, setEmployee] = useState<User | null>(null);
-  const [results, setResults] = useState<DailyResult[]>([]);
-  const [bonuses, setBonuses] = useState<Bonus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [expandedBonus, setExpandedBonus] = useState<number | null>(null);
+  const userQuery = useUser(userId);
+  const resultsQuery = useDailyResults(userId);
+  const bonusesQuery = useBonuses(userId);
+  const saveDaily = useCreateManualDailyResult();
+  const saveVideos = useSetManualMobilografVideos();
 
-  const [date, setDate] = useState(toLocalDateString(new Date()));
+  const [expandedBonus, setExpandedBonus] = useState<number | null>(null);
+  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [conversations, setConversations] = useState("");
   const [visits, setVisits] = useState("");
   const [videos, setVideos] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
-  const latestRequestId = useRef(0);
-
-  const load = async () => {
-    const requestId = ++latestRequestId.current;
-    setLoading(true);
-    try {
-      const [emp, resultList, bonusList] = await Promise.all([
-        api.getUser(userId),
-        api.listDailyResults(userId),
-        api.listBonuses(userId),
-      ]);
-      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
-      setEmployee(emp);
-      setResults(resultList);
-      setBonuses(bonusList);
-    } catch (e) {
-      if (requestId !== latestRequestId.current) return;
-      setError(e instanceof Error ? e.message : "Yuklashda xatolik");
-    } finally {
-      if (requestId === latestRequestId.current) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  const employee = userQuery.data;
 
   // Lavozimda kuzatiladigan ko'rsatkichlar — forma faqat shu maydonlarni ko'rsatadi
   // (lavozim yo'q bo'lsa standart suhbat+tashrif, backend metrics_for bilan bir xil).
@@ -70,25 +75,23 @@ export default function EmployeeProfile() {
   const tracksTashrif = trackedMetrics.includes("tashrif");
   const tracksVideo = trackedMetrics.includes("video");
 
+  const submitting = saveDaily.isPending || saveVideos.isPending;
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError(null);
 
     // Ko'rinmaydigan (lavozimda kuzatilmaydigan) maydonlar 0 sifatida yuboriladi
     const conversationsCount = tracksSuhbat ? Number(conversations) : 0;
     const visitsCount = tracksTashrif ? Number(visits) : 0;
     const videosCount = tracksVideo ? Number(videos) : 0;
-    if (
-      [conversationsCount, visitsCount, videosCount].some((v) => !Number.isInteger(v) || v < 0)
-    ) {
-      setError("Ko'rsatkichlar soni manfiy bo'lmagan butun son bo'lishi kerak");
+    if ([conversationsCount, visitsCount, videosCount].some((v) => !Number.isInteger(v) || v < 0)) {
+      toast.error("Ko'rsatkichlar soni manfiy bo'lmagan butun son bo'lishi kerak");
       return;
     }
 
-    setSubmitting(true);
     try {
       if (tracksSuhbat || tracksTashrif) {
-        await api.createManualDailyResult({
+        await saveDaily.mutateAsync({
           user_id: userId,
           date,
           conversations_count: conversationsCount,
@@ -96,20 +99,31 @@ export default function EmployeeProfile() {
         });
       }
       if (tracksVideo) {
-        await api.setManualMobilografVideos({ user_id: userId, date, confirmed_count: videosCount });
+        await saveVideos.mutateAsync({ user_id: userId, date, confirmed_count: videosCount });
       }
       setConversations("");
       setVisits("");
       setVideos("");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Saqlashda xatolik");
-    } finally {
-      setSubmitting(false);
+      toast.success("Kunlik natija saqlandi");
+    } catch {
+      // xato toast'i useApiMutation ichida ko'rsatiladi
     }
   };
 
-  if (loading) return <p className="text-sm text-slate-500">Yuklanmoqda...</p>;
+  if (userQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-9 w-64" />
+        <div className="grid gap-6 md:grid-cols-3">
+          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-72 rounded-xl md:col-span-2" />
+        </div>
+      </div>
+    );
+  }
+
+  const results = resultsQuery.data ?? [];
+  const bonuses = bonusesQuery.data ?? [];
 
   const chartData = [...results]
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -118,166 +132,177 @@ export default function EmployeeProfile() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/norms" className="text-indigo-600 text-sm hover:underline">
-          ← Orqaga
+        <Link to="/norms" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Orqaga
         </Link>
-        <h1 className="text-xl font-semibold mt-1">{employee?.full_name}</h1>
-        <p className="text-sm text-slate-500">Xodim profili</p>
+        <PageHeader title={employee?.full_name ?? ""} description="Xodim profili" />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
       <div className="grid gap-6 md:grid-cols-3">
-        <div className="md:col-span-1 bg-white rounded-lg shadow p-5 h-fit">
-          <h2 className="font-semibold mb-4">Kunlik natijani qo'lda kiritish</h2>
-          <p className="text-xs text-slate-400 mb-3">
-            CRM ulanmagan bo'lsa yoki tuzatish kerak bo'lsa shu yerdan kiriting.
-          </p>
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <label className="block text-sm text-slate-600 mb-1">Sana</label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-            {tracksSuhbat && (
+        <Card className="h-fit md:col-span-1">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Kunlik natijani qo'lda kiritish</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-xs text-slate-400">
+              CRM ulanmagan bo'lsa yoki tuzatish kerak bo'lsa shu yerdan kiriting.
+            </p>
+            <form onSubmit={handleSubmit} className="space-y-3">
               <div>
-                <label className="block text-sm text-slate-600 mb-1">Suhbatlar soni</label>
-                <input
-                  type="number"
-                  value={conversations}
-                  onChange={(e) => setConversations(e.target.value)}
+                <Label htmlFor="ep-date">Sana</Label>
+                <Input
+                  id="ep-date"
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
                   required
-                  className="w-full border rounded px-3 py-2 text-sm"
                 />
               </div>
-            )}
-            {tracksTashrif && (
-              <div>
-                <label className="block text-sm text-slate-600 mb-1">Tashriflar soni</label>
-                <input
-                  type="number"
-                  value={visits}
-                  onChange={(e) => setVisits(e.target.value)}
-                  required
-                  className="w-full border rounded px-3 py-2 text-sm"
-                />
-              </div>
-            )}
-            {tracksVideo && (
-              <div>
-                <label className="block text-sm text-slate-600 mb-1">
-                  Tasdiqlangan videolar soni
-                </label>
-                <input
-                  type="number"
-                  value={videos}
-                  onChange={(e) => setVideos(e.target.value)}
-                  required
-                  className="w-full border rounded px-3 py-2 text-sm"
-                />
-                <p className="text-xs text-slate-400 mt-1">
-                  Guruh reaksiyasi ishlamay qolganda shu yerdan kiriting — kun uchun qo'lda
-                  kiritilgan son qayta kiritilsa ustidan yoziladi.
-                </p>
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {submitting ? "Saqlanmoqda..." : "Saqlash"}
-            </button>
-          </form>
-        </div>
+              {tracksSuhbat && (
+                <div>
+                  <Label htmlFor="ep-conv">Suhbatlar soni</Label>
+                  <Input
+                    id="ep-conv"
+                    type="number"
+                    value={conversations}
+                    onChange={(e) => setConversations(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+              {tracksTashrif && (
+                <div>
+                  <Label htmlFor="ep-visits">Tashriflar soni</Label>
+                  <Input
+                    id="ep-visits"
+                    type="number"
+                    value={visits}
+                    onChange={(e) => setVisits(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+              {tracksVideo && (
+                <div>
+                  <Label htmlFor="ep-videos">Tasdiqlangan videolar soni</Label>
+                  <Input
+                    id="ep-videos"
+                    type="number"
+                    value={videos}
+                    onChange={(e) => setVideos(e.target.value)}
+                    required
+                  />
+                  <p className="mt-1 text-xs text-slate-400">
+                    Guruh reaksiyasi ishlamay qolganda shu yerdan kiriting — kun uchun qo'lda
+                    kiritilgan son qayta kiritilsa ustidan yoziladi.
+                  </p>
+                </div>
+              )}
+              <Button type="submit" disabled={submitting} className="w-full">
+                {submitting ? "Saqlanmoqda..." : "Saqlash"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
 
-        <div className="md:col-span-2 space-y-6">
-          <div className="bg-white rounded-lg shadow p-5">
-            <h2 className="font-semibold mb-4">Tendensiya</h2>
-            {chartData.length === 0 ? (
-              <p className="text-sm text-slate-500">Grafik uchun hali ma'lumot yo'q.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={260}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" fontSize={12} />
-                  <YAxis fontSize={12} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="suhbat" name="Suhbatlar" stroke="#4f46e5" strokeWidth={2} />
-                  <Line type="monotone" dataKey="tashrif" name="Tashriflar" stroke="#16a34a" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+        <div className="space-y-6 md:col-span-2">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Tendensiya</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {chartData.length === 0 ? (
+                <p className="text-sm text-slate-500">Grafik uchun hali ma'lumot yo'q.</p>
+              ) : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="date" fontSize={12} />
+                    <YAxis fontSize={12} />
+                    <Tooltip />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="suhbat"
+                      name="Suhbatlar"
+                      stroke="#4f46e5"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="tashrif"
+                      name="Tashriflar"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          <div>
+            <h3 className="mb-2 font-semibold">Kunlik natijalar tarixi</h3>
+            <DataTable
+              columns={resultColumns}
+              data={resultsQuery.data}
+              isLoading={resultsQuery.isLoading}
+              error={resultsQuery.error ? resultsQuery.error.message : null}
+              onRetry={() => resultsQuery.refetch()}
+              empty={{ text: "Hozircha ma'lumot yo'q." }}
+            />
           </div>
 
-          <div className="bg-white rounded-lg shadow p-5">
-            <h2 className="font-semibold mb-4">Kunlik natijalar tarixi</h2>
-            {results.length === 0 ? (
-              <p className="text-sm text-slate-500">Hozircha ma'lumot yo'q.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-slate-500 border-b">
-                    <th className="py-2">Sana</th>
-                    <th className="py-2">Suhbatlar</th>
-                    <th className="py-2">Tashriflar</th>
-                    <th className="py-2">Manba</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((r) => (
-                    <tr key={r.id} className="border-b last:border-0">
-                      <td className="py-2">{r.date}</td>
-                      <td className="py-2">{r.conversations_count}</td>
-                      <td className="py-2">{r.visits_count}</td>
-                      <td className="py-2">{SOURCE_LABELS[r.source] ?? r.source}</td>
-                    </tr>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Bonus tarixi</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {bonuses.length === 0 ? (
+                <p className="text-sm text-slate-500">Hali bonus hisoblanmagan.</p>
+              ) : (
+                <div className="space-y-2">
+                  {bonuses.map((b) => (
+                    <div key={b.id} className="rounded border">
+                      <button
+                        onClick={() => setExpandedBonus(expandedBonus === b.id ? null : b.id)}
+                        className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-slate-50"
+                      >
+                        <span>
+                          {b.period} —{" "}
+                          <span className="font-medium">{b.amount.toLocaleString()} so'm</span>
+                        </span>
+                        <span className="flex items-center gap-1 text-xs text-slate-400">
+                          {expandedBonus === b.id ? (
+                            <>
+                              yopish <ChevronUp className="h-3.5 w-3.5" />
+                            </>
+                          ) : (
+                            <>
+                              tafsilot <ChevronDown className="h-3.5 w-3.5" />
+                            </>
+                          )}
+                        </span>
+                      </button>
+                      {expandedBonus === b.id && b.breakdown && (
+                        <div className="space-y-1 px-3 pb-3 text-xs text-slate-600">
+                          {Object.entries(b.breakdown).map(([key, value]) => (
+                            <div key={key} className="flex justify-between border-b border-dashed py-1">
+                              <span className="text-slate-400">{key}</span>
+                              <span>{String(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-5">
-            <h2 className="font-semibold mb-4">Bonus tarixi</h2>
-            {bonuses.length === 0 ? (
-              <p className="text-sm text-slate-500">Hali bonus hisoblanmagan.</p>
-            ) : (
-              <div className="space-y-2">
-                {bonuses.map((b) => (
-                  <div key={b.id} className="border rounded">
-                    <button
-                      onClick={() => setExpandedBonus(expandedBonus === b.id ? null : b.id)}
-                      className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-slate-50"
-                    >
-                      <span>
-                        {b.period} — <span className="font-medium">{b.amount.toLocaleString()} so'm</span>
-                      </span>
-                      <span className="text-slate-400 text-xs">
-                        {expandedBonus === b.id ? "yopish ▲" : "tafsilot ▼"}
-                      </span>
-                    </button>
-                    {expandedBonus === b.id && b.breakdown && (
-                      <div className="px-3 pb-3 text-xs text-slate-600 space-y-1">
-                        {Object.entries(b.breakdown).map(([key, value]) => (
-                          <div key={key} className="flex justify-between border-b border-dashed py-1">
-                            <span className="text-slate-400">{key}</span>
-                            <span>{String(value)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
