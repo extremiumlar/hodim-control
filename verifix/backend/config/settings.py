@@ -10,9 +10,34 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-secret-key-change-me")
-DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",")]
+# DEBUG default False — faqat DJANGO_DEBUG=true bo'lsagina yoqiladi
+# (ishlab chiqarishda tasodifan debug rejimda qolib ketmasin).
+DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
+
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
+if not SECRET_KEY:
+    if DEBUG:
+        # Faqat lokal ishlab chiqish uchun — production'da (DEBUG=False)
+        # placeholder bilan ishga tushishga yo'l qo'yilmaydi.
+        SECRET_KEY = "dev-insecure-secret-key-change-me"
+        print("OGOHLANTIRISH: DJANGO_SECRET_KEY o'rnatilmagan — dev kalit ishlatilmoqda.")
+    else:
+        raise RuntimeError(
+            "DJANGO_SECRET_KEY environment o'zgaruvchisi o'rnatilmagan — "
+            "production rejimida (DEBUG=False) maxfiy kalitsiz ishga tushib bo'lmaydi."
+        )
+
+_hosts_env = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()]
+if DEBUG:
+    ALLOWED_HOSTS = _hosts_env or ["*"]
+else:
+    # Production'da "*" emas — aniq hostlar ro'yxati shart.
+    ALLOWED_HOSTS = [h for h in _hosts_env if h != "*"]
+    if not ALLOWED_HOSTS:
+        raise RuntimeError(
+            "DJANGO_ALLOWED_HOSTS bo'sh (yoki faqat '*') — production rejimida "
+            "aniq host ro'yxatini ko'rsating (masalan: example.uz,api.example.uz)."
+        )
 
 INSTALLED_APPS = [
     "django.contrib.admin",
