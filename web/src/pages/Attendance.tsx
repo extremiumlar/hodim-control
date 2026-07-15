@@ -1,233 +1,253 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { format, subDays } from "date-fns";
 import {
-  api,
-  Attendance as AttendanceRow,
-  AttendanceDashboard,
-  EmployeeAttendanceSummary,
-} from "../lib/api";
-
-const STATUS_LABELS: Record<string, { text: string; cls: string }> = {
-  present: { text: "Keldi", cls: "bg-emerald-100 text-emerald-700" },
-  late: { text: "Kechikdi", cls: "bg-rose-100 text-rose-700" },
-  absent: { text: "Kelmadi", cls: "bg-slate-200 text-slate-600" },
-  weekend: { text: "Dam olish", cls: "bg-blue-100 text-blue-700" },
-};
+  CalendarCheck,
+  Clock,
+  DoorOpen,
+  Hourglass,
+  LogIn,
+  RefreshCw,
+  UserX,
+  Users,
+} from "lucide-react";
+import { type ColumnDef } from "@tanstack/react-table";
+import DataTable from "@/components/DataTable";
+import PageHeader from "@/components/PageHeader";
+import { DateRangePicker } from "@/components/PeriodPicker";
+import StatCard from "@/components/StatCard";
+import StatusBadge from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  type Attendance as AttendanceRow,
+  type EmployeeAttendanceSummary,
+} from "@/lib/api";
+import {
+  useAttendanceDashboard,
+  useAttendanceEmployeeSummary,
+  useAttendanceList,
+} from "@/lib/queries";
 
 // Backend naive-UTC — "Z" qo'shib mahalliy vaqtga o'giramiz.
 function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   const norm = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
-  return new Date(norm).toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" });
+  return format(new Date(norm), "HH:mm");
 }
 
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
+const summaryColumns: ColumnDef<EmployeeAttendanceSummary>[] = [
+  { accessorKey: "full_name", header: "Xodim", cell: ({ row }) => <b>{row.original.full_name}</b> },
+  { accessorKey: "present_days", header: "Kelgan kun" },
+  {
+    accessorKey: "late_count",
+    header: "Kechikish (marta)",
+    cell: ({ row }) => (
+      <span className={row.original.late_count > 0 ? "text-rose-600" : ""}>
+        {row.original.late_count}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "late_minutes",
+    header: "Kechikish (daq)",
+    cell: ({ row }) => (
+      <span className={row.original.late_minutes > 0 ? "text-rose-600" : ""}>
+        {row.original.late_minutes}
+      </span>
+    ),
+  },
+  { accessorKey: "early_minutes", header: "Erta ketish (daq)" },
+  {
+    accessorKey: "worked_minutes",
+    header: "Ishlangan (soat)",
+    cell: ({ row }) => Math.round((row.original.worked_minutes / 60) * 10) / 10,
+  },
+];
+
+const rowColumns: ColumnDef<AttendanceRow>[] = [
+  {
+    accessorKey: "date",
+    header: "Sana",
+    cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
+  },
+  {
+    accessorKey: "user_full_name",
+    header: "Xodim",
+    cell: ({ row }) => <b>{row.original.user_full_name}</b>,
+  },
+  { accessorKey: "check_in_time", header: "Keldim", cell: ({ row }) => fmtTime(row.original.check_in_time) },
+  { accessorKey: "check_out_time", header: "Ketdim", cell: ({ row }) => fmtTime(row.original.check_out_time) },
+  {
+    accessorKey: "late_minutes",
+    header: "Kechikish",
+    cell: ({ row }) =>
+      row.original.late_minutes > 0 ? (
+        <span className="text-rose-600">{row.original.late_minutes} daq</span>
+      ) : (
+        "—"
+      ),
+  },
+  {
+    accessorKey: "worked_minutes",
+    header: "Ishlangan",
+    cell: ({ row }) =>
+      row.original.worked_minutes > 0
+        ? `${Math.round((row.original.worked_minutes / 60) * 10) / 10} soat`
+        : "—",
+  },
+  {
+    accessorKey: "status",
+    header: "Holat",
+    cell: ({ row }) => <StatusBadge kind="attendance" status={row.original.status} />,
+  },
+];
 
 export default function Attendance() {
-  const [dash, setDash] = useState<AttendanceDashboard | null>(null);
-  const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [summary, setSummary] = useState<EmployeeAttendanceSummary[]>([]);
-  const [dateFrom, setDateFrom] = useState(isoDaysAgo(7));
-  const [dateTo, setDateTo] = useState(isoDaysAgo(0));
-  const [error, setError] = useState("");
+  const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
+  const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
 
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      const [d, r, s] = await Promise.all([
-        api.attendanceDashboard(),
-        api.listAttendance({ date_from: dateFrom, date_to: dateTo }),
-        api.attendanceEmployeeSummary(30),
-      ]);
-      setDash(d);
-      setRows(r);
-      setSummary(s);
-    } catch (e: any) {
-      setError(e.message || "Yuklashda xatolik");
-    }
-  }, [dateFrom, dateTo]);
+  const dashQuery = useAttendanceDashboard();
+  const listQuery = useAttendanceList({ date_from: dateFrom, date_to: dateTo });
+  const summaryQuery = useAttendanceEmployeeSummary(30);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
+  const dash = dashQuery.data;
   const s = dash?.summary;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Davomat (kelib-ketish)</h1>
-        <button onClick={load} className="text-sm text-indigo-600 hover:underline">
+      <PageHeader title="Davomat (kelib-ketish)">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            dashQuery.refetch();
+            listQuery.refetch();
+            summaryQuery.refetch();
+          }}
+        >
+          <RefreshCw className="mr-2 h-4 w-4" />
           Yangilash
-        </button>
-      </div>
-
-      {error && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg px-3 py-2 text-sm">{error}</div>
-      )}
+        </Button>
+      </PageHeader>
 
       {/* Bugungi xulosa kartalari */}
-      {s && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-          {[
-            { label: "Bugun ishlashi kerak", value: s.working_today },
-            { label: "Keldi", value: s.checked_in_today },
-            { label: "Hozir ofisda", value: s.present_now },
-            { label: "Kechikdi", value: s.late_today, warn: s.late_today > 0 },
-            { label: "Ketdi", value: s.left_today },
-            { label: "Kelmagan", value: s.not_checked_in, warn: s.not_checked_in > 0 },
-            { label: "Oy: ishlangan soat", value: s.month_worked_hours },
-          ].map((c) => (
-            <div key={c.label} className="bg-white border border-slate-200 rounded-xl p-3">
-              <div className="text-xs text-slate-500">{c.label}</div>
-              <div className={`text-2xl font-bold ${c.warn ? "text-rose-600" : "text-slate-800"}`}>{c.value}</div>
-            </div>
+      {dashQuery.isLoading ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <Skeleton key={i} className="h-[86px] rounded-xl" />
           ))}
         </div>
+      ) : (
+        s && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+            <StatCard label="Bugun ishlashi kerak" value={s.working_today} icon={Users} />
+            <StatCard label="Keldi" value={s.checked_in_today} icon={LogIn} />
+            <StatCard label="Hozir ofisda" value={s.present_now} icon={CalendarCheck} />
+            <StatCard label="Kechikdi" value={s.late_today} icon={Hourglass} warn={s.late_today > 0} />
+            <StatCard label="Ketdi" value={s.left_today} icon={DoorOpen} />
+            <StatCard
+              label="Kelmagan"
+              value={s.not_checked_in}
+              icon={UserX}
+              warn={s.not_checked_in > 0}
+            />
+            <StatCard label="Oy: ishlangan soat" value={s.month_worked_hours} icon={Clock} />
+          </div>
+        )
       )}
 
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid gap-6 md:grid-cols-2">
         {/* Hozir ofisda */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="font-semibold mb-3">Hozir ofisda ({dash?.in_office.length ?? 0})</h2>
-          {dash && dash.in_office.length === 0 && <div className="text-sm text-slate-400">Hech kim yo'q</div>}
-          <ul className="space-y-2">
-            {dash?.in_office.map((p, i) => (
-              <li key={i} className="flex items-center justify-between text-sm">
-                <span>{p.user_name}</span>
-                <span className="text-slate-500">
-                  {fmtTime(p.check_in_time)}
-                  {p.late_minutes > 0 && <span className="text-rose-600 ml-2">+{p.late_minutes} daq</span>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Hozir ofisda ({dash?.in_office.length ?? 0})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {dashQuery.isLoading ? (
+              <Skeleton className="h-20 w-full" />
+            ) : dash?.in_office.length === 0 ? (
+              <div className="text-sm text-slate-400">Hech kim yo'q</div>
+            ) : (
+              <ul className="space-y-2">
+                {dash?.in_office.map((p, i) => (
+                  <li key={i} className="flex items-center justify-between text-sm">
+                    <span>{p.user_name}</span>
+                    <span className="text-slate-500">
+                      {fmtTime(p.check_in_time)}
+                      {p.late_minutes > 0 && (
+                        <span className="ml-2 text-rose-600">+{p.late_minutes} daq</span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
 
         {/* So'nggi harakatlar */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4">
-          <h2 className="font-semibold mb-3">Bugungi harakatlar</h2>
-          {dash && dash.recent.length === 0 && <div className="text-sm text-slate-400">Hali yozuv yo'q</div>}
-          <ul className="space-y-2">
-            {dash?.recent.map((p, i) => (
-              <li key={i} className="flex items-center justify-between text-sm">
-                <span>{p.user_name}</span>
-                <span className="text-slate-500">
-                  {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)}
-                  <span
-                    className={`ml-2 px-2 py-0.5 rounded-full text-xs ${STATUS_LABELS[p.status]?.cls ?? "bg-slate-100"}`}
-                  >
-                    {STATUS_LABELS[p.status]?.text ?? p.status}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Bugungi harakatlar</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {dashQuery.isLoading ? (
+              <Skeleton className="h-20 w-full" />
+            ) : dash?.recent.length === 0 ? (
+              <div className="text-sm text-slate-400">Hali yozuv yo'q</div>
+            ) : (
+              <ul className="space-y-2">
+                {dash?.recent.map((p, i) => (
+                  <li key={i} className="flex items-center justify-between text-sm">
+                    <span>{p.user_name}</span>
+                    <span className="flex items-center gap-2 text-slate-500">
+                      {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)}
+                      <StatusBadge kind="attendance" status={p.status} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* 30 kunlik xodim xulosasi */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4">
-        <h2 className="font-semibold mb-3">Xodimlar bo'yicha (oxirgi 30 kun)</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-100">
-                <th className="py-2 pr-3">Xodim</th>
-                <th className="py-2 pr-3">Kelgan kun</th>
-                <th className="py-2 pr-3">Kechikish (marta)</th>
-                <th className="py-2 pr-3">Kechikish (daq)</th>
-                <th className="py-2 pr-3">Erta ketish (daq)</th>
-                <th className="py-2">Ishlangan (soat)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.map((r) => (
-                <tr key={r.user_id} className="border-b border-slate-50">
-                  <td className="py-2 pr-3 font-medium">{r.full_name}</td>
-                  <td className="py-2 pr-3">{r.present_days}</td>
-                  <td className={`py-2 pr-3 ${r.late_count > 0 ? "text-rose-600" : ""}`}>{r.late_count}</td>
-                  <td className={`py-2 pr-3 ${r.late_minutes > 0 ? "text-rose-600" : ""}`}>{r.late_minutes}</td>
-                  <td className="py-2 pr-3">{r.early_minutes}</td>
-                  <td className="py-2">{Math.round((r.worked_minutes / 60) * 10) / 10}</td>
-                </tr>
-              ))}
-              {summary.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="py-4 text-center text-slate-400">
-                    Hali davomat yozuvlari yo'q
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div>
+        <h3 className="mb-2 font-semibold">Xodimlar bo'yicha (oxirgi 30 kun)</h3>
+        <DataTable
+          columns={summaryColumns}
+          data={summaryQuery.data}
+          isLoading={summaryQuery.isLoading}
+          error={summaryQuery.error ? summaryQuery.error.message : null}
+          onRetry={() => summaryQuery.refetch()}
+          empty={{ text: "Hali davomat yozuvlari yo'q" }}
+        />
       </div>
 
       {/* Yozuvlar jadvali (sana oralig'i bilan) */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4">
-        <div className="flex flex-wrap items-center gap-3 mb-3">
-          <h2 className="font-semibold">Yozuvlar</h2>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="border border-slate-300 rounded-md px-2 py-1 text-sm"
-          />
-          <span className="text-slate-400">—</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="border border-slate-300 rounded-md px-2 py-1 text-sm"
+      <div>
+        <div className="mb-2 flex flex-wrap items-center gap-3">
+          <h3 className="font-semibold">Yozuvlar</h3>
+          <DateRangePicker
+            from={dateFrom}
+            to={dateTo}
+            onChange={(f, t) => {
+              setDateFrom(f);
+              setDateTo(t);
+            }}
           />
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-100">
-                <th className="py-2 pr-3">Sana</th>
-                <th className="py-2 pr-3">Xodim</th>
-                <th className="py-2 pr-3">Keldim</th>
-                <th className="py-2 pr-3">Ketdim</th>
-                <th className="py-2 pr-3">Kechikish</th>
-                <th className="py-2 pr-3">Ishlangan</th>
-                <th className="py-2">Holat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="border-b border-slate-50">
-                  <td className="py-2 pr-3">{r.date}</td>
-                  <td className="py-2 pr-3 font-medium">{r.user_full_name}</td>
-                  <td className="py-2 pr-3">{fmtTime(r.check_in_time)}</td>
-                  <td className="py-2 pr-3">{fmtTime(r.check_out_time)}</td>
-                  <td className={`py-2 pr-3 ${r.late_minutes > 0 ? "text-rose-600" : ""}`}>
-                    {r.late_minutes > 0 ? `${r.late_minutes} daq` : "—"}
-                  </td>
-                  <td className="py-2 pr-3">
-                    {r.worked_minutes > 0 ? `${Math.round((r.worked_minutes / 60) * 10) / 10} soat` : "—"}
-                  </td>
-                  <td className="py-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs ${STATUS_LABELS[r.status]?.cls ?? "bg-slate-100"}`}>
-                      {STATUS_LABELS[r.status]?.text ?? r.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="py-4 text-center text-slate-400">
-                    Tanlangan oraliqda yozuv yo'q
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={rowColumns}
+          data={listQuery.data}
+          isLoading={listQuery.isLoading}
+          error={listQuery.error ? listQuery.error.message : null}
+          onRetry={() => listQuery.refetch()}
+          searchPlaceholder="Xodim bo'yicha qidirish..."
+          empty={{ text: "Tanlangan oraliqda yozuv yo'q" }}
+        />
       </div>
     </div>
   );
