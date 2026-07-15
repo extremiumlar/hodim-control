@@ -1,88 +1,67 @@
-import { useEffect, useRef, useState } from "react";
-import { api, ExcusedDay } from "../lib/api";
+import { useState } from "react";
+import { format } from "date-fns";
+import { CalendarX } from "lucide-react";
+import { type ColumnDef } from "@tanstack/react-table";
+import DataTable from "@/components/DataTable";
+import PageHeader from "@/components/PageHeader";
+import StatusBadge from "@/components/StatusBadge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { type ExcusedDay } from "@/lib/api";
+import { useExcusedDays } from "@/lib/queries";
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: "🕓 Kutilmoqda",
-  approved: "✅ Tasdiqlangan",
-  rejected: "❌ Rad etilgan",
-};
+const columns: ColumnDef<ExcusedDay>[] = [
+  { accessorKey: "user_full_name", header: "Xodim" },
+  {
+    accessorKey: "date",
+    header: "Sana",
+    cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
+  },
+  { accessorKey: "reason", header: "Sabab", enableSorting: false },
+  {
+    accessorKey: "status",
+    header: "Holat",
+    cell: ({ row }) => <StatusBadge kind="request" status={row.original.status} />,
+  },
+];
 
 export default function ExcusedDays() {
-  const [items, setItems] = useState<ExcusedDay[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const latestRequestId = useRef(0);
-
-  const load = async () => {
-    const requestId = ++latestRequestId.current;
-    setLoading(true);
-    try {
-      const items = await api.listExcusedDays(statusFilter || undefined);
-      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
-      setItems(items);
-    } catch (e) {
-      if (requestId !== latestRequestId.current) return;
-      setError(e instanceof Error ? e.message : "Yuklashda xatolik");
-    } finally {
-      if (requestId === latestRequestId.current) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const query = useExcusedDays(statusFilter === "all" ? undefined : statusFilter);
 
   return (
-    <div className="bg-white rounded-lg shadow p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="font-semibold">Sababli kunlar</h2>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm"
-        >
-          <option value="">Barchasi</option>
-          <option value="pending">Kutilmoqda</option>
-          <option value="approved">Tasdiqlangan</option>
-          <option value="rejected">Rad etilgan</option>
-        </select>
-      </div>
+    <div>
+      <PageHeader
+        title="Sababli kunlar"
+        description="Qaror qabul qilish HR tomonidan Telegram bot orqali amalga oshiriladi. Bu sahifa faqat tarixni ko'rish uchun."
+      >
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Barchasi</SelectItem>
+            <SelectItem value="pending">Kutilmoqda</SelectItem>
+            <SelectItem value="approved">Tasdiqlangan</SelectItem>
+            <SelectItem value="rejected">Rad etilgan</SelectItem>
+          </SelectContent>
+        </Select>
+      </PageHeader>
 
-      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-      {loading ? (
-        <p className="text-sm text-slate-500">Yuklanmoqda...</p>
-      ) : items.length === 0 ? (
-        <p className="text-sm text-slate-500">Ma'lumot topilmadi.</p>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-500 border-b">
-              <th className="py-2">Xodim</th>
-              <th className="py-2">Sana</th>
-              <th className="py-2">Sabab</th>
-              <th className="py-2">Holat</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id} className="border-b last:border-0">
-                <td className="py-2">{item.user_full_name}</td>
-                <td className="py-2">{item.date}</td>
-                <td className="py-2">{item.reason}</td>
-                <td className="py-2">{STATUS_LABELS[item.status] ?? item.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <p className="text-xs text-slate-400 mt-4">
-        Qaror qabul qilish HR tomonidan Telegram bot orqali amalga oshiriladi. Bu sahifa faqat tarixni
-        ko'rish uchun.
-      </p>
+      <DataTable
+        columns={columns}
+        data={query.data}
+        isLoading={query.isLoading}
+        error={query.error ? query.error.message : null}
+        onRetry={() => query.refetch()}
+        searchPlaceholder="Xodim yoki sabab bo'yicha qidirish..."
+        empty={{ icon: CalendarX, text: "Sababli kun so'rovlari topilmadi." }}
+      />
     </div>
   );
 }
