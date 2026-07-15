@@ -84,6 +84,10 @@ export const useAttendanceDashboard = () =>
 export const useAttendanceEmployeeSummary = (days = 30) =>
   useQuery({ queryKey: qk.attendanceSummary(days), queryFn: () => api.attendanceEmployeeSummary(days) });
 
+// Faqat Dasturchi (backend ham tekshiradi) — sinov uchun davomat yozuvini o'chirish
+export const useDeleteAttendance = () =>
+  useApiMutation((attendanceId: number) => api.deleteAttendance(attendanceId), [["attendance"]]);
+
 export const useMyCheckIn = () =>
   useApiMutation(api.myCheckIn, [qk.attendanceToday, ["attendance"]]);
 

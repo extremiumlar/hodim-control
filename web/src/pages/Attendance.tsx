@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
 import {
   CalendarCheck,
@@ -7,10 +7,13 @@ import {
   Hourglass,
   LogIn,
   RefreshCw,
+  Trash2,
   UserX,
   Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
 import { DateRangePicker } from "@/components/PeriodPicker";
@@ -23,10 +26,12 @@ import {
   type Attendance as AttendanceRow,
   type EmployeeAttendanceSummary,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import {
   useAttendanceDashboard,
   useAttendanceEmployeeSummary,
   useAttendanceList,
+  useDeleteAttendance,
 } from "@/lib/queries";
 
 // Backend naive-UTC — "Z" qo'shib mahalliy vaqtga o'giramiz.
@@ -65,54 +70,86 @@ const summaryColumns: ColumnDef<EmployeeAttendanceSummary>[] = [
   },
 ];
 
-const rowColumns: ColumnDef<AttendanceRow>[] = [
-  {
-    accessorKey: "date",
-    header: "Sana",
-    cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
-  },
-  {
-    accessorKey: "user_full_name",
-    header: "Xodim",
-    cell: ({ row }) => <b>{row.original.user_full_name}</b>,
-  },
-  { accessorKey: "check_in_time", header: "Keldim", cell: ({ row }) => fmtTime(row.original.check_in_time) },
-  { accessorKey: "check_out_time", header: "Ketdim", cell: ({ row }) => fmtTime(row.original.check_out_time) },
-  {
-    accessorKey: "late_minutes",
-    header: "Kechikish",
-    cell: ({ row }) =>
-      row.original.late_minutes > 0 ? (
-        <span className="text-rose-600">{row.original.late_minutes} daq</span>
-      ) : (
-        "—"
-      ),
-  },
-  {
-    accessorKey: "worked_minutes",
-    header: "Ishlangan",
-    cell: ({ row }) =>
-      row.original.worked_minutes > 0
-        ? `${Math.round((row.original.worked_minutes / 60) * 10) / 10} soat`
-        : "—",
-  },
-  {
-    accessorKey: "status",
-    header: "Holat",
-    cell: ({ row }) => <StatusBadge kind="attendance" status={row.original.status} />,
-  },
-];
+function baseRowColumns(): ColumnDef<AttendanceRow>[] {
+  return [
+    {
+      accessorKey: "date",
+      header: "Sana",
+      cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
+    },
+    {
+      accessorKey: "user_full_name",
+      header: "Xodim",
+      cell: ({ row }) => <b>{row.original.user_full_name}</b>,
+    },
+    { accessorKey: "check_in_time", header: "Keldim", cell: ({ row }) => fmtTime(row.original.check_in_time) },
+    { accessorKey: "check_out_time", header: "Ketdim", cell: ({ row }) => fmtTime(row.original.check_out_time) },
+    {
+      accessorKey: "late_minutes",
+      header: "Kechikish",
+      cell: ({ row }) =>
+        row.original.late_minutes > 0 ? (
+          <span className="text-rose-600">{row.original.late_minutes} daq</span>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      accessorKey: "worked_minutes",
+      header: "Ishlangan",
+      cell: ({ row }) =>
+        row.original.worked_minutes > 0
+          ? `${Math.round((row.original.worked_minutes / 60) * 10) / 10} soat`
+          : "—",
+    },
+    {
+      accessorKey: "status",
+      header: "Holat",
+      cell: ({ row }) => <StatusBadge kind="attendance" status={row.original.status} />,
+    },
+  ];
+}
 
 export default function Attendance() {
+  const { user } = useAuth();
+  const isDasturchi = user?.role === "dasturchi";
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [deleting, setDeleting] = useState<AttendanceRow | null>(null);
 
   const dashQuery = useAttendanceDashboard();
   const listQuery = useAttendanceList({ date_from: dateFrom, date_to: dateTo });
   const summaryQuery = useAttendanceEmployeeSummary(30);
+  const deleteAttendance = useDeleteAttendance();
 
   const dash = dashQuery.data;
   const s = dash?.summary;
+
+  // Dasturchi uchun o'chirish ustuni — check-in/check-out oqimini qaytadan
+  // sinash uchun (masalan bugungi yozuvni tozalab, yana "Keldim" bosish).
+  // Boshliq/HR/ROP'da bu tugma yo'q; backend ham faqat dasturchini qabul qiladi.
+  const rowColumns = useMemo<ColumnDef<AttendanceRow>[]>(() => {
+    const cols = baseRowColumns();
+    if (!isDasturchi) return cols;
+    return [
+      ...cols,
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-rose-600 hover:text-rose-700"
+            onClick={() => setDeleting(row.original)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ),
+      },
+    ];
+  }, [isDasturchi]);
 
   return (
     <div className="space-y-6">
@@ -249,6 +286,31 @@ export default function Attendance() {
           empty={{ text: "Tanlangan oraliqda yozuv yo'q" }}
         />
       </div>
+
+      {isDasturchi && (
+        <ConfirmDialog
+          open={deleting !== null}
+          onOpenChange={(open) => !open && setDeleting(null)}
+          title={
+            deleting
+              ? `${deleting.user_full_name} — ${format(new Date(deleting.date), "dd.MM.yyyy")} yozuvini o'chirasizmi?`
+              : ""
+          }
+          description="Bu amalni qaytarib bo'lmaydi. Faqat sinov/tozalash uchun (dasturchi huquqi) — xodim shu kun uchun qaytadan Keldim/Ketdim qila oladi."
+          confirmLabel="O'chirish"
+          destructive
+          loading={deleteAttendance.isPending}
+          onConfirm={() => {
+            if (!deleting) return;
+            deleteAttendance.mutate(deleting.id, {
+              onSuccess: () => {
+                toast.success("Davomat yozuvi o'chirildi.");
+                setDeleting(null);
+              },
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

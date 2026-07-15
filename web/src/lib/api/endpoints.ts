@@ -45,6 +45,8 @@ export const api = {
   },
   attendanceEmployeeSummary: (days = 30) =>
     apiFetch<EmployeeAttendanceSummary[]>(`/attendance/employee-summary?days=${days}`),
+  deleteAttendance: (attendanceId: number) =>
+    apiFetch<{ deleted: boolean }>(`/attendance/${attendanceId}`, { method: "DELETE" }),
   listOffices: () => apiFetch<Office[]>("/attendance/offices"),
   createOffice: (data: { name: string; latitude: number; longitude: number; radius_meters: number; is_active: boolean }) =>
     apiFetch<Office>("/attendance/offices", { method: "POST", body: JSON.stringify(data) }),

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db
+from api.deps import get_current_user, get_db, require_roles
 from api.schemas import (
     AttendanceOut,
     EmployeeAttendanceSummary,
@@ -25,6 +25,7 @@ from api.timeutil import today_local
 from db.models import (
     Attendance,
     AttendanceStatus,
+    AuditLog,
     OfficeLocation,
     Role,
     User,
@@ -350,3 +351,42 @@ async def employee_summary(
         )
         for r in rows.all()
     ]
+
+
+# ─────────────────────────────────────────────
+# Dasturchi — davomat yozuvini o'chirish (sinov/tozalash uchun)
+# ─────────────────────────────────────────────
+
+
+@router.delete("/{attendance_id}")
+async def delete_attendance(
+    attendance_id: int,
+    actor: User = Depends(require_roles(Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bitta davomat yozuvini butunlay o'chiradi — faqat Dasturchi. Xodimning
+    "Keldim/Ketdim" holatini tozalab, check-in oqimini qaytadan sinash uchun
+    (masalan bugungi yozuvni o'chirib, yana Keldim bosish). Boshliq/HR/ROP'da bu
+    huquq YO'Q — davomat tarixi ular uchun o'zgarmas hisoblanadi, faqat Dasturchi
+    texnik sinov uchun o'chira oladi. Audit jurnalida saqlanadi."""
+    att = await db.get(Attendance, attendance_id)
+    if att is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Davomat yozuvi topilmadi")
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="attendance_deleted",
+            target_user_id=att.user_id,
+            before={
+                "date": att.date.isoformat(),
+                "check_in_time": att.check_in_time.isoformat() if att.check_in_time else None,
+                "check_out_time": att.check_out_time.isoformat() if att.check_out_time else None,
+                "status": att.status,
+            },
+            after=None,
+        )
+    )
+    await db.delete(att)
+    await db.commit()
+    return {"deleted": True}
