@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import basicSsl from "@vitejs/plugin-basic-ssl";
@@ -76,6 +77,11 @@ export default defineConfig({
   // da brauzer ikkalasini bloklaydi). Telefonda birinchi ochishda sertifikat
   // ogohlantirishini "Advanced → Proceed" bilan bir marta qabul qilish kerak.
   plugins: [react(), verifixRedirect(), basicSsl(), httpToHttpsRedirect()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   server: {
     port: 5173,
     // 0.0.0.0 — boshqa qurilmalar (telefon, hotspot) ham kira olishi uchun.
