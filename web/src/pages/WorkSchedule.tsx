@@ -1,6 +1,28 @@
 import { useEffect, useState } from "react";
-import { api, User, WorkDayEntry, WorkOverride } from "../lib/api";
-import { toLocalDateString } from "../lib/date";
+import { format } from "date-fns";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import PageHeader from "@/components/PageHeader";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { type WorkDayEntry } from "@/lib/api";
+import {
+  useDeleteScheduleOverride,
+  useScheduleOverrides,
+  useSetScheduleOverride,
+  useSetWeeklySchedule,
+  useUsers,
+  useWeeklySchedule,
+} from "@/lib/queries";
 
 const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
 
@@ -14,208 +36,248 @@ function emptyWeek(): WorkDayEntry[] {
 }
 
 export default function WorkSchedule() {
-  const [users, setUsers] = useState<User[]>([]);
+  const usersQuery = useUsers();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [week, setWeek] = useState<WorkDayEntry[]>(emptyWeek());
-  const [overrides, setOverrides] = useState<WorkOverride[]>([]);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [saving, setSaving] = useState(false);
 
   // Yangi override formasi
-  const [ovDate, setOvDate] = useState(toLocalDateString(new Date()));
+  const [ovDate, setOvDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [ovWorking, setOvWorking] = useState(false);
   const [ovStart, setOvStart] = useState("09:00");
   const [ovEnd, setOvEnd] = useState("18:00");
   const [ovNote, setOvNote] = useState("");
 
   useEffect(() => {
-    api.listUsers().then((list) => {
-      setUsers(list);
-      if (list.length && selectedId == null) setSelectedId(list[0].id);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (usersQuery.data?.length && selectedId == null) {
+      setSelectedId(usersQuery.data[0].id);
+    }
+  }, [usersQuery.data, selectedId]);
+
+  const weeklyQuery = useWeeklySchedule(selectedId ?? 0, selectedId != null);
+  const overridesQuery = useScheduleOverrides(selectedId ?? 0, undefined, undefined, selectedId != null);
+  const saveWeekly = useSetWeeklySchedule();
+  const saveOverride = useSetScheduleOverride();
+  const deleteOverride = useDeleteScheduleOverride();
 
   useEffect(() => {
-    if (selectedId == null) return;
-    setMsg(null);
-    api.getWeeklySchedule(selectedId).then((w) => setWeek(w.days.sort((a, b) => a.weekday - b.weekday)));
-    api.listScheduleOverrides(selectedId).then(setOverrides);
-  }, [selectedId]);
+    if (weeklyQuery.data) {
+      setWeek([...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday));
+    }
+  }, [weeklyQuery.data]);
 
   function updateDay(wd: number, patch: Partial<WorkDayEntry>) {
     setWeek((prev) => prev.map((d) => (d.weekday === wd ? { ...d, ...patch } : d)));
   }
 
-  async function saveWeekly() {
+  function onSaveWeekly() {
     if (selectedId == null) return;
     for (const d of week) {
       if (d.is_working && (!d.start_time || !d.end_time)) {
-        setMsg({ kind: "err", text: `${WEEKDAYS[d.weekday]}: ish kuni uchun vaqt kerak` });
+        toast.error(`${WEEKDAYS[d.weekday]}: ish kuni uchun vaqt kerak`);
         return;
       }
       if (d.is_working && d.start_time! >= d.end_time!) {
-        setMsg({ kind: "err", text: `${WEEKDAYS[d.weekday]}: tugash vaqti kechroq bo'lishi kerak` });
+        toast.error(`${WEEKDAYS[d.weekday]}: tugash vaqti kechroq bo'lishi kerak`);
         return;
       }
     }
-    setSaving(true);
-    try {
-      await api.setWeeklySchedule(selectedId, week);
-      setMsg({ kind: "ok", text: "Haftalik jadval saqlandi" });
-    } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Xatolik" });
-    } finally {
-      setSaving(false);
-    }
+    saveWeekly.mutate(
+      { userId: selectedId, days: week },
+      { onSuccess: () => toast.success("Haftalik jadval saqlandi") }
+    );
   }
 
-  async function addOverride() {
+  function onAddOverride() {
     if (selectedId == null) return;
-    try {
-      await api.setScheduleOverride(selectedId, {
-        date: ovDate,
-        is_working: ovWorking,
-        start_time: ovWorking ? ovStart : null,
-        end_time: ovWorking ? ovEnd : null,
-        note: ovNote || null,
-      });
-      setOverrides(await api.listScheduleOverrides(selectedId));
-      setOvNote("");
-      setMsg({ kind: "ok", text: "O'zgartirish saqlandi" });
-    } catch (e) {
-      setMsg({ kind: "err", text: e instanceof Error ? e.message : "Xatolik" });
-    }
-  }
-
-  async function removeOverride(day: string) {
-    if (selectedId == null) return;
-    await api.deleteScheduleOverride(selectedId, day);
-    setOverrides(await api.listScheduleOverrides(selectedId));
+    saveOverride.mutate(
+      {
+        userId: selectedId,
+        data: {
+          date: ovDate,
+          is_working: ovWorking,
+          start_time: ovWorking ? ovStart : null,
+          end_time: ovWorking ? ovEnd : null,
+          note: ovNote || null,
+        },
+      },
+      {
+        onSuccess: () => {
+          setOvNote("");
+          toast.success("O'zgartirish saqlandi");
+        },
+      }
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-lg font-semibold">🗓 Ish jadvali</h2>
-        <select
-          value={selectedId ?? ""}
-          onChange={(e) => setSelectedId(Number(e.target.value))}
-          className="border rounded px-3 py-1.5 text-sm min-w-[220px]"
+      <PageHeader title="Ish jadvali">
+        <Select
+          value={selectedId != null ? String(selectedId) : ""}
+          onValueChange={(v) => setSelectedId(Number(v))}
         >
-          {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.full_name} ({u.role})
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {msg && (
-        <div className={`text-sm rounded px-3 py-2 ${msg.kind === "ok" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-          {msg.text}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Haftalik andoza */}
-        <div className="bg-white rounded-lg shadow p-5">
-          <h3 className="font-medium mb-3">Haftalik andoza (har hafta takrorlanadi)</h3>
-          <div className="space-y-2">
-            {week.map((d) => (
-              <div key={d.weekday} className="flex items-center gap-2 text-sm">
-                <label className="w-28 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={d.is_working}
-                    onChange={(e) => updateDay(d.weekday, { is_working: e.target.checked })}
-                  />
-                  {WEEKDAYS[d.weekday]}
-                </label>
-                {d.is_working ? (
-                  <>
-                    <input
-                      type="time"
-                      value={d.start_time ?? ""}
-                      onChange={(e) => updateDay(d.weekday, { start_time: e.target.value })}
-                      className="border rounded px-2 py-1"
-                    />
-                    <span>—</span>
-                    <input
-                      type="time"
-                      value={d.end_time ?? ""}
-                      onChange={(e) => updateDay(d.weekday, { end_time: e.target.value })}
-                      className="border rounded px-2 py-1"
-                    />
-                  </>
-                ) : (
-                  <span className="text-slate-400">dam olish</span>
-                )}
-              </div>
+          <SelectTrigger className="min-w-[220px]">
+            <SelectValue placeholder="Xodim tanlang" />
+          </SelectTrigger>
+          <SelectContent>
+            {usersQuery.data?.map((u) => (
+              <SelectItem key={u.id} value={String(u.id)}>
+                {u.full_name} ({u.role})
+              </SelectItem>
             ))}
-          </div>
-          <button
-            onClick={saveWeekly}
-            disabled={saving}
-            className="mt-4 bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {saving ? "Saqlanmoqda..." : "Haftalik jadvalni saqlash"}
-          </button>
-        </div>
+          </SelectContent>
+        </Select>
+      </PageHeader>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Haftalik andoza */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Haftalik andoza (har hafta takrorlanadi)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {weeklyQuery.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 7 }).map((_, i) => (
+                  <Skeleton key={i} className="h-9 w-full" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {week.map((d) => (
+                  <div key={d.weekday} className="flex items-center gap-2 text-sm">
+                    <label className="flex w-28 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={d.is_working}
+                        onChange={(e) => updateDay(d.weekday, { is_working: e.target.checked })}
+                      />
+                      {WEEKDAYS[d.weekday]}
+                    </label>
+                    {d.is_working ? (
+                      <>
+                        <Input
+                          type="time"
+                          value={d.start_time ?? ""}
+                          onChange={(e) => updateDay(d.weekday, { start_time: e.target.value })}
+                          className="h-8 w-auto"
+                        />
+                        <span>—</span>
+                        <Input
+                          type="time"
+                          value={d.end_time ?? ""}
+                          onChange={(e) => updateDay(d.weekday, { end_time: e.target.value })}
+                          className="h-8 w-auto"
+                        />
+                      </>
+                    ) : (
+                      <span className="text-slate-400">dam olish</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button className="mt-4" onClick={onSaveWeekly} disabled={saveWeekly.isPending}>
+              {saveWeekly.isPending ? "Saqlanmoqda..." : "Haftalik jadvalni saqlash"}
+            </Button>
+          </CardContent>
+        </Card>
 
         {/* Aniq sana o'zgartirishlari */}
-        <div className="bg-white rounded-lg shadow p-5">
-          <h3 className="font-medium mb-3">Aniq sana o'zgartirishi (bayram, almashtirilgan smena)</h3>
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2 flex-wrap">
-              <input type="date" value={ovDate} onChange={(e) => setOvDate(e.target.value)} className="border rounded px-2 py-1" />
-              <label className="flex items-center gap-1">
-                <input type="checkbox" checked={ovWorking} onChange={(e) => setOvWorking(e.target.checked)} />
-                Ish kuni
-              </label>
-              {ovWorking && (
-                <>
-                  <input type="time" value={ovStart} onChange={(e) => setOvStart(e.target.value)} className="border rounded px-2 py-1" />
-                  <span>—</span>
-                  <input type="time" value={ovEnd} onChange={(e) => setOvEnd(e.target.value)} className="border rounded px-2 py-1" />
-                </>
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">
+              Aniq sana o'zgartirishi (bayram, almashtirilgan smena)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date"
+                  value={ovDate}
+                  onChange={(e) => setOvDate(e.target.value)}
+                  className="h-8 w-auto"
+                />
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={ovWorking}
+                    onChange={(e) => setOvWorking(e.target.checked)}
+                  />
+                  Ish kuni
+                </label>
+                {ovWorking && (
+                  <>
+                    <Input
+                      type="time"
+                      value={ovStart}
+                      onChange={(e) => setOvStart(e.target.value)}
+                      className="h-8 w-auto"
+                    />
+                    <span>—</span>
+                    <Input
+                      type="time"
+                      value={ovEnd}
+                      onChange={(e) => setOvEnd(e.target.value)}
+                      className="h-8 w-auto"
+                    />
+                  </>
+                )}
+              </div>
+              <Input
+                type="text"
+                placeholder="Izoh (masalan: Bayram)"
+                value={ovNote}
+                onChange={(e) => setOvNote(e.target.value)}
+              />
+              <Button variant="secondary" onClick={onAddOverride} disabled={saveOverride.isPending}>
+                {saveOverride.isPending ? "Saqlanmoqda..." : "O'zgartirishni qo'shish"}
+              </Button>
+            </div>
+
+            <div className="mt-4 space-y-1">
+              {overridesQuery.isLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : overridesQuery.data?.length === 0 ? (
+                <p className="text-sm text-slate-400">O'zgartirishlar yo'q.</p>
+              ) : (
+                overridesQuery.data?.map((o) => (
+                  <div
+                    key={o.id}
+                    className="flex items-center justify-between border-b border-slate-100 py-1 text-sm"
+                  >
+                    <span>
+                      {format(new Date(o.date), "dd.MM.yyyy")} —{" "}
+                      {o.is_working ? (
+                        <b>
+                          {o.start_time}–{o.end_time}
+                        </b>
+                      ) : (
+                        <span className="text-amber-600">dam olish</span>
+                      )}
+                      {o.note ? ` (${o.note})` : ""}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-rose-600 hover:text-rose-700"
+                      onClick={() =>
+                        selectedId != null &&
+                        deleteOverride.mutate(
+                          { userId: selectedId, day: o.date },
+                          { onSuccess: () => toast.success("O'zgartirish o'chirildi") }
+                        )
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))
               )}
             </div>
-            <input
-              type="text"
-              placeholder="Izoh (masalan: Bayram)"
-              value={ovNote}
-              onChange={(e) => setOvNote(e.target.value)}
-              className="border rounded px-2 py-1 w-full"
-            />
-            <button onClick={addOverride} className="bg-slate-700 text-white rounded px-4 py-1.5 text-sm hover:bg-slate-800">
-              O'zgartirishni qo'shish
-            </button>
-          </div>
-
-          <div className="mt-4 space-y-1">
-            {overrides.length === 0 ? (
-              <p className="text-sm text-slate-400">O'zgartirishlar yo'q.</p>
-            ) : (
-              overrides.map((o) => (
-                <div key={o.id} className="flex items-center justify-between text-sm border-b border-slate-100 py-1">
-                  <span>
-                    {o.date} —{" "}
-                    {o.is_working ? (
-                      <b>{o.start_time}–{o.end_time}</b>
-                    ) : (
-                      <span className="text-amber-600">dam olish</span>
-                    )}
-                    {o.note ? ` (${o.note})` : ""}
-                  </span>
-                  <button onClick={() => removeOverride(o.date)} className="text-red-600 hover:underline">
-                    o'chirish
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
