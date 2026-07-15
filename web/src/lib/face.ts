@@ -22,13 +22,23 @@ export const MIN_REGISTER_FRAMES = 3;
 
 let loadingPromise: Promise<void> | null = null;
 
-export async function loadModels(): Promise<void> {
+/** Yuklangan model soni (0..3) — UI progress ko'rsatkichi uchun. */
+export function loadModels(onProgress?: (loaded: number, total: number) => void): Promise<void> {
   if (loadingPromise) return loadingPromise;
-  loadingPromise = Promise.all([
-    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-  ])
+  const nets = [
+    faceapi.nets.tinyFaceDetector,
+    faceapi.nets.faceLandmark68Net,
+    faceapi.nets.faceRecognitionNet,
+  ];
+  let loaded = 0;
+  loadingPromise = Promise.all(
+    nets.map((n) =>
+      n.loadFromUri(MODEL_URL).then(() => {
+        loaded++;
+        onProgress?.(loaded, nets.length);
+      })
+    )
+  )
     .then(() => {
       console.log("[face] Modellar yuklandi");
       return undefined;

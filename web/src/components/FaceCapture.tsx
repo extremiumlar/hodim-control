@@ -33,6 +33,10 @@ export default function FaceCapture({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [modelsReady, setModelsReady] = useState(false);
+  const [modelProgress, setModelProgress] = useState<{ loaded: number; total: number }>({
+    loaded: 0,
+    total: 3,
+  });
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
@@ -79,7 +83,7 @@ export default function FaceCapture({
   }, [stream]);
 
   useEffect(() => {
-    loadModels()
+    loadModels((loaded, total) => setModelProgress({ loaded, total }))
       .then(() => setModelsReady(true))
       .catch((e) => setError("Modellarni yuklab bo'lmadi: " + (e?.message || e)));
   }, []);
@@ -162,9 +166,10 @@ export default function FaceCapture({
       ? `⚠️ Yuz juda kichik (${live.size.toFixed(0)}px) — yaqinroq turing`
       : `✅ Yuz aniq (${live.size.toFixed(0)}px, ${(live.score * 100).toFixed(0)}%)`;
 
+  // Telefonda ishlatiladi — tugmalar kamida 48px balandlikda
   const btnPrimary =
-    "px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed";
-  const btnGhost = "px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50";
+    "px-4 py-3 min-h-[48px] rounded-md bg-indigo-600 text-white text-base font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed";
+  const btnGhost = "px-4 py-3 min-h-[48px] rounded-md border border-slate-300 text-base hover:bg-slate-50";
 
   return (
     <div className="space-y-3">
@@ -172,9 +177,18 @@ export default function FaceCapture({
         <video ref={videoRef} playsInline muted autoPlay className="w-full h-full object-cover transform scale-x-[-1]" />
         {!modelsReady && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-white text-sm">
-            <div className="text-center">
+            <div className="w-full max-w-[220px] text-center">
               <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              Model yuklanmoqda... (birinchi marta ~10 soniya)
+              <div>
+                Model yuklanmoqda... {modelProgress.loaded}/{modelProgress.total}
+              </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                <div
+                  className="h-full rounded-full bg-white transition-all"
+                  style={{ width: `${(modelProgress.loaded / modelProgress.total) * 100}%` }}
+                />
+              </div>
+              <div className="mt-1 text-xs text-white/60">(birinchi marta ~10 soniya)</div>
             </div>
           </div>
         )}
