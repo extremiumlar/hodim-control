@@ -160,27 +160,6 @@ class TelegramStartRequest(BaseModel):
     invite_token: str | None = None
 
 
-class DeeplinkStartOut(BaseModel):
-    """Saytga bot orqali kirish uchun bir martalik kod + Telegram deep-link."""
-
-    code: str
-    bot_url: str
-    expires_in_seconds: int
-
-
-class DeeplinkClaimRequest(BaseModel):
-    """Bot /start login_<code> bosilganda API'ga yuboradi."""
-
-    code: str
-    telegram_id: int
-
-
-class DeeplinkPollOut(BaseModel):
-    status: str  # pending | ready | expired | used
-    access_token: str | None = None
-    user: UserOut | None = None
-
-
 class TelegramStartResponse(BaseModel):
     status: str  # ok | invalid_token | already_linked | no_account
     user: UserOut | None = None

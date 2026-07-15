@@ -143,17 +143,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  startTelegramDeeplink: () =>
-    apiFetch<{ code: string; bot_url: string; expires_in_seconds: number }>(
-      "/auth/telegram-deeplink/start",
-      { method: "POST" }
-    ),
-  pollTelegramDeeplink: (code: string) =>
-    apiFetch<{
-      status: "pending" | "ready" | "expired" | "used" | "invalid_user";
-      access_token?: string;
-      user?: User;
-    }>(`/auth/telegram-deeplink/poll/${code}`),
   listDailyResults: (userId: number) => apiFetch<DailyResult[]>(`/daily-results?user_id=${userId}`),
   createManualDailyResult: (data: {
     user_id: number;

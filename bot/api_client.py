@@ -33,17 +33,6 @@ async def telegram_start(telegram_id: int, invite_token: str | None) -> dict:
     return resp.json()
 
 
-async def claim_deeplink_login(code: str, telegram_id: int) -> dict:
-    """Saytga bot orqali kirish: /start login_<code> bosilganda kodni shu odamning
-    telegram_id'siga bog'laydi (JWT bermaydi — sayt /poll orqali o'zi oladi)."""
-    resp = await _get_client().post(
-        "/auth/telegram-deeplink/claim",
-        json={"code": code, "telegram_id": telegram_id},
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
 async def get_user_by_telegram(telegram_id: int) -> dict | None:
     resp = await _get_client().get(f"/users/by-telegram/{telegram_id}")
     if resp.status_code == 404:

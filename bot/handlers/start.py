@@ -19,23 +19,6 @@ ROLE_NAMES = {
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject) -> None:
     invite_token = command.args or None
-
-    # Saytga bot orqali kirish (Telegram Login Widget o'rniga): /start login_<code>
-    # — bu ONBOARDING invite_token emas, sayt sessiyasini shu odamga bog'lash.
-    if invite_token and invite_token.startswith("login_"):
-        code = invite_token.removeprefix("login_")
-        result = await api_client.claim_deeplink_login(code, message.from_user.id)
-        if result.get("status") == "ok":
-            await message.answer(
-                "✅ Tasdiqlandi! Saytga qaytib, avtomatik kirishni kuting."
-            )
-        else:
-            await message.answer(
-                "⚠️ Kirish havolasi eskirgan yoki noto'g'ri. Saytda sahifani "
-                "yangilab qayta urinib ko'ring."
-            )
-        return
-
     result = await api_client.telegram_start(message.from_user.id, invite_token)
 
     if result["status"] == "invalid_token":
