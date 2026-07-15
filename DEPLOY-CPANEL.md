@@ -1,31 +1,35 @@
 # cPanel'ga o'rnatish (shared hosting)
 
-Bu qo'llanma **oddiy cPanel shared hosting** uchun (ahost va shu kabi). Docker yo'q,
-shuning uchun tuzilma boshqacha:
+Bu qo'llanma **oddiy cPanel shared hosting** uchun (ahost va shu kabi). Docker yo'q.
+Bitta Python App (Passenger + FastAPI) **ham API'ni, ham React saytni** xizmat
+qiladi — asosiy domenda, subdomensiz:
 
 ```
-misol.uz            → sayt (React, public_html, statik fayllar)
-api.misol.uz        → API + bot webhook (Python App / Passenger, FastAPI)
-cron (har daqiqa)   → scheduler o'rniga scripts/cron_tick.py
-SQLite (app.db)     → baza (8 xodim uchun yetarli)
+misol.uz/            → React sayt (FastAPI webdist/ dan)
+misol.uz/api/*       → API + bot webhook (FastAPI)
+cron (har daqiqa)    → scheduler o'rniga scripts/cron_tick.py
+SQLite (app.db)      → baza (8 xodim uchun yetarli)
 ```
+
+passenger_wsgi.py rejimni o'zi aniqlaydi: ilova ildizida `webdist/` (React build)
+bo'lsa — asosiy domen rejimi (yuqoridagi); bo'lmasa — faqat API (subdomen rejimi).
 
 > Docker/VPS uchun `DEPLOY.md`dan foydalaning — bu boshqa yo'l.
 
-Quyida `misol.uz` — sizning domeningiz, `cpuser` — cPanel foydalanuvchi nomingiz.
+Quyida `misol.uz` — sizning domeningiz, `nuriddi5` — cPanel foydalanuvchi nomingiz.
 Ularni o'zingiznikiga almashtiring. cPanel'da 3 oyna kerak: **Setup Python App**,
 **Terminal**, **File Manager**.
 
 ---
 
-## 1. Subdomen yaratish (API uchun)
+## 1. SSL tekshirish
 
-cPanel → **Domains** (yoki **Subdomains**) → yangi subdomen:
-- Subdomain: `api` → `api.misol.uz`
-- Document Root: avtomatik (`public_html/api` bo'lishi mumkin — muhim emas, Passenger o'zi boshqaradi)
+cPanel → **SSL/TLS Status** yoki **AutoSSL** → `misol.uz` uchun sertifikat faol
+ekanini tekshiring (kamera/GPS check-in va Telegram webhook HTTPS talab qiladi).
 
-cPanel → **SSL/TLS Status** yoki **AutoSSL** → `api.misol.uz` va `misol.uz` uchun
-sertifikat faol ekanini tekshiring (Telegram webhook HTTPS talab qiladi).
+> Subdomen (`api.misol.uz`) da alohida ishlatmoqchi bo'lsangiz ham mumkin — u holda
+> `webdist/` yuklamaysiz (React'ni asosiy domenda alohida qo'yasiz) va
+> API_BASE_URL'dan `/api` qismini olib tashlaysiz. Quyida asosiy domen yo'li.
 
 ---
 
@@ -50,7 +54,7 @@ mkdir -p logs
 | `BOT_SHARED_SECRET` | boshqa tasodifiy qiymat (webhook manzilida ishlatiladi) |
 | `BOT_TOKEN` | BotFather tokeni |
 | `BOT_WEBHOOK_ENABLED` | `true` |
-| `API_BASE_URL` | `https://api.misol.uz` |
+| `API_BASE_URL` | `https://misol.uz/api`  (asosiy domen rejimida `/api` bilan!) |
 | `FRONTEND_URL` | `https://misol.uz` |
 | `TELEGRAM_LOGIN_BOT_USERNAME` | bot username (masalan `NB_nazoratchibot`) |
 | `TELEGRAM_GROUP_CHAT_ID` | asosiy guruh chat ID |
@@ -62,8 +66,8 @@ mkdir -p logs
 
 cPanel → **Setup Python App** → **Create Application**:
 - **Python version**: 3.11 (yoki mavjud eng yangi 3.10+)
-- **Application root**: `hodimlar` (2-bosqichda clone qilingan papka)
-- **Application URL**: `api.misol.uz`
+- **Application root**: `hodimlar-tizimi` (2-bosqichda clone qilingan papka)
+- **Application URL**: `misol.uz` (asosiy domen)
 - **Application startup file**: `passenger_wsgi.py`
 - **Application Entry point**: `application`
 
@@ -103,32 +107,24 @@ Tekshiring: `https://api.misol.uz/health` → `{"status":"ok"}`.
 
 ## 4. Saytni (frontend) joylash
 
-Bu qismni **o'z kompyuteringizda** qilasiz (bu yerda Node bor):
+Asosiy domen rejimida sayt FastAPI orqali ilova ildizidagi `webdist/` papkasidan
+xizmat qilinadi (SPA yo'nalishi passenger_wsgi.py ichida hal qilingan — `.htaccess`
+kerak emas).
+
+Build'ni **o'z kompyuteringizda** qilasiz (bu yerda Node bor):
 
 ```bash
 cd web
-# API subdomeniga yo'naltiramiz (bu fayl gitignore'da, faqat sizda):
-echo "VITE_API_BASE_URL=https://api.misol.uz" > .env.production.local
+# Sayt API'ni bir xil domenning /api yo'lidan chaqiradi (bu fayl gitignore'da):
+echo "VITE_API_BASE_URL=/api" > .env.production.local
 echo "VITE_DEBUG=false" >> .env.production.local
 echo "VITE_TELEGRAM_LOGIN_BOT_USERNAME=NB_nazoratchibot" >> .env.production.local
 npm run build
 ```
 
-`web/dist/` ichidagi HAMMA narsani cPanel **File Manager** orqali `public_html`ga
-yuklang (yoki Terminal'da `scp`/`rsync`). So'ng SPA yo'nalishi uchun `public_html`ga
-`.htaccess` yarating:
-
-```apache
-# public_html/.htaccess — React Router uchun: hamma yo'l index.html'ga
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteBase /
-  RewriteRule ^index\.html$ - [L]
-  RewriteCond %{REQUEST_FILENAME} !-f
-  RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule . /index.html [L]
-</IfModule>
-```
+`web/dist/` ichidagi HAMMA narsani serverda ilova ildizidagi **`webdist/`** papkasiga
+yuklang (File Manager yoki `scp`). Ya'ni `~/hodimlar-tizimi/webdist/index.html`,
+`~/hodimlar-tizimi/webdist/assets/...` bo'lishi kerak. So'ng App'ni **Restart** qiling.
 
 ---
 
@@ -143,8 +139,8 @@ python scripts/set_webhook.py
 python scripts/set_webhook.py --info    # holatni tekshirish
 ```
 
-Bu Telegram'ga `https://api.misol.uz/bot/webhook/<BOT_SHARED_SECRET>` manzilini
-beradi — endi bot xabarlari shu API ichida ishlanadi (alohida jarayon shart emas).
+Bu Telegram'ga `https://misol.uz/api/bot/webhook/<BOT_SHARED_SECRET>` manzilini
+beradi (API_BASE_URL + /bot/webhook) — bot xabarlari shu API ichida ishlanadi.
 
 BotFather → `/setdomain` → botga `misol.uz` domenini bog'lang (sayt Login Widget uchun).
 
@@ -167,7 +163,7 @@ ishlarni (CRM sync, eslatma, digest, bonus va h.k.) o'zi hal qiladi.
 
 ## 7. Tekshirish ro'yxati
 
-- `https://api.misol.uz/health` → `{"status":"ok"}`
+- `https://misol.uz/api/health` → `{"status":"ok"}`
 - `https://misol.uz` ochiladi, Telegram Login ko'rinadi (dev-login YO'Q)
 - Boshliq bilan kirib `/users`da xodim yaratish ishlaydi
 - **Telefonda** `https://misol.uz/check-in` — kamera va GPS so'raladi (HTTPS shart!)
