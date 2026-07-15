@@ -1,12 +1,18 @@
 """Oylik hisobida tasdiqlangan ta'til kunlari sinovi."""
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from django.test import TestCase
+from django.utils import timezone
 
-from accounts.models import User
+from accounts.models import Shift, User
+from attendance.models import Attendance
 from leave.models import LeaveRequest
 from .services import compute_payroll
+
+
+def _aware(d: date, t: time) -> datetime:
+    return timezone.make_aware(datetime.combine(d, t), timezone.get_current_timezone())
 
 
 class LeavePayrollTests(TestCase):
@@ -61,3 +67,55 @@ class LeavePayrollTests(TestCase):
         )
         payroll = compute_payroll(self.user, self.PERIOD)
         self.assertEqual(payroll.absent_days, base_absent)
+
+
+class AttendancePayrollTests(TestCase):
+    """Davomat yozuvlari asosidagi oylik komponentlari."""
+
+    PERIOD = "2026-06"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="t_pay", password="x", base_salary=Decimal("2200000"),
+        )
+
+    def _present(self, d: date):
+        Attendance.objects.create(
+            user=self.user, date=d,
+            check_in_time=_aware(d, time(9, 0)),
+            check_out_time=_aware(d, time(18, 0)),
+        )
+
+    def test_present_day_reduces_absent(self):
+        base_absent = compute_payroll(self.user, self.PERIOD).absent_days
+        self._present(date(2026, 6, 10))  # chorshanba
+        payroll = compute_payroll(self.user, self.PERIOD)
+        self.assertEqual(payroll.absent_days, base_absent - 1)
+
+    def test_weekend_work_adds_extra(self):
+        total_before = compute_payroll(self.user, self.PERIOD).total
+        self._present(date(2026, 6, 14))  # yakshanba — dam olish kuni
+        payroll = compute_payroll(self.user, self.PERIOD)
+        self.assertEqual(payroll.weekend_days, 1)
+        self.assertGreater(payroll.total, total_before)
+        # weekend_extra = kunlik_stavka * 150%
+        per_day = payroll.base_salary / payroll.work_days_total
+        self.assertAlmostEqual(
+            float(payroll.weekend_extra), float(per_day * Decimal("1.5")), places=0
+        )
+
+    def test_late_minutes_penalized(self):
+        self.user.late_penalty_per_minute = Decimal("1000")
+        self.user.shift = Shift.objects.create(
+            name="Grace'siz", start_time=time(9, 0), end_time=time(18, 0), grace_minutes=0,
+        )
+        self.user.save()
+        d = date(2026, 6, 10)
+        Attendance.objects.create(
+            user=self.user, date=d,
+            check_in_time=_aware(d, time(9, 10)),  # 10 daq kechikish
+            check_out_time=_aware(d, time(18, 0)),
+        )
+        payroll = compute_payroll(self.user, self.PERIOD)
+        self.assertEqual(payroll.late_minutes, 10)
+        self.assertEqual(payroll.late_penalty_total, Decimal("10000.00"))

@@ -7,6 +7,9 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     type_display = serializers.CharField(source="get_type_display", read_only=True)
 
+    def get_user_name(self, obj) -> str:
+        return obj.user.get_full_name() or obj.user.username
+
     class Meta:
         model = LeaveRequest
         fields = [

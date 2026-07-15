@@ -8,7 +8,7 @@ from django.utils import timezone
 from accounts.models import Shift, User
 from leave.models import LeaveRequest
 from .models import Attendance
-from .services import CheckInError, CheckInPayload, perform_check_in
+from .services import CheckInError, CheckInPayload, perform_check_in, perform_check_out
 from .utils import compute_early_minutes, compute_late_minutes, compute_worked_minutes
 
 
@@ -53,6 +53,23 @@ class WorkedMinutesTests(TestCase):
             _local_dt(2026, 6, 10, 9, 0), _local_dt(2026, 6, 10, 18, 0)
         )
         self.assertEqual(got, 540)
+
+    def test_check_in_inside_break(self):
+        # 13:30 da kelib 18:00 da ketish -> tanaffusning 30 daqiqasi ayiriladi = 240
+        got = compute_worked_minutes(
+            _local_dt(2026, 6, 10, 13, 30), _local_dt(2026, 6, 10, 18, 0), self.shift
+        )
+        self.assertEqual(got, 240)
+
+    def test_span_fully_inside_break(self):
+        got = compute_worked_minutes(
+            _local_dt(2026, 6, 10, 13, 10), _local_dt(2026, 6, 10, 13, 50), self.shift
+        )
+        self.assertEqual(got, 0)
+
+    def test_missing_times_zero(self):
+        self.assertEqual(compute_worked_minutes(None, _local_dt(2026, 6, 10, 18, 0), self.shift), 0)
+        self.assertEqual(compute_worked_minutes(_local_dt(2026, 6, 10, 9, 0), None, self.shift), 0)
 
     def test_recalculate_uses_shift_break(self):
         user = User.objects.create_user(username="t_break", password="x", shift=self.shift)
@@ -150,6 +167,55 @@ class AutoCheckoutTests(TestCase):
         call_command("auto_checkout", date=str(self.day))
         att.refresh_from_db()
         self.assertEqual(att.check_out_time, original_out)
+
+    def test_night_shift_closed_next_day(self):
+        night = Shift.objects.create(
+            name="Tungi", start_time=time(22, 0), end_time=time(6, 0),
+        )
+        user = User.objects.create_user(username="t_auto4", password="x", shift=night)
+        att = Attendance.objects.create(
+            user=user, date=self.day,
+            check_in_time=timezone.make_aware(
+                datetime.combine(self.day, time(22, 0)), timezone.get_current_timezone()
+            ),
+        )
+        call_command("auto_checkout", date=str(self.day))
+        att.refresh_from_db()
+        out_local = timezone.localtime(att.check_out_time)
+        self.assertEqual(out_local.date(), self.day + timedelta(days=1))  # keyingi kun
+        self.assertEqual(out_local.time(), time(6, 0))
+        self.assertEqual(att.worked_minutes, 480)  # 22:00-06:00 = 8 soat
+
+
+class CheckOutGuardTests(TestCase):
+    """perform_check_out himoyalari."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="t_out", password="x")
+        self.payload = CheckInPayload(latitude=0.0, longitude=0.0)
+
+    def test_check_out_without_check_in(self):
+        with self.assertRaisesMessage(CheckInError, "Avval check-in"):
+            perform_check_out(self.user, self.payload)
+
+
+class WeekendStatusTests(TestCase):
+    """Dam olish kunidagi yozuv statusi weekend bo'lishi."""
+
+    def test_sunday_marked_weekend(self):
+        user = User.objects.create_user(username="t_wknd", password="x")  # ish kunlari 1-5
+        att = Attendance.objects.create(
+            user=user, date=timezone.localdate(),
+            check_in_time=_local_dt(2026, 6, 14, 10, 0),  # yakshanba
+        )
+        # is_weekend yozuv sanasiga qarab: bugungi sana ish kuni bo'lsa false bo'ladi,
+        # shuning uchun aniq yakshanba sanasi bilan qayta tekshiramiz.
+        att.date = datetime(2026, 6, 14).date()  # yakshanba
+        att.check_in_time = _local_dt(2026, 6, 14, 10, 1)  # recalc trigger
+        att.save()
+        att.refresh_from_db()
+        self.assertTrue(att.is_weekend)
+        self.assertEqual(att.status, Attendance.Status.WEEKEND)
 
 
 class NightShiftTests(TestCase):
