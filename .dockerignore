@@ -1,0 +1,29 @@
+# Docker build kontekstiga kirmasligi kerak bo'lgan narsalar — busiz kontekst
+# gigabaytlarga oshadi (verifix venv, node_modules) va sirlar/baza image'ga
+# tushib qolishi mumkin.
+.git
+.claude
+.idea
+
+# Python muhitlari va keshlar
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+
+# Lokal baza va loglar — production PostgreSQL ishlatadi
+*.db
+*.sqlite3
+logs
+
+# Sirlar (compose env_file orqali beriladi, image ichiga kirmasin)
+.env
+
+# Frontend artefaktlari (image ichida qayta build qilinadi)
+web/node_modules
+web/dist
+
+# Iste'foga chiqqan Django backend — deploy qilinmaydi (arxiv)
+verifix

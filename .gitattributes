@@ -1,0 +1,3 @@
+# Shell skriptlar konteynerda ishlaydi — CRLF bilan buziladi ("bad interpreter").
+# Windows'da checkout qilinganda ham LF bo'lib qolsin.
+*.sh text eol=lf

@@ -1,15 +1,24 @@
+# Production stack: PostgreSQL + FastAPI + bot + scheduler + web (nginx'li SPA).
+#
+# Ishga tushirish:  docker compose up -d --build
+# Sirlar .env faylidan olinadi (namuna: .env.example) — DATABASE_URL bu yerda
+# compose tomonidan qat'iy postgres'ga o'rnatiladi.
+#
+# Portlar ataylab faqat 127.0.0.1 ga bog'langan — tashqariga faqat host
+# nginx'i (TLS bilan, deploy/nginx-production.conf) chiqadi. Kamera/GPS
+# (Face ID check-in) faqat HTTPS'da ishlaydi, shuning uchun TLS majburiy.
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: hodimlar
-      POSTGRES_PASSWORD: hodimlar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hodimlar}
       POSTGRES_DB: hodimlar
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"  # faqat serverning o'zidan (psql/backup uchun)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hodimlar"]
       interval: 5s
@@ -23,12 +32,13 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://hodimlar:hodimlar@db:5432/hodimlar
+      DATABASE_URL: postgresql+asyncpg://hodimlar:${POSTGRES_PASSWORD:-hodimlar}@db:5432/hodimlar
+      DEBUG: "false"
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # diagnostika uchun; brauzer web nginx /api orqali yuradi
 
   bot:
     build:
@@ -58,7 +68,7 @@ services:
       dockerfile: web/Dockerfile
     restart: unless-stopped
     ports:
-      - "5173:80"
+      - "127.0.0.1:8080:80"  # host nginx (TLS) shu portga proxy qiladi
     depends_on:
       - api
 
