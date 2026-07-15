@@ -1,70 +1,62 @@
 import { FormEvent, useState } from "react";
-import { api } from "../lib/api";
-import { toLocalDateString } from "../lib/date";
-
-function firstDayOfMonth(): string {
-  const now = new Date();
-  return toLocalDateString(new Date(now.getFullYear(), now.getMonth(), 1));
-}
+import { format, startOfMonth } from "date-fns";
+import { Download, FileSpreadsheet } from "lucide-react";
+import { toast } from "sonner";
+import PageHeader from "@/components/PageHeader";
+import { DateRangePicker } from "@/components/PeriodPicker";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { useDownloadReport } from "@/lib/queries";
 
 export default function Reports() {
-  const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
-  const [dateTo, setDateTo] = useState(toLocalDateString(new Date()));
-  const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
+  const download = useDownloadReport();
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setDownloading(true);
-    setError(null);
-    try {
-      await api.downloadReportExport(dateFrom, dateTo);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Yuklab olishda xatolik");
-    } finally {
-      setDownloading(false);
-    }
+    download.mutate(
+      { dateFrom, dateTo },
+      { onSuccess: () => toast.success("Excel fayl yuklab olindi") }
+    );
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-5 max-w-lg">
-      <h2 className="font-semibold mb-4">Hisobot eksporti (.xlsx)</h2>
-      <p className="text-sm text-slate-500 mb-4">
-        Tanlangan davr bo'yicha har bir xodim uchun suhbatlar, tashriflar, vazifalar, sababli kunlar va
-        (agar davr aniq bitta oyni qamrab olsa) bonus summasi Excel faylga eksport qilinadi.
-      </p>
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-slate-600 mb-1">Boshlanish sanasi</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              required
-              className="w-full border rounded px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-slate-600 mb-1">Tugash sanasi</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              required
-              className="w-full border rounded px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-        <button
-          type="submit"
-          disabled={downloading}
-          className="bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {downloading ? "Tayyorlanmoqda..." : "Excel yuklab olish"}
-        </button>
-      </form>
-      {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+    <div>
+      <PageHeader
+        title="Hisobot eksporti (.xlsx)"
+        description="Tanlangan davr bo'yicha har bir xodim uchun suhbatlar, tashriflar, vazifalar, sababli kunlar va (agar davr aniq bitta oyni qamrab olsa) bonus summasi Excel faylga eksport qilinadi."
+      />
+      <Card className="max-w-xl">
+        <CardContent className="pt-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm text-slate-600">Davr</label>
+              <DateRangePicker
+                from={dateFrom}
+                to={dateTo}
+                onChange={(f, t) => {
+                  setDateFrom(f);
+                  setDateTo(t);
+                }}
+              />
+            </div>
+            <Button type="submit" disabled={download.isPending}>
+              {download.isPending ? (
+                <>
+                  <FileSpreadsheet className="mr-2 h-4 w-4 animate-pulse" />
+                  Tayyorlanmoqda...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Excel yuklab olish
+                </>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
