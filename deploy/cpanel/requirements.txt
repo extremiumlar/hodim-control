@@ -2,11 +2,8 @@
 # Docker'dagi alohida api/bot/scheduler requirements o'rniga hammasi birga,
 # chunki cPanel'da bitta "Python App" (bitta virtualenv) ishlaydi.
 #
-# Baza: PostgreSQL (asyncpg). asyncpg PyPI'da tayyor manylinux wheel bilan keladi,
-# shuning uchun cPanel'da kompilyatorsiz o'rnatiladi. cPanel → "PostgreSQL
-# Databases" da baza+user yarating va .env'da:
-#   DATABASE_URL=postgresql+asyncpg://USER:PAROL@localhost:5432/BAZA
-# (aiosqlite ham qoldirilgan — lokal sinovda SQLite ishlatsa bo'ladi.)
+# Baza: SQLite (aiosqlite) — mavjud ishlab turgan app.db faylini serverga
+# yuklaydi (ma'lumotlar bilan birga). PostgreSQL kerak emas.
 
 # --- Web (Passenger ASGI o'rami) ---
 a2wsgi==1.10.7
@@ -14,7 +11,6 @@ a2wsgi==1.10.7
 # --- API (FastAPI) ---
 fastapi==0.115.6
 sqlalchemy==2.0.36
-asyncpg==0.30.0
 aiosqlite==0.20.0
 alembic==1.14.0
 pydantic-settings==2.7.0
