@@ -22,6 +22,7 @@ from django.db.models import Sum
 
 from accounts.models import User
 from attendance.models import Attendance
+from leave.models import LeaveRequest
 from .models import MonthlyPayroll, Bonus, Penalty
 
 CENT = Decimal("0.01")
@@ -30,6 +31,28 @@ CENT = Decimal("0.01")
 def _parse_period(period: str) -> tuple[int, int]:
     y, m = period.split("-")
     return int(y), int(m)
+
+
+def _excused_leave_workdays(user: User, start: date, end: date, work_day_set: set[int]) -> set[date]:
+    """Davr bilan kesishgan APPROVED ta'tillarning ISH KUNLARIga to'g'ri keladigan
+    sanalari — bu kunlar uchun oylik AYIRILMAYDI. To'lovsiz (unpaid) ta'til bundan
+    mustasno: u kelmagan kun kabi ayiriladi, shuning uchun to'plamga kirmaydi."""
+    leaves = LeaveRequest.objects.filter(
+        user=user,
+        status=LeaveRequest.Status.APPROVED,
+        start_date__lte=end,
+        end_date__gte=start,
+    ).exclude(type=LeaveRequest.Type.UNPAID)
+
+    excused: set[date] = set()
+    for leave in leaves:
+        d = max(leave.start_date, start)
+        stop = min(leave.end_date, end)
+        while d <= stop:
+            if d.isoweekday() in work_day_set:
+                excused.add(d)
+            d = date.fromordinal(d.toordinal() + 1)
+    return excused
 
 
 def compute_payroll(user: User, period: str) -> MonthlyPayroll:
@@ -51,11 +74,15 @@ def compute_payroll(user: User, period: str) -> MonthlyPayroll:
     late_min = atts.aggregate(s=Sum("late_minutes"))["s"] or 0
     weekend_worked = atts.filter(is_weekend=True, check_in_time__isnull=False).count()
 
-    # Kelmagan ish kunlari = jami ish kunlari - ish kunida kelganlar
+    # Kelmagan ish kunlari = jami ish kunlari - ish kunida kelganlar - uzrli
+    # (tasdiqlangan ta'til) kunlar. vacation/sick/other ta'tildagi ish kunlari
+    # uchun oylik ayirilmaydi; unpaid (to'lovsiz) esa uzrli hisoblanmaydi —
+    # o'sha kunlar kelmagan kun kabi ayirilaveradi.
     present_workdays = atts.filter(
         is_weekend=False, check_in_time__isnull=False
     ).count()
-    absent = max(0, work_days_total - present_workdays)
+    excused_days = _excused_leave_workdays(user, start, end, work_day_set)
+    absent = max(0, work_days_total - present_workdays - len(excused_days))
 
     base = Decimal(user.base_salary or 0)
     # Aniq kunlik stavka (yaxlitlamasdan) - hisob uchun
