@@ -11,7 +11,9 @@ from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.schemas import HourlyMetricStatus, HourlyPlanOut
 from api.telegram_notify import send_message
-from api.timeutil import TASHKENT_TZ, today_local
+# Tushlik chegaralari va ish-daqiqa hisobi timeutil'da — davomat worked_minutes
+# bilan bitta manba ("ishlangan vaqt" ta'rifi ikki joyda farq qilmasligi uchun).
+from api.timeutil import LUNCH_END, LUNCH_START, TASHKENT_TZ, today_local, work_minutes as _work_minutes
 from db.models import Role, User, WorkScheduleOverride, WorkScheduleWeekly
 
 router = APIRouter(prefix="/hourly-plan", tags=["hourly-plan"])
@@ -19,17 +21,6 @@ router = APIRouter(prefix="/hourly-plan", tags=["hourly-plan"])
 WEEKDAYS_UZ = ["Dush", "Sesh", "Chor", "Pay", "Jum", "Shan", "Yak"]
 DEFAULT_START = "09:00"
 DEFAULT_END = "18:00"
-# Tushlik tanaffusi — reja hisobidan chiqariladi (ish soatiga kirmaydi).
-LUNCH_START = 13 * 60  # 13:00
-LUNCH_END = 14 * 60  # 14:00
-
-
-def _work_minutes(a: int, b: int) -> int:
-    """[a, b) oralig'idagi ish daqiqalari — tushlik (13:00–14:00) ayirilgan holda."""
-    if b <= a:
-        return 0
-    lunch_overlap = max(0, min(b, LUNCH_END) - max(a, LUNCH_START))
-    return (b - a) - lunch_overlap
 
 
 def _to_min(hm: str) -> int:

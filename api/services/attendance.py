@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.routers.hourly_plan import _effective_today  # ish oynasi qoidasining yagona manbai
-from api.timeutil import TASHKENT_TZ, today_local
+from api.timeutil import TASHKENT_TZ, today_local, work_minutes
 from db.models import Attendance, AttendanceStatus, OfficeLocation, User
 
 
@@ -175,7 +175,7 @@ async def perform_check_out(
     """Xodimni «Ketdim» qiladi. GPS + yuz tasdiqlanadi. Erta ketish ish oynasi
     tugashidan, ishlangan vaqt check-in/out orasidan hisoblanadi."""
     day = today_local()
-    is_working, _start, end = await _effective_today(db, user, day)
+    is_working, start, end = await _effective_today(db, user, day)
 
     att = await db.scalar(
         select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
@@ -199,7 +199,19 @@ async def perform_check_out(
     else:
         att.early_leave_minutes = 0
 
-    worked = int((att.check_out_time - att.check_in_time).total_seconds() // 60)
+    # Ishlangan vaqt — soatlik reja bilan BIR XIL ta'rif (timeutil.work_minutes):
+    # tushlik (13:00–14:00) chiqariladi, ish kunida faqat ish oynasi [start, end]
+    # bilan kesishgan qism sanaladi (erta kelib o'tirish yoki kech qolib ketish
+    # ishlangan soatni shishirmaydi). Dam olish kunida oyna yo'q — kelish-ketish
+    # oralig'ining o'zi (tushliksiz) olinadi. work_minutes teskari oraliqda 0
+    # qaytaradi, shuning uchun manfiy chiqmaydi.
+    check_in_local = att.check_in_time.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+    in_min = _minute_of_day(check_in_local)
+    out_min = _minute_of_day(now_local)
+    if is_working and start and end:
+        worked = work_minutes(max(in_min, _hm_to_min(start)), min(out_min, _hm_to_min(end)))
+    else:
+        worked = work_minutes(in_min, out_min)
     att.worked_minutes = max(0, worked)
 
     _apply_status(att, is_working)
