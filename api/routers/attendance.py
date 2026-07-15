@@ -232,6 +232,8 @@ async def dashboard(
     left_today = sum(1 for a, _ in today_rows if a.check_out_time is not None)
 
     # Bugun ishlashi kerak bo'lganlar (ish jadvali bo'yicha) — kutilgan davomat.
+    # Faqat XODIMLAR (employee) sanaladi — rahbarlar (boss/rop/hr/dasturchi)
+    # davomat kutiluvchilar qatoriga kirmaydi (egasi qarori, 2026-07-15).
     # Har foydalanuvchi uchun _effective_today chaqirish N+1 so'rov bo'lardi;
     # o'rniga bugungi override'lar va shu hafta-kunidagi weekly yozuvlar bittadan
     # so'rov bilan olinadi, qoida esa ayni o'sha: override > weekly > default
@@ -249,12 +251,19 @@ async def dashboard(
         )
     }
     default_working = today.weekday() < 5
+    employees = [u for u in active_users if u.role == Role.employee.value]
+    employee_ids = {u.id for u in employees}
     working_today = sum(
         1
-        for u in active_users
+        for u in employees
         if overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working))
     )
-    not_checked_in = max(0, working_today - checked_in_today)
+    # "Kelmagan" ham xodimlar kesimida: rahbar check-in qilsa working_today'siz
+    # checked_in_today'dan ayirish sonni noto'g'ri kamaytirardi.
+    checked_in_employees = sum(
+        1 for a, _ in today_rows if a.check_in_time is not None and a.user_id in employee_ids
+    )
+    not_checked_in = max(0, working_today - checked_in_employees)
 
     month_late = await db.scalar(
         select(func.coalesce(func.sum(Attendance.late_minutes), 0)).where(
@@ -323,7 +332,9 @@ async def employee_summary(
             func.coalesce(func.sum(Attendance.worked_minutes), 0).label("worked_minutes"),
         )
         .join(Attendance, Attendance.user_id == User.id)
-        .where(Attendance.date >= since)
+        # Faqat xodimlar — rahbarlar davomat xulosasida ko'rsatilmaydi
+        # (dashboard working_today bilan bir xil qoida).
+        .where(Attendance.date >= since, User.role == Role.employee.value)
         .group_by(User.id, User.full_name)
         .order_by(func.coalesce(func.sum(Attendance.late_minutes), 0).desc())
     )
