@@ -10,16 +10,21 @@ from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.timeutil import today_local
 from crm import get_crm_adapter
 from db.models import (
+    AiMessageLog,
+    Attendance,
     AuditLog,
     Bonus,
     DailyResult,
     ExcusedDay,
+    HotLead,
     MobilografVideo,
     Norm,
     Position,
     Role,
     TaskModel,
     User,
+    WorkScheduleOverride,
+    WorkScheduleWeekly,
 )
 from api.schemas import (
     CrmOperatorRow,
@@ -579,6 +584,11 @@ async def _has_dependent_records(db: AsyncSession, user_id: int) -> bool:
         select(ExcusedDay.id).where((ExcusedDay.user_id == user_id) | (ExcusedDay.decided_by == user_id)),
         select(Bonus.id).where(Bonus.user_id == user_id),
         select(AuditLog.id).where((AuditLog.actor_id == user_id) | (AuditLog.target_user_id == user_id)),
+        # Davomat va ish jadvali tarixi ham qimmatli — bor bo'lsa Boss butunlay
+        # o'chira olmaydi (faolsizlantirishga yo'naltiriladi).
+        select(Attendance.id).where(Attendance.user_id == user_id),
+        select(WorkScheduleWeekly.id).where(WorkScheduleWeekly.user_id == user_id),
+        select(WorkScheduleOverride.id).where(WorkScheduleOverride.user_id == user_id),
     ]
     for query in checks:
         if await db.scalar(query.limit(1)) is not None:
@@ -592,9 +602,17 @@ async def _force_delete_dependent_records(db: AsyncSession, user_id: int) -> Non
     Dasturchi biror xodimga norma belgilangan yoki topshiriq berilganidan qat'i nazar uni
     to'liq o'chira oladi. Audit jurnali (AuditLog) esa o'chirilmaydi — faqat shu
     foydalanuvchiga bo'lgan bog'lanish uzatiladi (NULL), chunki audit tarixi doimiy
-    saqlanishi kerak."""
+    saqlanishi kerak. Xuddi shu qoida AiMessageLog (AI xabarlar tarixi) va HotLead
+    (lid tarixi CRM bilan bog'liq) uchun ham — yozuvlar qoladi, user_id NULL bo'ladi.
+
+    ondelete=CASCADE'li jadvallar (Attendance, WorkScheduleWeekly/Override,
+    HourlyActual, HourlyTarget, OperatorProfile, ShortfallReason) bu yerda qo'lda
+    o'chirilmaydi — ularni foydalanuvchi o'chirilganda bazaning o'zi o'chiradi
+    (SQLite'da buning uchun db/base.py da PRAGMA foreign_keys=ON yoqilgan)."""
     await db.execute(update(AuditLog).where(AuditLog.actor_id == user_id).values(actor_id=None))
     await db.execute(update(AuditLog).where(AuditLog.target_user_id == user_id).values(target_user_id=None))
+    await db.execute(update(AiMessageLog).where(AiMessageLog.user_id == user_id).values(user_id=None))
+    await db.execute(update(HotLead).where(HotLead.user_id == user_id).values(user_id=None))
 
     await db.execute(delete(TaskModel).where((TaskModel.assigned_to == user_id) | (TaskModel.assigned_by == user_id)))
     await db.execute(delete(Norm).where((Norm.user_id == user_id) | (Norm.changed_by == user_id)))
@@ -641,6 +659,10 @@ async def delete_user(
 
     if is_dasturchi:
         await _force_delete_dependent_records(db, user_id)
+
+    # O'chirilayotgan xodim kimgadir rahbar bo'lsa, bo'ysunuvchilarning manager_id
+    # havolasi uziladi (NULL) — FK majburlash yoqilgach busiz o'chirish xato berardi.
+    await db.execute(update(User).where(User.manager_id == user_id).values(manager_id=None))
 
     db.add(
         AuditLog(
