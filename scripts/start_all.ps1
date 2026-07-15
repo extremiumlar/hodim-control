@@ -62,7 +62,9 @@ Log ""
 Log "Manzillar:"
 Log "  API (backend):        http://localhost:8000"
 Log "  Sayt (shu kompyuter): https://localhost:5173"
-Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+# Faqat FAOL (Preferred) manzillar — Deprecated/Tentative (eski Wi-Fi, APIPA)
+# ko'rsatilsa foydalanuvchi o'lik manzilga kirib "sayt ishlamayapti" deb o'ylaydi.
+Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
     ForEach-Object { Log "  Sayt (telefon/tarmoq): https://$($_.IPAddress):5173" }
 Log "  (telefonda birinchi ochishda sertifikat ogohlantirishida 'Advanced -> Proceed' bosiladi)"
