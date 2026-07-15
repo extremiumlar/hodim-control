@@ -17,6 +17,13 @@ async def send_reminders() -> None:
         logger.info("Eslatmalar yuborildi: %s", body)
 
 
+async def mark_overdue_tasks() -> None:
+    """Muddati o'tgan pending vazifalarni overdue statusiga o'tkazadi."""
+    body = await call_api("/tasks/mark-overdue", label="Muddati o'tganlar")
+    if body is not None and body.get("marked_overdue"):
+        logger.info("Muddati o'tgan vazifalar belgilandi: %s", body)
+
+
 async def send_weekly_digest() -> None:
     """Haftalik raqamli yakun (shu hafta vs o'tgan hafta, operator kesimida) — guruhga
     bitta xabar. Sof kod hisobi — AI o'chiq bo'lsa ham ishlaydi."""

@@ -52,6 +52,11 @@ def _build_jobs() -> list[JobSpec]:
         )
 
     specs += [
+        # Muddati o'tgan pending vazifalarni overdue ga o'tkazish — har 15 daqiqada
+        JobSpec(
+            "mark_overdue", jobs.mark_overdue_tasks, IntervalTrigger(minutes=15),
+            max_instances=1, coalesce=True,
+        ),
         # Kunlik yagona digest (vazifa + qo'ng'iroq/lid/tashrif + AI xulosa, bitta
         # xabar) — vaqt bazadan (/statistika_vaqt) sozlangani uchun har daqiqa
         # tekshiriladi (API vaqt kelganini va shu kuni yuborilmaganini o'zi hal qiladi).

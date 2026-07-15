@@ -2,7 +2,7 @@ import html
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
@@ -337,11 +337,34 @@ async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) ->
     return await _to_out_many(tasks, db)
 
 
+@router.post("/mark-overdue", dependencies=[Depends(verify_bot_secret)])
+async def mark_overdue_tasks(db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler davriy chaqiradi: muddati (deadline, naive-UTC) o'tib ketgan va hali
+    pending vazifalarni overdue ga o'tkazadi. Muddatsiz (deadline=None) vazifalar
+    tegilmaydi. Overdue vazifani xodim keyin ham «Bajardim» bilan done qila oladi
+    (complete_task faqat done bo'lganda qisqa tutashadi)."""
+    result = await db.execute(
+        update(TaskModel)
+        .where(
+            TaskModel.status == TaskStatus.pending.value,
+            TaskModel.deadline.isnot(None),
+            TaskModel.deadline < datetime.utcnow(),
+        )
+        .values(status=TaskStatus.overdue.value)
+    )
+    await db.commit()
+    return {"marked_overdue": result.rowcount or 0}
+
+
 @router.post("/send-reminders", dependencies=[Depends(verify_bot_secret)])
 async def send_reminders(db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan kun davomida bir necha marta chaqiriladi — hali bajarilmagan
-    barcha vazifalar uchun xodimga eslatma qayta yuboriladi."""
-    query = select(TaskModel).where(TaskModel.status == TaskStatus.pending.value)
+    barcha vazifalar uchun xodimga eslatma qayta yuboriladi. Overdue ham kiradi —
+    ilgari bunday vazifalar pending bo'lib qolgani uchun eslatma olardi, status
+    to'g'rilangach ham eslatish davom etadi."""
+    query = select(TaskModel).where(
+        TaskModel.status.in_((TaskStatus.pending.value, TaskStatus.overdue.value))
+    )
     pending_tasks = list(await db.scalars(query))
 
     sent = 0
