@@ -1,6 +1,7 @@
 """Davomat hisob-kitob yordamchilari sinovi."""
 from datetime import datetime, time, timedelta
 
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
@@ -61,6 +62,52 @@ class WorkedMinutesTests(TestCase):
             check_out_time=_local_dt(2026, 6, 10, 18, 0),
         )
         self.assertEqual(att.worked_minutes, 480)
+
+
+class AutoCheckoutTests(TestCase):
+    """auto_checkout buyrug'i: unutilgan check-out'lar smena oxiri bilan yopiladi."""
+
+    def setUp(self):
+        self.shift = Shift.objects.create(
+            name="Kunduzgi", start_time=time(9, 0), end_time=time(18, 0),
+            break_start=time(13, 0), break_end=time(14, 0),
+        )
+        self.day = timezone.localdate() - timedelta(days=1)
+
+    def _att(self, username, shift):
+        user = User.objects.create_user(username=username, password="x", shift=shift)
+        return Attendance.objects.create(
+            user=user, date=self.day,
+            check_in_time=timezone.make_aware(
+                datetime.combine(self.day, time(9, 0)), timezone.get_current_timezone()
+            ),
+        )
+
+    def test_sets_shift_end_and_recalculates(self):
+        att = self._att("t_auto1", self.shift)
+        call_command("auto_checkout", date=str(self.day))
+        att.refresh_from_db()
+        self.assertIsNotNone(att.check_out_time)
+        self.assertEqual(timezone.localtime(att.check_out_time).time(), time(18, 0))
+        self.assertEqual(att.worked_minutes, 480)  # tanaffus ham ayirilgan
+        self.assertIn("avto check-out", att.note)
+
+    def test_user_without_shift_skipped(self):
+        att = self._att("t_auto2", None)
+        call_command("auto_checkout", date=str(self.day))
+        att.refresh_from_db()
+        self.assertIsNone(att.check_out_time)
+
+    def test_already_checked_out_untouched(self):
+        att = self._att("t_auto3", self.shift)
+        original_out = timezone.make_aware(
+            datetime.combine(self.day, time(17, 0)), timezone.get_current_timezone()
+        )
+        att.check_out_time = original_out
+        att.save()
+        call_command("auto_checkout", date=str(self.day))
+        att.refresh_from_db()
+        self.assertEqual(att.check_out_time, original_out)
 
 
 class NightShiftTests(TestCase):
