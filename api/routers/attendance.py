@@ -10,7 +10,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db
-from api.routers.hourly_plan import _effective_today
 from api.schemas import (
     AttendanceOut,
     EmployeeAttendanceSummary,
@@ -23,7 +22,15 @@ from api.schemas import (
 )
 from api.services.attendance import CheckError, perform_check_in, perform_check_out
 from api.timeutil import today_local
-from db.models import Attendance, AttendanceStatus, OfficeLocation, Role, User
+from db.models import (
+    Attendance,
+    AttendanceStatus,
+    OfficeLocation,
+    Role,
+    User,
+    WorkScheduleOverride,
+    WorkScheduleWeekly,
+)
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -224,12 +231,29 @@ async def dashboard(
     late_today = sum(1 for a, _ in today_rows if a.status == AttendanceStatus.late.value)
     left_today = sum(1 for a, _ in today_rows if a.check_out_time is not None)
 
-    # Bugun ishlashi kerak bo'lganlar (ish jadvali bo'yicha) — kutilgan davomat
-    working_today = 0
-    for u in active_users:
-        is_working, _s, _e = await _effective_today(db, u, today)
-        if is_working:
-            working_today += 1
+    # Bugun ishlashi kerak bo'lganlar (ish jadvali bo'yicha) — kutilgan davomat.
+    # Har foydalanuvchi uchun _effective_today chaqirish N+1 so'rov bo'lardi;
+    # o'rniga bugungi override'lar va shu hafta-kunidagi weekly yozuvlar bittadan
+    # so'rov bilan olinadi, qoida esa ayni o'sha: override > weekly > default
+    # (jadval belgilanmaganda dushanba-juma ish kuni).
+    overrides_by_user = {
+        o.user_id: o.is_working
+        for o in await db.scalars(
+            select(WorkScheduleOverride).where(WorkScheduleOverride.date == today)
+        )
+    }
+    weekly_by_user = {
+        w.user_id: w.is_working
+        for w in await db.scalars(
+            select(WorkScheduleWeekly).where(WorkScheduleWeekly.weekday == today.weekday())
+        )
+    }
+    default_working = today.weekday() < 5
+    working_today = sum(
+        1
+        for u in active_users
+        if overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working))
+    )
     not_checked_in = max(0, working_today - checked_in_today)
 
     month_late = await db.scalar(
