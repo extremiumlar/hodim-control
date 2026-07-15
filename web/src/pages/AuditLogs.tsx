@@ -1,5 +1,19 @@
-import { useEffect, useRef, useState } from "react";
-import { api, AuditLog } from "../lib/api";
+import { useState } from "react";
+import { format } from "date-fns";
+import { ScrollText } from "lucide-react";
+import { type ColumnDef } from "@tanstack/react-table";
+import DataTable from "@/components/DataTable";
+import PageHeader from "@/components/PageHeader";
+import { DateRangePicker } from "@/components/PeriodPicker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { type AuditLog } from "@/lib/api";
+import { useAuditLogs } from "@/lib/queries";
 
 const ACTION_LABELS: Record<string, string> = {
   user_created: "Foydalanuvchi qo'shildi",
@@ -19,104 +33,91 @@ function formatValue(value: Record<string, unknown> | null): string {
     .join(", ");
 }
 
+const columns: ColumnDef<AuditLog>[] = [
+  {
+    accessorKey: "created_at",
+    header: "Vaqt",
+    cell: ({ row }) => (
+      <span className="whitespace-nowrap">
+        {format(new Date(row.original.created_at), "dd.MM.yyyy, HH:mm")}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "action",
+    header: "Harakat",
+    cell: ({ row }) => ACTION_LABELS[row.original.action] ?? row.original.action,
+  },
+  {
+    accessorKey: "actor_name",
+    header: "Kim",
+    cell: ({ row }) => row.original.actor_name ?? "tizim",
+  },
+  {
+    accessorKey: "target_name",
+    header: "Kimga",
+    cell: ({ row }) => row.original.target_name ?? "—",
+  },
+  {
+    id: "change",
+    header: "O'zgarish",
+    enableSorting: false,
+    cell: ({ row }) => (
+      <div className="text-xs text-slate-500">
+        <div>oldin: {formatValue(row.original.before)}</div>
+        <div>keyin: {formatValue(row.original.after)}</div>
+      </div>
+    ),
+  },
+];
+
 export default function AuditLogs() {
-  const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [action, setAction] = useState("");
+  const [action, setAction] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  const latestRequestId = useRef(0);
-
-  const load = async () => {
-    const requestId = ++latestRequestId.current;
-    setLoading(true);
-    try {
-      const logs = await api.listAuditLogs({
-        action: action || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      });
-      if (requestId !== latestRequestId.current) return; // yangiroq so'rov allaqachon boshlangan
-      setLogs(logs);
-    } catch (e) {
-      if (requestId !== latestRequestId.current) return;
-      setError(e instanceof Error ? e.message : "Yuklashda xatolik");
-    } finally {
-      if (requestId === latestRequestId.current) setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, dateFrom, dateTo]);
+  const query = useAuditLogs({
+    action: action === "all" ? undefined : action,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  });
 
   return (
-    <div className="bg-white rounded-lg shadow p-5">
-      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
-        <h2 className="font-semibold">Audit jurnali</h2>
-        <div className="flex gap-2">
-          <select
-            value={action}
-            onChange={(e) => setAction(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          >
-            <option value="">Barcha harakatlar</option>
+    <div>
+      <PageHeader title="Audit jurnali" description="Tizimdagi muhim o'zgarishlar tarixi.">
+        <Select value={action} onValueChange={setAction}>
+          <SelectTrigger className="w-56">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Barcha harakatlar</SelectItem>
             {Object.entries(ACTION_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>
+              <SelectItem key={value} value={value}>
                 {label}
-              </option>
+              </SelectItem>
             ))}
-          </select>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          />
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="border rounded px-2 py-1.5 text-sm"
-          />
-        </div>
-      </div>
+          </SelectContent>
+        </Select>
+        <DateRangePicker
+          from={dateFrom}
+          to={dateTo}
+          withPresets={false}
+          onChange={(f, t) => {
+            setDateFrom(f);
+            setDateTo(t);
+          }}
+        />
+      </PageHeader>
 
-      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-      {loading ? (
-        <p className="text-sm text-slate-500">Yuklanmoqda...</p>
-      ) : logs.length === 0 ? (
-        <p className="text-sm text-slate-500">Yozuvlar topilmadi.</p>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-500 border-b">
-              <th className="py-2">Vaqt</th>
-              <th className="py-2">Harakat</th>
-              <th className="py-2">Kim</th>
-              <th className="py-2">Kimga</th>
-              <th className="py-2">O'zgarish</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((log) => (
-              <tr key={log.id} className="border-b last:border-0 align-top">
-                <td className="py-2 whitespace-nowrap">{new Date(log.created_at).toLocaleString()}</td>
-                <td className="py-2">{ACTION_LABELS[log.action] ?? log.action}</td>
-                <td className="py-2">{log.actor_name ?? "tizim"}</td>
-                <td className="py-2">{log.target_name ?? "—"}</td>
-                <td className="py-2 text-xs text-slate-500">
-                  <div>oldin: {formatValue(log.before)}</div>
-                  <div>keyin: {formatValue(log.after)}</div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <DataTable
+        columns={columns}
+        data={query.data}
+        isLoading={query.isLoading}
+        error={query.error ? query.error.message : null}
+        onRetry={() => query.refetch()}
+        searchPlaceholder="Kim yoki kimga bo'yicha qidirish..."
+        empty={{ icon: ScrollText, text: "Audit yozuvlari topilmadi." }}
+      />
     </div>
   );
 }
