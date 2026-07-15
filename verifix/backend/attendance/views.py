@@ -166,11 +166,30 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
             attendances__date=today, attendances__check_in_time__isnull=False,
         ).count()
 
-        # Davomat foizi (oy boshidan)
+        # Davomat foizi (oy boshidan): kutilgan = har hodimning o'z ish kunlari
+        # (work_day_set) bo'yicha oy boshidan bugungacha bo'lgan ish kunlari
+        # yig'indisi; haqiqiy = faqat ish kunidagi check-in'lar. Ilgari maxraj
+        # kalendar kunlar (today.day), surat esa dam olish yozuvlarini ham
+        # sanagani uchun foiz noto'g'ri chiqardi.
         month_qs = Attendance.objects.filter(date__gte=month_start, date__lte=today)
         month_present = month_qs.filter(check_in_time__isnull=False).count()
         month_late_min = month_qs.aggregate(s=Sum("late_minutes"))["s"] or 0
         month_worked_min = month_qs.aggregate(s=Sum("worked_minutes"))["s"] or 0
+
+        month_days = [
+            month_start + timedelta(days=i) for i in range((today - month_start).days + 1)
+        ]
+        expected_workdays = sum(
+            sum(1 for d in month_days if d.isoweekday() in u.work_day_set())
+            for u in active_users
+        )
+        actual_workday_checkins = month_qs.filter(
+            is_weekend=False, check_in_time__isnull=False
+        ).count()
+        attendance_rate = (
+            round(100 * actual_workday_checkins / expected_workdays, 1)
+            if expected_workdays else 0
+        )
 
         # So'nggi harakatlar (oxirgi 15 check-in/out)
         recent = (
@@ -214,9 +233,7 @@ class AttendanceViewSet(viewsets.ReadOnlyModelViewSet):
                 "left_today": left_today,
                 "not_checked_in": not_checked_in,
                 "on_leave": on_leave,
-                "attendance_rate": round(
-                    100 * month_present / (total_employees * max(1, today.day))
-                    if total_employees else 0, 1),
+                "attendance_rate": attendance_rate,
                 "month_late_minutes": month_late_min,
                 "month_worked_hours": round(month_worked_min / 60, 1),
             },
