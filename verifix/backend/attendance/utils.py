@@ -64,9 +64,31 @@ def compute_early_minutes(check_out_dt: datetime, shift_end: time) -> int:
     return max(0, diff_min)
 
 
-def compute_worked_minutes(check_in_dt: datetime, check_out_dt: datetime) -> int:
-    """Keldim va Ketdim orasidagi daqiqalar (umumiy ishlangan vaqt)."""
+def compute_worked_minutes(check_in_dt: datetime, check_out_dt: datetime, shift=None) -> int:
+    """Keldim va Ketdim orasidagi daqiqalar (umumiy ishlangan vaqt).
+
+    Smenada tanaffus (break_start/break_end) belgilangan bo'lsa, [check_in,
+    check_out] oralig'ining tanaffus bilan kesishgan qismi ayiriladi — tushlik
+    ishlangan vaqtga kirmaydi. Shift yoki tanaffus yo'q bo'lsa xom span
+    (avvalgi xatti-harakat) qaytadi.
+    """
     if not check_in_dt or not check_out_dt:
         return 0
     diff = int((check_out_dt - check_in_dt).total_seconds() // 60)
+    if diff <= 0:
+        return 0
+    if (shift is not None and shift.break_start and shift.break_end
+            and shift.break_start < shift.break_end):
+        in_local = _to_local(check_in_dt)
+        out_local = _to_local(check_out_dt)
+        b_start = in_local.replace(
+            hour=shift.break_start.hour, minute=shift.break_start.minute,
+            second=0, microsecond=0,
+        )
+        b_end = in_local.replace(
+            hour=shift.break_end.hour, minute=shift.break_end.minute,
+            second=0, microsecond=0,
+        )
+        overlap = int((min(out_local, b_end) - max(in_local, b_start)).total_seconds() // 60)
+        diff -= max(0, overlap)
     return max(0, diff)

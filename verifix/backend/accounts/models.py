@@ -25,6 +25,10 @@ class Shift(models.Model):
         "Kechikishga ruxsat (daqiqa)", default=5,
         help_text="Shu daqiqadan keyin kechikish hisoblanadi.",
     )
+    # Tanaffus (masalan tushlik 13:00-14:00) — ishlangan vaqt hisobidan
+    # chiqariladi. Ikkalasi ham to'ldirilgandagina qo'llanadi.
+    break_start = models.TimeField("Tanaffus boshlanishi", null=True, blank=True)
+    break_end = models.TimeField("Tanaffus tugashi", null=True, blank=True)
     work_days = models.CharField(
         "Ish kunlari",
         max_length=20,

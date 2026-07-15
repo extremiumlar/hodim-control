@@ -85,8 +85,8 @@ class Attendance(models.Model):
         else:
             self.early_leave_minutes = 0
 
-        # Ishlangan vaqt
-        self.worked_minutes = compute_worked_minutes(self.check_in_time, self.check_out_time)
+        # Ishlangan vaqt (smenada tanaffus bo'lsa u ayiriladi)
+        self.worked_minutes = compute_worked_minutes(self.check_in_time, self.check_out_time, shift)
 
         # Status
         if self.is_weekend:
