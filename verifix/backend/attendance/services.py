@@ -73,8 +73,23 @@ def _validate_face(user, payload: CheckInPayload) -> float:
     return sim
 
 
+def _on_leave_today(user) -> bool:
+    """Bugungi sana biror APPROVED ta'til oralig'iga tushadimi — haqiqat manbai
+    LeaveRequest oralig'i, `is_on_leave` bayrog'i emas (u sanasiz bo'lgani uchun
+    HR "finish"ni unutsa xodim abadiy ta'tilda qolib ketardi)."""
+    from leave.models import LeaveRequest
+
+    today = timezone.localdate()
+    return LeaveRequest.objects.filter(
+        user=user,
+        status=LeaveRequest.Status.APPROVED,
+        start_date__lte=today,
+        end_date__gte=today,
+    ).exists()
+
+
 def perform_check_in(user, payload: CheckInPayload) -> Attendance:
-    if user.is_on_leave:
+    if _on_leave_today(user):
         raise CheckInError("Siz ta'tildasiz. Adminga murojaat qiling.")
     if user.shift is None:
         raise CheckInError("Sizga smena biriktirilmagan.")

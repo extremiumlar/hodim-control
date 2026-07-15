@@ -34,9 +34,13 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         leave.reviewed_at = timezone.now()
         leave.review_comment = request.data.get("comment", "")
         leave.save()
-        # Hodimni ta'tilga qo'yish
-        leave.user.is_on_leave = True
-        leave.user.save(update_fields=["is_on_leave"])
+        # is_on_leave endi faqat kesh/ko'rsatish uchun — qarorlar (check-in,
+        # oylik) LeaveRequest oralig'iga tayanadi. Bayroq faqat ta'til hali
+        # tugamagan bo'lsa qo'yiladi (o'tmishdagi ta'til hodimni "abadiy
+        # ta'tilda" qilib qo'ymasin).
+        if leave.end_date >= timezone.localdate():
+            leave.user.is_on_leave = True
+            leave.user.save(update_fields=["is_on_leave"])
         return Response(LeaveRequestSerializer(leave).data)
 
     @action(detail=True, methods=["post"], url_path="reject",
