@@ -8,6 +8,15 @@ $py = Join-Path $root ".venv\Scripts\python.exe"
 $logs = Join-Path $root "logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
 
+# O'z jurnali — Task Scheduler yashirin oynada chaqirganda stdout yo'qoladi,
+# shu fayldan skript nima qilganini ko'rish mumkin.
+$selfLog = Join-Path $logs "start_all.log"
+"=== start_all $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===" | Out-File $selfLog -Encoding utf8
+function Log([string]$msg) {
+    $msg
+    "$(Get-Date -Format 'HH:mm:ss') $msg" | Out-File $selfLog -Append -Encoding utf8
+}
+
 function Test-PortBusy([int]$port) {
     try { Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction Stop | Out-Null; $true } catch { $false }
 }
@@ -27,37 +36,39 @@ function Start-Hidden([string]$exe, [string]$exeArgs, [string]$workDir, [string]
 # 1) API (port 8000)
 if (-not (Test-PortBusy 8000)) {
     Start-Hidden $py "-m uvicorn api.main:app --host 127.0.0.1 --port 8000 --log-level warning" $root "api"
-    "API ishga tushirildi"
-} else { "API allaqachon ishlayapti (port 8000)" }
+    Log "API ishga tushirildi"
+} else { Log "API allaqachon ishlayapti (port 8000)" }
 
 # 2) Telegram bot
 if (-not (Test-PyModuleRunning "bot\.main")) {
     Start-Hidden $py "-m bot.main" $root "bot"
-    "Bot ishga tushirildi"
-} else { "Bot allaqachon ishlayapti" }
+    Log "Bot ishga tushirildi"
+} else { Log "Bot allaqachon ishlayapti" }
 
 # 3) Scheduler (eslatmalar, kunlik xulosa, CRM sync, oylik bonus)
 if (-not (Test-PyModuleRunning "scheduler\.main")) {
     Start-Hidden $py "-m scheduler.main" $root "scheduler"
-    "Scheduler ishga tushirildi"
-} else { "Scheduler allaqachon ishlayapti" }
+    Log "Scheduler ishga tushirildi"
+} else { Log "Scheduler allaqachon ishlayapti" }
 
 # 4) Sayt (Vite dev server, port 5173)
 if (-not (Test-PortBusy 5173)) {
     Start-Hidden "cmd.exe" "/c npm run dev" (Join-Path $root "web") "web"
-    "Sayt ishga tushirildi"
-} else { "Sayt allaqachon ishlayapti (port 5173)" }
+    Log "Sayt ishga tushirildi"
+} else { Log "Sayt allaqachon ishlayapti (port 5173)" }
 
-# 5) verifix backend (hodim_crm Django, port 8002) — /verifix davomat tizimi
-$verifixPy = Join-Path $root "verifix\backend\venv\Scripts\python.exe"
-if ((Test-Path $verifixPy) -and (-not (Test-PortBusy 8002))) {
-    Start-Hidden $verifixPy "manage.py runserver 0.0.0.0:8002 --noreload" (Join-Path $root "verifix\backend") "verifix-api"
-    "verifix backend ishga tushirildi (8002)"
-} elseif (Test-PortBusy 8002) { "verifix backend allaqachon ishlayapti (8002)" }
+# Manzillar — cmd oynasida (va start_all.log da) ko'rinadi
+Log ""
+Log "Manzillar:"
+Log "  API (backend):        http://localhost:8000"
+Log "  Sayt (shu kompyuter): https://localhost:5173"
+Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+    ForEach-Object { Log "  Sayt (telefon/tarmoq): https://$($_.IPAddress):5173" }
+Log "  (telefonda birinchi ochishda sertifikat ogohlantirishida 'Advanced -> Proceed' bosiladi)"
 
-# 6) verifix frontend (Next.js PRODUCTION, port 3000) — 'npm run build' oldindan bajarilishi kerak.
-#    Dev emas, production: barqaror (worker qulamaydi) va xatoda kod ko'rsatmaydi.
-if (-not (Test-PortBusy 3000)) {
-    Start-Hidden "cmd.exe" "/c npm run start" (Join-Path $root "verifix\frontend") "verifix-web"
-    "verifix frontend ishga tushirildi (3000)"
-} else { "verifix frontend allaqachon ishlayapti (3000)" }
+Log "tugadi"
+
+# verifix (hodim_crm) yagona backendga birlashtirildi (2026-07-14): davomat endi
+# FastAPI + asosiy panel ichida (/check-in, /attendance). Alohida Django/Next
+# xizmatlari endi ishga tushirilmaydi; verifix/ papkasi arxiv sifatida qoladi.
