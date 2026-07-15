@@ -1,7 +1,7 @@
 """Geolokatsiya va vaqt hisoblash yordamchi funksiyalari."""
 from __future__ import annotations
 import math
-from datetime import datetime, time, date as date_cls
+from datetime import datetime, time, timedelta, date as date_cls
 from django.utils import timezone
 
 
@@ -27,12 +27,24 @@ def _to_local(dt: datetime) -> datetime:
     return timezone.localtime(dt)
 
 
-def compute_late_minutes(check_in_dt: datetime, shift_start: time, grace_min: int = 0) -> int:
+def _is_night_shift(shift_start: time | None, shift_end: time | None) -> bool:
+    """Smena yarim tundan oshadimi (masalan 22:00-06:00)?"""
+    return bool(shift_start and shift_end and shift_end < shift_start)
+
+
+def compute_late_minutes(
+    check_in_dt: datetime, shift_start: time, grace_min: int = 0,
+    shift_end: time | None = None,
+) -> int:
     """Smena boshlanish vaqtidan necha daqiqa kech qolganini hisoblaydi.
 
     Misol: shift 09:00, grace=5, keldi 09:15 -> 10 daq kechikish
            shift 09:00, grace=5, keldi 09:03 -> 0 daq (grace ichida)
            shift 09:00, grace=5, keldi 08:55 -> 0 daq (erta keldi)
+
+    Tungi smena (end < start, masalan 22:00-06:00): kelish yarim tundan keyin
+    bo'lsa (mahalliy soat smena tugashidan oldin), boshlanish OLDINGI kunga
+    tegishli — kechikish o'sha nuqtadan o'lchanadi.
     """
     if not check_in_dt or not shift_start:
         return 0
@@ -41,17 +53,26 @@ def compute_late_minutes(check_in_dt: datetime, shift_start: time, grace_min: in
         hour=shift_start.hour, minute=shift_start.minute,
         second=0, microsecond=0,
     )
+    if _is_night_shift(shift_start, shift_end) and local.time() < shift_end:
+        scheduled -= timedelta(days=1)
     diff_min = int((local - scheduled).total_seconds() // 60)
     if diff_min <= grace_min:
         return 0
     return diff_min - grace_min
 
 
-def compute_early_minutes(check_out_dt: datetime, shift_end: time) -> int:
+def compute_early_minutes(
+    check_out_dt: datetime, shift_end: time,
+    shift_start: time | None = None,
+) -> int:
     """Smena tugashidan necha daqiqa erta ketganini hisoblaydi.
 
     Misol: shift end 18:00, ketdi 17:30 -> 30 daq erta
            shift end 18:00, ketdi 18:15 -> 0 daq (kech ketdi)
+
+    Tungi smena (end < start): ketish yarim tundan OLDIN bo'lsa (mahalliy soat
+    smena tugashidan katta), rejalashtirilgan tugash KEYINGI kunda — erta ketish
+    shu nuqtaga nisbatan o'lchanadi.
     """
     if not check_out_dt or not shift_end:
         return 0
@@ -60,6 +81,8 @@ def compute_early_minutes(check_out_dt: datetime, shift_end: time) -> int:
         hour=shift_end.hour, minute=shift_end.minute,
         second=0, microsecond=0,
     )
+    if _is_night_shift(shift_start, shift_end) and local.time() > shift_end:
+        scheduled += timedelta(days=1)
     diff_min = int((scheduled - local).total_seconds() // 60)
     return max(0, diff_min)
 

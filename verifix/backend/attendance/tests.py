@@ -8,7 +8,7 @@ from accounts.models import Shift, User
 from leave.models import LeaveRequest
 from .models import Attendance
 from .services import CheckInError, CheckInPayload, perform_check_in
-from .utils import compute_worked_minutes
+from .utils import compute_early_minutes, compute_late_minutes, compute_worked_minutes
 
 
 def _local_dt(y, m, d, hh, mm):
@@ -61,6 +61,45 @@ class WorkedMinutesTests(TestCase):
             check_out_time=_local_dt(2026, 6, 10, 18, 0),
         )
         self.assertEqual(att.worked_minutes, 480)
+
+
+class NightShiftTests(TestCase):
+    """Tungi (yarim tundan oshuvchi) smenada kechikish/erta ketish hisobi."""
+
+    def test_day_shift_unchanged(self):
+        # 09:00-18:00: 09:15 kelish, grace=5 -> 10 daq (eski xatti-harakat)
+        got = compute_late_minutes(
+            _local_dt(2026, 6, 10, 9, 15), time(9, 0), 5, shift_end=time(18, 0)
+        )
+        self.assertEqual(got, 10)
+
+    def test_night_shift_late_before_midnight(self):
+        # 22:00-06:00: 22:10 kelish (grace'siz) -> 10 daq kechikish
+        got = compute_late_minutes(
+            _local_dt(2026, 6, 10, 22, 10), time(22, 0), 0, shift_end=time(6, 0)
+        )
+        self.assertEqual(got, 10)
+
+    def test_night_shift_late_after_midnight(self):
+        # 00:30 da kelish — smena kecha 22:00 da boshlangan -> 150 daq
+        got = compute_late_minutes(
+            _local_dt(2026, 6, 11, 0, 30), time(22, 0), 0, shift_end=time(6, 0)
+        )
+        self.assertEqual(got, 150)
+
+    def test_night_shift_early_leave_before_midnight(self):
+        # 23:00 da ketish — tugash ertaga 06:00 -> 420 daq erta
+        got = compute_early_minutes(
+            _local_dt(2026, 6, 10, 23, 0), time(6, 0), shift_start=time(22, 0)
+        )
+        self.assertEqual(got, 420)
+
+    def test_night_shift_early_leave_after_midnight(self):
+        # 05:00 da ketish — tugash bugun 06:00 -> 60 daq erta
+        got = compute_early_minutes(
+            _local_dt(2026, 6, 11, 5, 0), time(6, 0), shift_start=time(22, 0)
+        )
+        self.assertEqual(got, 60)
 
 
 class LeaveGateTests(TestCase):

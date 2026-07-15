@@ -69,18 +69,19 @@ class Attendance(models.Model):
         # Dam olish kuni? (hodimning shaxsiy ish kunlari bo'yicha)
         self.is_weekend = is_weekend(self.date, self.user.work_day_set())
 
-        # Kechikish
+        # Kechikish (tungi smena uchun end ham uzatiladi)
         if self.check_in_time and shift:
             self.late_minutes = compute_late_minutes(
                 self.check_in_time, shift.start_time, shift.grace_minutes,
+                shift_end=shift.end_time,
             )
         else:
             self.late_minutes = 0
 
-        # Erta ketish
+        # Erta ketish (tungi smena uchun start ham uzatiladi)
         if self.check_out_time and shift:
             self.early_leave_minutes = compute_early_minutes(
-                self.check_out_time, shift.end_time,
+                self.check_out_time, shift.end_time, shift_start=shift.start_time,
             )
         else:
             self.early_leave_minutes = 0
