@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, LeadStageDay, LeadStageMonth } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { format } from "date-fns";
+import { CalendarDays, Home, Magnet, Phone } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
+import { currentMonthKey, MonthPicker } from "@/components/PeriodPicker";
+import StatCard from "@/components/StatCard";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { useLeadStageDay, useLeadStageMonth } from "@/lib/queries";
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 
@@ -14,25 +24,18 @@ function monthTitle(monthKey: string): string {
   return `${MONTH_NAMES[m - 1] ?? monthKey} ${y}`;
 }
 
-function currentMonthKey(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
-
 function formatDay(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return format(new Date(iso + "T00:00:00"), "dd.MM");
 }
 
 function LastUpdated({ iso }: { iso: string | null }) {
   if (!iso) {
-    return <p className="text-xs text-slate-400 mt-3">Ma'lumot hali yig'ilmagan.</p>;
+    return <p className="mt-3 text-xs text-slate-400">Ma'lumot hali yig'ilmagan.</p>;
   }
-  const dt = new Date(iso + "Z");
   return (
-    <p className="text-xs text-slate-400 mt-3">
-      🕐 Oxirgi yangilanish: {dt.toLocaleString("uz", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-      {" "}(fon rejimida, taxminan har 30 daqiqada)
+    <p className="mt-3 text-xs text-slate-400">
+      🕐 Oxirgi yangilanish: {format(new Date(iso + "Z"), "dd.MM, HH:mm")} (fon rejimida, taxminan
+      har 30 daqiqada)
     </p>
   );
 }
@@ -41,183 +44,193 @@ export default function LeadStats() {
   const { user } = useAuth();
   const isManager = MANAGER_ROLES.includes(user?.role ?? "");
   const [month, setMonth] = useState(currentMonthKey());
-  const [monthData, setMonthData] = useState<LeadStageMonth | null>(null);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const [dayData, setDayData] = useState<LeadStageDay | null>(null);
   const [selectedOperator, setSelectedOperator] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
-  // Oylik ma'lumot — rahbar tashkilotni, xodim o'z statistikasini ko'radi
-  useEffect(() => {
-    setLoading(true);
-    setError(null);
-    const req = isManager ? api.leadStageMonth(month) : api.myLeadStageMonth(month);
-    req
-      .then((data) => {
-        setMonthData(data);
-        const lastDay = data.days.length ? data.days[data.days.length - 1].date : null;
-        setSelectedDay(lastDay);
-        setSelectedOperator(null);
-      })
-      .catch((e) => {
-        const status = e instanceof ApiError ? e.status : 0;
-        setError(
-          status === 403
-            ? "Bu bo'lim uchun ruxsatingiz yo'q."
-            : status === 400
-              ? "CRM operator ID'ingiz sozlanmagan — rahbaringizga murojaat qiling."
-              : "Ma'lumotni yuklashda xatolik."
-        );
-        setMonthData(null);
-      })
-      .finally(() => setLoading(false));
-  }, [month, isManager]);
+  const monthQuery = useLeadStageMonth(month, isManager);
+  const monthData = monthQuery.data;
 
-  // Kunlik ma'lumot (kun yoki operator o'zgarganda)
+  // Oy ma'lumoti kelganda oxirgi kunni avtomatik tanlaymiz
   useEffect(() => {
-    if (!selectedDay) {
-      setDayData(null);
-      return;
+    if (monthData) {
+      const lastDay = monthData.days.length ? monthData.days[monthData.days.length - 1].date : null;
+      setSelectedDay(lastDay);
+      setSelectedOperator(null);
     }
-    const req = isManager
-      ? api.leadStageDay(selectedDay, selectedOperator ?? undefined)
-      : api.myLeadStageDay(selectedDay);
-    req.then(setDayData).catch(() => setDayData(null));
-  }, [selectedDay, selectedOperator, isManager]);
+  }, [monthData]);
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Yuklanmoqda...</div>;
-  if (error) return <div className="bg-white rounded-lg shadow p-6 text-slate-600">{error}</div>;
+  const dayQuery = useLeadStageDay(selectedDay, selectedOperator ?? undefined, isManager);
+  const dayData = dayQuery.data ?? null;
+
+  if (monthQuery.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-9 w-64" />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[86px] rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-72 w-full rounded-xl" />
+      </div>
+    );
+  }
+
+  if (monthQuery.error) {
+    const status = monthQuery.error instanceof ApiError ? monthQuery.error.status : 0;
+    return (
+      <div className="rounded-lg bg-white p-6 text-slate-600 shadow">
+        {status === 403
+          ? "Bu bo'lim uchun ruxsatingiz yo'q."
+          : status === 400
+            ? "CRM operator ID'ingiz sozlanmagan — rahbaringizga murojaat qiling."
+            : "Ma'lumotni yuklashda xatolik."}
+      </div>
+    );
+  }
+
   if (!monthData) return null;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h2 className="text-lg font-semibold">🧲 Lidlar statistikasi — {monthTitle(monthData.month)}</h2>
-        <input
-          type="month"
-          value={month}
-          max={currentMonthKey()}
-          onChange={(e) => setMonth(e.target.value)}
-          className="border rounded px-3 py-1.5 text-sm"
-        />
-      </div>
+      <PageHeader title={`🧲 Lidlar statistikasi — ${monthTitle(monthData.month)}`}>
+        <MonthPicker value={month} onChange={setMonth} />
+      </PageHeader>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">📞 Gaplashilgan lidlar</div>
-          <div className="text-2xl font-semibold">{monthData.calls}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">🧲 Ishlangan lidlar</div>
-          <div className="text-2xl font-semibold">{monthData.total}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">Tashriflar</div>
-          <div className="text-2xl font-semibold">{monthData.visits}</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="text-xs text-slate-500">Ma'lumotli kunlar</div>
-          <div className="text-2xl font-semibold">{monthData.days.length}</div>
-        </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <StatCard label="Gaplashilgan lidlar" value={monthData.calls} icon={Phone} />
+        <StatCard label="Ishlangan lidlar" value={monthData.total} icon={Magnet} />
+        <StatCard label="Tashriflar" value={monthData.visits} icon={Home} />
+        <StatCard label="Ma'lumotli kunlar" value={monthData.days.length} icon={CalendarDays} />
       </div>
 
       {monthData.days.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-6 text-slate-500">Bu oy uchun hali ma'lumot yo'q.</div>
+        <div className="rounded-lg bg-white p-6 text-slate-500 shadow">
+          Bu oy uchun hali ma'lumot yo'q.
+        </div>
       ) : (
-        <div className={`grid grid-cols-1 gap-4 ${isManager ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+        <div className={cn("grid grid-cols-1 gap-4", isManager ? "md:grid-cols-3" : "md:grid-cols-2")}>
           {/* Kunlar ro'yxati */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-medium text-sm text-slate-600 mb-3">Kunlar</h3>
-            <div className="space-y-1 max-h-[28rem] overflow-auto">
-              {[...monthData.days].reverse().map((d) => (
-                <button
-                  key={d.date}
-                  onClick={() => {
-                    setSelectedDay(d.date);
-                    setSelectedOperator(null);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm ${
-                    selectedDay === d.date ? "bg-indigo-600 text-white" : "hover:bg-slate-100"
-                  }`}
-                >
-                  <span>{formatDay(d.date)}</span>
-                  <span className={selectedDay === d.date ? "text-indigo-100" : "text-slate-500"}>
-                    {d.calls} gaplashildi · {d.total} lid
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Kun tafsiloti: bosqichlar */}
-          <div className="bg-white rounded-lg shadow p-4">
-            {dayData ? (
-              <>
-                <h3 className="font-medium text-sm text-slate-600 mb-1">
-                  {dayData.responsible_id != null
-                    ? dayData.responsible_name
-                    : "Barcha operatorlar"}{" "}
-                  — {formatDay(dayData.date)}
-                </h3>
-                <div className="text-sm text-slate-500 mb-3 space-y-0.5">
-                  <div>📞 Gaplashilgan: <b>{dayData.calls}</b> (kiruvchi {dayData.calls_in}, chiquvchi {dayData.calls_out})</div>
-                  <div>🧲 Ishlangan lidlar: <b>{dayData.total}</b> · Tashrif: <b>{dayData.visits}</b></div>
-                </div>
-                <div className="space-y-1">
-                  {dayData.stages.length === 0 ? (
-                    <p className="text-sm text-slate-400">Ma'lumot yo'q.</p>
-                  ) : (
-                    dayData.stages.map((s) => (
-                      <div key={s.stage_name} className="flex justify-between text-sm py-1 border-b border-slate-100">
-                        <span>{s.stage_name}</span>
-                        <span className="font-medium">{s.count}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-                {selectedOperator != null && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm text-slate-600">Kunlar</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="max-h-[28rem] space-y-1 overflow-auto">
+                {[...monthData.days].reverse().map((d) => (
                   <button
-                    onClick={() => setSelectedOperator(null)}
-                    className="mt-3 text-sm text-indigo-600 hover:underline"
+                    key={d.date}
+                    onClick={() => {
+                      setSelectedDay(d.date);
+                      setSelectedOperator(null);
+                    }}
+                    className={cn(
+                      "flex w-full items-center justify-between rounded px-3 py-2 text-sm",
+                      selectedDay === d.date ? "bg-primary text-primary-foreground" : "hover:bg-slate-100"
+                    )}
                   >
-                    ← Barcha operatorlar
-                  </button>
-                )}
-                <LastUpdated iso={dayData.last_updated} />
-              </>
-            ) : (
-              <p className="text-sm text-slate-400">Kun tanlang.</p>
-            )}
-          </div>
-
-          {/* Operatorlar — faqat rahbarlar uchun */}
-          {isManager && (
-          <div className="bg-white rounded-lg shadow p-4">
-            <h3 className="font-medium text-sm text-slate-600 mb-3">Operatorlar</h3>
-            {dayData && dayData.operators.length > 0 ? (
-              <div className="space-y-1 max-h-[28rem] overflow-auto">
-                {dayData.operators.map((op) => (
-                  <button
-                    key={op.responsible_id}
-                    onClick={() => setSelectedOperator(op.responsible_id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded text-sm ${
-                      selectedOperator === op.responsible_id ? "bg-indigo-600 text-white" : "hover:bg-slate-100"
-                    }`}
-                  >
-                    <span className="truncate mr-2">{op.responsible_name}</span>
-                    <span className={`whitespace-nowrap ${selectedOperator === op.responsible_id ? "text-indigo-100" : "text-slate-500"}`}>
-                      📞{op.calls} · 🧲{op.total}
+                    <span>{formatDay(d.date)}</span>
+                    <span className={selectedDay === d.date ? "text-indigo-100" : "text-slate-500"}>
+                      {d.calls} gaplashildi · {d.total} lid
                     </span>
                   </button>
                 ))}
               </div>
-            ) : (
-              <p className="text-sm text-slate-400">
-                {selectedOperator != null ? "Bitta operator ko'rinishi." : "Kun tanlang."}
-              </p>
-            )}
-          </div>
+            </CardContent>
+          </Card>
+
+          {/* Kun tafsiloti: bosqichlar */}
+          <Card>
+            <CardContent className="pt-6">
+              {dayQuery.isLoading ? (
+                <Skeleton className="h-40 w-full" />
+              ) : dayData ? (
+                <>
+                  <h3 className="mb-1 text-sm font-medium text-slate-600">
+                    {dayData.responsible_id != null ? dayData.responsible_name : "Barcha operatorlar"} —{" "}
+                    {formatDay(dayData.date)}
+                  </h3>
+                  <div className="mb-3 space-y-0.5 text-sm text-slate-500">
+                    <div>
+                      📞 Gaplashilgan: <b>{dayData.calls}</b> (kiruvchi {dayData.calls_in}, chiquvchi{" "}
+                      {dayData.calls_out})
+                    </div>
+                    <div>
+                      🧲 Ishlangan lidlar: <b>{dayData.total}</b> · Tashrif: <b>{dayData.visits}</b>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    {dayData.stages.length === 0 ? (
+                      <p className="text-sm text-slate-400">Ma'lumot yo'q.</p>
+                    ) : (
+                      dayData.stages.map((s) => (
+                        <div
+                          key={s.stage_name}
+                          className="flex justify-between border-b border-slate-100 py-1 text-sm"
+                        >
+                          <span>{s.stage_name}</span>
+                          <span className="font-medium">{s.count}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {selectedOperator != null && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="mt-3 h-auto p-0"
+                      onClick={() => setSelectedOperator(null)}
+                    >
+                      ← Barcha operatorlar
+                    </Button>
+                  )}
+                  <LastUpdated iso={dayData.last_updated} />
+                </>
+              ) : (
+                <p className="text-sm text-slate-400">Kun tanlang.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Operatorlar — faqat rahbarlar uchun */}
+          {isManager && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm text-slate-600">Operatorlar</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {dayData && dayData.operators.length > 0 ? (
+                  <div className="max-h-[28rem] space-y-1 overflow-auto">
+                    {dayData.operators.map((op) => (
+                      <button
+                        key={op.responsible_id}
+                        onClick={() => setSelectedOperator(op.responsible_id)}
+                        className={cn(
+                          "flex w-full items-center justify-between rounded px-3 py-2 text-sm",
+                          selectedOperator === op.responsible_id
+                            ? "bg-primary text-primary-foreground"
+                            : "hover:bg-slate-100"
+                        )}
+                      >
+                        <span className="mr-2 truncate">{op.responsible_name}</span>
+                        <span
+                          className={cn(
+                            "whitespace-nowrap",
+                            selectedOperator === op.responsible_id ? "text-indigo-100" : "text-slate-500"
+                          )}
+                        >
+                          📞{op.calls} · 🧲{op.total}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">
+                    {selectedOperator != null ? "Bitta operator ko'rinishi." : "Kun tanlang."}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           )}
         </div>
       )}
