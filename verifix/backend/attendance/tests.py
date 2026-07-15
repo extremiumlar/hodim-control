@@ -64,6 +64,48 @@ class WorkedMinutesTests(TestCase):
         self.assertEqual(att.worked_minutes, 480)
 
 
+class RecalcOnSaveTests(TestCase):
+    """save() faqat check_in/check_out o'zgarganda qayta hisoblashi — smena
+    keyin o'zgarsa tarixiy yozuvlar buzilmasligi."""
+
+    def setUp(self):
+        self.shift = Shift.objects.create(
+            name="Kunduzgi", start_time=time(9, 0), end_time=time(18, 0),
+        )
+        self.user = User.objects.create_user(username="t_recalc", password="x", shift=self.shift)
+        self.att = Attendance.objects.create(
+            user=self.user, date=timezone.localdate(),
+            check_in_time=_local_dt(2026, 6, 10, 9, 30),  # 25 daq kechikish (grace=5)
+            check_out_time=_local_dt(2026, 6, 10, 18, 0),
+        )
+
+    def test_note_edit_keeps_history_after_shift_change(self):
+        self.assertEqual(self.att.late_minutes, 25)
+        # Smena keyinchalik o'zgartirildi — tarixiy yozuv o'zgarmasligi kerak
+        self.shift.start_time = time(8, 0)
+        self.shift.save()
+        self.att.refresh_from_db()
+        self.att.note = "tahrir"
+        self.att.save()
+        self.att.refresh_from_db()
+        self.assertEqual(self.att.late_minutes, 25)  # 85 ga oshib ketmadi
+
+    def test_time_change_still_recalculates(self):
+        self.att.check_in_time = _local_dt(2026, 6, 10, 10, 0)
+        self.att.save()
+        self.att.refresh_from_db()
+        self.assertEqual(self.att.late_minutes, 55)
+
+    def test_forced_recalc(self):
+        self.shift.start_time = time(8, 0)
+        self.shift.save()
+        self.att.refresh_from_db()
+        self.att.user.refresh_from_db()
+        self.att.save(recalc=True)
+        self.att.refresh_from_db()
+        self.assertEqual(self.att.late_minutes, 85)
+
+
 class AutoCheckoutTests(TestCase):
     """auto_checkout buyrug'i: unutilgan check-out'lar smena oxiri bilan yopiladi."""
 

@@ -26,5 +26,5 @@ class Command(BaseCommand):
         total = qs.count()
         self.stdout.write(f"{total} ta yozuv qayta hisoblanmoqda...")
         for att in qs:
-            att.save()  # recalculate() chaqiriladi
+            att.save(recalc=True)  # majburan qayta hisoblash (vaqtlar o'zgarmagan bo'lsa ham)
         self.stdout.write(self.style.SUCCESS(f"✅ {total} ta yozuv yangilandi."))

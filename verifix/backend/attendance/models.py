@@ -99,7 +99,27 @@ class Attendance(models.Model):
         else:
             self.status = self.Status.PRESENT
 
-    def save(self, *args, **kwargs):
-        # Har bir save oldidan avtomatik hisoblash
-        self.recalculate()
+    def save(self, *args, recalc: bool | None = None, **kwargs):
+        # recalc=None (default): faqat yangi yozuvda yoki check_in/check_out
+        # O'ZGARGANDA qayta hisoblanadi — aks holda smena keyinchalik o'zgarsa
+        # oddiy tahrir (masalan izoh) tarixiy late/worked raqamlarini joriy
+        # smena bo'yicha qayta yozib, auditni buzardi. recalc=True bilan
+        # majburan qayta hisoblash mumkin (recalc_attendance buyrug'i shunday
+        # chaqiradi), recalc=False — umuman hisoblamaslik.
+        if recalc is None:
+            if self.pk is None:
+                recalc = True
+            else:
+                old = (
+                    Attendance.objects.filter(pk=self.pk)
+                    .values("check_in_time", "check_out_time")
+                    .first()
+                )
+                recalc = (
+                    old is None
+                    or old["check_in_time"] != self.check_in_time
+                    or old["check_out_time"] != self.check_out_time
+                )
+        if recalc:
+            self.recalculate()
         super().save(*args, **kwargs)
