@@ -76,7 +76,13 @@ export default defineConfig({
   // (Face ID) va GPS faqat xavfsiz originda ishlaydi (http://192.168.137.1:5173
   // da brauzer ikkalasini bloklaydi). Telefonda birinchi ochishda sertifikat
   // ogohlantirishini "Advanced → Proceed" bilan bir marta qabul qilish kerak.
-  plugins: [react(), verifixRedirect(), basicSsl(), httpToHttpsRedirect()],
+  // VITE_NO_SSL=1 — HTTPS'siz yordamchi instans (masalan avtomatik UI tekshiruvlar
+  // uchun); asosiy server doim HTTPS (telefonda kamera/GPS shart).
+  plugins: [
+    react(),
+    verifixRedirect(),
+    ...(process.env.VITE_NO_SSL === "1" ? [] : [basicSsl(), httpToHttpsRedirect()]),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
