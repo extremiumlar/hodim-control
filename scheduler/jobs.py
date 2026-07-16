@@ -140,6 +140,14 @@ async def hot_lead_tick() -> None:
         logger.info("Issiq lid eskalatsiya: %s ta", escalation["escalated"])
 
 
+async def anketa_tick() -> None:
+    """Bilim bazasi anketasi: Dasturchi tasdiqlagan vaqti kelgan sessiyalarni
+    boshlaydi (xodimlarga birinchi savollarni yuboradi). Faol sessiya bo'lmasa no-op."""
+    body = await call_api("/anketa/tick", timeout=120, label="Anketa tick")
+    if body is not None and body.get("started"):
+        logger.info("Anketa: %s ta sessiya boshlandi", body["started"])
+
+
 async def ai_weekly_run() -> None:
     """Haftalik AI trend: har operatorga SHAXSIY xulosa (guruhga jamoa ko'rinishini
     endi raqamli haftalik digest beradi — send_weekly_digest)."""

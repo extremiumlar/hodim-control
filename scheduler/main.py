@@ -142,6 +142,11 @@ def _build_jobs() -> list[JobSpec]:
             IntervalTrigger(minutes=cfg.HOT_LEAD_POLL_MINUTES),
             max_instances=1, coalesce=True,
         ),
+        # Bilim bazasi anketasi — tasdiqlangan vaqti kelgan sessiyani boshlash
+        JobSpec(
+            "anketa_tick", jobs.anketa_tick, IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
         # Haftalik AI trend (shaxsiy xabarlar) — haftalik digestdan keyinroq,
         # operator avval guruhdagi raqamlarni, keyin shaxsiy xulosasini ko'radi
         JobSpec(

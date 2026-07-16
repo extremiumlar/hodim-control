@@ -5,6 +5,7 @@ from api.config import settings
 from api.routers import (
     ai_coach,
     ai_watch,
+    anketa,
     attendance,
     audit_logs,
     auth,
@@ -53,6 +54,7 @@ app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
+app.include_router(anketa.router)
 
 # cPanel deploy: bot shu API ichida webhook orqali ishlaydi. Faqat yoqilganda
 # ulanadi — shunda bot/ paketi import qilinadi (Docker api image'da bot/ yo'q,

@@ -43,6 +43,7 @@ def _due(now: datetime) -> list:
     # ── Har daqiqa (yengil, o'zini vaqt/bayroq bo'yicha tekshiradi) ──
     add("/daily-results/sync")                       # CRM sync (ilgari 30s)
     add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
+    add("/anketa/tick", timeout=120)                 # rejalashtirilgan anketani boshlash
 
     # ── Interval ──
     if m % 15 == 0:

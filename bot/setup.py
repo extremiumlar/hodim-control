@@ -12,6 +12,7 @@ from aiogram.types import ErrorEvent
 from bot.config import BOT_TOKEN
 from bot.handlers import (
     ai_watch,
+    anketa,
     assign_task,
     excused,
     group_stats,
@@ -57,8 +58,12 @@ def build_dispatcher(bot: Bot) -> Dispatcher:
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(group_stats.router)
-    # ENG OXIRIDA: erkin matnli sabab ushlagichi — yuqoridagi hech bir handler
-    # olmagan shaxsiy matnlargina yetib keladi (menyu/FSM/buyruqlar ustun turadi).
+    dp.include_router(anketa.router)
+    # ENG OXIRIDA ikki "erkin matn" ushlagichi, tartib muhim:
+    # 1) anketa javoblari — API'da faol savol kutilmayotgan bo'lsa SkipHandler
+    #    bilan keyingisiga o'tkazadi;
+    # 2) AI sabab matni — yuqoridagi hech bir handler olmagan xabarlar.
+    dp.include_router(anketa.answer_router)
     dp.include_router(ai_watch.reason_text_router)
 
     @dp.error()

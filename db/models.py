@@ -537,3 +537,72 @@ class Attendance(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AnketaSessionStatus(str, enum.Enum):
+    scheduled = "scheduled"
+    in_progress = "in_progress"
+    done = "done"
+    cancelled = "cancelled"
+
+
+class AnketaSession(Base):
+    """Bilim bazasi anketasi sessiyasi — Dasturchi bot orqali kun/vaqtni
+    tasdiqlaganda yaratiladi; `scheduled_at` (naive UTC) yetganda tick uni
+    boshlaydi (savollar xodimlarga botdan yuboriladi). Bir vaqtda faqat bitta
+    faol (scheduled/in_progress) sessiya bo'lishi mumkin."""
+
+    __tablename__ = "anketa_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime)  # naive UTC
+    status: Mapped[str] = mapped_column(
+        String(20), default=AnketaSessionStatus.scheduled.value, index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AnketaAssignment(Base):
+    """Bitta xodimga biriktirilgan bitta savol to'plami (1:1 — har to'plam
+    sessiyada faqat bitta xodimga tushadi, UniqueConstraint bilan kafolatlanadi).
+    `current_q` — keyingi yuboriladigan savolning 0-asosli indeksi; javoblar
+    kelgani sari bittaga oshadi (savollar api/services/anketa_data.py'da)."""
+
+    __tablename__ = "anketa_assignments"
+    __table_args__ = (
+        UniqueConstraint("session_id", "user_id", name="uq_anketa_assignment_user"),
+        UniqueConstraint("session_id", "toplam", name="uq_anketa_assignment_toplam"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("anketa_sessions.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    toplam: Mapped[int] = mapped_column(Integer)
+    current_q: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|in_progress|done
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AnketaAnswer(Base):
+    """Xodimning bitta savolga javobi. `question_text` — javob paytidagi savol
+    matni nusxasi (keyin to'plam o'zgarsa ham javob konteksti saqlanadi)."""
+
+    __tablename__ = "anketa_answers"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "question_index", name="uq_anketa_answer_q"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(
+        ForeignKey("anketa_assignments.id", ondelete="CASCADE"), index=True
+    )
+    question_index: Mapped[int] = mapped_column(Integer)
+    question_text: Mapped[str] = mapped_column(Text)
+    answer_text: Mapped[str] = mapped_column(Text)
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

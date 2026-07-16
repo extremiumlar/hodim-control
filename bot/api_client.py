@@ -414,6 +414,53 @@ async def set_ai_config(telegram_id: int, **fields) -> dict | None:
     return resp.json()
 
 
+async def anketa_overview(telegram_id: int) -> dict | None:
+    """Anketa holati (taqsimot + sessiya). Faqat Dasturchi — ruxsat yo'q bo'lsa None."""
+    resp = await _get_client().get(f"/anketa/overview/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_schedule(telegram_id: int, scheduled_at: str | None) -> dict:
+    """Sessiya yaratish. scheduled_at — Toshkent vaqti "YYYY-MM-DDTHH:MM" yoki None
+    (darhol boshlash). 400 xatolar (faol sessiya bor, xodim topilmadi...) chaqiruvchida
+    HTTPStatusError sifatida ushlanadi — detail foydalanuvchiga ko'rsatiladi."""
+    resp = await _get_client().post(
+        "/anketa/schedule",
+        json={"telegram_id": telegram_id, "scheduled_at": scheduled_at},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_cancel(telegram_id: int) -> dict:
+    resp = await _get_client().post("/anketa/cancel", json={"telegram_id": telegram_id}, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_answer(telegram_id: int, text: str) -> dict:
+    """Xodim matnini anketa javobi sifatida sinab ko'radi.
+    {"handled": false} — anketa kutilmayotgan edi (bot boshqa oqimlarga o'tkazadi)."""
+    resp = await _get_client().post(
+        "/anketa/answer", json={"telegram_id": telegram_id, "text": text}, timeout=30
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_results(telegram_id: int) -> dict | None:
+    """Oxirgi sessiya javoblari (.txt fayl uchun). Ruxsat yo'q — None, sessiya yo'q — 404."""
+    resp = await _get_client().get(f"/anketa/results/{telegram_id}", timeout=60)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
     """Operator issiq lidni qabul qildi (✅ tugmasi). Boshqa operatorga tayinlangan
     bo'lsa — None (bot ogohlantiradi)."""
