@@ -82,9 +82,9 @@ def main_menu(
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
             rows.append([KeyboardButton(text=BTN_AUDIT), KeyboardButton(text=BTN_PANEL)])
-        if role == "dasturchi":
-            # Bilim bazasi anketasi — boshlanishini faqat Dasturchi tasdiqlaydi
-            rows.append([KeyboardButton(text=BTN_ANKETA)])
+            if role == "dasturchi":
+                # Bilim bazasi anketasi — boshlanishini faqat Dasturchi tasdiqlaydi
+                rows.append([KeyboardButton(text=BTN_ANKETA)])
         else:
             rows.append([KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PANEL)])
 
