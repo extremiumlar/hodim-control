@@ -91,6 +91,7 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
             InlineKeyboardButton(text="➕ Ma'lumot qo'shish", callback_data="kb:add"),
             InlineKeyboardButton(text="📥 Baza (.txt)", callback_data="kb:export"),
         ],
+        [InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 

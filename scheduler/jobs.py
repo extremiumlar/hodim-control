@@ -159,6 +159,13 @@ async def knowledge_tick() -> None:
         )
 
 
+async def playbook_tick() -> None:
+    """Sotuv playbook: faol qurish bosqichini davom ettiradi (build yo'q — no-op)."""
+    body = await call_api("/playbook/tick", timeout=120, label="Playbook tick")
+    if body is not None and body.get("active"):
+        logger.info("Playbook qurilmoqda: bosqich=%s", body.get("status"))
+
+
 async def knowledge_stale() -> None:
     """Bilim bazasi: eskirgan sana-sezgir yozuvlarni belgilab rahbarga eslatadi."""
     body = await call_api("/knowledge/stale-tick", timeout=60, label="Bilim bazasi eskirish")

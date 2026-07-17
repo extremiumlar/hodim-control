@@ -587,6 +587,50 @@ class KnowledgeEntry(Base):
     )
 
 
+class PlaybookBuild(Base):
+    """Sotuv playbook qurish jarayoni — og'ir AI ishi cron tick'da bosqichma-bosqich
+    boradi (cPanel gateway limiti): profiles (har sotuvchi uslubi, anketa
+    javoblaridan) → objections (shortfall_reason erkin matnlaridan real mijoz
+    e'tirozlari) → synthesis (yakuniy playbook yozuvlari, eng natijali sotuvchiga
+    og'irlik berib) → done. Oraliq natijalar `data` JSON'ida to'planadi."""
+
+    __tablename__ = "playbook_builds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(20), default="profiles", index=True)
+    # {"targets": [...], "profiles": {...}, "objections": [...]}
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    ai_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PlaybookEntry(Base):
+    """Playbook yozuvi: vaziyat → texnika → xodimlarning namunaviy iboralari.
+    `kind`: etiroz (e'tiroz bilan ishlash), uslub (ohang/uslub qoidasi), qoida
+    (umumiy sotuv qoidasi, masalan tezlik). Sotuv AI (3-bosqich) faqat verified
+    yozuvlardan foydalanadi — Boss tasdig'i shart."""
+
+    __tablename__ = "playbook_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    build_id: Mapped[int | None] = mapped_column(
+        ForeignKey("playbook_builds.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(10), default="etiroz")  # etiroz|uslub|qoida
+    situation: Mapped[str] = mapped_column(Text)
+    technique: Mapped[str] = mapped_column(Text)
+    phrases: Mapped[list | None] = mapped_column(JSON, nullable=True)  # [{"text","source"}]
+    status: Mapped[str] = mapped_column(String(20), default="unverified", index=True)
+    verified_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class AnketaSessionStatus(str, enum.Enum):
     scheduled = "scheduled"
     in_progress = "in_progress"

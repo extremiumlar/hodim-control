@@ -23,6 +23,7 @@ from bot.handlers import (
     menu,
     mobilograf,
     norms,
+    playbook,
     start,
     stats,
     tasks,
@@ -61,6 +62,7 @@ def build_dispatcher(bot: Bot) -> Dispatcher:
     dp.include_router(group_stats.router)
     dp.include_router(anketa.router)
     dp.include_router(knowledge.router)
+    dp.include_router(playbook.router)
     # ENG OXIRIDA ikki "erkin matn" ushlagichi, tartib muhim:
     # 1) anketa javoblari — API'da faol savol kutilmayotgan bo'lsa SkipHandler
     #    bilan keyingisiga o'tkazadi;

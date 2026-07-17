@@ -546,6 +546,53 @@ async def knowledge_export(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def playbook_overview(telegram_id: int) -> dict | None:
+    """Sotuv playbook holati. Faqat Boshliq/Dasturchi — ruxsat yo'q bo'lsa None."""
+    resp = await _get_client().get(f"/playbook/overview/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def playbook_build(telegram_id: int) -> dict:
+    """Playbook qurishni boshlaydi (haqiqiy AI ishi cron tick'da boradi).
+    400 — allaqachon qurilmoqda / anketa yo'q / AI o'chiq."""
+    resp = await _get_client().post(
+        "/playbook/build", json={"telegram_id": telegram_id}, timeout=60
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def playbook_review_next(telegram_id: int, after_id: int = 0) -> dict | None:
+    resp = await _get_client().get(
+        f"/playbook/review-next/{telegram_id}", params={"after_id": after_id}
+    )
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def playbook_decide(telegram_id: int, entry_id: int, action: str) -> dict:
+    resp = await _get_client().post(
+        "/playbook/decide",
+        json={"telegram_id": telegram_id, "entry_id": entry_id, "action": action},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def playbook_export(telegram_id: int) -> dict | None:
+    resp = await _get_client().get(f"/playbook/export/{telegram_id}", timeout=60)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
     """Operator issiq lidni qabul qildi (✅ tugmasi). Boshqa operatorga tayinlangan
     bo'lsa — None (bot ogohlantiradi)."""

@@ -59,6 +59,7 @@ def _due(now: datetime) -> list:
     add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
     add("/anketa/tick", timeout=120)                 # rejalashtirilgan anketani boshlash
     add("/knowledge/tick", timeout=120)              # bilim bazasi AI ishlovi (draft yo'q — no-op)
+    add("/playbook/tick", timeout=120)               # playbook qurish bosqichlari (build yo'q — no-op)
 
     # ── Interval ──
     if m % 15 == 0:

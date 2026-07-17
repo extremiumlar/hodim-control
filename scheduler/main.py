@@ -152,6 +152,11 @@ def _build_jobs() -> list[JobSpec]:
             "knowledge_tick", jobs.knowledge_tick, IntervalTrigger(minutes=1),
             max_instances=1, coalesce=True,
         ),
+        # Sotuv playbook — qurish bosqichlarini davom ettirish
+        JobSpec(
+            "playbook_tick", jobs.playbook_tick, IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
         # Bilim bazasi — eskirgan sana-sezgir yozuvlar eslatmasi (kunlik)
         JobSpec(
             "knowledge_stale", jobs.knowledge_stale, _cron(hour=9, minute=35),
