@@ -10,7 +10,13 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+# SQLite busy timeout: cPanel deploy'da bazaga IKKI jarayon yozadi (Passenger'dagi
+# API + har daqiqalik cron_tick, jumladan in-process lid snapshot). Standart 5s
+# qulf kutish qisqa yozuvlar to'qnashganda "database is locked" berishi mumkin —
+# 30s ga oshiramiz (lokalda ham zarari yo'q).
+_connect_args = {"timeout": 30} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 # SQLite standart holatda FOREIGN KEY cheklovlarini MAJBURLAMAYDI — ondelete=CASCADE
