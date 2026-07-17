@@ -148,6 +148,24 @@ async def anketa_tick() -> None:
         logger.info("Anketa: %s ta sessiya boshlandi", body["started"])
 
 
+async def knowledge_tick() -> None:
+    """Bilim bazasi: draft yozuvlarni chegaralangan AI to'plamida qayta ishlaydi
+    (draft bo'lmasa no-op)."""
+    body = await call_api("/knowledge/tick", timeout=120, label="Bilim bazasi tick")
+    if body is not None and body.get("processed"):
+        logger.info(
+            "Bilim bazasi: %s birlik ishlandi, %s draft qoldi",
+            body["processed"], body.get("remaining"),
+        )
+
+
+async def knowledge_stale() -> None:
+    """Bilim bazasi: eskirgan sana-sezgir yozuvlarni belgilab rahbarga eslatadi."""
+    body = await call_api("/knowledge/stale-tick", timeout=60, label="Bilim bazasi eskirish")
+    if body is not None and body.get("flagged"):
+        logger.info("Bilim bazasi: %s ta eskirgan yozuv belgilandi", body["flagged"])
+
+
 async def ai_weekly_run() -> None:
     """Haftalik AI trend: har operatorga SHAXSIY xulosa (guruhga jamoa ko'rinishini
     endi raqamli haftalik digest beradi — send_weekly_digest)."""

@@ -539,6 +539,54 @@ class Attendance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class KnowledgeStatus(str, enum.Enum):
+    draft = "draft"  # anketadan yaratilgan, AI ishlovi kutilmoqda (cron tick)
+    unverified = "unverified"  # AI ishlagan, rahbar tasdig'i kutilmoqda
+    unknown = "unknown"  # javob yo'q/taxminiy — "bilim bo'shlig'i"
+    conflict = "conflict"  # xodimlar javoblari zid — rahbar hal qiladi
+    verified = "verified"  # tasdiqlangan — sotuv AI'ga faqat shular beriladi
+
+
+class KnowledgeEntry(Base):
+    """Sotuv bilim bazasi yozuvi (savol → rasmiy javob).
+
+    Manba: anketa javoblari (ingest → draft → AI ishlovi → unverified/unknown/
+    conflict → rahbar tasdig'i → verified) yoki qo'lda kiritilgan yozuv (darhol
+    verified). `kind`: single — oddiy savol-javob; common — A qism (5 xodimda bir
+    xil savol, AI birlashtiradi, `group_key` bilan guruhlangan); open — C qism
+    ochiq javobi (AI alohida savol-javob juftlarga ajratadi, keyin o'chiriladi).
+    `date_sensitive` yozuvlar 30 kundan eskirsa `needs_recheck` belgilanadi."""
+
+    __tablename__ = "knowledge_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), default="single")  # single|common|open
+    group_key: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
+    category: Mapped[str] = mapped_column(String(30), default="umumiy")
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default=KnowledgeStatus.draft.value, index=True)
+    date_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    needs_recheck: Mapped[bool] = mapped_column(Boolean, default=False)
+    recheck_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    source: Mapped[str] = mapped_column(String(255), default="")
+    source_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("anketa_sessions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    anketa_answer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("anketa_answers.id", ondelete="SET NULL"), nullable=True
+    )
+    ai_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class AnketaSessionStatus(str, enum.Enum):
     scheduled = "scheduled"
     in_progress = "in_progress"

@@ -58,6 +58,7 @@ def _due(now: datetime) -> list:
     add("/daily-results/sync")                       # CRM sync (ilgari 30s)
     add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
     add("/anketa/tick", timeout=120)                 # rejalashtirilgan anketani boshlash
+    add("/knowledge/tick", timeout=120)              # bilim bazasi AI ishlovi (draft yo'q — no-op)
 
     # ── Interval ──
     if m % 15 == 0:
@@ -82,6 +83,8 @@ def _due(now: datetime) -> list:
         add("/reports/yesterday-correction", timeout=60)
     if h == cfg.AI_BUILD_TARGETS_HOUR and m == 0:
         add("/auto-plan/build-targets", timeout=120)
+    if h == 9 and m == 35:
+        add("/knowledge/stale-tick", timeout=60)     # eskirgan sana-sezgir yozuvlar eslatmasi
 
     # ── Haftalik (yakshanba) ──
     if dow_sun and h == cfg.AI_COMPUTE_PROFILES_HOUR and m == 0:

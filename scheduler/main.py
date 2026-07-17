@@ -147,6 +147,16 @@ def _build_jobs() -> list[JobSpec]:
             "anketa_tick", jobs.anketa_tick, IntervalTrigger(minutes=1),
             max_instances=1, coalesce=True,
         ),
+        # Bilim bazasi — draft'larni AI bilan bo'lib-bo'lib qayta ishlash
+        JobSpec(
+            "knowledge_tick", jobs.knowledge_tick, IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
+        # Bilim bazasi — eskirgan sana-sezgir yozuvlar eslatmasi (kunlik)
+        JobSpec(
+            "knowledge_stale", jobs.knowledge_stale, _cron(hour=9, minute=35),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # Haftalik AI trend (shaxsiy xabarlar) — haftalik digestdan keyinroq,
         # operator avval guruhdagi raqamlarni, keyin shaxsiy xulosasini ko'radi
         JobSpec(

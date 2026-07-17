@@ -18,6 +18,7 @@ BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
 BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_ANKETA = "📝 Anketa"
+BTN_KNOWLEDGE = "📚 Bilim bazasi"
 BTN_CANCEL = "❌ Bekor qilish"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
@@ -82,9 +83,12 @@ def main_menu(
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
             rows.append([KeyboardButton(text=BTN_AUDIT), KeyboardButton(text=BTN_PANEL)])
+            # Sotuv bilim bazasi — anketa javoblarini tasdiqlash/boyitish (boss ham).
+            # Anketa boshlanishini esa faqat Dasturchi tasdiqlaydi.
+            knowledge_row = [KeyboardButton(text=BTN_KNOWLEDGE)]
             if role == "dasturchi":
-                # Bilim bazasi anketasi — boshlanishini faqat Dasturchi tasdiqlaydi
-                rows.append([KeyboardButton(text=BTN_ANKETA)])
+                knowledge_row.append(KeyboardButton(text=BTN_ANKETA))
+            rows.append(knowledge_row)
         else:
             rows.append([KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PANEL)])
 

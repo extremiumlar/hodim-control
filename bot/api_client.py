@@ -479,6 +479,73 @@ async def anketa_results(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def knowledge_overview(telegram_id: int) -> dict | None:
+    """Bilim bazasi holati. Faqat Boshliq/Dasturchi — ruxsat yo'q bo'lsa None."""
+    resp = await _get_client().get(f"/knowledge/overview/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def knowledge_ingest(telegram_id: int) -> dict:
+    """Anketa javoblaridan draft'lar yaratadi (tez, AI'siz — AI ishlovi cron'da).
+    400 — yangi ma'lumot yo'q (chaqiruvchi detail'ni ko'rsatadi)."""
+    resp = await _get_client().post(
+        "/knowledge/ingest", json={"telegram_id": telegram_id}, timeout=60
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def knowledge_review_next(telegram_id: int, after_id: int = 0) -> dict | None:
+    resp = await _get_client().get(
+        f"/knowledge/review-next/{telegram_id}", params={"after_id": after_id}
+    )
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def knowledge_decide(
+    telegram_id: int, entry_id: int, action: str, answer: str | None = None
+) -> dict:
+    resp = await _get_client().post(
+        "/knowledge/decide",
+        json={"telegram_id": telegram_id, "entry_id": entry_id, "action": action, "answer": answer},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def knowledge_add(
+    telegram_id: int, question: str, answer: str, category: str, date_sensitive: bool
+) -> dict:
+    resp = await _get_client().post(
+        "/knowledge/add",
+        json={
+            "telegram_id": telegram_id,
+            "question": question,
+            "answer": answer,
+            "category": category,
+            "date_sensitive": date_sensitive,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def knowledge_export(telegram_id: int) -> dict | None:
+    resp = await _get_client().get(f"/knowledge/export/{telegram_id}", timeout=60)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
     """Operator issiq lidni qabul qildi (✅ tugmasi). Boshqa operatorga tayinlangan
     bo'lsa — None (bot ogohlantiradi)."""
