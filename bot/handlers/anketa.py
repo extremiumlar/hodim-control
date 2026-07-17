@@ -45,7 +45,7 @@ _STATUS_LABELS = {
     "done": "✅ yakunlangan",
     "cancelled": "🚫 bekor qilingan",
 }
-_ASSIGN_EMOJI = {"pending": "🕓", "in_progress": "⏳", "done": "✅"}
+_ASSIGN_EMOJI = {"pending": "🕓", "in_progress": "⏳", "done": "✅", "stopped": "⏹"}
 
 
 class AnketaSchedule(StatesGroup):
@@ -86,7 +86,19 @@ def _overview_keyboard(data: dict) -> InlineKeyboardMarkup:
     active = session and session["status"] in {"scheduled", "in_progress"}
     rows: list[list[InlineKeyboardButton]] = []
     if active:
-        rows.append([InlineKeyboardButton(text="❌ Sessiyani bekor qilish", callback_data="anketa:cancel")])
+        if session["status"] == "in_progress":
+            # Yakunlash — javoblar saqlanadi (to'ldirmaganlarni kutmasdan yopish);
+            # bekor qilish — javoblar ham o'chadi (sinovni tozalash uchun)
+            rows.append([
+                InlineKeyboardButton(
+                    text="🏁 Yakunlash (javoblar saqlanadi)", callback_data="anketa:finish"
+                )
+            ])
+        rows.append([
+            InlineKeyboardButton(
+                text="❌ Bekor qilish (javoblar o'chadi)", callback_data="anketa:cancel"
+            )
+        ])
     else:
         # Standart taqsimot xato bo'lsa ham boshqa guruhlar (all/lavozim/rol)
         # bilan boshlash mumkin — tugmalar har doim chiqadi
@@ -323,6 +335,26 @@ async def on_confirm(callback: CallbackQuery) -> None:
         )
     await callback.message.edit_text(text, reply_markup=None)
     await callback.answer()
+
+
+@router.callback_query(F.data == "anketa:finish")
+async def on_finish_session(callback: CallbackQuery) -> None:
+    try:
+        result = await api_client.anketa_finish(callback.from_user.id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await callback.answer(detail, show_alert=True)
+            return
+        raise
+    await callback.message.edit_text(
+        f"🏁 Sessiya yakunlandi: {result['done']} xodim to'liq tugatgan, "
+        f"{result['stopped']} xodimniki to'xtatildi (yozgan javoblari saqlandi).\n\n"
+        "Endi «📚 Bilim bazasi» → «🔄 Anketadan yuklash» bilan javoblarni bazaga "
+        "olishingiz mumkin.",
+        reply_markup=None,
+    )
+    await callback.answer("Yakunlandi")
 
 
 @router.callback_query(F.data == "anketa:cancel")

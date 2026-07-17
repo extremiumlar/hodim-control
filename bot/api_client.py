@@ -485,6 +485,14 @@ async def anketa_preview_targets(
     return resp.json()
 
 
+async def anketa_finish(telegram_id: int) -> dict:
+    """Sessiyani muddatidan oldin yakunlash — javoblar SAQLANADI, tugatmaganlar
+    to'xtatiladi. 400 — davom etayotgan sessiya yo'q."""
+    resp = await _get_client().post("/anketa/finish", json={"telegram_id": telegram_id}, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def anketa_cancel(telegram_id: int) -> dict:
     resp = await _get_client().post("/anketa/cancel", json={"telegram_id": telegram_id}, timeout=60)
     resp.raise_for_status()

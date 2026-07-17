@@ -316,6 +316,54 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
     return {"session": await _session_view(db, session)}
 
 
+@router.post("/finish")
+async def finish(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> dict:
+    """Sessiyani MUDDATIDAN OLDIN yakunlash — to'ldirmaganlarni kutmasdan.
+    Bekor qilishdan farqi: yozilgan javoblar SAQLANADI (bilim bazasiga yuklash
+    mumkin); tugatmagan xodimlarning anketasi to'xtatiladi (stopped)."""
+    actor = await _require_dasturchi(db, payload.telegram_id)
+    session = await _active_session(db)
+    if session is None or session.status != AnketaSessionStatus.in_progress.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Davom etayotgan sessiya yo'q")
+
+    session.status = AnketaSessionStatus.done.value
+    session.finished_at = datetime.utcnow()
+    assignments = list(
+        await db.scalars(select(AnketaAssignment).where(AnketaAssignment.session_id == session.id))
+    )
+    stopped_users: list[int] = []
+    done_count = 0
+    for a in assignments:
+        if a.status == "done":
+            done_count += 1
+            continue
+        a.status = "stopped"
+        a.finished_at = datetime.utcnow()
+        stopped_users.append(a.user_id)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="anketa_finished_early",
+            after={"session_id": session.id, "done": done_count, "stopped": len(stopped_users)},
+        )
+    )
+    await db.commit()
+
+    for user_id in stopped_users:
+        user = await db.get(User, user_id)
+        if user and user.telegram_id:
+            await send_message(
+                user.telegram_id,
+                "ℹ️ Anketa yakunlandi — qolgan savollarga javob yozish shart emas. "
+                "Yozgan javoblaringiz uchun rahmat!",
+            )
+    return {
+        "session": await _session_view(db, session),
+        "done": done_count,
+        "stopped": len(stopped_users),
+    }
+
+
 @router.post("/cancel")
 async def cancel(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> dict:
     actor = await _require_dasturchi(db, payload.telegram_id)
