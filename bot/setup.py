@@ -81,8 +81,15 @@ def build_dispatcher(bot: Bot) -> Dispatcher:
             chat_id = update.callback_query.message.chat.id
 
         if chat_id:
+            # VAQTINCHALIK DIAGNOSTIKA: server logga kirish imkoni yo'qligi sababli
+            # xatolik matnini to'g'ridan-to'g'ri chatga chiqaramiz — sabab
+            # topilgach shu qism OLIB TASHLANADI.
+            detail = f"{type(event.exception).__name__}: {event.exception}"[:500]
             try:
-                await bot.send_message(chat_id, "⚠️ Xatolik yuz berdi, birozdan keyin urinib ko'ring.")
+                await bot.send_message(
+                    chat_id,
+                    f"⚠️ Xatolik yuz berdi, birozdan keyin urinib ko'ring.\n\n🔧 DEBUG: <code>{detail}</code>",
+                )
             except Exception:
                 logger.exception("Foydalanuvchiga xato haqida xabar berib bo'lmadi")
 
