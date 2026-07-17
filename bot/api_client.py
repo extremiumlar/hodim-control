@@ -593,6 +593,27 @@ async def playbook_export(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def sales_ai_overview(telegram_id: int) -> dict | None:
+    """Sotuv AI holati (tasdiqlangan baza/playbook soni). 404 — ro'yxatsiz."""
+    resp = await _get_client().get(f"/sales-ai/overview/{telegram_id}")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def sales_ai_ask(telegram_id: int, question: str) -> dict:
+    """Mijoz savoliga AI javobi. AI generatsiyasi sekin bo'lishi mumkin —
+    timeout keng (ai-watch reason-text bilan bir xil yondashuv)."""
+    resp = await _get_client().post(
+        "/sales-ai/ask",
+        json={"telegram_id": telegram_id, "question": question},
+        timeout=180,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
     """Operator issiq lidni qabul qildi (✅ tugmasi). Boshqa operatorga tayinlangan
     bo'lsa — None (bot ogohlantiradi)."""

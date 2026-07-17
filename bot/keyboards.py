@@ -19,6 +19,7 @@ BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_ANKETA = "📝 Anketa"
 BTN_KNOWLEDGE = "📚 Bilim bazasi"
+BTN_SALES_AI = "🤖 Sotuv AI"
 BTN_CANCEL = "❌ Bekor qilish"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
@@ -75,10 +76,17 @@ def main_menu(
     if show_lead_stats and role not in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
 
+    # Sotuv AI — sotuv xodimlariga YORDAMCHI (mijoz savoliga rasmiy javob varianti)
+    if role not in MANAGER_ROLES and bool(sales_metrics):
+        rows.append([KeyboardButton(text=BTN_SALES_AI)])
+
     if role in MANAGER_ROLES:
         rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
         rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
         rows.append([KeyboardButton(text=BTN_LEAD_STATS), KeyboardButton(text=BTN_HOURLY_PLAN_CONTROL)])
+        if role in {"rop", "boss", "dasturchi"}:
+            # Sotuv AI sinovi — rahbar mijoz savolini yozib javob sifatini tekshiradi
+            rows.append([KeyboardButton(text=BTN_SALES_AI)])
         if role in {"boss", "dasturchi"}:
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
