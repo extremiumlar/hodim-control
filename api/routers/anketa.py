@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, verify_bot_secret
@@ -276,6 +276,13 @@ async def cancel(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> d
     for a in assignments:
         if a.status == "in_progress":
             pending_users.append(a.user_id)
+
+    # Bekor qilinganda xodimlar yozib ulgurgan javoblar ham o'chiriladi — sessiya
+    # umuman bo'lmagandek, keyingi sinovda toza holatdan boshlanadi.
+    assignment_ids = [a.id for a in assignments]
+    if assignment_ids:
+        await db.execute(delete(AnketaAnswer).where(AnketaAnswer.assignment_id.in_(assignment_ids)))
+
     db.add(AuditLog(actor_id=actor.id, action="anketa_cancelled", after={"session_id": session.id}))
     await db.commit()
 
