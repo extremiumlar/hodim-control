@@ -664,9 +664,11 @@ class AnketaAssignment(Base):
     kelgani sari bittaga oshadi (savollar api/services/anketa_data.py'da)."""
 
     __tablename__ = "anketa_assignments"
+    # Eslatma: ilgari (session_id, toplam) ham unique edi — qatnashchilar erkin
+    # tanlanadigan bo'lgach (5 kishidan ko'p guruhda to'plamlar 1-5 aylanib
+    # takrorlanadi) bu cheklov olib tashlandi (f2a3b4c5d6e7).
     __table_args__ = (
         UniqueConstraint("session_id", "user_id", name="uq_anketa_assignment_user"),
-        UniqueConstraint("session_id", "toplam", name="uq_anketa_assignment_toplam"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -698,3 +700,7 @@ class AnketaAnswer(Base):
     question_text: Mapped[str] = mapped_column(Text)
     answer_text: Mapped[str] = mapped_column(Text)
     answered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Bilim bazasiga qachon yuklangani (NULL — hali yuklanmagan). Javob darajasida
+    # kuzatiladi — tugallanmagan sessiyani qisman yuklash va keyin faqat yangi
+    # javoblarni qo'shib yuklash uchun.
+    ingested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

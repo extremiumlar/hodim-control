@@ -172,23 +172,26 @@ async def _generate_json(instruction: str, payload, max_tokens: int = 1200):
 # ─── 1-qadam: draft yaratish (AI'siz, tez) ───────────────────────────────────
 
 async def create_drafts(db: AsyncSession) -> dict:
-    """Yakunlangan (done) anketa sessiyalarining hali bazaga olinmagan javoblaridan
-    draft yozuvlar yaratadi. Qaysi sessiya olinganini knowledge_entries.session_id
-    ko'rsatadi — qayta chaqirish xavfsiz (idempotent)."""
-    done_sessions = list(
+    """Anketa javoblaridan draft yozuvlar yaratadi. Javob darajasida idempotent
+    (AnketaAnswer.ingested_at) — shuning uchun TUGALLANMAGAN (in_progress)
+    sessiyani ham qisman yuklash mumkin: hozirgacha yozilgan javoblar olinadi,
+    keyin xodimlar davom etsa keyingi yuklash faqat yangi javoblarni qo'shadi."""
+    sessions = list(
         await db.scalars(
-            select(AnketaSession).where(AnketaSession.status == AnketaSessionStatus.done.value)
+            select(AnketaSession).where(
+                AnketaSession.status.in_(
+                    [AnketaSessionStatus.done.value, AnketaSessionStatus.in_progress.value]
+                )
+            )
         )
     )
-    ingested_ids = set(
-        (await db.scalars(select(KnowledgeEntry.session_id).distinct())).all()
-    )
-    new_sessions = [s for s in done_sessions if s.id not in ingested_ids]
-    if not new_sessions:
+    if not sessions:
         return {"created": 0, "sessions": []}
 
     created = 0
-    for session in new_sessions:
+    touched_sessions: list[int] = []
+    for session in sessions:
+        session_created = 0
         assignments = list(
             await db.scalars(
                 select(AnketaAssignment).where(AnketaAssignment.session_id == session.id)
@@ -201,7 +204,10 @@ async def create_drafts(db: AsyncSession) -> dict:
             answers = list(
                 await db.scalars(
                     select(AnketaAnswer)
-                    .where(AnketaAnswer.assignment_id == a.id)
+                    .where(
+                        AnketaAnswer.assignment_id == a.id,
+                        AnketaAnswer.ingested_at.is_(None),
+                    )
                     .order_by(AnketaAnswer.question_index)
                 )
             )
@@ -228,9 +234,13 @@ async def create_drafts(db: AsyncSession) -> dict:
                         anketa_answer_id=ans.id,
                     )
                 )
+                ans.ingested_at = datetime.utcnow()
                 created += 1
+                session_created += 1
+        if session_created:
+            touched_sessions.append(session.id)
     await db.commit()
-    return {"created": created, "sessions": [s.id for s in new_sessions]}
+    return {"created": created, "sessions": touched_sessions}
 
 
 # ─── 2-qadam: AI ishlovi (cron tick, chegaralangan) ──────────────────────────

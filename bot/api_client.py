@@ -441,15 +441,46 @@ async def anketa_overview(telegram_id: int) -> dict | None:
     return resp.json()
 
 
-async def anketa_schedule(telegram_id: int, scheduled_at: str | None) -> dict:
+async def anketa_schedule(
+    telegram_id: int,
+    scheduled_at: str | None,
+    target_type: str = "standart",
+    position_id: int | None = None,
+    role: str | None = None,
+) -> dict:
     """Sessiya yaratish. scheduled_at — Toshkent vaqti "YYYY-MM-DDTHH:MM" yoki None
-    (darhol boshlash). 400 xatolar (faol sessiya bor, xodim topilmadi...) chaqiruvchida
+    (darhol boshlash). target_* — qatnashchilar (standart/all/position/role).
+    400 xatolar (faol sessiya bor, xodim topilmadi...) chaqiruvchida
     HTTPStatusError sifatida ushlanadi — detail foydalanuvchiga ko'rsatiladi."""
     resp = await _get_client().post(
         "/anketa/schedule",
-        json={"telegram_id": telegram_id, "scheduled_at": scheduled_at},
+        json={
+            "telegram_id": telegram_id,
+            "scheduled_at": scheduled_at,
+            "target_type": target_type,
+            "position_id": position_id,
+            "role": role,
+        },
         timeout=60,
     )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_preview_targets(
+    telegram_id: int,
+    target_type: str = "standart",
+    position_id: int | None = None,
+    role: str | None = None,
+) -> dict:
+    """Tanlangan guruh bo'yicha kim qaysi to'plam olishini oldindan ko'rish.
+    400 — guruh bo'sh/xato (detail bilan)."""
+    params: dict = {"target_type": target_type}
+    if position_id is not None:
+        params["position_id"] = position_id
+    if role:
+        params["role"] = role
+    resp = await _get_client().get(f"/anketa/preview-targets/{telegram_id}", params=params)
     resp.raise_for_status()
     return resp.json()
 

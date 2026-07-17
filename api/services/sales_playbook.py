@@ -150,7 +150,9 @@ async def _seller_stats(db: AsyncSession, user_ids: list[int]) -> dict[int, dict
 
 
 async def _anketa_answers_for(db: AsyncSession, user_id: int) -> list[dict]:
-    """Xodimning yakunlangan sessiyalardagi barcha javoblari (savol bilan)."""
+    """Xodimning anketa javoblari (savol bilan). Tugallanmagan sessiyalar ham
+    olinadi — yozilgan javob bor bo'lsa uslubni o'rganish mumkin (bekor
+    qilinganlarning javoblari bazadan o'chirilgan, o'zi kirmaydi)."""
     rows = list(
         await db.scalars(
             select(AnketaAnswer)
@@ -158,7 +160,9 @@ async def _anketa_answers_for(db: AsyncSession, user_id: int) -> list[dict]:
             .join(AnketaSession, AnketaSession.id == AnketaAssignment.session_id)
             .where(
                 AnketaAssignment.user_id == user_id,
-                AnketaSession.status == AnketaSessionStatus.done.value,
+                AnketaSession.status.in_(
+                    [AnketaSessionStatus.done.value, AnketaSessionStatus.in_progress.value]
+                ),
             )
             .order_by(AnketaAnswer.question_index)
         )
@@ -186,13 +190,18 @@ async def start_build(db: AsyncSession, actor: User) -> PlaybookBuild:
             await db.scalars(
                 select(AnketaAssignment.user_id)
                 .join(AnketaSession, AnketaSession.id == AnketaAssignment.session_id)
-                .where(AnketaSession.status == AnketaSessionStatus.done.value)
+                .join(AnketaAnswer, AnketaAnswer.assignment_id == AnketaAssignment.id)
+                .where(
+                    AnketaSession.status.in_(
+                        [AnketaSessionStatus.done.value, AnketaSessionStatus.in_progress.value]
+                    )
+                )
                 .distinct()
             )
         ).all()
     ]
     if not seller_ids:
-        raise ValueError("Yakunlangan anketa yo'q — avval anketa o'tkazilishi kerak.")
+        raise ValueError("Anketa javoblari yo'q — avval anketa o'tkazilishi kerak.")
 
     stats = await _seller_stats(db, seller_ids)
     targets = []

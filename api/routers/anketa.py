@@ -42,6 +42,11 @@ class SchedulePayload(BaseModel):
     telegram_id: int
     # Toshkent vaqti "YYYY-MM-DDTHH:MM" ko'rinishida; None — darhol boshlash
     scheduled_at: str | None = None
+    # Qatnashchilar (vazifa berishdagi kabi): standart (5 sotuvchi, nomma-nom) |
+    # all (barcha faol xodimlar, dasturchi'dan tashqari) | position | role
+    target_type: str = "standart"
+    position_id: int | None = None
+    role: str | None = None
 
 
 class ActorPayload(BaseModel):
@@ -74,27 +79,58 @@ async def _require_dasturchi(db: AsyncSession, telegram_id: int) -> User:
     return user
 
 
-async def _resolve_targets(db: AsyncSession) -> list[tuple[User, int]]:
-    """ANKETA_TARGETS taqsimotini bazadagi faol xodimlarga bog'laydi.
-    Har ism uchun aynan bitta faol, telegramga ulangan xodim topilishi shart —
-    aks holda aniq xabarli 400 (Dasturchi botda ko'radi)."""
-    users = list(await db.scalars(select(User).where(User.is_active.is_(True))))
-    resolved: list[tuple[User, int]] = []
-    for name, toplam in ANKETA_TARGETS:
-        matches = [u for u in users if u.full_name.strip().lower().startswith(name)]
-        if not matches:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Xodim topilmadi: {name.title()}")
-        if len(matches) > 1:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, f"Bir nechta xodim mos keldi: {name.title()}"
-            )
-        user = matches[0]
-        if not user.telegram_id:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, f"{user.full_name.strip()} botga ulanmagan (telegram_id yo'q)"
-            )
-        resolved.append((user, toplam))
-    return resolved
+async def _resolve_targets(
+    db: AsyncSession,
+    target_type: str = "standart",
+    position_id: int | None = None,
+    role: str | None = None,
+) -> list[tuple[User, int]]:
+    """Qatnashchilarni tanlaydi va har biriga to'plam biriktiradi.
+
+    standart — ANKETA_TARGETS (5 sotuvchi nomma-nom, qat'iy 1:1). Boshqa rejimlar
+    (all/position/role) — tanlangan guruh: 5 tagacha xodimga to'plamlar
+    takrorlanmaydi, ko'proq bo'lsa 1-5 aylanib qayta beriladi."""
+    if target_type == "standart":
+        users = list(await db.scalars(select(User).where(User.is_active.is_(True))))
+        resolved: list[tuple[User, int]] = []
+        for name, toplam in ANKETA_TARGETS:
+            matches = [u for u in users if u.full_name.strip().lower().startswith(name)]
+            if not matches:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Xodim topilmadi: {name.title()}")
+            if len(matches) > 1:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, f"Bir nechta xodim mos keldi: {name.title()}"
+                )
+            user = matches[0]
+            if not user.telegram_id:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{user.full_name.strip()} botga ulanmagan (telegram_id yo'q)",
+                )
+            resolved.append((user, toplam))
+        return resolved
+
+    query = select(User).where(User.is_active.is_(True), User.telegram_id.isnot(None))
+    if target_type == "all":
+        # Texnik akkaunt (dasturchi) anketa olmaydi
+        query = query.where(User.role != Role.dasturchi.value)
+    elif target_type == "position":
+        if position_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Lavozim tanlanmagan")
+        query = query.where(User.position_id == position_id)
+    elif target_type == "role":
+        if not role:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Rol tanlanmagan")
+        query = query.where(User.role == role)
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum qatnashchi turi")
+
+    users = sorted(await db.scalars(query), key=lambda u: u.full_name.strip().lower())
+    if not users:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Tanlangan guruhda botga ulangan faol xodim topilmadi"
+        )
+    return [(u, i % 5 + 1) for i, u in enumerate(users)]
 
 
 def _question_text(toplam: int, index: int) -> str:
@@ -209,6 +245,26 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
     }
 
 
+@router.get("/preview-targets/{telegram_id}")
+async def preview_targets(
+    telegram_id: int,
+    target_type: str = "standart",
+    position_id: int | None = None,
+    role: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Tanlangan guruh bo'yicha kim qaysi to'plamni olishini oldindan ko'rsatadi
+    (Dasturchi tasdiqlashdan oldin ro'yxatni ko'radi)."""
+    await _require_dasturchi(db, telegram_id)
+    targets = await _resolve_targets(db, target_type, position_id, role)
+    return {
+        "targets": [
+            {"full_name": u.full_name.strip(), "toplam": t, "bot_started": u.bot_started}
+            for u, t in targets
+        ]
+    }
+
+
 @router.post("/schedule")
 async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db)) -> dict:
     """Sessiya yaratish (Dasturchi tasdig'i). scheduled_at berilmasa yoki o'tib
@@ -221,7 +277,7 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
             "Faol anketa sessiyasi allaqachon bor — avval uni yakunlang yoki bekor qiling.",
         )
 
-    targets = await _resolve_targets(db)
+    targets = await _resolve_targets(db, payload.target_type, payload.position_id, payload.role)
 
     if payload.scheduled_at:
         try:
@@ -244,6 +300,7 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
             after={
                 "session_id": session.id,
                 "scheduled_at_local": _utc_naive_to_local_str(scheduled_utc),
+                "target_type": payload.target_type,
                 "targets": [
                     {"user_id": u.id, "full_name": u.full_name.strip(), "toplam": t}
                     for u, t in targets

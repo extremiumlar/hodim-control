@@ -87,14 +87,15 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
 
 @router.post("/ingest")
 async def ingest(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> dict:
-    """Yakunlangan anketa sessiyalari javoblaridan draft'lar yaratadi (tez,
-    AI'siz). AI ishlovi keyingi daqiqalarda /tick orqali bo'lib-bo'lib boradi."""
+    """Anketa javoblaridan draft'lar yaratadi (tez, AI'siz) — tugallanmagan
+    sessiyalarning yozilgan javoblari ham olinadi (javob darajasida idempotent).
+    AI ishlovi keyingi daqiqalarda /tick orqali bo'lib-bo'lib boradi."""
     actor = await _require_manager(db, payload.telegram_id)
     result = await svc.create_drafts(db)
     if not result["created"]:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Yangi ma'lumot yo'q — yakunlangan anketa sessiyalari allaqachon yuklangan.",
+            "Yangi javob yo'q — anketalarning barcha yozilgan javoblari allaqachon yuklangan.",
         )
     db.add(
         AuditLog(
