@@ -5,6 +5,22 @@ from bot.config import API_BASE_URL, BOT_SHARED_SECRET
 HEADERS = {"X-Bot-Secret": BOT_SHARED_SECRET}
 
 _client: httpx.AsyncClient | None = None
+_transport: httpx.BaseTransport | None = None
+_base_url: str = API_BASE_URL
+
+
+def use_in_process_transport(app) -> None:
+    """cPanel webhook rejimida bot va FastAPI bitta jarayonda ishlaydi — bot API'ga
+    haqiqiy tarmoq orqali (HTTPS) murojaat qilsa, so'rov Passenger'ning YAGONA
+    ishchi jarayoniga qaytib keladi, u esa allaqachon shu webhook so'rovini
+    band — natijada ReadTimeout (o'z-o'ziga tiqilib qolish). Shu funksiya
+    ASGITransport bilan API'ga to'g'ridan-to'g'ri (tarmoqsiz) murojaat qilishga
+    o'tkazadi. `api/routers/bot_webhook.py` birinchi so'rovda chaqiradi.
+    Docker/polling rejimida (bot va API alohida jarayon/konteyner) chaqirilmaydi —
+    o'sha yerda haqiqiy HTTP kerak."""
+    global _transport, _base_url
+    _transport = httpx.ASGITransport(app=app)
+    _base_url = "http://in-process"
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -12,7 +28,9 @@ def _get_client() -> httpx.AsyncClient:
     yangi client/ulanish ochish o'rniga) — connection pooling imkonini beradi."""
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(base_url=API_BASE_URL, headers=HEADERS, timeout=10)
+        _client = httpx.AsyncClient(
+            base_url=_base_url, headers=HEADERS, timeout=10, transport=_transport
+        )
     return _client
 
 

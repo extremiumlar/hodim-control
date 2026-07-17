@@ -28,7 +28,15 @@ _dp = None
 def _ensure_bot():
     global _bot, _dp
     if _bot is None:
-        from bot.setup import build_bot, build_dispatcher  # lazy: bot/ paketiga bog'liqlik shu yerda
+        from bot import api_client  # lazy: bot/ paketiga bog'liqlik shu yerda
+        from bot.setup import build_bot, build_dispatcher
+        from api.main import app as api_app
+
+        # Bot API'ga tarmoq (HTTPS) o'rniga to'g'ridan-to'g'ri shu jarayon ichida
+        # murojaat qilsin — sabab: bot/api_client.py'dagi use_in_process_transport
+        # docstringi (Passenger yagona ishchi jarayoniga o'z-o'ziga tiqilib qolish).
+        api_client.use_in_process_transport(api_app)
+
         _bot = build_bot()
         _dp = build_dispatcher(_bot)
     return _bot, _dp
