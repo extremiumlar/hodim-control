@@ -4,6 +4,7 @@ Boshqaruv faqat rahbarlar (boss/dasturchi) uchun: anketadan yuklash (ingest),
 ko'rib chiqish (tasdiqlash/tahrirlash/o'chirish), qo'lda yozuv qo'shish, .txt
 eksport. /tick va /stale-tick — cron/scheduler chaqiruvlari.
 Web panelga ataylab hech narsa qo'shilmagan (frontend deploy'i o'zgarmasin)."""
+import hmac
 import logging
 from datetime import datetime
 
@@ -12,13 +13,18 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.services import knowledge as svc
-from db.models import AuditLog, KnowledgeEntry, KnowledgeStatus, User
+from db.models import AuditLog, KnowledgeEntry, KnowledgeStatus, PlaybookEntry, User
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"], dependencies=[Depends(verify_bot_secret)])
+
+# Tashqi chatbot uchun ochiq (bot-secret'siz) router — faqat /dataset, o'z kaliti
+# bilan himoyalangan (KNOWLEDGE_DATASET_KEY). api/main.py alohida include qiladi.
+public_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 REVIEW_STATUSES = (
     KnowledgeStatus.unverified.value,
@@ -257,3 +263,64 @@ async def export(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
 async def stale_tick(db: AsyncSession = Depends(get_db)) -> dict:
     """Kunlik: eskirgan sana-sezgir verified yozuvlarni belgilab rahbarga eslatadi."""
     return await svc.stale_check(db)
+
+
+async def build_dataset(db: AsyncSession) -> dict:
+    """Tashqi chatbot uchun tayyor dataset — FAQAT tasdiqlangan savol-javoblar
+    va playbook. Bot (.json tugmasi) va /dataset endpointi bir xil shakl beradi."""
+    entries = list(
+        await db.scalars(
+            select(KnowledgeEntry)
+            .where(KnowledgeEntry.status == KnowledgeStatus.verified.value)
+            .order_by(KnowledgeEntry.category, KnowledgeEntry.id)
+        )
+    )
+    playbook = list(
+        await db.scalars(
+            select(PlaybookEntry)
+            .where(PlaybookEntry.status == "verified")
+            .order_by(PlaybookEntry.kind, PlaybookEntry.id)
+        )
+    )
+    return {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "count": len(entries),
+        "entries": [
+            {
+                "savol": e.question,
+                "javob": e.answer,
+                "kategoriya": e.category,
+                "sana_sezgir": e.date_sensitive,
+                "qayta_tekshirish_kerak": e.needs_recheck,
+                "yangilangan": e.updated_at.strftime("%Y-%m-%d") if e.updated_at else None,
+            }
+            for e in entries
+        ],
+        "playbook": [
+            {
+                "turi": p.kind,
+                "vaziyat": p.situation,
+                "texnika": p.technique,
+                "iboralar": p.phrases or [],
+            }
+            for p in playbook
+        ],
+    }
+
+
+@router.get("/dataset-for-bot/{telegram_id}")
+async def dataset_for_bot(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    """Bot uchun xuddi shu dataset (rahbar .json faylini yuklab oladi)."""
+    await _require_manager(db, telegram_id)
+    return await build_dataset(db)
+
+
+@public_router.get("/dataset")
+async def dataset(key: str = "", db: AsyncSession = Depends(get_db)) -> dict:
+    """Tashqi chatbot bilim bazasini shu yerdan tortib oladi. KNOWLEDGE_DATASET_KEY
+    .env'da bo'sh bo'lsa endpoint umuman yo'qdek (404) — tasodifan ochilib qolmaydi."""
+    if not settings.knowledge_dataset_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    if not key or not hmac.compare_digest(key, settings.knowledge_dataset_key):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Kalit noto'g'ri")
+    return await build_dataset(db)

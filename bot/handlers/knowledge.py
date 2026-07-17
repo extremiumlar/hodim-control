@@ -91,7 +91,10 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
             InlineKeyboardButton(text="➕ Ma'lumot qo'shish", callback_data="kb:add"),
             InlineKeyboardButton(text="📥 Baza (.txt)", callback_data="kb:export"),
         ],
-        [InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu")],
+        [
+            InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu"),
+            InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset"),
+        ],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -351,6 +354,33 @@ async def on_add_category(callback: CallbackQuery, state: FSMContext) -> None:
     flag = " (📅 sana-sezgir deb belgilandi)" if date_sensitive else ""
     await callback.message.edit_text(f"✅ Ma'lumot bazaga qo'shildi va tasdiqlandi{flag}.")
     await callback.answer("Saqlandi")
+
+
+@router.callback_query(F.data == "kb:dataset")
+async def on_dataset(callback: CallbackQuery) -> None:
+    """Tashqi chatbot uchun tayyor dataset — FAQAT tasdiqlangan savol-javoblar
+    (+ tasdiqlangan playbook) JSON faylda."""
+    import json as _json
+
+    data = await api_client.knowledge_dataset(callback.from_user.id)
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    if not data.get("count"):
+        await callback.answer(
+            "Tasdiqlangan yozuv hali yo'q — avval «🔍 Ko'rib chiqish»da tasdiqlang",
+            show_alert=True,
+        )
+        return
+    content = _json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    await callback.message.answer_document(
+        BufferedInputFile(content, filename="bilim_dataset.json"),
+        caption=(
+            f"📦 Chatbot uchun dataset: {data['count']} ta tasdiqlangan savol-javob, "
+            f"{len(data.get('playbook', []))} ta playbook yozuvi."
+        ),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "kb:export")

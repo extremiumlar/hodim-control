@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     crm_type: str = "none"
     crm_webhook_secret: str = ""
 
+    # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
+    # Bo'sh — endpoint o'chiq (404). Tasodifiy uzun qiymat qo'ying:
+    # python3 -c "import secrets;print(secrets.token_urlsafe(32))"
+    knowledge_dataset_key: str = ""
+
     # Kelib-ketish davomati (verifix'dan birlashtirilgan) — kechikishga ruxsat (grace).
     # Ish oynasi boshlanishidan shu daqiqadan keyin kelinsagina kechikish hisoblanadi.
     attendance_grace_minutes: int = 5

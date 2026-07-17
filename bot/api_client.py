@@ -577,6 +577,15 @@ async def knowledge_export(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def knowledge_dataset(telegram_id: int) -> dict | None:
+    """Tashqi chatbot uchun tayyor dataset (faqat verified) — bot .json fayl qiladi."""
+    resp = await _get_client().get(f"/knowledge/dataset-for-bot/{telegram_id}", timeout=60)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def playbook_overview(telegram_id: int) -> dict | None:
     """Sotuv playbook holati. Faqat Boshliq/Dasturchi — ruxsat yo'q bo'lsa None."""
     resp = await _get_client().get(f"/playbook/overview/{telegram_id}")

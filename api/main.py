@@ -59,6 +59,7 @@ app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
 app.include_router(anketa.router)
 app.include_router(knowledge.router)
+app.include_router(knowledge.public_router)
 app.include_router(playbook.router)
 app.include_router(sales_ai.router)
 
