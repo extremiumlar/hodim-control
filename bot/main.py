@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from bot import api_client
 from bot.setup import allowed_update_types, build_bot, build_dispatcher
@@ -14,6 +15,28 @@ async def main() -> None:
     quradi."""
     bot = build_bot()
     dp = build_dispatcher(bot)
+
+    # XAVFSIZLIK: bitta BOT_TOKEN bir vaqtda faqat bitta rejimda (polling YOKI
+    # webhook) ishlay oladi. Agar hozir Telegram'da FAOL webhook bo'lsa (odatda
+    # production/cPanel), bu yerda polling boshlash uni jimgina O'CHIRIB
+    # TASHLAYDI — production bot butunlay to'xtab qoladi (adashib `start_all`
+    # bosilganda shu sodir bo'lgan). Shuning uchun oldin tekshiramiz va
+    # to'xtaymiz — ataylab lokal polling kerak bo'lsa .env'da
+    # FORCE_LOCAL_POLLING=true qo'ying (yoki avval scripts/set_webhook.py
+    # --delete bilan production webhook'ni ongli ravishda o'chiring).
+    info = await bot.get_webhook_info()
+    if info.url and os.getenv("FORCE_LOCAL_POLLING") != "true":
+        logger.error(
+            "TO'XTATILDI: Telegram'da hozir FAOL webhook bor (%s) — bu ehtimol "
+            "production server. Shu yerda polling boshlasa, o'sha webhook "
+            "o'chib, production bot ishlamay qoladi. Ataylab lokal polling "
+            "kerak bo'lsa: .env'da FORCE_LOCAL_POLLING=true qo'ying, YOKI avval "
+            "`python scripts/set_webhook.py --delete` bilan production "
+            "webhook'ni ongli ravishda o'chiring.",
+            info.url,
+        )
+        await bot.session.close()
+        return
 
     # drop_pending_updates=False — bot o'chiq paytda kelgan xabarlar restartdan
     # keyin QAYTA ISHLANADI. Bu ataylab: operator AI sabab so'roviga javobni bot
