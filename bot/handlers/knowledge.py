@@ -98,6 +98,12 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
             )
         ],
         [
+            InlineKeyboardButton(
+                text=f"📖 Hammasini ko'rib chiqish ({data.get('review_pending', 0) + counts.get('verified', 0)})",
+                callback_data="kb:anext:0",
+            )
+        ],
+        [
             InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu"),
             InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset"),
         ],
@@ -315,6 +321,127 @@ async def _show_verified_next(callback: CallbackQuery, after_id: int) -> None:
     await callback.answer()
 
 
+# ─── HAMMASINI ko'rib chiqish (holatidan qat'i nazar, draft'dan tashqari) ────
+
+def _all_card(entry: dict, remaining: int, processing: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Universal karta: yozuv holatiga qarab tugmalar moslashadi — javobsiz/
+    o'tkazib yuborilganlarga javob yozish, tasdiqlanganlarni qaytarish mumkin."""
+    badge = _STATUS_BADGE.get(entry["status"], entry["status"])
+    date_flag = "✅" if entry["date_sensitive"] else "❌"
+    lines = [
+        f"📖 <b>To'liq ko'rib chiqish</b> — qolgan: {remaining}"
+        + (f" (+{processing} AI ishlovida)" if processing else ""),
+        "",
+        f"Holat: {badge} · Kategoriya: {entry['category']}",
+        f"Manba: {html.escape(entry.get('source') or '-')}",
+        f"📅 Sana-sezgir (narx/muddat): {date_flag}",
+        "",
+        f"<b>Savol:</b> {html.escape(entry['question'])}",
+        "<b>Javob:</b> " + (html.escape(entry["answer"]) if entry["answer"] else "<i>(bo'sh)</i>"),
+    ]
+    if entry.get("review_note"):
+        lines.append(f"\n💬 AI izohi: {html.escape(entry['review_note'])}")
+
+    eid = entry["id"]
+    first_row = [InlineKeyboardButton(text="✏️ Javob yozish", callback_data=f"kb:aedit:{eid}")]
+    if entry["status"] == "verified":
+        first_row.append(
+            InlineKeyboardButton(text="🔙 Tasdiqdan qaytarish", callback_data=f"kb:aunv:{eid}")
+        )
+    else:
+        first_row.insert(
+            0, InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"kb:aok:{eid}")
+        )
+    rows = [
+        first_row,
+        [
+            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:adate:{eid}"),
+            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:adel:{eid}"),
+        ],
+        [
+            InlineKeyboardButton(text="⏭ Keyingisi", callback_data=f"kb:anext:{eid}"),
+            InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
+        ],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _all_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
+    entry = data.get("entry")
+    if entry is None:
+        return (
+            "📖 Ro'yxat tugadi — barcha yozuvlar ko'rib chiqildi.",
+            InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
+            ),
+        )
+    group = data.get("conflict_group")
+    if group and len(group) > 1:
+        return _conflict_card(entry, group, data["remaining"], data.get("processing", 0))
+    return _all_card(entry, data["remaining"], data.get("processing", 0))
+
+
+async def _show_all_next(callback: CallbackQuery, after_id: int) -> None:
+    data = await api_client.knowledge_review_next(callback.from_user.id, after_id, mode="all")
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    text, markup = _all_view(data)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("kb:anext:"))
+async def on_all_next(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_all_next(callback, int(callback.data.rsplit(":", 1)[1]))
+
+
+async def _all_decide(callback: CallbackQuery, action: str, next_after: int) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.knowledge_decide(callback.from_user.id, entry_id, action)
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    # next_after: 0 — o'sha yozuvni yangilangan holda qayta ko'rsat (id-1),
+    # 1 — keyingisiga o't (id)
+    await _show_all_next(callback, entry_id - 1 + next_after)
+
+
+@router.callback_query(F.data.startswith("kb:aok:"))
+async def on_all_approve(callback: CallbackQuery) -> None:
+    await _all_decide(callback, "approve", 1)
+
+
+@router.callback_query(F.data.startswith("kb:aunv:"))
+async def on_all_unverify(callback: CallbackQuery) -> None:
+    await _all_decide(callback, "unverify", 0)
+
+
+@router.callback_query(F.data.startswith("kb:adate:"))
+async def on_all_toggle_date(callback: CallbackQuery) -> None:
+    await _all_decide(callback, "toggle_date", 0)
+
+
+@router.callback_query(F.data.startswith("kb:adel:"))
+async def on_all_delete(callback: CallbackQuery) -> None:
+    await _all_decide(callback, "delete", 1)
+
+
+@router.callback_query(F.data.startswith("kb:aedit:"))
+async def on_all_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    await state.set_state(KbEdit.waiting_answer)
+    await state.update_data(entry_id=entry_id, mode="all")
+    await callback.message.answer(
+        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlanadi):",
+        reply_markup=cancel_menu(),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("kb:vnext:"))
 async def on_verified_next(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -441,12 +568,14 @@ async def on_edit_text(message: Message, state: FSMContext) -> None:
     # Avtomatik davom: qaysi rejimdan kelgan bo'lsa (tasdiq kutayotganlar yoki
     # tasdiqlanganlarni qayta ko'rish) o'sha ro'yxatning navbatdagisini ko'rsatamiz
     mode = data.get("mode", "pending")
-    # verified rejimda tahrirlangan yozuv ro'yxatda qoladi — takror chiqmasligi
-    # uchun undan keyingisiga o'tamiz; pending'da esa boshidan (u chiqib ketgan)
-    after = data["entry_id"] if mode == "verified" else 0
+    # verified/all rejimlarida tahrirlangan yozuv ro'yxatda qoladi — takror
+    # chiqmasligi uchun undan keyingisiga o'tamiz; pending'da esa boshidan
+    # (tahrirlangan yozuv u ro'yxatdan chiqib ketgan)
+    after = data["entry_id"] if mode in ("verified", "all") else 0
     next_data = await api_client.knowledge_review_next(message.from_user.id, after, mode=mode)
     if next_data is not None:
-        text, markup = _verified_view(next_data) if mode == "verified" else _review_view(next_data)
+        view = {"verified": _verified_view, "all": _all_view}.get(mode, _review_view)
+        text, markup = view(next_data)
         await message.answer(text, reply_markup=markup)
 
 

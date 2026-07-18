@@ -134,13 +134,17 @@ async def review_next(
     telegram_id: int, after_id: int = 0, mode: str = "pending", db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Ko'rib chiqiladigan navbatdagi yozuv. `mode=pending` — tasdiq kutayotganlar
-    (unverified/conflict/unknown); `mode=verified` — allaqachon tasdiqlanganlarni
-    QAYTA ko'rib chiqish (tahrirlash/tasdiqdan qaytarish/o'chirish).
+    (unverified/conflict/unknown); `mode=verified` — tasdiqlanganlarni qayta
+    ko'rish; `mode=all` — HAMMASI (draft'dan tashqari) — o'tkazib yuborilgan/
+    javobsiz qolganlarni ham qamrab to'liq qayta o'tish uchun.
     `after_id` — "o'tkazib yuborish" uchun: shu id'dan keyingisi olinadi."""
     await _require_manager(db, telegram_id)
-    statuses = (
-        (KnowledgeStatus.verified.value,) if mode == "verified" else REVIEW_STATUSES
-    )
+    if mode == "verified":
+        statuses = (KnowledgeStatus.verified.value,)
+    elif mode == "all":
+        statuses = (*REVIEW_STATUSES, KnowledgeStatus.verified.value)
+    else:
+        statuses = REVIEW_STATUSES
     entry = await db.scalar(
         select(KnowledgeEntry)
         .where(KnowledgeEntry.status.in_(statuses), KnowledgeEntry.id > after_id)
