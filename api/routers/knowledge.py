@@ -71,6 +71,7 @@ def _entry_view(e: KnowledgeEntry) -> dict:
         "needs_recheck": e.needs_recheck,
         "source": e.source,
         "review_note": e.review_note,
+        "group_key": e.group_key,
     }
 
 
@@ -151,8 +152,27 @@ async def review_next(
             KnowledgeEntry.status == KnowledgeStatus.draft.value
         )
     )
+
+    # Ziddiyatli yozuv guruh bo'lib ko'rsatiladi: bitta savolga bir nechta xodim
+    # javobi — rahbar ularni yonma-yon ko'rib, birini qabul qiladi/tahrirlaydi
+    conflict_group: list[dict] | None = None
+    if entry is not None and entry.status == KnowledgeStatus.conflict.value and entry.group_key:
+        members = list(
+            await db.scalars(
+                select(KnowledgeEntry)
+                .where(
+                    KnowledgeEntry.group_key == entry.group_key,
+                    KnowledgeEntry.status == KnowledgeStatus.conflict.value,
+                )
+                .order_by(KnowledgeEntry.id)
+            )
+        )
+        if len(members) > 1:
+            conflict_group = [_entry_view(m) for m in members]
+
     return {
         "entry": _entry_view(entry) if entry else None,
+        "conflict_group": conflict_group,
         "remaining": remaining or 0,
         "processing": drafts or 0,
     }
@@ -203,15 +223,41 @@ async def decide(payload: DecidePayload, db: AsyncSession = Depends(get_db)) -> 
     else:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum amal")
 
+    # Ziddiyatli guruhdan bittasi tanlandi (qabul yoki tahrir) — qolgan
+    # variantlar keraksiz bo'lib qoladi, avtomatik o'chiriladi
+    removed_siblings = 0
+    if (
+        payload.action in ("approve", "edit")
+        and before_status == KnowledgeStatus.conflict.value
+        and entry.group_key
+    ):
+        siblings = list(
+            await db.scalars(
+                select(KnowledgeEntry).where(
+                    KnowledgeEntry.group_key == entry.group_key,
+                    KnowledgeEntry.status == KnowledgeStatus.conflict.value,
+                    KnowledgeEntry.id != entry.id,
+                )
+            )
+        )
+        for s in siblings:
+            await db.delete(s)
+        removed_siblings = len(siblings)
+
     db.add(
         AuditLog(
             actor_id=actor.id,
             action=f"knowledge_{payload.action}",
-            after={"id": entry.id, "before_status": before_status, "status": entry.status},
+            after={
+                "id": entry.id,
+                "before_status": before_status,
+                "status": entry.status,
+                **({"removed_conflict_siblings": removed_siblings} if removed_siblings else {}),
+            },
         )
     )
     await db.commit()
-    return {"entry": _entry_view(entry)}
+    return {"entry": _entry_view(entry), "removed_siblings": removed_siblings}
 
 
 @router.post("/add")

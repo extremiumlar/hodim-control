@@ -183,11 +183,49 @@ def _entry_card(entry: dict, remaining: int, processing: int) -> tuple[str, Inli
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-async def _show_next(callback: CallbackQuery, after_id: int) -> None:
-    data = await api_client.knowledge_review_next(callback.from_user.id, after_id)
-    if data is None:
-        await callback.answer("Ruxsat yo'q", show_alert=True)
-        return
+def _source_name(source: str) -> str:
+    """"Anketa №1, savol 2: Kamola" → "Kamola" (ko'rsatish uchun)."""
+    return (source or "").rsplit(": ", 1)[-1].strip() or "?"
+
+
+def _conflict_card(
+    entry: dict, group: list[dict], remaining: int, processing: int
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Ziddiyatli savol kartasi: barcha xodimlar javoblari yonma-yon, rahbar
+    birini qabul qiladi yoki birini tahrirlab o'tkazadi (qolganlari o'chadi)."""
+    lines = [
+        f"🔍 <b>Ko'rib chiqish</b> — qolgan: {remaining}"
+        + (f" (+{processing} AI ishlovida)" if processing else ""),
+        "",
+        "⚠️ <b>Ziddiyatli javoblar</b> — bitta savolga xodimlar har xil javob bergan.",
+        f"\n<b>Savol:</b> {html.escape(entry['question'])}",
+    ]
+    for i, m in enumerate(group, start=1):
+        lines.append(
+            f"\n<b>{i}) {html.escape(_source_name(m.get('source')))}:</b> "
+            f"{html.escape(m['answer']) if m['answer'] else '<i>(bo`sh)</i>'}"
+        )
+    if entry.get("review_note"):
+        lines.append(f"\n💬 AI izohi: {html.escape(entry['review_note'])}")
+    lines.append("\nBirini qabul qiling yoki tahrirlab o'tkazing — qolganlari o'chiriladi.")
+
+    rows = [
+        [
+            InlineKeyboardButton(text=f"✅ {i}-javobni qabul qilish", callback_data=f"kb:ok:{m['id']}"),
+            InlineKeyboardButton(text=f"✏️ {i}-ni tahrirlash", callback_data=f"kb:edit:{m['id']}"),
+        ]
+        for i, m in enumerate(group, start=1)
+    ]
+    max_id = max(m["id"] for m in group)
+    rows.append([
+        InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"kb:review:{max_id}"),
+        InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
+    ])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _review_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """review-next javobidan karta quradi (oddiy / ziddiyatli guruh / tugadi)."""
     entry = data.get("entry")
     if entry is None:
         extra = (
@@ -195,15 +233,24 @@ async def _show_next(callback: CallbackQuery, after_id: int) -> None:
             if data.get("processing")
             else ""
         )
-        await callback.message.edit_text(
+        return (
             f"✅ Ko'rib chiqiladigan yozuv qolmadi.{extra}",
-            reply_markup=InlineKeyboardMarkup(
+            InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
             ),
         )
-        await callback.answer()
+    group = data.get("conflict_group")
+    if group and len(group) > 1:
+        return _conflict_card(entry, group, data["remaining"], data.get("processing", 0))
+    return _entry_card(entry, data["remaining"], data.get("processing", 0))
+
+
+async def _show_next(callback: CallbackQuery, after_id: int) -> None:
+    data = await api_client.knowledge_review_next(callback.from_user.id, after_id)
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
         return
-    text, markup = _entry_card(entry, data["remaining"], data.get("processing", 0))
+    text, markup = _review_view(data)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
@@ -275,10 +322,12 @@ async def on_edit_text(message: Message, state: FSMContext) -> None:
         detail = (exc.response.json() or {}).get("detail", "Xatolik")
         await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
         return
-    await message.answer(
-        "✅ Javob saqlandi va tasdiqlandi. Davom etish: «📚 Bilim bazasi» → «🔍 Ko'rib chiqish».",
-        reply_markup=menu_for_user(user),
-    )
+    await message.answer("✅ Javob saqlandi va tasdiqlandi.", reply_markup=menu_for_user(user))
+    # Avtomatik davom: navbatdagi ko'rib chiqiladigan yozuvni darhol ko'rsatamiz
+    next_data = await api_client.knowledge_review_next(message.from_user.id, 0)
+    if next_data is not None:
+        text, markup = _review_view(next_data)
+        await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "kb:add")
