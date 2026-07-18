@@ -40,8 +40,11 @@ def build_bot() -> Bot:
     return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 
-def build_dispatcher(bot: Bot) -> Dispatcher:
-    dp = Dispatcher(storage=MemoryStorage())
+def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
+    """`storage` berilmasa MemoryStorage (polling — bitta doimiy jarayon).
+    cPanel webhook rejimida api/routers/bot_webhook.py bazaviy storage beradi —
+    Passenger ishchilari almashganda FSM holati yo'qolmasligi uchun."""
+    dp = Dispatcher(storage=storage or MemoryStorage())
 
     # menu/stats routerlari FSM oqimlaridan (norms, assign_task) OLDIN turadi:
     # asosiy menyu tugmasi bosilganda u FSMning "istalgan matn" bosqichiga

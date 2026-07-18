@@ -539,6 +539,26 @@ class Attendance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class FsmState(Base):
+    """Bot FSM holati — cPanel (webhook) rejimida XOTIRA O'RNIGA bazada.
+
+    Passenger ishchi jarayonni harakatsizlikdan keyin o'chirib/qayta ochadi va
+    bir nechta ishchi ochishi mumkin — MemoryStorage'dagi holat yo'qolib, ko'p
+    bosqichli oqimlar (javob tahriri, ma'lumot qo'shish, vaqt kiritish, Sotuv AI
+    rejimi...) o'rtasida uzilib qolardi (jonli bug: rahbar javob yozganda bot
+    "unutib" qo'ygan). Docker/polling rejimida ishlatilmaydi (u yerda bitta
+    doimiy jarayon, MemoryStorage yetarli)."""
+
+    __tablename__ = "fsm_states"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)  # bot:chat:user:destiny
+    state: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class KnowledgeStatus(str, enum.Enum):
     draft = "draft"  # anketadan yaratilgan, AI ishlovi kutilmoqda (cron tick)
     unverified = "unverified"  # AI ishlagan, rahbar tasdig'i kutilmoqda

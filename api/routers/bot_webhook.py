@@ -31,6 +31,7 @@ def _ensure_bot():
         from bot import api_client  # lazy: bot/ paketiga bog'liqlik shu yerda
         from bot.setup import build_bot, build_dispatcher
         from api.main import app as api_app
+        from api.services.fsm_storage import DbFsmStorage
 
         # Bot API'ga tarmoq (HTTPS) o'rniga to'g'ridan-to'g'ri shu jarayon ichida
         # murojaat qilsin — sabab: bot/api_client.py'dagi use_in_process_transport
@@ -38,7 +39,10 @@ def _ensure_bot():
         api_client.use_in_process_transport(api_app)
 
         _bot = build_bot()
-        _dp = build_dispatcher(_bot)
+        # FSM holati bazada — Passenger ishchisi almashganda (idle-kill / bir
+        # nechta ishchi) ko'p bosqichli oqimlar (javob tahriri, ma'lumot qo'shish,
+        # vaqt kiritish...) uzilib qolmasligi uchun
+        _dp = build_dispatcher(_bot, storage=DbFsmStorage())
     return _bot, _dp
 
 
