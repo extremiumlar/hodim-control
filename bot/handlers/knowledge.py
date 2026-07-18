@@ -92,6 +92,12 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
             InlineKeyboardButton(text="📥 Baza (.txt)", callback_data="kb:export"),
         ],
         [
+            InlineKeyboardButton(
+                text=f"🔁 Tasdiqlanganlarni qayta ko'rish ({counts.get('verified', 0)})",
+                callback_data="kb:vnext:0",
+            )
+        ],
+        [
             InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu"),
             InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset"),
         ],
@@ -255,6 +261,115 @@ async def _show_next(callback: CallbackQuery, after_id: int) -> None:
     await callback.answer()
 
 
+# ─── Tasdiqlanganlarni QAYTA ko'rib chiqish ──────────────────────────────────
+
+def _verified_card(entry: dict, remaining: int) -> tuple[str, InlineKeyboardMarkup]:
+    date_flag = "✅" if entry["date_sensitive"] else "❌"
+    lines = [
+        f"🔁 <b>Qayta ko'rib chiqish</b> — tasdiqlanganlar: {remaining}",
+        "",
+        f"Holat: ✅ tasdiqlangan · Kategoriya: {entry['category']}",
+        f"Manba: {html.escape(entry.get('source') or '-')}",
+        f"📅 Sana-sezgir (narx/muddat): {date_flag}",
+        "",
+        f"<b>Savol:</b> {html.escape(entry['question'])}",
+        f"<b>Javob:</b> {html.escape(entry['answer'])}",
+    ]
+    eid = entry["id"]
+    rows = [
+        [
+            InlineKeyboardButton(text="✏️ Javobni tahrirlash", callback_data=f"kb:vedit:{eid}"),
+            InlineKeyboardButton(text="🔙 Tasdiqdan qaytarish", callback_data=f"kb:unv:{eid}"),
+        ],
+        [
+            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:vdate:{eid}"),
+            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:vdel:{eid}"),
+        ],
+        [
+            InlineKeyboardButton(text="⏭ Keyingisi", callback_data=f"kb:vnext:{eid}"),
+            InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
+        ],
+    ]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _verified_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
+    entry = data.get("entry")
+    if entry is None:
+        return (
+            "Tasdiqlangan yozuvlar tugadi (yoki hali yo'q).",
+            InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
+            ),
+        )
+    return _verified_card(entry, data["remaining"])
+
+
+async def _show_verified_next(callback: CallbackQuery, after_id: int) -> None:
+    data = await api_client.knowledge_review_next(callback.from_user.id, after_id, mode="verified")
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    text, markup = _verified_view(data)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("kb:vnext:"))
+async def on_verified_next(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_verified_next(callback, int(callback.data.rsplit(":", 1)[1]))
+
+
+@router.callback_query(F.data.startswith("kb:unv:"))
+async def on_unverify(callback: CallbackQuery) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.knowledge_decide(callback.from_user.id, entry_id, "unverify")
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    await callback.answer("Tasdiqdan qaytarildi — endi «🔍 Ko'rib chiqish» navbatida")
+    await _show_verified_next(callback, entry_id)
+
+
+@router.callback_query(F.data.startswith("kb:vdel:"))
+async def on_verified_delete(callback: CallbackQuery) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.knowledge_decide(callback.from_user.id, entry_id, "delete")
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    await _show_verified_next(callback, entry_id)
+
+
+@router.callback_query(F.data.startswith("kb:vdate:"))
+async def on_verified_toggle_date(callback: CallbackQuery) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.knowledge_decide(callback.from_user.id, entry_id, "toggle_date")
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    await _show_verified_next(callback, entry_id - 1)  # o'sha yozuv yangilangan holda
+
+
+@router.callback_query(F.data.startswith("kb:vedit:"))
+async def on_verified_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    await state.set_state(KbEdit.waiting_answer)
+    await state.update_data(entry_id=entry_id, mode="verified")
+    await callback.message.answer(
+        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlangan holda yangilanadi):",
+        reply_markup=cancel_menu(),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("kb:review:"))
 async def on_review(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -297,7 +412,7 @@ async def on_toggle_date(callback: CallbackQuery) -> None:
 async def on_edit(callback: CallbackQuery, state: FSMContext) -> None:
     entry_id = int(callback.data.rsplit(":", 1)[1])
     await state.set_state(KbEdit.waiting_answer)
-    await state.update_data(entry_id=entry_id)
+    await state.update_data(entry_id=entry_id, mode="pending")
     await callback.message.answer(
         "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlangan bo'ladi):",
         reply_markup=cancel_menu(),
@@ -323,10 +438,15 @@ async def on_edit_text(message: Message, state: FSMContext) -> None:
         await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
         return
     await message.answer("✅ Javob saqlandi va tasdiqlandi.", reply_markup=menu_for_user(user))
-    # Avtomatik davom: navbatdagi ko'rib chiqiladigan yozuvni darhol ko'rsatamiz
-    next_data = await api_client.knowledge_review_next(message.from_user.id, 0)
+    # Avtomatik davom: qaysi rejimdan kelgan bo'lsa (tasdiq kutayotganlar yoki
+    # tasdiqlanganlarni qayta ko'rish) o'sha ro'yxatning navbatdagisini ko'rsatamiz
+    mode = data.get("mode", "pending")
+    # verified rejimda tahrirlangan yozuv ro'yxatda qoladi — takror chiqmasligi
+    # uchun undan keyingisiga o'tamiz; pending'da esa boshidan (u chiqib ketgan)
+    after = data["entry_id"] if mode == "verified" else 0
+    next_data = await api_client.knowledge_review_next(message.from_user.id, after, mode=mode)
     if next_data is not None:
-        text, markup = _review_view(next_data)
+        text, markup = _verified_view(next_data) if mode == "verified" else _review_view(next_data)
         await message.answer(text, reply_markup=markup)
 
 

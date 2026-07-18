@@ -537,9 +537,12 @@ async def knowledge_ingest(telegram_id: int) -> dict:
     return resp.json()
 
 
-async def knowledge_review_next(telegram_id: int, after_id: int = 0) -> dict | None:
+async def knowledge_review_next(
+    telegram_id: int, after_id: int = 0, mode: str = "pending"
+) -> dict | None:
+    """mode: pending — tasdiq kutayotganlar; verified — tasdiqlanganlarni qayta ko'rish."""
     resp = await _get_client().get(
-        f"/knowledge/review-next/{telegram_id}", params={"after_id": after_id}
+        f"/knowledge/review-next/{telegram_id}", params={"after_id": after_id, "mode": mode}
     )
     if resp.status_code == 403:
         return None

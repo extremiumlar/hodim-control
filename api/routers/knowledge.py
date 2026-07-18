@@ -131,20 +131,25 @@ async def tick(db: AsyncSession = Depends(get_db)) -> dict:
 
 @router.get("/review-next/{telegram_id}")
 async def review_next(
-    telegram_id: int, after_id: int = 0, db: AsyncSession = Depends(get_db)
+    telegram_id: int, after_id: int = 0, mode: str = "pending", db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Ko'rib chiqiladigan navbatdagi yozuv (unverified/conflict/unknown).
+    """Ko'rib chiqiladigan navbatdagi yozuv. `mode=pending` — tasdiq kutayotganlar
+    (unverified/conflict/unknown); `mode=verified` — allaqachon tasdiqlanganlarni
+    QAYTA ko'rib chiqish (tahrirlash/tasdiqdan qaytarish/o'chirish).
     `after_id` — "o'tkazib yuborish" uchun: shu id'dan keyingisi olinadi."""
     await _require_manager(db, telegram_id)
+    statuses = (
+        (KnowledgeStatus.verified.value,) if mode == "verified" else REVIEW_STATUSES
+    )
     entry = await db.scalar(
         select(KnowledgeEntry)
-        .where(KnowledgeEntry.status.in_(REVIEW_STATUSES), KnowledgeEntry.id > after_id)
+        .where(KnowledgeEntry.status.in_(statuses), KnowledgeEntry.id > after_id)
         .order_by(KnowledgeEntry.id)
         .limit(1)
     )
     remaining = await db.scalar(
         select(func.count()).select_from(KnowledgeEntry).where(
-            KnowledgeEntry.status.in_(REVIEW_STATUSES)
+            KnowledgeEntry.status.in_(statuses)
         )
     )
     drafts = await db.scalar(
@@ -207,6 +212,12 @@ async def decide(payload: DecidePayload, db: AsyncSession = Depends(get_db)) -> 
         entry.verified_by = actor.id
         entry.verified_at = datetime.utcnow()
         entry.review_note = None
+    elif payload.action == "unverify":
+        # Tasdiqdan qaytarish — yozuv yana "tasdiq kutmoqda" navbatiga tushadi
+        # (sotuv AI/datasetdan chiqadi), keyin qayta tahrirlab tasdiqlash mumkin
+        entry.status = KnowledgeStatus.unverified.value
+        entry.verified_by = None
+        entry.verified_at = None
     elif payload.action == "toggle_date":
         entry.date_sensitive = not entry.date_sensitive
     elif payload.action == "delete":
