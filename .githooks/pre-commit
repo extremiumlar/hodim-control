@@ -1,0 +1,19 @@
+#!/bin/sh
+# web/src o'zgargan bo'lsa, commitdan oldin frontendni qayta build qilib
+# webdist/ ga qo'shadi — backend va frontend har doim BIRGA deploy bo'lishi
+# uchun (git pull serverda ikkalasini ham yangilaydi). Faqat web/src staged
+# bo'lganda ishlaydi — backend-only commitlarni sekinlashtirmaydi.
+set -e
+
+if git diff --cached --name-only | grep -q '^web/src/'; then
+    echo "[pre-commit] web/src o'zgardi — frontend qayta build qilinmoqda..."
+    ( cd web && npm run build ) || {
+        echo "[pre-commit] Build muvaffaqiyatsiz — commit to'xtatildi." >&2
+        exit 1
+    }
+    rm -rf webdist
+    mkdir -p webdist
+    cp -r web/dist/* webdist/
+    git add webdist
+    echo "[pre-commit] webdist/ yangilandi va commitga qo'shildi."
+fi
