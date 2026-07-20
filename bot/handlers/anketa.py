@@ -464,7 +464,8 @@ async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     ])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back")])
     hint = (
-        "Yuklangan to'plam tanlansa — guruhdagi hamma shu savollarni oladi.\n"
+        "⚠️ Bu yerda tanlangan to'plam GURUHDAGI HAMMAGA BIR XIL beriladi.\n"
+        "Turli odamlarga TURLI to'plam kerak bo'lsa — ⬅️ Orqaga → «👤 Har kimga alohida»ni tanlang.\n"
         "«Ichki 5 to'plam» — kodga yozilgan standart savollar (har kishiga 1-5 dan biri)."
     )
     await callback.message.edit_text(
@@ -474,8 +475,15 @@ async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-def _preview_text(targets: list[dict]) -> str:
+def _preview_text(targets: list[dict], *, warn_same_template: bool = False) -> str:
     lines = [f"Qatnashchilar ({len(targets)} kishi):"]
+    if warn_same_template and len(targets) > 1:
+        label = targets[0].get("label") or f"To'plam №{targets[0].get('toplam')}"
+        lines.append(
+            f"⚠️ <b>Diqqat: barcha {len(targets)} kishiga BIR XIL to'plam ({html.escape(label)}) "
+            "yuboriladi.</b> Har kimga boshqa to'plam kerak bo'lsa ⬅️ Orqaga → "
+            "«👤 Har kimga alohida»ni tanlang."
+        )
     for t in targets:
         warn = "" if t.get("bot_started") else " ⚠️ botga /start bosmagan"
         label = t.get("label") or f"To'plam №{t.get('toplam')}"
@@ -512,7 +520,7 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
             ]]
         )
         await callback.message.edit_text(
-            f"▶️ Anketa HOZIR boshlansinmi?\n\n{_preview_text(targets)}\n\n"
+            f"▶️ Anketa HOZIR boshlansinmi?\n\n{_preview_text(targets, warn_same_template=True)}\n\n"
             "Har biriga birinchi savol darhol yuboriladi.",
             reply_markup=keyboard,
         )
@@ -520,7 +528,7 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
         return
 
     await state.set_state(AnketaSchedule.waiting_datetime)
-    await callback.message.edit_text(_preview_text(targets))
+    await callback.message.edit_text(_preview_text(targets, warn_same_template=True))
     await callback.message.answer(
         "🗓 Boshlanish kun va vaqtini yozing (Toshkent vaqti).\n\n"
         "Qabul qilinadigan ko'rinishlar:\n"
@@ -534,27 +542,38 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
 
 # ─── «Har kimga alohida» taqsimoti ──────────────────────────────────────────
 
-def _user_matches_filter(user: dict, filt: str | None) -> bool:
-    """Band 7: lavozim/rol bo'yicha tezkor filtr — katta jamoada per-user
-    ro'yxatni skroll qilib yurmaslik uchun."""
-    if not filt or filt == "all":
-        return True
-    if filt.startswith("role_"):
-        return user["role"] == filt[len("role_"):]
-    if filt.startswith("pos_"):
-        return user.get("position_id") == int(filt[len("pos_"):])
+def _spec_matches(user: dict, spec: str) -> bool:
+    if spec.startswith("role_"):
+        return user["role"] == spec[len("role_"):]
+    if spec.startswith("pos_"):
+        return user.get("position_id") == int(spec[len("pos_"):])
     return True
 
 
-async def _quick_filter_rows(prefix: str, active: str | None) -> list[list[InlineKeyboardButton]]:
-    """`prefix` — masalan "anketa:pfilter" yoki "anketa:bfilter". Tanlangan
-    chip ✅ bilan belgilanadi. Rol/lavozim tanlovlari _targets_keyboard bilan
-    bir xil (role_boss/role_rop/role_hr/pos_<id>)."""
+def _user_matches_filter(user: dict, filters: list[str] | str | None) -> bool:
+    """Bir nechta lavozim/rol birga tanlanishi mumkin (masalan Operator +
+    Manager) — foydalanuvchi ULARDAN BIRIGA mos kelsa yetarli. Bo'sh/None —
+    hammasi ko'rsatiladi. (Eski bitta-string format ham qo'llab-quvvatlanadi
+    — orqaga moslik.)"""
+    if not filters:
+        return True
+    if isinstance(filters, str):
+        filters = [filters]
+    return any(_spec_matches(user, spec) for spec in filters if spec and spec != "all")
+
+
+async def _quick_filter_rows(prefix: str, active: list[str]) -> list[list[InlineKeyboardButton]]:
+    """`prefix` — masalan "anketa:pfilter" yoki "anketa:bfilter". BIR NECHTA
+    chip birga yoqilishi mumkin (masalan 👑 Boshliq + 🧭 ROP) — natijada
+    ularning BIRLASHMASI (OR) ko'rsatiladi. "Hammasi" barcha chiplarni
+    o'chirib, filtrsiz holatga qaytaradi."""
     def mark(spec: str, label: str) -> str:
-        return f"✅ {label}" if (active or "all") == spec else label
+        return f"✅ {label}" if spec in active else label
 
     rows = [[
-        InlineKeyboardButton(text=mark("all", "Hammasi"), callback_data=f"{prefix}:all"),
+        InlineKeyboardButton(
+            text=("✅ Hammasi" if not active else "Hammasi (tozalash)"), callback_data=f"{prefix}:all"
+        ),
         InlineKeyboardButton(text=mark("role_boss", "👑 Boshliq"), callback_data=f"{prefix}:role_boss"),
         InlineKeyboardButton(text=mark("role_rop", "🧭 ROP"), callback_data=f"{prefix}:role_rop"),
         InlineKeyboardButton(text=mark("role_hr", "🗂 HR"), callback_data=f"{prefix}:role_hr"),
@@ -574,16 +593,31 @@ async def _quick_filter_rows(prefix: str, active: str | None) -> list[list[Inlin
     return rows
 
 
+def _toggle_filter_spec(current: list[str] | str | None, spec: str) -> list[str]:
+    """"all" bosilsa — hammasini tozalaydi; aks holda spec ro'yxatda bo'lsa
+    olib tashlaydi, bo'lmasa qo'shadi (ko'p tanlovni yig'ib boradi)."""
+    filters = list(current) if isinstance(current, list) else ([current] if current else [])
+    if spec == "all":
+        return []
+    if spec in filters:
+        filters.remove(spec)
+    else:
+        filters.append(spec)
+    return filters
+
+
 async def _picker_view(telegram_id: int, state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
     data = await state.get_data()
     assign: dict = data.get("assign") or {}
-    filt = data.get("picker_filter")
+    filt: list[str] = data.get("picker_filter") or []
     users = (await api_client.anketa_candidates(telegram_id)).get("users", [])
     templates = (await api_client.anketa_templates(telegram_id) or {}).get("templates", [])
     name_by_id = {str(t["id"]): t["name"] for t in templates}
     filtered = [u for u in users if _user_matches_filter(u, filt)]
 
     lines = ["👤 <b>Har kimga alohida taqsimot</b>", ""]
+    if filt:
+        lines.append("(bir nechta lavozim/rolni birga yoqib qo'shimcha qidirish mumkin)")
     rows: list[list[InlineKeyboardButton]] = list(await _quick_filter_rows("anketa:pfilter", filt))
     for u in filtered:
         key = str(u["user_id"])
@@ -634,7 +668,8 @@ async def on_each_start(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("anketa:pfilter:"))
 async def on_picker_filter(callback: CallbackQuery, state: FSMContext) -> None:
     spec = callback.data.split(":", 2)[2]
-    await state.update_data(picker_filter=None if spec == "all" else spec)
+    data = await state.get_data()
+    await state.update_data(picker_filter=_toggle_filter_spec(data.get("picker_filter"), spec))
     text, markup = await _picker_view(callback.from_user.id, state)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
@@ -646,7 +681,7 @@ async def _bulk_view(telegram_id: int, state: FSMContext) -> tuple[str, InlineKe
     data = await state.get_data()
     template_id = data.get("bulk_template_id")
     selected: set[int] = set(data.get("bulk_selected") or [])
-    filt = data.get("bulk_filter")
+    filt: list[str] = data.get("bulk_filter") or []
     users = (await api_client.anketa_candidates(telegram_id)).get("users", [])
     templates = (await api_client.anketa_templates(telegram_id) or {}).get("templates", [])
     tname = next((t["name"] for t in templates if t["id"] == template_id), "to'plam")
@@ -707,7 +742,8 @@ async def on_bulk_template(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("anketa:bfilter:"))
 async def on_bulk_filter(callback: CallbackQuery, state: FSMContext) -> None:
     spec = callback.data.split(":", 2)[2]
-    await state.update_data(bulk_filter=None if spec == "all" else spec)
+    data = await state.get_data()
+    await state.update_data(bulk_filter=_toggle_filter_spec(data.get("bulk_filter"), spec))
     text, markup = await _bulk_view(callback.from_user.id, state)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
