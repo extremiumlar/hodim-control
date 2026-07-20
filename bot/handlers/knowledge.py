@@ -15,7 +15,7 @@ import logging
 
 import httpx
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
@@ -61,6 +61,14 @@ class KbEdit(StatesGroup):
 class KbAdd(StatesGroup):
     waiting_question = State()
     waiting_answer = State()
+    # Kategoriya tugmalari bosilguncha ham holat FAOL turadi (state.clear()
+    # ATAYLAB chaqirilmaydi) — savol/javob matni shu FSM data'sida saqlanadi
+    # (callback_data 64 baytga sig'maydi). Ilgari shu bosqichda state
+    # tozalanib, lekin data qoldirilardi — bu boshqa FSM oqimiga (masalan
+    # keyinroq ochilgan ✏️ tahrirlash) tasodifan aralashib ketishi mumkin
+    # bo'lgan "osilib qolgan" ma'lumot edi. Endi state ONE PIECE sifatida
+    # yuriydi: yakunlanganda yoki bekor qilinganda BIR JOYDA tozalanadi.
+    waiting_category = State()
 
 
 async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] | None:
@@ -429,6 +437,7 @@ async def on_edit_text(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "kb:add")
 async def on_add(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()  # oldingi FSM oqimidan qolgan holat/data bo'lsa tozalanadi
     await state.set_state(KbAdd.waiting_question)
     await callback.message.answer(
         "➕ Yangi ma'lumot.\n1/2 — mijoz SAVOLINI yozing (masalan: «1 xonali kvartira narxi qancha?»):",
@@ -457,36 +466,44 @@ async def on_add_answer(message: Message, state: FSMContext) -> None:
         await message.answer("Bekor qilindi.", reply_markup=menu_for_user(user))
         return
     await state.update_data(answer=message.text.strip())
-    data = await state.get_data()
-    # State'ni tozalaymiz (matn kutish tugadi), lekin savol/javobni storage'da
-    # qoldiramiz — kategoriya tugmasi bosilganda kbadd callback o'qib oladi
-    # (matnlar callback_data'ning 64 baytiga sig'maydi).
-    await state.clear()
+    # DIQQAT: state ATAYLAB tozalanmaydi — KbAdd.waiting_category'ga o'tadi.
+    # Savol/javob matni shu FSM data'sida saqlanadi (callback_data 64 baytga
+    # sig'maydi), lekin holat FAOL bo'lgani uchun endi boshqa oqimga
+    # "osilib qolgan" ma'lumot bo'lib aralashib ketmaydi — yakunlanganda
+    # (kategoriya tanlanganda) yoki bekor qilinganda BIR JOYDA tozalanadi.
+    await state.set_state(KbAdd.waiting_category)
     rows = [
         [
-            InlineKeyboardButton(text=label, callback_data=f"kbadd:{value}:0")
+            InlineKeyboardButton(text=label, callback_data=f"kbadd:{value}")
             for value, label in _ADD_CATEGORIES[i : i + 3]
         ]
         for i in range(0, len(_ADD_CATEGORIES), 3)
     ]
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="kbadd:cancel")])
     await message.answer("Kategoriya tanlang:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await message.answer("Asosiy menyu:", reply_markup=menu_for_user(user))
-    await state.update_data(question=data["question"], answer=data["answer"])
 
 
-@router.callback_query(F.data.startswith("kbadd:"))
+@router.callback_query(StateFilter(KbAdd.waiting_category), F.data == "kbadd:cancel")
+async def on_add_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.message.edit_text("Bekor qilindi.")
+    await callback.answer()
+
+
+@router.callback_query(StateFilter(KbAdd.waiting_category), F.data.startswith("kbadd:"))
 async def on_add_category(callback: CallbackQuery, state: FSMContext) -> None:
-    parts = callback.data.split(":")
-    category = parts[1]
-    date_sensitive = parts[2] == "1"
+    category = callback.data.split(":", 1)[1]
     data = await state.get_data()
     if not data.get("question") or not data.get("answer"):
+        # Nazariy holat (state to'g'ri bo'lsa data ham bo'lishi kerak) — ehtiyot
+        # chorasi sifatida saqlanadi, foydalanuvchini oqib ketmasin.
+        await state.clear()
         await callback.answer("Ma'lumot topilmadi — «➕ Ma'lumot qo'shish»dan qayta boshlang", show_alert=True)
         return
 
     # Narx/topshirish kategoriyalari odatda sana-sezgir — avtomatik belgilaymiz
-    if category in {"narx", "topshirish"} and not date_sensitive:
-        date_sensitive = True
+    date_sensitive = category in {"narx", "topshirish"}
 
     try:
         await api_client.knowledge_add(
