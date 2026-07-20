@@ -235,13 +235,22 @@ async def on_document(message: Message, state: FSMContext) -> None:
     )
 
 
+def _template_usage_suffix(t: dict) -> str:
+    """Band 9: to'plam tarixi qisqacha — nechta sessiyada ishlatilgani."""
+    sessions = t.get("sessions_used") or 0
+    if not sessions:
+        return " · hali ishlatilmagan"
+    answers = t.get("answers_collected") or 0
+    return f" · {sessions} sessiyada, {answers} javob yig'ilgan"
+
+
 def _templates_view(templates: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
     if templates:
         lines = ["📄 <b>Savol to'plamlari</b>", ""]
         for t in templates:
             lines.append(
                 f"• <b>{html.escape(t['name'])}</b> — {t['question_count']} savol "
-                f"({t.get('created_at_local') or '-'})"
+                f"({t.get('created_at_local') or '-'}){_template_usage_suffix(t)}"
             )
     else:
         lines = ["📄 <b>Savol to'plamlari</b>", "", "Hali to'plam yuklanmagan."]
@@ -274,6 +283,24 @@ async def on_templates(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("anketa:tv:"))
+def _template_history_text(data: dict) -> str:
+    """Band 9: bu to'plam qaysi sessiya(lar)da, kimlarga berilgani va nechta
+    javob yig'ilgani — o'chirish/qayta ishlatishdan oldin ko'rish uchun."""
+    history = data.get("history") or []
+    if not history:
+        return "🕘 Bu to'plam hali birorta sessiyada ishlatilmagan."
+    label_by_status = {"scheduled": "🗓", "in_progress": "⏳", "done": "✅", "cancelled": "🚫"}
+    lines = [f"🕘 <b>Tarix</b> — jami {data.get('total_answers_collected', 0)} javob yig'ilgan:"]
+    for h in history:
+        emoji = label_by_status.get(h["session_status"], "•")
+        lines.append(f"\n{emoji} Sessiya #{h['session_id']} ({h['session_status']})")
+        if h.get("started_at_local"):
+            lines.append(f"  Boshlangan: {h['started_at_local']}")
+        for u in h["users"]:
+            lines.append(f"  • {html.escape(u['full_name'])}: {u['answered']} javob ({u['status']})")
+    return "\n".join(lines)
+
+
 async def on_template_view(callback: CallbackQuery) -> None:
     template_id = int(callback.data.rsplit(":", 1)[1])
     try:
@@ -282,6 +309,8 @@ async def on_template_view(callback: CallbackQuery) -> None:
         detail = (exc.response.json() or {}).get("detail", "Xatolik")
         await callback.answer(detail, show_alert=True)
         return
+
+    await callback.message.answer(_template_history_text(data))
 
     lines = [f"📄 <b>{html.escape(data['name'])}</b> — {data['question_count']} savol", ""]
     section = None

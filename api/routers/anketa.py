@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, verify_bot_secret
@@ -438,6 +438,19 @@ async def list_templates(telegram_id: int, db: AsyncSession = Depends(get_db)) -
             .order_by(AnketaTemplate.id)
         )
     )
+    # Band 9 — to'plam tarixi: nechta sessiyada ishlatilgani + jami javob
+    # (bitta GROUP BY so'rov, har to'plam uchun alohida so'rov emas)
+    usage_rows = list(
+        await db.execute(
+            select(
+                AnketaAssignment.template_id,
+                func.count(func.distinct(AnketaAssignment.session_id)),
+                func.sum(AnketaAssignment.current_q),
+            ).group_by(AnketaAssignment.template_id)
+        )
+    )
+    usage = {tid: (sessions, answers or 0) for tid, sessions, answers in usage_rows if tid is not None}
+
     return {
         "templates": [
             {
@@ -446,6 +459,8 @@ async def list_templates(telegram_id: int, db: AsyncSession = Depends(get_db)) -
                 "filename": t.filename,
                 "question_count": t.question_count,
                 "created_at_local": _utc_naive_to_local_str(t.created_at),
+                "sessions_used": usage.get(t.id, (0, 0))[0],
+                "answers_collected": usage.get(t.id, (0, 0))[1],
             }
             for t in templates
         ]
@@ -458,12 +473,57 @@ async def template_detail(
 ) -> dict:
     await _require_dasturchi(db, telegram_id)
     template = await _load_template(db, template_id, active_only=False)
+
+    # Tarix: bu to'plam qaysi sessiya(lar)da, kimlarga berilgani va nechta
+    # javob yig'ilgani — Dasturchi to'plamni o'chirish/qayta ishlatishdan
+    # oldin qaerda ishlatilganini ko'rsin.
+    assignments = list(
+        await db.scalars(
+            select(AnketaAssignment)
+            .where(AnketaAssignment.template_id == template_id)
+            .order_by(AnketaAssignment.session_id.desc())
+        )
+    )
+    by_session: dict[int, list[AnketaAssignment]] = {}
+    for a in assignments:
+        by_session.setdefault(a.session_id, []).append(a)
+
+    history = []
+    total_answers = 0
+    for session_id, session_assignments in by_session.items():
+        session = await db.get(AnketaSession, session_id)
+        if session is None:
+            continue
+        users_view = []
+        for a in session_assignments:
+            user = await db.get(User, a.user_id)
+            total_answers += a.current_q
+            users_view.append(
+                {
+                    "full_name": user.full_name.strip() if user else "?",
+                    "answered": a.current_q,
+                    "status": a.status,
+                }
+            )
+        history.append(
+            {
+                "session_id": session_id,
+                "session_status": session.status,
+                "started_at_local": _utc_naive_to_local_str(session.started_at),
+                "finished_at_local": _utc_naive_to_local_str(session.finished_at),
+                "users": users_view,
+            }
+        )
+    history.sort(key=lambda h: h["session_id"], reverse=True)
+
     return {
         "id": template.id,
         "name": template.name,
         "filename": template.filename,
         "question_count": template.question_count,
         "questions": list(template.questions or []),
+        "history": history,
+        "total_answers_collected": total_answers,
     }
 
 
