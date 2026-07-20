@@ -20,6 +20,7 @@ export const qk = {
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
   attendanceSummary: (days: number) => ["attendance", "summary", days] as const,
+  attendanceLateStats: (days: number) => ["attendance", "late-stats", days] as const,
   offices: ["offices"] as const,
   users: (role?: string, includeInactive?: boolean) =>
     ["users", role ?? "all", !!includeInactive] as const,
@@ -83,6 +84,9 @@ export const useAttendanceDashboard = () =>
 
 export const useAttendanceEmployeeSummary = (days = 30) =>
   useQuery({ queryKey: qk.attendanceSummary(days), queryFn: () => api.attendanceEmployeeSummary(days) });
+
+export const useAttendanceLateStats = (days = 30) =>
+  useQuery({ queryKey: qk.attendanceLateStats(days), queryFn: () => api.attendanceLateStats(days) });
 
 // Faqat Dasturchi (backend ham tekshiradi) — sinov uchun davomat yozuvini o'chirish
 export const useDeleteAttendance = () =>

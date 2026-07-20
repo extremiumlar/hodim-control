@@ -25,11 +25,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   type Attendance as AttendanceRow,
   type EmployeeAttendanceSummary,
+  type LateStatRow,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   useAttendanceDashboard,
   useAttendanceEmployeeSummary,
+  useAttendanceLateStats,
   useAttendanceList,
   useDeleteAttendance,
 } from "@/lib/queries";
@@ -108,6 +110,77 @@ function baseRowColumns(): ColumnDef<AttendanceRow>[] {
       cell: ({ row }) => <StatusBadge kind="attendance" status={row.original.status} />,
     },
   ];
+}
+
+// Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
+function LateStatsSection() {
+  const [days, setDays] = useState(30);
+  const query = useAttendanceLateStats(days);
+  const rows: LateStatRow[] = query.data ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Hourglass className="h-4 w-4 text-rose-500" />
+            Kechikish statistikasi (kunma-kun)
+          </CardTitle>
+          <div className="flex gap-1">
+            {[7, 30, 90].map((d) => (
+              <Button
+                key={d}
+                variant={days === d ? "default" : "outline"}
+                size="sm"
+                onClick={() => setDays(d)}
+              >
+                {d} kun
+              </Button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {query.isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : query.error ? (
+          <div className="text-sm text-rose-600">{query.error.message}</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-slate-400">
+            Tanlangan davrda hech kim kechikmagan 🎉
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {rows.map((r) => (
+              <li key={r.user_id} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+                <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-medium">{r.full_name}</span>
+                  <span className="text-sm font-semibold text-rose-600">
+                    jami {r.total_late_minutes} daq
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {r.late_days} kun · o'rtacha {r.avg_late_minutes} daq · eng ko'p{" "}
+                    {r.max_late_minutes} daq
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {r.days.map((d) => (
+                    <span
+                      key={d.date}
+                      className="rounded-md bg-rose-50 px-2 py-0.5 text-xs text-rose-700"
+                      title={`${format(new Date(d.date), "dd.MM.yyyy")} — ${d.late_minutes} daqiqa kechikkan`}
+                    >
+                      {format(new Date(d.date), "dd.MM")} +{d.late_minutes}
+                    </span>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function Attendance() {
@@ -249,6 +322,9 @@ export default function Attendance() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Kechikish statistikasi — har xodim kunma-kun necha daqiqa kech qolgani */}
+      <LateStatsSection />
 
       {/* 30 kunlik xodim xulosasi */}
       <div>

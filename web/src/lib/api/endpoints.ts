@@ -7,6 +7,7 @@ import type {
   DailyResult,
   EmployeeAttendanceSummary,
   ExcusedDay,
+  LateStatRow,
   CrmOperatorRow,
   CrmVisitOperatorRow,
   LeadStageDay,
@@ -45,6 +46,8 @@ export const api = {
   },
   attendanceEmployeeSummary: (days = 30) =>
     apiFetch<EmployeeAttendanceSummary[]>(`/attendance/employee-summary?days=${days}`),
+  attendanceLateStats: (days = 30) =>
+    apiFetch<LateStatRow[]>(`/attendance/late-stats?days=${days}`),
   deleteAttendance: (attendanceId: number) =>
     apiFetch<{ deleted: boolean }>(`/attendance/${attendanceId}`, { method: "DELETE" }),
   listOffices: () => apiFetch<Office[]>("/attendance/offices"),

@@ -87,6 +87,21 @@ export interface EmployeeAttendanceSummary {
   worked_minutes: number;
 }
 
+export interface LateDayEntry {
+  date: string;
+  late_minutes: number;
+}
+
+export interface LateStatRow {
+  user_id: number;
+  full_name: string;
+  late_days: number;
+  total_late_minutes: number;
+  avg_late_minutes: number;
+  max_late_minutes: number;
+  days: LateDayEntry[];
+}
+
 export interface Task {
   id: number;
   assigned_by: number;

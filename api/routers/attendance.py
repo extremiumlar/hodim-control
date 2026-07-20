@@ -13,6 +13,8 @@ from api.deps import get_current_user, get_db, require_roles
 from api.schemas import (
     AttendanceOut,
     EmployeeAttendanceSummary,
+    LateDayEntry,
+    LateStatRow,
     MeCheckRequest,
     OfficeCreate,
     OfficeOut,
@@ -351,6 +353,49 @@ async def employee_summary(
         )
         for r in rows.all()
     ]
+
+
+@router.get("/late-stats", response_model=list[LateStatRow])
+async def late_stats(
+    days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
+) -> list[LateStatRow]:
+    """Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
+    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: faqat xodimlar
+    (rahbarlar ro'yxatga kirmaydi). Jami kechikish bo'yicha kamayish tartibida."""
+    since = today_local() - timedelta(days=days)
+    rows = await db.execute(
+        select(Attendance.user_id, User.full_name, Attendance.date, Attendance.late_minutes)
+        .join(User, Attendance.user_id == User.id)
+        .where(
+            Attendance.date >= since,
+            Attendance.late_minutes > 0,
+            User.role == Role.employee.value,
+        )
+        .order_by(Attendance.date)
+    )
+    by_user: dict[int, dict] = {}
+    for uid, full_name, day, late in rows.all():
+        e = by_user.setdefault(
+            uid, {"user_id": uid, "full_name": full_name, "days": [], "total": 0, "max": 0}
+        )
+        e["days"].append(LateDayEntry(date=day, late_minutes=late))
+        e["total"] += late
+        e["max"] = max(e["max"], late)
+
+    out = [
+        LateStatRow(
+            user_id=e["user_id"],
+            full_name=e["full_name"],
+            late_days=len(e["days"]),
+            total_late_minutes=e["total"],
+            avg_late_minutes=round(e["total"] / len(e["days"]), 1),
+            max_late_minutes=e["max"],
+            days=e["days"],
+        )
+        for e in by_user.values()
+    ]
+    out.sort(key=lambda r: r.total_late_minutes, reverse=True)
+    return out
 
 
 # ─────────────────────────────────────────────

@@ -634,3 +634,22 @@ class EmployeeAttendanceSummary(BaseModel):
     late_minutes: int
     early_minutes: int
     worked_minutes: int
+
+
+class LateDayEntry(BaseModel):
+    """Bitta kechikkan kun — sana va necha daqiqa kech qolgani."""
+
+    date: dt.date
+    late_minutes: int
+
+
+class LateStatRow(BaseModel):
+    """Bir xodimning davr bo'yicha kechikish statistikasi (kunma-kun ro'yxat bilan)."""
+
+    user_id: int
+    full_name: str
+    late_days: int  # nechta kun kechikkan
+    total_late_minutes: int  # jami kechikish (daqiqa)
+    avg_late_minutes: float  # o'rtacha (kechikkan kunlarga nisbatan)
+    max_late_minutes: int  # eng katta kechikish
+    days: list[LateDayEntry]  # faqat kechikkan kunlar, sana bo'yicha o'sish tartibida
