@@ -1,7 +1,8 @@
 """Bilim bazasi anketasi — bot tomonlari.
 
 Ikki router:
-- `router` — Dasturchi boshqaruvi: «📝 Anketa» tugmasi / /anketa buyrug'i,
+- `router` — Dasturchi boshqaruvi. Kirish: «🧠 Sotuv AI markazi» dashboardidagi
+  «2️⃣ Anketa» / «1️⃣ Savol to'plamlari» tugmalari (yoki /anketa buyrug'i);
   savol to'plamlari (Word/.txt yuklash), sessiyani boshlash (kimlarga + qaysi
   to'plam), yakunlash/bekor qilish, javoblarni .txt fayl qilib yuklab olish.
 - `answer_router` — xodim javoblarini ushlovchi matn handleri. Dispatcher'da
@@ -124,6 +125,7 @@ def _overview_keyboard(data: dict) -> InlineKeyboardMarkup:
     ])
     if session:
         rows.append([InlineKeyboardButton(text="📥 Javoblar (.txt)", callback_data="anketa:results")])
+    rows.append([InlineKeyboardButton(text="⬅️ Sotuv AI markazi", callback_data="aic:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

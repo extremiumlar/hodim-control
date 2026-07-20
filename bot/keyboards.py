@@ -17,6 +17,10 @@ BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
 BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
 BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
+BTN_AI_CENTER = "🧠 Sotuv AI markazi"
+# Eski alohida tugmalar — endi asosiy menyuda ko'rinmaydi (BTN_AI_CENTER
+# ularni almashtirdi), lekin /anketa, /bilim buyruqlari va shu matnli xabar
+# hamon ishlaydi (foydalanuvchida eski klaviatura keshi qolgan bo'lishi mumkin).
 BTN_ANKETA = "📝 Anketa"
 BTN_KNOWLEDGE = "📚 Bilim bazasi"
 BTN_SALES_AI = "🤖 Sotuv AI"
@@ -91,12 +95,10 @@ def main_menu(
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
             rows.append([KeyboardButton(text=BTN_AUDIT), KeyboardButton(text=BTN_PANEL)])
-            # Sotuv bilim bazasi — anketa javoblarini tasdiqlash/boyitish (boss ham).
-            # Anketa boshlanishini esa faqat Dasturchi tasdiqlaydi.
-            knowledge_row = [KeyboardButton(text=BTN_KNOWLEDGE)]
-            if role == "dasturchi":
-                knowledge_row.append(KeyboardButton(text=BTN_ANKETA))
-            rows.append(knowledge_row)
+            # Anketa + Bilim bazasi + Sotuv playbook — YAGONA dashboard orqali
+            # (ilgari ikkita alohida tugma edi; anketani boshlashni faqat
+            # Dasturchi qila oladi, backend shu cheklovni saqlaydi).
+            rows.append([KeyboardButton(text=BTN_AI_CENTER)])
         else:
             rows.append([KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PANEL)])
 

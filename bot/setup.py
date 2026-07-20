@@ -11,6 +11,7 @@ from aiogram.types import ErrorEvent
 
 from bot.config import BOT_TOKEN
 from bot.handlers import (
+    ai_center,
     ai_watch,
     anketa,
     assign_task,
@@ -64,6 +65,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(group_stats.router)
+    dp.include_router(ai_center.router)
     dp.include_router(anketa.router)
     dp.include_router(knowledge.router)
     dp.include_router(playbook.router)

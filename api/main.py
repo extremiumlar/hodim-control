@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
 from api.routers import (
+    ai_center,
     ai_coach,
     ai_watch,
     anketa,
@@ -58,6 +59,7 @@ app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
 app.include_router(anketa.router)
+app.include_router(ai_center.router)
 app.include_router(knowledge.router)
 app.include_router(knowledge.public_router)
 app.include_router(playbook.router)

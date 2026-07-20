@@ -28,10 +28,13 @@ class SalesAi(StatesGroup):
     asking = State()
 
 
-@router.message(F.text == BTN_SALES_AI)
-async def enter_mode(message: Message, state: FSMContext) -> None:
+async def enter_mode_from_chat(message: Message, telegram_id: int, state: FSMContext) -> None:
+    """Sotuv AI so'rash rejimini ochadi. Ikki kirish nuqtasidan chaqiriladi:
+    «🤖 Sotuv AI» reply-tugmasi (operatorlar) va Sotuv AI markazi dashboardidagi
+    «🤖 Sotuv AI'ni sinash» inline tugmasi (rahbarlar) — ikkalasi ham bir xil
+    xabar/holatni ko'rsatishi uchun mantiq shu yerda markazlashgan."""
     await state.clear()
-    data = await api_client.sales_ai_overview(message.from_user.id)
+    data = await api_client.sales_ai_overview(telegram_id)
     if data is None:
         return  # ro'yxatdan o'tmagan
     if not data.get("ai_enabled"):
@@ -39,8 +42,8 @@ async def enter_mode(message: Message, state: FSMContext) -> None:
         return
     if not data.get("kb_verified"):
         await message.answer(
-            "Bilim bazasida hali tasdiqlangan ma'lumot yo'q — avval rahbar «📚 Bilim "
-            "bazasi» bo'limida anketa javoblarini tasdiqlashi kerak."
+            "Bilim bazasida hali tasdiqlangan ma'lumot yo'q — avval rahbar «🧠 Sotuv AI "
+            "markazi» bo'limida anketa javoblarini tasdiqlashi kerak."
         )
         return
     await state.set_state(SalesAi.asking)
@@ -52,6 +55,11 @@ async def enter_mode(message: Message, state: FSMContext) -> None:
         "Javobni o'zingiz mijozga moslab yuborasiz. Chiqish — «❌ Bekor qilish».",
         reply_markup=cancel_menu(),
     )
+
+
+@router.message(F.text == BTN_SALES_AI)
+async def enter_mode(message: Message, state: FSMContext) -> None:
+    await enter_mode_from_chat(message, message.from_user.id, state)
 
 
 @router.message(Command("sotuv_ai"))

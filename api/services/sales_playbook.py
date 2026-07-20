@@ -50,6 +50,14 @@ from db.models import (
 logger = logging.getLogger(__name__)
 
 MAX_AI_ATTEMPTS = 3
+
+# Foydalanuvchiga ko'rsatiladigan bosqich nomlari (api/routers/playbook.py va
+# api/routers/ai_center.py — dashboard — ikkalasi ham shu yerdan oladi).
+BUILD_STAGE_LABELS = {
+    "profiles": "sotuvchi profillari o'rganilmoqda",
+    "objections": "mijoz e'tirozlari ajratilmoqda",
+    "synthesis": "yakuniy playbook tuzilmoqda",
+}
 STATS_DAYS = 60  # natijalar oynasi (suhbat/tashrif)
 OBJECTION_DAYS = 90  # operator sabablari oynasi
 ACTIVE_STATUSES = ("profiles", "objections", "synthesis")

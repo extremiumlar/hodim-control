@@ -12,6 +12,7 @@ narsa qo'shilmagan (ataylab: frontend deploy'ini o'zgartirmaslik sharti)."""
 import base64
 import binascii
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -456,11 +457,53 @@ async def template_detail(
     }
 
 
+_GENERIC_STEM_RE = re.compile(
+    r"^(anketa|savol(lar)?|doc(ument)?|new|untitled|scan|img|image|fayl|file|"
+    r"hujjat|copy|nusxa|без[ _]?имени|документ)[\s_\-]*\d*$",
+    re.I,
+)
+
+
+def _is_generic_stem(stem: str) -> bool:
+    """Fayl nomi "anketa.docx", "doc1.docx", "hujjat (2).docx" kabi umumiy
+    bo'lsa True — bunday holatda docx sarlavhasi ustuvor bo'ladi (aks holda
+    fayl nomi ustuvor: bir nechta faylning docx sarlavhasi bir xil bo'lishi
+    juda oddiy holat, lekin fayl nomlarini foydalanuvchi odatda o'zi
+    farqlab qo'yadi)."""
+    cleaned = re.sub(r"\s*\(\d+\)\s*$", "", stem.strip())
+    return not cleaned or bool(_GENERIC_STEM_RE.match(cleaned))
+
+
+async def _unique_template_name(db: AsyncSession, base_name: str) -> str:
+    """Faol to'plamlar orasida nom to'qnashsa "Nomi (2)", "Nomi (3)"... qo'shadi
+    — bir xil docx sarlavhali bir nechta fayl yuklanganda ro'yxatda
+    ajratib bo'lmay qolmasligi uchun (haqiqiy holat: 3 ta fayl, hammasi bir
+    xil sarlavha bilan)."""
+    existing = set(
+        await db.scalars(select(AnketaTemplate.name).where(AnketaTemplate.is_active.is_(True)))
+    )
+    if base_name not in existing:
+        return base_name
+    n = 2
+    while f"{base_name} ({n})" in existing:
+        n += 1
+    return f"{base_name} ({n})"
+
+
 @router.post("/templates/upload")
 async def upload_template(
     payload: TemplateUploadPayload, db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Botga tashlangan .docx/.txt fayldan savollarni ajratib to'plam yaratadi."""
+    """Botga tashlangan .docx/.txt fayldan savollarni ajratib to'plam yaratadi.
+
+    Nom ustuvorligi: (1) foydalanuvchi qo'lda kiritgan nom; (2) FAYL NOMI
+    (agar generik bo'lmasa — "anketa.docx" kabi emas); (3) docx sarlavhasi;
+    (4) fayl nomi baribir. Fayl nomi ustuvor, chunki bir nechta fayl bir xil
+    docx sarlavhasi bilan yuklanishi (masalan "NURLI DIYOR — 2-BOSQICH
+    ANKETA" nomli 3 ta fayl) juda oddiy holat va sarlavhaga tayansak
+    tanlash ro'yxatida ajratib bo'lmay qoladi; fayl nomini esa foydalanuvchi
+    odatda o'zi farqlab beradi (Manager_anketa.docx, Operator_anketa.docx).
+    Har holatda ham to'qnashuv bo'lsa avtomatik "(2)", "(3)" qo'shiladi."""
     actor = await _require_dasturchi(db, payload.telegram_id)
     try:
         data = base64.b64decode(payload.content_b64)
@@ -481,7 +524,15 @@ async def upload_template(
     for suffix in (".docx", ".txt"):
         if stem.lower().endswith(suffix):
             stem = stem[: -len(suffix)]
-    name = (payload.name or parsed.get("title") or stem or "Savol to'plami").strip()[:255]
+    stem = stem.strip()
+
+    if payload.name:
+        base_name = payload.name.strip()
+    elif stem and not _is_generic_stem(stem):
+        base_name = stem
+    else:
+        base_name = (parsed.get("title") or stem or "Savol to'plami").strip()
+    name = (await _unique_template_name(db, base_name[:240]))[:255]
 
     template = AnketaTemplate(
         name=name,

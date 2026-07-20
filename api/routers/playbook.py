@@ -50,13 +50,6 @@ def _entry_view(e: PlaybookEntry) -> dict:
     }
 
 
-_BUILD_STAGE_LABELS = {
-    "profiles": "sotuvchi profillari o'rganilmoqda",
-    "objections": "mijoz e'tirozlari ajratilmoqda",
-    "synthesis": "yakuniy playbook tuzilmoqda",
-}
-
-
 @router.get("/overview/{telegram_id}")
 async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     await _require_manager(db, telegram_id)
@@ -75,7 +68,7 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
     return {
         "counts": counts,
         "building": (
-            {"status": build.status, "label": _BUILD_STAGE_LABELS.get(build.status, build.status)}
+            {"status": build.status, "label": svc.BUILD_STAGE_LABELS.get(build.status, build.status)}
             if build
             else None
         ),

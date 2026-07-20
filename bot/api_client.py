@@ -702,6 +702,16 @@ async def playbook_export(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def ai_center_overview(telegram_id: int) -> dict | None:
+    """Sotuv AI markazi dashboardi — anketa/bilim bazasi/playbook holati +
+    tavsiya bitta so'rovda. Faqat Boshliq/Dasturchi — ruxsat yo'q bo'lsa None."""
+    resp = await _get_client().get(f"/ai-center/overview/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def sales_ai_overview(telegram_id: int) -> dict | None:
     """Sotuv AI holati (tasdiqlangan baza/playbook soni). 404 — ro'yxatsiz."""
     resp = await _get_client().get(f"/sales-ai/overview/{telegram_id}")

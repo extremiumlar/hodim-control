@@ -1,8 +1,9 @@
 """Sotuv playbook — bot boshqaruvi (faqat Boshliq/Dasturchi).
 
-Kirish: «📚 Bilim bazasi» menyusidagi «🧭 Sotuv playbook» tugmasi (yoki /playbook).
-Amallar: 🔨 qurish (AI ishi cron'da bosqichma-bosqich, tayyor bo'lgach xabar),
-🔍 yozuvlarni birma-bir ko'rib tasdiqlash/o'chirish, 📥 .txt eksport."""
+Kirish: «🧠 Sotuv AI markazi» dashboardidagi «4️⃣ Sotuv playbook» tugmasi
+(yoki /playbook). Amallar: 🔨 qurish (AI ishi cron'da bosqichma-bosqich,
+tayyor bo'lgach xabar), 🔍 yozuvlarni birma-bir ko'rib tasdiqlash/o'chirish,
+📥 .txt eksport."""
 import html
 import logging
 
@@ -55,7 +56,7 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
         ])
     if counts:
         rows.append([InlineKeyboardButton(text="📥 Playbook (.txt)", callback_data="pb:export")])
-    rows.append([InlineKeyboardButton(text="⬅️ Bilim bazasi", callback_data="kb:menu")])
+    rows.append([InlineKeyboardButton(text="⬅️ Sotuv AI markazi", callback_data="aic:menu")])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 

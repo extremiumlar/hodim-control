@@ -1,6 +1,7 @@
 """Sotuv bilim bazasi — bot boshqaruvi (faqat Boshliq/Dasturchi).
 
-«📚 Bilim bazasi» tugmasi: holat + 4 amal:
+Kirish: «🧠 Sotuv AI markazi» dashboardidagi «3️⃣ Bilim bazasi» tugmasi
+(yoki /bilim). Holat + 4 amal:
 - 🔄 Anketadan yuklash — yakunlangan anketa javoblaridan draft'lar (AI ishlovi
   keyingi daqiqalarda cron'da bo'lib-bo'lib boradi, tayyor bo'lgach xabar keladi);
 - 🔍 Ko'rib chiqish — unverified/conflict/unknown yozuvlarni birma-bir:
@@ -103,10 +104,8 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
                 callback_data="kb:anext:0",
             )
         ],
-        [
-            InlineKeyboardButton(text="🧭 Sotuv playbook", callback_data="pb:menu"),
-            InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset"),
-        ],
+        [InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset")],
+        [InlineKeyboardButton(text="⬅️ Sotuv AI markazi", callback_data="aic:menu")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
