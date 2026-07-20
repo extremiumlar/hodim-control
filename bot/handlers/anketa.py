@@ -394,9 +394,15 @@ async def on_set_time(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("anketa:tg:"))
-async def on_target_chosen(callback: CallbackQuery) -> None:
-    """Guruh tanlandi — endi qaysi savol to'plami berilishini so'raymiz."""
+async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    """Guruh tanlandi — endi qaysi savol to'plami berilishini so'raymiz.
+    mode/spec shu yerda FSM holatiga yoziladi — keyingi qadamlarning
+    callback_data'sida qayta-qayta tashib yurish shart bo'lmaydi (band 6:
+    ilgari "anketa:confirm:{spec}:{tsel}:{value}" kabi uch qismli formatlar
+    va ularni qo'lda parslash bor edi)."""
     _, _, mode, spec = callback.data.split(":", 3)
+    await state.update_data(target_mode=mode, target_spec=spec)
+
     data = await api_client.anketa_templates(callback.from_user.id)
     templates = (data or {}).get("templates", [])
 
@@ -404,7 +410,7 @@ async def on_target_chosen(callback: CallbackQuery) -> None:
         [
             InlineKeyboardButton(
                 text=f"📄 {t['name'][:28]} ({t['question_count']})",
-                callback_data=f"anketa:ts:{mode}:{spec}:t{t['id']}",
+                callback_data=f"anketa:ts:t{t['id']}",
             )
         ]
         for t in templates
@@ -412,7 +418,7 @@ async def on_target_chosen(callback: CallbackQuery) -> None:
     rows.append([
         InlineKeyboardButton(
             text="🎯 Ichki 5 to'plam (standart savollar)",
-            callback_data=f"anketa:ts:{mode}:{spec}:std",
+            callback_data="anketa:ts:std",
         )
     ])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back")])
@@ -438,7 +444,10 @@ def _preview_text(targets: list[dict]) -> str:
 
 @router.callback_query(F.data.startswith("anketa:ts:"))
 async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None:
-    _, _, mode, spec, tsel = callback.data.split(":", 4)
+    tsel = callback.data.split(":", 2)[2]
+    data = await state.get_data()
+    mode = data.get("target_mode", "now")
+    spec = data.get("target_spec", "std")
     template_id = _parse_tsel(tsel)
     try:
         preview = await api_client.anketa_preview_targets(
@@ -451,14 +460,13 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
             return
         raise
     targets = preview.get("targets", [])
+    await state.update_data(tsel=tsel)
 
     if mode == "now":
+        await state.update_data(scheduled_iso=None)
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[
-                InlineKeyboardButton(
-                    text="✅ Ha, hozir boshlansin",
-                    callback_data=f"anketa:confirm:{spec}:{tsel}:now",
-                ),
+                InlineKeyboardButton(text="✅ Ha, hozir boshlansin", callback_data="anketa:confirm"),
                 InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
             ]]
         )
@@ -471,7 +479,6 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
         return
 
     await state.set_state(AnketaSchedule.waiting_datetime)
-    await state.update_data(target_spec=spec, tsel=tsel, explicit=False)
     await callback.message.edit_text(_preview_text(targets))
     await callback.message.answer(
         "🗓 Boshlanish kun va vaqtini yozing (Toshkent vaqti).\n\n"
@@ -604,11 +611,12 @@ async def on_pick_done(callback: CallbackQuery, state: FSMContext) -> None:
     preview = "\n".join(lines)
 
     if data.get("pick_mode") == "now":
+        await state.update_data(scheduled_iso=None)
         await callback.message.edit_text(
             f"▶️ Anketa HOZIR boshlansinmi?\n\n{preview}",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[[
-                    InlineKeyboardButton(text="✅ Ha, boshlansin", callback_data="anketa:cfx:now"),
+                    InlineKeyboardButton(text="✅ Ha, boshlansin", callback_data="anketa:cfx"),
                     InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:plist"),
                 ]]
             ),
@@ -678,16 +686,14 @@ async def on_datetime_input(message: Message, state: FSMContext) -> None:
     iso = parsed.strftime("%Y-%m-%dT%H:%M")
     user = await api_client.get_user_by_telegram(message.from_user.id)
 
-    if data.get("explicit"):
-        # Taqsimot FSM'da qoladi (tasdiqlashda ishlatiladi) — state'ni tozalamaymiz,
-        # faqat matn kutish bosqichidan chiqamiz
-        await state.set_state(None)
-        callback_data = f"anketa:cfx:{iso}"
-    else:
-        spec = data.get("target_spec", "std")
-        tsel = data.get("tsel", "std")
-        await state.clear()
-        callback_data = f"anketa:confirm:{spec}:{tsel}:{iso}"
+    # Tanlangan vaqt FSM holatiga yoziladi (callback_data'ga emas — band 6:
+    # tugma endi har doim qisqa literal, "spec:tsel:iso" kabi cheklovsiz
+    # cho'zilib ketmaydi). Holat matn kutish bosqichidan chiqadi, lekin
+    # to'liq TOZALANMAYDI — tasdiqlash bosilganda kerak bo'lgan target_spec/
+    # tsel/assign shu yerda saqlanib qoladi.
+    await state.update_data(scheduled_iso=iso)
+    await state.set_state(None)
+    callback_data = "anketa:cfx" if data.get("explicit") else "anketa:confirm"
 
     await message.answer(
         f"🗓 Anketa <b>{parsed.strftime('%d.%m.%Y %H:%M')}</b> (Toshkent) da boshlansinmi?\n"
@@ -715,19 +721,15 @@ async def _finish_schedule(callback: CallbackQuery, result: dict) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("anketa:confirm:"))
-async def on_confirm(callback: CallbackQuery) -> None:
-    """Format: anketa:confirm:<spec>:<tsel>:<now|iso>.
-    Eski xabarlardagi tugmalar (tsel'siz yoki spec'siz) ham ishlaydi."""
-    parts = callback.data.split(":")[2:]
-    if len(parts) >= 3:
-        spec, tsel, value = parts[0], parts[1], ":".join(parts[2:])
-    elif len(parts) == 2:
-        spec, tsel, value = parts[0], "std", parts[1]
-    else:
-        spec, tsel, value = "std", "std", parts[0]
-    # ISO vaqt ichida ':' bor — yuqoridagi join uni tiklaydi
-    scheduled_at = None if value == "now" else value
+@router.callback_query(F.data == "anketa:confirm")
+async def on_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    """Guruh (spec/tsel) bo'yicha tasdiqlash — hammasi FSM holatidan o'qiladi
+    (band 6: ilgari "anketa:confirm:{spec}:{tsel}:{value}" kabi callback_data'ga
+    cho'zib yozilardi, endi tugma har doim shu qisqa literal)."""
+    data = await state.get_data()
+    spec = data.get("target_spec", "std")
+    tsel = data.get("tsel", "std")
+    scheduled_at = data.get("scheduled_iso")
     try:
         result = await api_client.anketa_schedule(
             callback.from_user.id,
@@ -741,15 +743,15 @@ async def on_confirm(callback: CallbackQuery) -> None:
             await callback.answer(detail, show_alert=True)
             return
         raise
+    await state.clear()
     await _finish_schedule(callback, result)
 
 
-@router.callback_query(F.data.startswith("anketa:cfx:"))
+@router.callback_query(F.data == "anketa:cfx")
 async def on_confirm_explicit(callback: CallbackQuery, state: FSMContext) -> None:
-    """Har kimga alohida taqsimot bilan tasdiqlash (taqsimot FSM'da)."""
-    value = callback.data.split(":", 2)[2]
-    scheduled_at = None if value == "now" else value
+    """Har kimga alohida taqsimot bilan tasdiqlash (taqsimot ham, vaqt ham FSM'da)."""
     data = await state.get_data()
+    scheduled_at = data.get("scheduled_iso")
     assign: dict = data.get("assign") or {}
     if not assign:
         await callback.answer("Taqsimot topilmadi — qaytadan boshlang", show_alert=True)
