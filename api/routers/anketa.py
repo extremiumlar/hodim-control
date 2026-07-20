@@ -9,6 +9,8 @@ sessiya yopiladi va Dasturchiga xabar boradi.
 
 Barcha endpointlar bot ichki chaqiruvlari (X-Bot-Secret) — web panelga hech
 narsa qo'shilmagan (ataylab: frontend deploy'ini o'zgartirmaslik sharti)."""
+import base64
+import binascii
 import logging
 from datetime import datetime, timezone
 
@@ -25,11 +27,14 @@ from db.models import (
     AnketaAssignment,
     AnketaSession,
     AnketaSessionStatus,
+    AnketaTemplate,
     AuditLog,
+    Position,
     Role,
     User,
 )
 from api.services.anketa_data import ANKETA_RULES, ANKETA_TARGETS, toplam_questions
+from api.services.docx_parse import parse_questions
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +43,26 @@ router = APIRouter(prefix="/anketa", tags=["anketa"], dependencies=[Depends(veri
 ACTIVE_STATUSES = (AnketaSessionStatus.scheduled.value, AnketaSessionStatus.in_progress.value)
 
 
+class AssignmentIn(BaseModel):
+    user_id: int
+    # Yuklangan to'plam id'si; None — ichki 1-5 to'plamdan (aylanma) beriladi
+    template_id: int | None = None
+
+
 class SchedulePayload(BaseModel):
     telegram_id: int
     # Toshkent vaqti "YYYY-MM-DDTHH:MM" ko'rinishida; None — darhol boshlash
     scheduled_at: str | None = None
     # Qatnashchilar (vazifa berishdagi kabi): standart (5 sotuvchi, nomma-nom) |
-    # all (barcha faol xodimlar, dasturchi'dan tashqari) | position | role
+    # all (barcha faol xodimlar, dasturchi'dan tashqari) | position | role |
+    # explicit (har kimga alohida — `assignments` ro'yxati bo'yicha)
     target_type: str = "standart"
     position_id: int | None = None
     role: str | None = None
+    # Guruh rejimida: hammaga shu yuklangan to'plam berilsin (None — ichki 1-5)
+    template_id: int | None = None
+    # explicit rejimida: kim qaysi to'plamni oladi (ro'yxatda yo'q xodim anketa OLMAYDI)
+    assignments: list[AssignmentIn] | None = None
 
 
 class ActorPayload(BaseModel):
@@ -56,6 +72,18 @@ class ActorPayload(BaseModel):
 class AnswerPayload(BaseModel):
     telegram_id: int
     text: str
+
+
+class TemplateUploadPayload(BaseModel):
+    telegram_id: int
+    filename: str
+    content_b64: str
+    name: str | None = None
+
+
+class TemplateActionPayload(BaseModel):
+    telegram_id: int
+    template_id: int
 
 
 def _local_to_utc_naive(local: datetime) -> datetime:
@@ -79,20 +107,60 @@ async def _require_dasturchi(db: AsyncSession, telegram_id: int) -> User:
     return user
 
 
+async def _load_template(db: AsyncSession, template_id: int, *, active_only: bool = True) -> AnketaTemplate:
+    template = await db.get(AnketaTemplate, template_id)
+    if template is None or (active_only and not template.is_active):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Savol to'plami topilmadi")
+    return template
+
+
 async def _resolve_targets(
     db: AsyncSession,
     target_type: str = "standart",
     position_id: int | None = None,
     role: str | None = None,
-) -> list[tuple[User, int]]:
-    """Qatnashchilarni tanlaydi va har biriga to'plam biriktiradi.
+    template_id: int | None = None,
+    assignments: list[AssignmentIn] | None = None,
+) -> list[dict]:
+    """Qatnashchilarni tanlaydi va har biriga savol to'plamini biriktiradi.
 
-    standart — ANKETA_TARGETS (5 sotuvchi nomma-nom, qat'iy 1:1). Boshqa rejimlar
-    (all/position/role) — tanlangan guruh: 5 tagacha xodimga to'plamlar
-    takrorlanmaydi, ko'proq bo'lsa 1-5 aylanib qayta beriladi."""
+    Qaytaradi: [{"user": User, "toplam": int, "template_id": int|None}].
+    `template_id` berilsa (guruh rejimida) hamma shu YUKLANGAN to'plamni oladi;
+    berilmasa ichki 1-5 to'plam aylanma tarzda beriladi.
+    `explicit` rejimida `assignments` ro'yxati aynan kim nima olishini belgilaydi —
+    ro'yxatda yo'q xodimga anketa umuman yuborilmaydi."""
+    if template_id is not None:
+        await _load_template(db, template_id)
+
+    if target_type == "explicit":
+        if not assignments:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Hech kim tanlanmagan")
+        resolved: list[dict] = []
+        seen: set[int] = set()
+        for item in assignments:
+            if item.user_id in seen:
+                continue
+            seen.add(item.user_id)
+            user = await db.get(User, item.user_id)
+            if user is None or not user.is_active or not user.telegram_id:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Xodim topilmadi yoki botga ulanmagan (id {item.user_id})",
+                )
+            if item.template_id is not None:
+                await _load_template(db, item.template_id)
+            resolved.append(
+                {
+                    "user": user,
+                    "toplam": 0 if item.template_id else len(resolved) % 5 + 1,
+                    "template_id": item.template_id,
+                }
+            )
+        return resolved
+
     if target_type == "standart":
         users = list(await db.scalars(select(User).where(User.is_active.is_(True))))
-        resolved: list[tuple[User, int]] = []
+        resolved = []
         for name, toplam in ANKETA_TARGETS:
             matches = [u for u in users if u.full_name.strip().lower().startswith(name)]
             if not matches:
@@ -107,7 +175,13 @@ async def _resolve_targets(
                     status.HTTP_400_BAD_REQUEST,
                     f"{user.full_name.strip()} botga ulanmagan (telegram_id yo'q)",
                 )
-            resolved.append((user, toplam))
+            resolved.append(
+                {
+                    "user": user,
+                    "toplam": 0 if template_id else toplam,
+                    "template_id": template_id,
+                }
+            )
         return resolved
 
     query = select(User).where(User.is_active.is_(True), User.telegram_id.isnot(None))
@@ -130,15 +204,29 @@ async def _resolve_targets(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Tanlangan guruhda botga ulangan faol xodim topilmadi"
         )
-    return [(u, i % 5 + 1) for i, u in enumerate(users)]
+    return [
+        {"user": u, "toplam": 0 if template_id else i % 5 + 1, "template_id": template_id}
+        for i, u in enumerate(users)
+    ]
 
 
-def _question_text(toplam: int, index: int) -> str:
-    questions = toplam_questions(toplam)
+async def _questions_and_label(db: AsyncSession, a: AnketaAssignment) -> tuple[list[dict], str]:
+    """Biriktirmaning savollari va ko'rsatiladigan nomi. Yuklangan to'plam
+    o'chirilgan bo'lsa ham (yumshoq o'chirish) savollar o'qiladi."""
+    if a.template_id:
+        template = await db.get(AnketaTemplate, a.template_id)
+        if template is not None:
+            return list(template.questions or []), template.name
+        return [], "Savol to'plami"
+    return toplam_questions(a.toplam), f"To'plam №{a.toplam}"
+
+
+def _question_text(questions: list[dict], label: str, index: int) -> str:
     q = questions[index]
+    section = q.get("section") or "Savollar"
     return (
-        f"📝 <b>Anketa · To'plam №{toplam}</b> — savol {index + 1}/{len(questions)}\n"
-        f"<i>{q['section']}</i>\n\n{q['text']}"
+        f"📝 <b>Anketa · {label}</b> — savol {index + 1}/{len(questions)}\n"
+        f"<i>{section}</i>\n\n{q['text']}"
     )
 
 
@@ -163,23 +251,28 @@ async def _session_view(db: AsyncSession, session: AnketaSession | None) -> dict
     user_ids = {a.user_id for a in assignments}
     users = list(await db.scalars(select(User).where(User.id.in_(user_ids)))) if user_ids else []
     name_by_id = {u.id: u.full_name.strip() for u in users}
+    rows = []
+    for a in assignments:
+        questions, label = await _questions_and_label(db, a)
+        rows.append(
+            {
+                "user_id": a.user_id,
+                "full_name": name_by_id.get(a.user_id, "?"),
+                "toplam": a.toplam,
+                "template_id": a.template_id,
+                "label": label,
+                "status": a.status,
+                "answered": a.current_q,
+                "total": len(questions),
+            }
+        )
     return {
         "id": session.id,
         "status": session.status,
         "scheduled_at_local": _utc_naive_to_local_str(session.scheduled_at),
         "started_at_local": _utc_naive_to_local_str(session.started_at),
         "finished_at_local": _utc_naive_to_local_str(session.finished_at),
-        "assignments": [
-            {
-                "user_id": a.user_id,
-                "full_name": name_by_id.get(a.user_id, "?"),
-                "toplam": a.toplam,
-                "status": a.status,
-                "answered": a.current_q,
-                "total": len(toplam_questions(a.toplam)),
-            }
-            for a in assignments
-        ],
+        "assignments": rows,
     }
 
 
@@ -202,14 +295,17 @@ async def _start_session(db: AsyncSession, session: AnketaSession) -> None:
         user = await db.get(User, a.user_id)
         if not user or not user.telegram_id:
             continue
-        total = len(toplam_questions(a.toplam))
+        questions, label = await _questions_and_label(db, a)
+        if not questions:  # to'plam bo'sh/o'chirilgan — bu xodimni o'tkazamiz
+            logger.warning("Anketa: %s uchun savollar topilmadi (assignment %s)", user.id, a.id)
+            continue
         intro = (
-            f"📝 <b>NURLI DIYOR — bilim bazasi anketasi (To'plam №{a.toplam})</b>\n\n"
-            f"Assalomu alaykum, {user.full_name.strip()}! Sizga {total} ta savol beriladi.\n\n"
+            f"📝 <b>NURLI DIYOR — bilim bazasi anketasi ({label})</b>\n\n"
+            f"Assalomu alaykum, {user.full_name.strip()}! Sizga {len(questions)} ta savol beriladi.\n\n"
             f"{ANKETA_RULES}\n\nBoshladik! 👇"
         )
         await send_message(user.telegram_id, intro)
-        await send_message(user.telegram_id, _question_text(a.toplam, 0))
+        await send_message(user.telegram_id, _question_text(questions, label, 0))
 
     creator = await db.get(User, session.created_by)
     if creator and creator.telegram_id:
@@ -227,8 +323,12 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
     try:
         targets = await _resolve_targets(db)
         target_rows = [
-            {"full_name": u.full_name.strip(), "toplam": t, "bot_started": u.bot_started}
-            for u, t in targets
+            {
+                "full_name": t["user"].full_name.strip(),
+                "toplam": t["toplam"],
+                "bot_started": t["user"].bot_started,
+            }
+            for t in targets
         ]
         targets_error = None
     except HTTPException as exc:
@@ -238,9 +338,19 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
     session = await _active_session(db)
     if session is None:
         session = await db.scalar(select(AnketaSession).order_by(AnketaSession.id.desc()))
+    templates = list(
+        await db.scalars(
+            select(AnketaTemplate)
+            .where(AnketaTemplate.is_active.is_(True))
+            .order_by(AnketaTemplate.id)
+        )
+    )
     return {
         "targets": target_rows,
         "targets_error": targets_error,
+        "templates": [
+            {"id": t.id, "name": t.name, "question_count": t.question_count} for t in templates
+        ],
         "session": await _session_view(db, session),
     }
 
@@ -251,18 +361,186 @@ async def preview_targets(
     target_type: str = "standart",
     position_id: int | None = None,
     role: str | None = None,
+    template_id: int | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Tanlangan guruh bo'yicha kim qaysi to'plamni olishini oldindan ko'rsatadi
     (Dasturchi tasdiqlashdan oldin ro'yxatni ko'radi)."""
     await _require_dasturchi(db, telegram_id)
-    targets = await _resolve_targets(db, target_type, position_id, role)
+    targets = await _resolve_targets(db, target_type, position_id, role, template_id)
+    label = None
+    if template_id:
+        label = (await _load_template(db, template_id)).name
     return {
         "targets": [
-            {"full_name": u.full_name.strip(), "toplam": t, "bot_started": u.bot_started}
-            for u, t in targets
+            {
+                "full_name": t["user"].full_name.strip(),
+                "toplam": t["toplam"],
+                "label": label or f"To'plam №{t['toplam']}",
+                "bot_started": t["user"].bot_started,
+            }
+            for t in targets
         ]
     }
+
+
+@router.get("/candidates/{telegram_id}")
+async def candidates(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    """Anketa berish mumkin bo'lgan xodimlar (botga ulangan faol) — «har kimga
+    alohida» taqsimotida ro'yxat sifatida ko'rsatiladi."""
+    await _require_dasturchi(db, telegram_id)
+    users = sorted(
+        await db.scalars(
+            select(User).where(User.is_active.is_(True), User.telegram_id.isnot(None))
+        ),
+        key=lambda u: u.full_name.strip().lower(),
+    )
+    positions = {
+        p.id: p.name for p in await db.scalars(select(Position))
+    }
+    return {
+        "users": [
+            {
+                "user_id": u.id,
+                "full_name": u.full_name.strip(),
+                "role": u.role,
+                "position": positions.get(u.position_id) if u.position_id else None,
+                "bot_started": u.bot_started,
+            }
+            for u in users
+        ]
+    }
+
+
+# ─── Savol to'plamlari (Word/.txt yuklash) ───────────────────────────────────
+
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/templates/{telegram_id}")
+async def list_templates(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    await _require_dasturchi(db, telegram_id)
+    templates = list(
+        await db.scalars(
+            select(AnketaTemplate)
+            .where(AnketaTemplate.is_active.is_(True))
+            .order_by(AnketaTemplate.id)
+        )
+    )
+    return {
+        "templates": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "filename": t.filename,
+                "question_count": t.question_count,
+                "created_at_local": _utc_naive_to_local_str(t.created_at),
+            }
+            for t in templates
+        ]
+    }
+
+
+@router.get("/templates/{telegram_id}/{template_id}")
+async def template_detail(
+    telegram_id: int, template_id: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    await _require_dasturchi(db, telegram_id)
+    template = await _load_template(db, template_id, active_only=False)
+    return {
+        "id": template.id,
+        "name": template.name,
+        "filename": template.filename,
+        "question_count": template.question_count,
+        "questions": list(template.questions or []),
+    }
+
+
+@router.post("/templates/upload")
+async def upload_template(
+    payload: TemplateUploadPayload, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Botga tashlangan .docx/.txt fayldan savollarni ajratib to'plam yaratadi."""
+    actor = await _require_dasturchi(db, payload.telegram_id)
+    try:
+        data = base64.b64decode(payload.content_b64)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fayl mazmuni buzilgan")
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fayl bo'sh")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fayl juda katta (5 MB dan oshmasin)")
+
+    try:
+        parsed = parse_questions(data, payload.filename)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    questions = parsed["questions"]
+    stem = (payload.filename or "").rsplit("/", 1)[-1]
+    for suffix in (".docx", ".txt"):
+        if stem.lower().endswith(suffix):
+            stem = stem[: -len(suffix)]
+    name = (payload.name or parsed.get("title") or stem or "Savol to'plami").strip()[:255]
+
+    template = AnketaTemplate(
+        name=name,
+        filename=(payload.filename or "")[:255],
+        questions=questions,
+        question_count=len(questions),
+        created_by=actor.id,
+    )
+    db.add(template)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="anketa_template_upload",
+            after={"name": name, "questions": len(questions), "fallback": parsed["fallback"]},
+        )
+    )
+    await db.commit()
+    await db.refresh(template)
+    return {
+        "id": template.id,
+        "name": template.name,
+        "question_count": template.question_count,
+        "fallback": parsed["fallback"],
+        "preview": [q["text"] for q in questions[:5]],
+    }
+
+
+@router.post("/templates/delete")
+async def delete_template(
+    payload: TemplateActionPayload, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Yumshoq o'chirish — o'tgan sessiyalarning savollari saqlanib qoladi."""
+    actor = await _require_dasturchi(db, payload.telegram_id)
+    template = await _load_template(db, payload.template_id)
+
+    active = await _active_session(db)
+    if active is not None:
+        used = await db.scalar(
+            select(AnketaAssignment).where(
+                AnketaAssignment.session_id == active.id,
+                AnketaAssignment.template_id == template.id,
+            )
+        )
+        if used is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Bu to'plam faol sessiyada ishlatilmoqda — avval sessiyani yakunlang.",
+            )
+
+    template.is_active = False
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="anketa_template_delete",
+            after={"template_id": template.id, "name": template.name},
+        )
+    )
+    await db.commit()
+    return {"deleted": True}
 
 
 @router.post("/schedule")
@@ -277,7 +555,14 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
             "Faol anketa sessiyasi allaqachon bor — avval uni yakunlang yoki bekor qiling.",
         )
 
-    targets = await _resolve_targets(db, payload.target_type, payload.position_id, payload.role)
+    targets = await _resolve_targets(
+        db,
+        payload.target_type,
+        payload.position_id,
+        payload.role,
+        payload.template_id,
+        payload.assignments,
+    )
 
     if payload.scheduled_at:
         try:
@@ -291,8 +576,15 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
     session = AnketaSession(created_by=actor.id, scheduled_at=scheduled_utc)
     db.add(session)
     await db.flush()
-    for user, toplam in targets:
-        db.add(AnketaAssignment(session_id=session.id, user_id=user.id, toplam=toplam))
+    for t in targets:
+        db.add(
+            AnketaAssignment(
+                session_id=session.id,
+                user_id=t["user"].id,
+                toplam=t["toplam"],
+                template_id=t["template_id"],
+            )
+        )
     db.add(
         AuditLog(
             actor_id=actor.id,
@@ -302,8 +594,13 @@ async def schedule(payload: SchedulePayload, db: AsyncSession = Depends(get_db))
                 "scheduled_at_local": _utc_naive_to_local_str(scheduled_utc),
                 "target_type": payload.target_type,
                 "targets": [
-                    {"user_id": u.id, "full_name": u.full_name.strip(), "toplam": t}
-                    for u, t in targets
+                    {
+                        "user_id": t["user"].id,
+                        "full_name": t["user"].full_name.strip(),
+                        "toplam": t["toplam"],
+                        "template_id": t["template_id"],
+                    }
+                    for t in targets
                 ],
             },
         )
@@ -444,7 +741,7 @@ async def answer(payload: AnswerPayload, db: AsyncSession = Depends(get_db)) -> 
     if assignment is None:
         return {"handled": False}
 
-    questions = toplam_questions(assignment.toplam)
+    questions, label = await _questions_and_label(db, assignment)
     index = assignment.current_q
     if index >= len(questions):  # himoya: holat buzilgan bo'lsa yakunlaymiz
         assignment.status = "done"
@@ -469,7 +766,7 @@ async def answer(payload: AnswerPayload, db: AsyncSession = Depends(get_db)) -> 
     messages: list[str] = []
     if not finished:
         messages.append(f"✅ Javob qayd etildi ({assignment.current_q}/{len(questions)}).")
-        messages.append(_question_text(assignment.toplam, assignment.current_q))
+        messages.append(_question_text(questions, label, assignment.current_q))
         return {"handled": True, "messages": messages}
 
     messages.append(
@@ -493,7 +790,7 @@ async def answer(payload: AnswerPayload, db: AsyncSession = Depends(get_db)) -> 
     if creator and creator.telegram_id:
         await send_message(
             creator.telegram_id,
-            f"📝 {user.full_name.strip()} anketani yakunladi (To'plam №{assignment.toplam}) — "
+            f"📝 {user.full_name.strip()} anketani yakunladi ({label}) — "
             f"{done_count}/{len(all_assignments)} tayyor.",
         )
         if all_done:
@@ -529,6 +826,7 @@ async def results(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     result_users = []
     for a in assignments:
         user = await db.get(User, a.user_id)
+        _, label = await _questions_and_label(db, a)
         answers = list(
             await db.scalars(
                 select(AnketaAnswer)
@@ -540,6 +838,7 @@ async def results(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
             {
                 "full_name": user.full_name.strip() if user else "?",
                 "toplam": a.toplam,
+                "label": label,
                 "status": a.status,
                 "answers": [
                     {

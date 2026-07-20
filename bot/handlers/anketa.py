@@ -2,8 +2,8 @@
 
 Ikki router:
 - `router` — Dasturchi boshqaruvi: «📝 Anketa» tugmasi / /anketa buyrug'i,
-  holat ko'rinishi, «hozir boshlash» yoki kun/vaqt kiritish (FSM) + tasdiqlash,
-  bekor qilish, javoblarni .txt fayl qilib yuklab olish.
+  savol to'plamlari (Word/.txt yuklash), sessiyani boshlash (kimlarga + qaysi
+  to'plam), yakunlash/bekor qilish, javoblarni .txt fayl qilib yuklab olish.
 - `answer_router` — xodim javoblarini ushlovchi matn handleri. Dispatcher'da
   ai_watch.reason_text_router'dan OLDIN ulanadi: API'da faol savol kutilmayotgan
   bo'lsa ({"handled": false}) SkipHandler bilan xabar keyingi (AI sabab)
@@ -11,6 +11,7 @@ Ikki router:
 
 Boshlanish vaqti kelganda savollarni API o'zi yuboradi (/anketa/tick — cron yoki
 scheduler), shuning uchun bot bu yerda faqat boshqaruv va javob qabul qiladi."""
+import base64
 import html
 import logging
 from datetime import datetime, timedelta
@@ -38,6 +39,7 @@ router = Router(name="anketa")
 answer_router = Router(name="anketa_answers")
 
 TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 _STATUS_LABELS = {
     "scheduled": "🗓 rejalashtirilgan",
@@ -46,21 +48,29 @@ _STATUS_LABELS = {
     "cancelled": "🚫 bekor qilingan",
 }
 _ASSIGN_EMOJI = {"pending": "🕓", "in_progress": "⏳", "done": "✅", "stopped": "⏹"}
+_ROLE_LABELS = {
+    "boss": "Boshliq", "rop": "ROP", "hr": "HR", "dasturchi": "Dasturchi", "employee": "Xodim",
+}
 
 
 class AnketaSchedule(StatesGroup):
     waiting_datetime = State()
 
 
+# ─── Asosiy ko'rinish ────────────────────────────────────────────────────────
+
 def _overview_text(data: dict) -> str:
     lines = ["📝 <b>Bilim bazasi anketasi</b>", ""]
-    if data.get("targets_error"):
-        lines.append(f"⚠️ Standart taqsimot xatosi: {html.escape(data['targets_error'])}")
+    templates = data.get("templates") or []
+    if templates:
+        lines.append(f"<b>Savol to'plamlari</b> ({len(templates)} ta yuklangan):")
+        for t in templates:
+            lines.append(f"• {html.escape(t['name'])} — {t['question_count']} savol")
     else:
-        lines.append("<b>Standart taqsimot</b> (boshlashda boshqa guruhni ham tanlash mumkin):")
-        for t in data.get("targets", []):
-            warn = "" if t.get("bot_started") else " ⚠️ botga /start bosmagan"
-            lines.append(f"• {html.escape(t['full_name'])} — To'plam №{t['toplam']}{warn}")
+        lines.append(
+            "<b>Savol to'plamlari:</b> hali yuklanmagan — Word (.docx) faylni shu chatga "
+            "tashlasangiz, savollar avtomatik ajratiladi."
+        )
 
     session = data.get("session")
     if session:
@@ -72,8 +82,10 @@ def _overview_text(data: dict) -> str:
             lines.append(f"Boshlanish vaqti: {session['scheduled_at_local']} (Toshkent)")
         for a in session.get("assignments", []):
             emoji = _ASSIGN_EMOJI.get(a["status"], "•")
+            label = a.get("label") or f"№{a.get('toplam')}"
             lines.append(
-                f"{emoji} {html.escape(a['full_name'])} (№{a['toplam']}): {a['answered']}/{a['total']} javob"
+                f"{emoji} {html.escape(a['full_name'])} ({html.escape(label)}): "
+                f"{a['answered']}/{a['total']} javob"
             )
     else:
         lines.append("")
@@ -84,6 +96,7 @@ def _overview_text(data: dict) -> str:
 def _overview_keyboard(data: dict) -> InlineKeyboardMarkup:
     session = data.get("session")
     active = session and session["status"] in {"scheduled", "in_progress"}
+    templates = data.get("templates") or []
     rows: list[list[InlineKeyboardButton]] = []
     if active:
         if session["status"] == "in_progress":
@@ -100,12 +113,15 @@ def _overview_keyboard(data: dict) -> InlineKeyboardMarkup:
             )
         ])
     else:
-        # Standart taqsimot xato bo'lsa ham boshqa guruhlar (all/lavozim/rol)
-        # bilan boshlash mumkin — tugmalar har doim chiqadi
         rows.append([
             InlineKeyboardButton(text="▶️ Hozir boshlash", callback_data="anketa:now"),
             InlineKeyboardButton(text="🗓 Kun/vaqt belgilash", callback_data="anketa:settime"),
         ])
+    rows.append([
+        InlineKeyboardButton(
+            text=f"📄 Savol to'plamlari ({len(templates)})", callback_data="anketa:tpls"
+        )
+    ])
     if session:
         rows.append([InlineKeyboardButton(text="📥 Javoblar (.txt)", callback_data="anketa:results")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -131,11 +147,190 @@ async def anketa_command(message: Message, state: FSMContext) -> None:
     await _show_overview(message, message.from_user.id)
 
 
-# Qatnashchi tanlash spetsifikatsiyasi (callback'da yuriydi, ichida ':' yo'q):
-# std | all | role_boss | role_rop | role_hr | role_employee | pos_<id>
+@router.callback_query(F.data == "anketa:back")
+async def on_back(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    data = await api_client.anketa_overview(callback.from_user.id)
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await callback.message.edit_text(_overview_text(data), reply_markup=_overview_keyboard(data))
+    await callback.answer()
+
+
+# ─── Savol to'plamlari (Word yuklash) ────────────────────────────────────────
+
+@router.message(F.chat.type == "private", F.document)
+async def on_document(message: Message, state: FSMContext) -> None:
+    """Dasturchi tashlagan .docx/.txt — savol to'plami sifatida yuklanadi.
+    Boshqa rollar yoki boshqa formatlar — jimgina o'tkazib yuboriladi."""
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or user.get("role") != "dasturchi":
+        return
+
+    document = message.document
+    name = (document.file_name or "").lower()
+    if not (name.endswith(".docx") or name.endswith(".txt")):
+        await message.answer(
+            "📄 Savol to'plami uchun <b>.docx</b> (yoki .txt) fayl kerak.\n"
+            "Eski <code>.doc</code> bo'lsa: Word → «Save as» → «Word Document (.docx)»."
+        )
+        return
+    if (document.file_size or 0) > MAX_UPLOAD_BYTES:
+        await message.answer("Fayl juda katta (5 MB dan oshmasin).")
+        return
+
+    await message.answer("⏳ Fayl o'qilmoqda — savollar ajratilyapti...")
+    try:
+        buffer = await message.bot.download(document)
+        content = buffer.read()
+    except Exception:  # noqa: BLE001 — Telegram yuklab berishida xatolik
+        logger.exception("Anketa faylini yuklab olishda xatolik")
+        await message.answer("⚠️ Faylni yuklab bo'lmadi — qayta yuborib ko'ring.")
+        return
+
+    try:
+        result = await api_client.anketa_template_upload(
+            message.from_user.id,
+            document.file_name or "anketa.docx",
+            base64.b64encode(content).decode("ascii"),
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await message.answer(f"⚠️ {detail}")
+            return
+        raise
+
+    preview = "\n".join(f"{i}. {html.escape(q)}" for i, q in enumerate(result["preview"], start=1))
+    warn = (
+        "\n\n⚠️ Savollar aniq belgilanmagan (raqam/«?» topilmadi) — har qator savol deb "
+        "olindi. Ro'yxatni tekshiring."
+        if result.get("fallback")
+        else ""
+    )
+    await message.answer(
+        f"✅ <b>{html.escape(result['name'])}</b> to'plami yaratildi — "
+        f"{result['question_count']} ta savol.\n\n<b>Boshi:</b>\n{preview}{warn}",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="👁 To'liq ko'rish", callback_data=f"anketa:tv:{result['id']}")],
+                [InlineKeyboardButton(text="⬅️ Anketa menyusi", callback_data="anketa:back")],
+            ]
+        ),
+    )
+
+
+def _templates_view(templates: list[dict]) -> tuple[str, InlineKeyboardMarkup]:
+    if templates:
+        lines = ["📄 <b>Savol to'plamlari</b>", ""]
+        for t in templates:
+            lines.append(
+                f"• <b>{html.escape(t['name'])}</b> — {t['question_count']} savol "
+                f"({t.get('created_at_local') or '-'})"
+            )
+    else:
+        lines = ["📄 <b>Savol to'plamlari</b>", "", "Hali to'plam yuklanmagan."]
+    lines.append("")
+    lines.append(
+        "Yangi to'plam qo'shish: Word (.docx) faylni shu chatga tashlang — savollar "
+        "avtomatik ajratiladi (raqamlangan, «?» bilan tugagan yoki ro'yxat ko'rinishidagi "
+        "qatorlar savol deb olinadi)."
+    )
+    rows = [
+        [
+            InlineKeyboardButton(text=f"👁 {t['name'][:20]}", callback_data=f"anketa:tv:{t['id']}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"anketa:tdel:{t['id']}"),
+        ]
+        for t in templates
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Anketa menyusi", callback_data="anketa:back")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "anketa:tpls")
+async def on_templates(callback: CallbackQuery) -> None:
+    data = await api_client.anketa_templates(callback.from_user.id)
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    text, markup = _templates_view(data.get("templates", []))
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:tv:"))
+async def on_template_view(callback: CallbackQuery) -> None:
+    template_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        data = await api_client.anketa_template_detail(callback.from_user.id, template_id)
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+
+    lines = [f"📄 <b>{html.escape(data['name'])}</b> — {data['question_count']} savol", ""]
+    section = None
+    for i, q in enumerate(data["questions"], start=1):
+        if q.get("section") and q["section"] != section:
+            section = q["section"]
+            lines.append(f"\n<i>{html.escape(section)}</i>")
+        lines.append(f"{i}. {html.escape(q['text'])}")
+    text = "\n".join(lines)
+
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="⬅️ To'plamlar", callback_data="anketa:tpls")]]
+    )
+    if len(text) > 3900:  # Telegram xabar chegarasi — uzun to'plam fayl bo'lib ketadi
+        content = "\n".join(
+            f"{i}. {q['text']}" for i, q in enumerate(data["questions"], start=1)
+        ).encode("utf-8")
+        await callback.message.answer_document(
+            BufferedInputFile(content, filename=f"{data['name'][:40]}.txt"),
+            caption=f"📄 {data['name']} — {data['question_count']} savol",
+            reply_markup=markup,
+        )
+    else:
+        await callback.message.answer(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:tdel:"))
+async def on_template_delete_ask(callback: CallbackQuery) -> None:
+    template_id = int(callback.data.rsplit(":", 1)[1])
+    await callback.message.edit_text(
+        "🗑 Bu savol to'plami ro'yxatdan olib tashlansinmi?\n"
+        "(O'tgan sessiyalarning savol-javoblari saqlanib qoladi.)",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Ha", callback_data=f"anketa:tdelok:{template_id}"),
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:tpls"),
+            ]]
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:tdelok:"))
+async def on_template_delete(callback: CallbackQuery) -> None:
+    template_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.anketa_template_delete(callback.from_user.id, template_id)
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    data = await api_client.anketa_templates(callback.from_user.id)
+    text, markup = _templates_view((data or {}).get("templates", []))
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer("O'chirildi")
+
+
+# ─── Sessiyani boshlash: kimlarga → qaysi to'plam → tasdiq ───────────────────
+
+# Qatnashchi spetsifikatsiyasi (callback'da, ichida ':' yo'q):
+# std | all | role_boss | role_rop | role_hr | pos_<id>
 def _parse_spec(spec: str) -> dict:
-    if spec == "std":
-        return {"target_type": "standart", "position_id": None, "role": None}
     if spec == "all":
         return {"target_type": "all", "position_id": None, "role": None}
     if spec.startswith("role_"):
@@ -145,10 +340,18 @@ def _parse_spec(spec: str) -> dict:
     return {"target_type": "standart", "position_id": None, "role": None}
 
 
+def _parse_tsel(tsel: str) -> int | None:
+    """`std` — ichki 1-5 to'plam; `t<id>` — yuklangan to'plam."""
+    if tsel.startswith("t") and tsel[1:].isdigit():
+        return int(tsel[1:])
+    return None
+
+
 async def _targets_keyboard(mode: str) -> InlineKeyboardMarkup:
-    """Qatnashchilar tanlovi — vazifa berishdagi kabi: hamma / rol / lavozim.
-    mode: now | time (keyingi qadamni belgilaydi)."""
+    """Qatnashchilar tanlovi — vazifa berishdagi kabi: hamma / rol / lavozim,
+    hamda «har kimga alohida». mode: now | time."""
     rows = [
+        [InlineKeyboardButton(text="👤 Har kimga alohida", callback_data=f"anketa:each:{mode}")],
         [InlineKeyboardButton(text="🎯 Standart (5 sotuvchi)", callback_data=f"anketa:tg:{mode}:std")],
         [InlineKeyboardButton(text="👥 Barcha xodimlar", callback_data=f"anketa:tg:{mode}:all")],
         [
@@ -174,8 +377,7 @@ async def _targets_keyboard(mode: str) -> InlineKeyboardMarkup:
 @router.callback_query(F.data == "anketa:now")
 async def on_start_now(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
-        "▶️ Anketa KIMLARGA yuborilsin? Guruhni tanlang:",
-        reply_markup=await _targets_keyboard("now"),
+        "▶️ Anketa KIMLARGA yuborilsin?", reply_markup=await _targets_keyboard("now")
     )
     await callback.answer()
 
@@ -189,19 +391,57 @@ async def on_set_time(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("anketa:tg:"))
+async def on_target_chosen(callback: CallbackQuery) -> None:
+    """Guruh tanlandi — endi qaysi savol to'plami berilishini so'raymiz."""
+    _, _, mode, spec = callback.data.split(":", 3)
+    data = await api_client.anketa_templates(callback.from_user.id)
+    templates = (data or {}).get("templates", [])
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📄 {t['name'][:28]} ({t['question_count']})",
+                callback_data=f"anketa:ts:{mode}:{spec}:t{t['id']}",
+            )
+        ]
+        for t in templates
+    ]
+    rows.append([
+        InlineKeyboardButton(
+            text="🎯 Ichki 5 to'plam (standart savollar)",
+            callback_data=f"anketa:ts:{mode}:{spec}:std",
+        )
+    ])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back")])
+    hint = (
+        "Yuklangan to'plam tanlansa — guruhdagi hamma shu savollarni oladi.\n"
+        "«Ichki 5 to'plam» — kodga yozilgan standart savollar (har kishiga 1-5 dan biri)."
+    )
+    await callback.message.edit_text(
+        f"📄 Qaysi savol to'plami yuborilsin?\n\n{hint}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
 def _preview_text(targets: list[dict]) -> str:
     lines = [f"Qatnashchilar ({len(targets)} kishi):"]
     for t in targets:
         warn = "" if t.get("bot_started") else " ⚠️ botga /start bosmagan"
-        lines.append(f"• {html.escape(t['full_name'])} — To'plam №{t['toplam']}{warn}")
+        label = t.get("label") or f"To'plam №{t.get('toplam')}"
+        lines.append(f"• {html.escape(t['full_name'])} — {html.escape(label)}{warn}")
     return "\n".join(lines)
 
 
-@router.callback_query(F.data.startswith("anketa:tg:"))
-async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
-    _, _, mode, spec = callback.data.split(":", 3)
+@router.callback_query(F.data.startswith("anketa:ts:"))
+async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    _, _, mode, spec, tsel = callback.data.split(":", 4)
+    template_id = _parse_tsel(tsel)
     try:
-        preview = await api_client.anketa_preview_targets(callback.from_user.id, **_parse_spec(spec))
+        preview = await api_client.anketa_preview_targets(
+            callback.from_user.id, template_id=template_id, **_parse_spec(spec)
+        )
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (400, 403):
             detail = (exc.response.json() or {}).get("detail", "Xatolik")
@@ -213,21 +453,23 @@ async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     if mode == "now":
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Ha, hozir boshlansin", callback_data=f"anketa:confirm:{spec}:now"),
+                InlineKeyboardButton(
+                    text="✅ Ha, hozir boshlansin",
+                    callback_data=f"anketa:confirm:{spec}:{tsel}:now",
+                ),
                 InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
             ]]
         )
         await callback.message.edit_text(
             f"▶️ Anketa HOZIR boshlansinmi?\n\n{_preview_text(targets)}\n\n"
-            "Har biriga o'z to'plamining birinchi savoli darhol yuboriladi.",
+            "Har biriga birinchi savol darhol yuboriladi.",
             reply_markup=keyboard,
         )
         await callback.answer()
         return
 
-    # mode == "time": spec'ni FSM'da saqlab, sana-vaqt so'raymiz
     await state.set_state(AnketaSchedule.waiting_datetime)
-    await state.update_data(target_spec=spec)
+    await state.update_data(target_spec=spec, tsel=tsel, explicit=False)
     await callback.message.edit_text(_preview_text(targets))
     await callback.message.answer(
         "🗓 Boshlanish kun va vaqtini yozing (Toshkent vaqti).\n\n"
@@ -239,6 +481,151 @@ async def on_target_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     )
     await callback.answer()
 
+
+# ─── «Har kimga alohida» taqsimoti ──────────────────────────────────────────
+
+async def _picker_view(telegram_id: int, state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
+    data = await state.get_data()
+    assign: dict = data.get("assign") or {}
+    users = (await api_client.anketa_candidates(telegram_id)).get("users", [])
+    templates = (await api_client.anketa_templates(telegram_id) or {}).get("templates", [])
+    name_by_id = {str(t["id"]): t["name"] for t in templates}
+
+    lines = ["👤 <b>Har kimga alohida taqsimot</b>", ""]
+    chosen = 0
+    rows: list[list[InlineKeyboardButton]] = []
+    for u in users:
+        key = str(u["user_id"])
+        tid = assign.get(key)
+        if tid:
+            chosen += 1
+            mark = f"✅ {name_by_id.get(str(tid), 'to`plam')[:18]}"
+        else:
+            mark = "✖️ bermayman"
+        role = _ROLE_LABELS.get(u["role"], u["role"])
+        extra = f" · {u['position']}" if u.get("position") else ""
+        lines.append(f"• {html.escape(u['full_name'])} ({role}{extra}) — {mark}")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{'✅' if tid else '✖️'} {u['full_name'][:22]}",
+                callback_data=f"anketa:pu:{u['user_id']}",
+            )
+        ])
+
+    lines.append("")
+    lines.append(f"Tanlangan: <b>{chosen}</b> kishi. Xodim ustiga bosib to'plam tanlang.")
+    if not templates:
+        lines.append("\n⚠️ Hali savol to'plami yuklanmagan — Word faylni chatga tashlang.")
+
+    rows.append([
+        InlineKeyboardButton(text="✅ Tayyor", callback_data="anketa:pdone"),
+        InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
+    ])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("anketa:each:"))
+async def on_each_start(callback: CallbackQuery, state: FSMContext) -> None:
+    mode = callback.data.rsplit(":", 1)[1]
+    await state.clear()
+    await state.update_data(pick_mode=mode, assign={})
+    text, markup = await _picker_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:pu:"))
+async def on_pick_user(callback: CallbackQuery) -> None:
+    user_id = int(callback.data.rsplit(":", 1)[1])
+    templates = (await api_client.anketa_templates(callback.from_user.id) or {}).get("templates", [])
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📄 {t['name'][:28]} ({t['question_count']})",
+                callback_data=f"anketa:pt:{user_id}:{t['id']}",
+            )
+        ]
+        for t in templates
+    ]
+    rows.append([
+        InlineKeyboardButton(text="✖️ Bu xodimga bermayman", callback_data=f"anketa:pt:{user_id}:0")
+    ])
+    rows.append([InlineKeyboardButton(text="⬅️ Ro'yxatga", callback_data="anketa:plist")])
+    await callback.message.edit_text(
+        "📄 Bu xodimga qaysi to'plam berilsin?"
+        + ("" if templates else "\n\n⚠️ Hali to'plam yuklanmagan — Word faylni chatga tashlang."),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:pt:"))
+async def on_pick_template(callback: CallbackQuery, state: FSMContext) -> None:
+    _, _, user_id_s, template_id_s = callback.data.split(":", 3)
+    data = await state.get_data()
+    assign = dict(data.get("assign") or {})
+    if template_id_s == "0":
+        assign.pop(user_id_s, None)
+    else:
+        assign[user_id_s] = int(template_id_s)
+    await state.update_data(assign=assign)
+    text, markup = await _picker_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "anketa:plist")
+async def on_pick_list(callback: CallbackQuery, state: FSMContext) -> None:
+    text, markup = await _picker_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "anketa:pdone")
+async def on_pick_done(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    assign: dict = data.get("assign") or {}
+    if not assign:
+        await callback.answer("Hech kim tanlanmadi — kamida bitta xodimga to'plam bering", show_alert=True)
+        return
+
+    users = (await api_client.anketa_candidates(callback.from_user.id)).get("users", [])
+    templates = (await api_client.anketa_templates(callback.from_user.id) or {}).get("templates", [])
+    tname = {str(t["id"]): t["name"] for t in templates}
+    name_by_id = {str(u["user_id"]): u["full_name"] for u in users}
+    lines = [f"Qatnashchilar ({len(assign)} kishi):"]
+    for uid, tid in assign.items():
+        lines.append(
+            f"• {html.escape(name_by_id.get(uid, '?'))} — "
+            f"{html.escape(tname.get(str(tid), 'to`plam'))}"
+        )
+    preview = "\n".join(lines)
+
+    if data.get("pick_mode") == "now":
+        await callback.message.edit_text(
+            f"▶️ Anketa HOZIR boshlansinmi?\n\n{preview}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[
+                    InlineKeyboardButton(text="✅ Ha, boshlansin", callback_data="anketa:cfx:now"),
+                    InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:plist"),
+                ]]
+            ),
+        )
+        await callback.answer()
+        return
+
+    await state.set_state(AnketaSchedule.waiting_datetime)
+    await state.update_data(explicit=True)
+    await callback.message.edit_text(preview)
+    await callback.message.answer(
+        "🗓 Boshlanish kun va vaqtini yozing (Toshkent vaqti).\n"
+        "Masalan: <code>ertaga 09:00</code>",
+        reply_markup=cancel_menu(),
+    )
+    await callback.answer()
+
+
+# ─── Vaqt kiritish va tasdiqlash ────────────────────────────────────────────
 
 def _parse_local_datetime(raw: str) -> datetime | None:
     """Foydalanuvchi kiritgan matnni Toshkent vaqtidagi datetime'ga o'giradi.
@@ -286,45 +673,34 @@ async def on_datetime_input(message: Message, state: FSMContext) -> None:
         return
 
     data = await state.get_data()
-    spec = data.get("target_spec", "std")
-    await state.clear()
-    user = await api_client.get_user_by_telegram(message.from_user.id)
     iso = parsed.strftime("%Y-%m-%dT%H:%M")
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Tasdiqlayman", callback_data=f"anketa:confirm:{spec}:{iso}"),
-            InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
-        ]]
-    )
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+
+    if data.get("explicit"):
+        # Taqsimot FSM'da qoladi (tasdiqlashda ishlatiladi) — state'ni tozalamaymiz,
+        # faqat matn kutish bosqichidan chiqamiz
+        await state.set_state(None)
+        callback_data = f"anketa:cfx:{iso}"
+    else:
+        spec = data.get("target_spec", "std")
+        tsel = data.get("tsel", "std")
+        await state.clear()
+        callback_data = f"anketa:confirm:{spec}:{tsel}:{iso}"
+
     await message.answer(
         f"🗓 Anketa <b>{parsed.strftime('%d.%m.%Y %H:%M')}</b> (Toshkent) da boshlansinmi?\n"
         "Tasdiqlansa, vaqt kelganda bot xodimlarga savollarni o'zi yuboradi.",
-        reply_markup=keyboard,
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Tasdiqlayman", callback_data=callback_data),
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
+            ]]
+        ),
     )
     await message.answer("Asosiy menyu:", reply_markup=menu_for_user(user))
 
 
-@router.callback_query(F.data.startswith("anketa:confirm:"))
-async def on_confirm(callback: CallbackQuery) -> None:
-    # Format: anketa:confirm:<spec>:<now|YYYY-MM-DDTHH:MM> (spec ichida ':' yo'q).
-    # Eski xabarlardagi tugmalar (spec'siz format: "now" yoki iso) ham ishlaydi.
-    rest = callback.data.split(":", 2)[2]
-    if ":" in rest and not rest[0].isdigit() and rest != "now":
-        spec, value = rest.split(":", 1)
-    else:
-        spec, value = "std", rest
-    scheduled_at = None if value == "now" else value
-    try:
-        result = await api_client.anketa_schedule(
-            callback.from_user.id, scheduled_at, **_parse_spec(spec)
-        )
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (400, 403):
-            detail = (exc.response.json() or {}).get("detail", "Xatolik")
-            await callback.answer(detail, show_alert=True)
-            return
-        raise
-
+async def _finish_schedule(callback: CallbackQuery, result: dict) -> None:
     session = result.get("session") or {}
     if session.get("status") == "in_progress":
         text = "🚀 Anketa boshlandi — xodimlarga birinchi savollar yuborildi."
@@ -336,6 +712,63 @@ async def on_confirm(callback: CallbackQuery) -> None:
     await callback.message.edit_text(text, reply_markup=None)
     await callback.answer()
 
+
+@router.callback_query(F.data.startswith("anketa:confirm:"))
+async def on_confirm(callback: CallbackQuery) -> None:
+    """Format: anketa:confirm:<spec>:<tsel>:<now|iso>.
+    Eski xabarlardagi tugmalar (tsel'siz yoki spec'siz) ham ishlaydi."""
+    parts = callback.data.split(":")[2:]
+    if len(parts) >= 3:
+        spec, tsel, value = parts[0], parts[1], ":".join(parts[2:])
+    elif len(parts) == 2:
+        spec, tsel, value = parts[0], "std", parts[1]
+    else:
+        spec, tsel, value = "std", "std", parts[0]
+    # ISO vaqt ichida ':' bor — yuqoridagi join uni tiklaydi
+    scheduled_at = None if value == "now" else value
+    try:
+        result = await api_client.anketa_schedule(
+            callback.from_user.id,
+            scheduled_at,
+            template_id=_parse_tsel(tsel),
+            **_parse_spec(spec),
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await callback.answer(detail, show_alert=True)
+            return
+        raise
+    await _finish_schedule(callback, result)
+
+
+@router.callback_query(F.data.startswith("anketa:cfx:"))
+async def on_confirm_explicit(callback: CallbackQuery, state: FSMContext) -> None:
+    """Har kimga alohida taqsimot bilan tasdiqlash (taqsimot FSM'da)."""
+    value = callback.data.split(":", 2)[2]
+    scheduled_at = None if value == "now" else value
+    data = await state.get_data()
+    assign: dict = data.get("assign") or {}
+    if not assign:
+        await callback.answer("Taqsimot topilmadi — qaytadan boshlang", show_alert=True)
+        return
+
+    payload = [{"user_id": int(uid), "template_id": int(tid)} for uid, tid in assign.items()]
+    try:
+        result = await api_client.anketa_schedule(
+            callback.from_user.id, scheduled_at, target_type="explicit", assignments=payload
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await callback.answer(detail, show_alert=True)
+            return
+        raise
+    await state.clear()
+    await _finish_schedule(callback, result)
+
+
+# ─── Sessiyani yakunlash / bekor qilish / natijalar ─────────────────────────
 
 @router.callback_query(F.data == "anketa:finish")
 async def on_finish_session(callback: CallbackQuery) -> None:
@@ -371,16 +804,6 @@ async def on_cancel_session(callback: CallbackQuery) -> None:
     await callback.answer("Bekor qilindi")
 
 
-@router.callback_query(F.data == "anketa:back")
-async def on_back(callback: CallbackQuery) -> None:
-    data = await api_client.anketa_overview(callback.from_user.id)
-    if data is None:
-        await callback.answer("Ruxsat yo'q", show_alert=True)
-        return
-    await callback.message.edit_text(_overview_text(data), reply_markup=_overview_keyboard(data))
-    await callback.answer()
-
-
 @router.callback_query(F.data == "anketa:results")
 async def on_results(callback: CallbackQuery) -> None:
     try:
@@ -403,7 +826,8 @@ async def on_results(callback: CallbackQuery) -> None:
     ]
     for u in data.get("users", []):
         lines.append("")
-        lines.append(f"XODIM: {u['full_name']} — To'plam №{u['toplam']} ({u['status']})")
+        label = u.get("label") or f"To'plam №{u.get('toplam')}"
+        lines.append(f"XODIM: {u['full_name']} — {label} ({u['status']})")
         lines.append("-" * 60)
         if not u["answers"]:
             lines.append("(hali javob yo'q)")
@@ -416,6 +840,8 @@ async def on_results(callback: CallbackQuery) -> None:
     await callback.message.answer_document(BufferedInputFile(content, filename=filename))
     await callback.answer()
 
+
+# ─── Xodim javoblari ────────────────────────────────────────────────────────
 
 @answer_router.message(
     F.chat.type == "private",

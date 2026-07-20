@@ -17,6 +17,7 @@ limiti sababli bitta so'rovda hammasini qilib bo'lmaydi, ecb9413 naqshi):
 """
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -31,6 +32,7 @@ from db.models import (
     AnketaAssignment,
     AnketaSession,
     AnketaSessionStatus,
+    AnketaTemplate,
     KnowledgeEntry,
     KnowledgeStatus,
     Role,
@@ -62,6 +64,10 @@ _CATEGORY_BY_SECTION = {
 MAX_AI_ATTEMPTS = 3  # shundan keyin deterministik fallback
 CLASSIFY_BATCH = 8  # bitta AI chaqiruvida tasniflanadigan single yozuvlar
 STALE_DAYS = 30  # sana-sezgir yozuv shu muddatdan keyin qayta tekshirishga chiqadi
+
+# Yuklangan to'plamlarda "ochiq" savolni taxminlash: bitta javobda bir nechta
+# savol-javob juftini so'raydigan matnlar ("3-5 ta savolni yozing" kabi)
+_OPEN_HINT_RE = re.compile(r"\d\s*[-–]\s*\d\s*ta|sanab\s+yozing|ro'?yxat", re.I)
 
 _UNKNOWN_MARKERS = (
     "bilmayman", "bilmadim", "aniq emas", "ma'lumotim yo'q", "malumotim yo'q",
@@ -197,10 +203,26 @@ async def create_drafts(db: AsyncSession) -> dict:
                 select(AnketaAssignment).where(AnketaAssignment.session_id == session.id)
             )
         )
+        # Nechta xodim AYNAN bir xil savol to'plamini olgan — shu holda bir xil
+        # indeksdagi savol hammada bir xil bo'ladi va javoblar birlashtiriladi
+        set_counts: dict[tuple, int] = {}
+        for a in assignments:
+            key = ("t", a.template_id) if a.template_id else ("n", a.toplam)
+            set_counts[key] = set_counts.get(key, 0) + 1
+
         for a in assignments:
             user = await db.get(User, a.user_id)
             name = user.full_name.strip() if user else "?"
-            questions = toplam_questions(a.toplam)
+            if a.template_id:
+                template = await db.get(AnketaTemplate, a.template_id)
+                questions = list(template.questions or []) if template else []
+                set_label = template.name if template else "To'plam"
+            else:
+                questions = toplam_questions(a.toplam)
+                set_label = f"№{a.toplam}"
+            shared = set_counts.get(
+                ("t", a.template_id) if a.template_id else ("n", a.toplam), 1
+            ) > 1
             answers = list(
                 await db.scalars(
                     select(AnketaAnswer)
@@ -214,8 +236,22 @@ async def create_drafts(db: AsyncSession) -> dict:
             for ans in answers:
                 q = questions[ans.question_index] if ans.question_index < len(questions) else None
                 section = q["section"] if q else ""
-                if ans.question_index < 3:
+                if a.template_id:
+                    # Yuklangan to'plam: bir xil to'plamni bir necha xodim olgan
+                    # bo'lsa, bir xil indeksdagi savol ham bir xil — birlashtiramiz
+                    if shared:
+                        kind = "common"
+                        group_key = f"common:{session.id}:t{a.template_id}:{ans.question_index}"
+                    elif _OPEN_HINT_RE.search(ans.question_text):
+                        kind, group_key = "open", None
+                    else:
+                        kind, group_key = "single", None
+                elif ans.question_index < 3:
+                    # Ichki 5 to'plamning A qismi hamma to'plamda bir xil
                     kind, group_key = "common", f"common:{session.id}:{ans.question_index}"
+                elif shared:
+                    kind = "common"
+                    group_key = f"common:{session.id}:n{a.toplam}:{ans.question_index}"
                 elif section.startswith("C qism"):
                     kind, group_key = "open", None
                 else:
@@ -228,7 +264,7 @@ async def create_drafts(db: AsyncSession) -> dict:
                         question=ans.question_text,
                         answer=ans.answer_text,
                         status=KnowledgeStatus.draft.value,
-                        source=f"Anketa №{a.toplam}, savol {ans.question_index + 1}: {name}",
+                        source=f"Anketa {set_label}, savol {ans.question_index + 1}: {name}",
                         source_user_id=a.user_id,
                         session_id=session.id,
                         anketa_answer_id=ans.id,

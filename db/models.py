@@ -658,6 +658,25 @@ class AnketaSessionStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class AnketaTemplate(Base):
+    """Word/matn faylidan yuklangan savol to'plami (Dasturchi botga .docx tashlaydi,
+    api/services/docx_parse.py savollarni ajratadi). `questions` — [{"section",
+    "text"}] ro'yxati, fayl o'zgarsa ham sessiya savollari shu yerda muzlatilgan
+    holda qoladi. O'chirish YUMSHOQ (`is_active=False`) — o'tgan sessiyalarning
+    savollari yo'qolmasligi uchun."""
+
+    __tablename__ = "anketa_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    filename: Mapped[str] = mapped_column(String(255), default="")
+    questions: Mapped[list] = mapped_column(JSON, default=list)
+    question_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class AnketaSession(Base):
     """Bilim bazasi anketasi sessiyasi — Dasturchi bot orqali kun/vaqtni
     tasdiqlaganda yaratiladi; `scheduled_at` (naive UTC) yetganda tick uni
@@ -696,7 +715,12 @@ class AnketaAssignment(Base):
         ForeignKey("anketa_sessions.id", ondelete="CASCADE"), index=True
     )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # Ichki (kodga yozilgan) to'plam raqami 1-5. Yuklangan Word to'plami
+    # ishlatilsa `template_id` to'ldiriladi va bu maydon 0 bo'ladi.
     toplam: Mapped[int] = mapped_column(Integer)
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("anketa_templates.id"), nullable=True, index=True
+    )
     current_q: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending|in_progress|done
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

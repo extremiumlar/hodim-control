@@ -447,6 +447,8 @@ async def anketa_schedule(
     target_type: str = "standart",
     position_id: int | None = None,
     role: str | None = None,
+    template_id: int | None = None,
+    assignments: list[dict] | None = None,
 ) -> dict:
     """Sessiya yaratish. scheduled_at — Toshkent vaqti "YYYY-MM-DDTHH:MM" yoki None
     (darhol boshlash). target_* — qatnashchilar (standart/all/position/role).
@@ -460,6 +462,8 @@ async def anketa_schedule(
             "target_type": target_type,
             "position_id": position_id,
             "role": role,
+            "template_id": template_id,
+            "assignments": assignments,
         },
         timeout=60,
     )
@@ -472,6 +476,7 @@ async def anketa_preview_targets(
     target_type: str = "standart",
     position_id: int | None = None,
     role: str | None = None,
+    template_id: int | None = None,
 ) -> dict:
     """Tanlangan guruh bo'yicha kim qaysi to'plam olishini oldindan ko'rish.
     400 — guruh bo'sh/xato (detail bilan)."""
@@ -480,7 +485,60 @@ async def anketa_preview_targets(
         params["position_id"] = position_id
     if role:
         params["role"] = role
+    if template_id is not None:
+        params["template_id"] = template_id
     resp = await _get_client().get(f"/anketa/preview-targets/{telegram_id}", params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_candidates(telegram_id: int) -> dict:
+    """Anketa berish mumkin bo'lgan xodimlar ro'yxati («har kimga alohida» uchun)."""
+    resp = await _get_client().get(f"/anketa/candidates/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_templates(telegram_id: int) -> dict | None:
+    """Yuklangan savol to'plamlari. Ruxsat yo'q — None."""
+    resp = await _get_client().get(f"/anketa/templates/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_template_detail(telegram_id: int, template_id: int) -> dict:
+    resp = await _get_client().get(f"/anketa/templates/{telegram_id}/{template_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_template_upload(
+    telegram_id: int, filename: str, content_b64: str, name: str | None = None
+) -> dict:
+    """Word/.txt fayldan savol to'plami yaratadi (fayl base64 ko'rinishida —
+    a2wsgi ostida multipart'dan ko'ra ishonchliroq va bir xil JSON yo'l)."""
+    resp = await _get_client().post(
+        "/anketa/templates/upload",
+        json={
+            "telegram_id": telegram_id,
+            "filename": filename,
+            "content_b64": content_b64,
+            "name": name,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_template_delete(telegram_id: int, template_id: int) -> dict:
+    resp = await _get_client().post(
+        "/anketa/templates/delete",
+        json={"telegram_id": telegram_id, "template_id": template_id},
+        timeout=30,
+    )
     resp.raise_for_status()
     return resp.json()
 
