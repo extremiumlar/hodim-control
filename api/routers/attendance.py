@@ -23,6 +23,7 @@ from api.schemas import (
     UserOut,
 )
 from api.services.attendance import CheckError, perform_check_in, perform_check_out
+from api.services.attendance_digest import send_attendance_digest
 from api.timeutil import today_local
 from db.models import (
     Attendance,
@@ -418,6 +419,21 @@ async def late_stats_bot(
     if not user or not user.is_active or user.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ma'lumot faqat rahbarlar uchun")
     return await _late_stats_data(db, days)
+
+
+@router.post("/digest", dependencies=[Depends(verify_bot_secret)])
+async def attendance_digest(
+    kind: str = "morning",
+    chat_id: int | None = None,
+    dry_run: bool = False,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Kunlik davomat digestini guruhga yuboradi (scheduler/cron chaqiradi).
+
+    kind=morning — ertalabki (kim keldi/kechikdi/hali yo'q);
+    kind=evening — kun yakuni (ish vaqti, kechikish, chiqmaganlar, kelmaganlar).
+    dry_run=true — yubormasdan matnni qaytaradi (sinov uchun)."""
+    return await send_attendance_digest(db, kind=kind, chat_id=chat_id, dry_run=dry_run)
 
 
 # ─────────────────────────────────────────────

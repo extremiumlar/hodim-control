@@ -19,6 +19,14 @@ WEEKLY_DIGEST_DOW = "sun"
 WEEKLY_DIGEST_HOUR = 20
 WEEKLY_DIGEST_MINUTE = 0
 
+# Davomat (kelib-ketish) digesti guruhga: ertalab — kim keldi/kechikdi/kelmadi;
+# kechqurun — kun yakuni (ish vaqti, chiqmaganlar). Dam olish kunida (hech kim
+# ishlamasa) yuborilmaydi.
+ATTENDANCE_MORNING_HOUR = 9
+ATTENDANCE_MORNING_MINUTE = 30
+ATTENDANCE_EVENING_HOUR = 22
+ATTENDANCE_EVENING_MINUTE = 0
+
 # CRM webhook o'rniga zaxira: deyarli real-vaqtli bo'lishi uchun tez-tez so'raladi.
 # amoCRM ulanganda API rate-limitga e'tibor bering (oraliqni kattalashtirish kerak
 # bo'lishi mumkin).

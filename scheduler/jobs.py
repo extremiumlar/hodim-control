@@ -32,6 +32,24 @@ async def send_weekly_digest() -> None:
         logger.info("Haftalik digest: %s", body)
 
 
+async def send_attendance_morning_digest() -> None:
+    """Ertalabki davomat digesti guruhga — kim keldi, kim kechikdi, kim kelmadi."""
+    body = await call_api(
+        "/attendance/digest?kind=morning", timeout=60, label="Ertalabki davomat digesti"
+    )
+    if body is not None:
+        logger.info("Ertalabki davomat digesti: %s", body)
+
+
+async def send_attendance_evening_digest() -> None:
+    """Kechki davomat digesti guruhga — kun yakuni (ish vaqti, chiqmaganlar)."""
+    body = await call_api(
+        "/attendance/digest?kind=evening", timeout=60, label="Kechki davomat digesti"
+    )
+    if body is not None:
+        logger.info("Kechki davomat digesti: %s", body)
+
+
 async def send_monthly_digest() -> None:
     """Oylik yakun (joriy oy vs o'tgan oy, operator kesimida, bonus bilan) — guruhga
     bitta xabar, oyning oxirgi kuni kechqurun. Sof kod hisobi."""

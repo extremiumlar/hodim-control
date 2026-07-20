@@ -86,6 +86,11 @@ def _due(now: datetime) -> list:
         add("/auto-plan/build-targets", timeout=120)
     if h == 9 and m == 35:
         add("/knowledge/stale-tick", timeout=60)     # eskirgan sana-sezgir yozuvlar eslatmasi
+    # Davomat digesti guruhga (dam olish kunida API o'zi yubormaydi)
+    if h == cfg.ATTENDANCE_MORNING_HOUR and m == cfg.ATTENDANCE_MORNING_MINUTE:
+        add("/attendance/digest?kind=morning", timeout=60)
+    if h == cfg.ATTENDANCE_EVENING_HOUR and m == cfg.ATTENDANCE_EVENING_MINUTE:
+        add("/attendance/digest?kind=evening", timeout=60)
 
     # ── Haftalik (yakshanba) ──
     if dow_sun and h == cfg.AI_COMPUTE_PROFILES_HOUR and m == 0:

@@ -70,6 +70,18 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day_of_week=cfg.WEEKLY_DIGEST_DOW, hour=cfg.WEEKLY_DIGEST_HOUR, minute=cfg.WEEKLY_DIGEST_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Davomat digesti — ertalab (kim keldi/kechikdi) va kechqurun (kun yakuni).
+        # Dam olish kunida API o'zi yubormaydi (hech kim ishlamasa).
+        JobSpec(
+            "attendance_morning_digest", jobs.send_attendance_morning_digest,
+            _cron(hour=cfg.ATTENDANCE_MORNING_HOUR, minute=cfg.ATTENDANCE_MORNING_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+        JobSpec(
+            "attendance_evening_digest", jobs.send_attendance_evening_digest,
+            _cron(hour=cfg.ATTENDANCE_EVENING_HOUR, minute=cfg.ATTENDANCE_EVENING_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # Oylik yakun — oyning oxirgi kuni kechqurun (bonus hisobidan oldin)
         JobSpec(
             "monthly_digest", jobs.send_monthly_digest,
