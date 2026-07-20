@@ -80,29 +80,13 @@ async def _overview_view(telegram_id: int) -> tuple[str, InlineKeyboardMarkup] |
     if not data.get("ai_enabled"):
         lines.append("\n⚠️ AI o'chiq (.env: AI_ENABLED) — yuklashda javoblar xom holda tushadi.")
 
+    total = data.get("review_pending", 0) + counts.get("verified", 0)
     rows = [
         [InlineKeyboardButton(text="🔄 Anketadan yuklash", callback_data="kb:ingest")],
-        [
-            InlineKeyboardButton(
-                text=f"🔍 Ko'rib chiqish ({data.get('review_pending', 0)})",
-                callback_data="kb:review:0",
-            )
-        ],
+        [InlineKeyboardButton(text=f"🔍 Ko'rib chiqish ({total})", callback_data="kb:review")],
         [
             InlineKeyboardButton(text="➕ Ma'lumot qo'shish", callback_data="kb:add"),
             InlineKeyboardButton(text="📥 Baza (.txt)", callback_data="kb:export"),
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"🔁 Tasdiqlanganlarni qayta ko'rish ({counts.get('verified', 0)})",
-                callback_data="kb:vnext:0",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text=f"📖 Hammasini ko'rib chiqish ({data.get('review_pending', 0) + counts.get('verified', 0)})",
-                callback_data="kb:anext:0",
-            )
         ],
         [InlineKeyboardButton(text="📦 Dataset (.json)", callback_data="kb:dataset")],
         [InlineKeyboardButton(text="⬅️ Sotuv AI markazi", callback_data="aic:menu")],
@@ -159,53 +143,50 @@ async def on_ingest(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-def _entry_card(entry: dict, remaining: int, processing: int) -> tuple[str, InlineKeyboardMarkup]:
-    badge = _STATUS_BADGE.get(entry["status"], entry["status"])
-    date_flag = "✅" if entry["date_sensitive"] else "❌"
-    lines = [
-        f"🔍 <b>Ko'rib chiqish</b> — qolgan: {remaining}"
-        + (f" (+{processing} AI ishlovida)" if processing else ""),
-        "",
-        f"Holat: {badge} · Kategoriya: {entry['category']}",
-        f"Manba: {html.escape(entry.get('source') or '-')}",
-        f"📅 Sana-sezgir (narx/muddat): {date_flag}",
-        "",
-        f"<b>Savol:</b> {html.escape(entry['question'])}",
-        "<b>Javob:</b> " + (html.escape(entry["answer"]) if entry["answer"] else "<i>(bo'sh)</i>"),
-    ]
-    if entry.get("review_note"):
-        lines.append(f"\n💬 AI izohi: {html.escape(entry['review_note'])}")
-
-    eid = entry["id"]
-    rows = [
-        [
-            InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"kb:ok:{eid}"),
-            InlineKeyboardButton(text="✏️ Javob yozish", callback_data=f"kb:edit:{eid}"),
-        ],
-        [
-            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:date:{eid}"),
-            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:del:{eid}"),
-        ],
-        [
-            InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"kb:review:{eid}"),
-            InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
-        ],
-    ]
-    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def _source_name(source: str) -> str:
     """"Anketa №1, savol 2: Kamola" → "Kamola" (ko'rsatish uchun)."""
     return (source or "").rsplit(": ", 1)[-1].strip() or "?"
 
 
+# ─── Yagona ko'rib chiqish oqimi (ilgari 3 xil "review" bo'lgan: pending/
+# verified/all — endi bitta karta va bitta navigatsiya, holat FAQAT filtr) ───
+
+_FILTER_LABELS = {"pending": "⏳ Kutayotganlar", "verified": "✅ Tasdiqlanganlar", "all": "📖 Hammasi"}
+_FILTER_TITLES = {"pending": "🔍 Ko'rib chiqish", "verified": "🔍 Ko'rib chiqish", "all": "📖 To'liq ko'rib chiqish"}
+
+
+def _filter_choice_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
+    counts = data.get("counts", {})
+    pending = data.get("review_pending", 0)
+    verified = counts.get("verified", 0)
+    rows = [
+        [InlineKeyboardButton(text=f"⏳ Kutayotganlar ({pending})", callback_data="kb:rev:pending:0")],
+        [InlineKeyboardButton(text=f"✅ Tasdiqlanganlar ({verified})", callback_data="kb:rev:verified:0")],
+        [InlineKeyboardButton(text=f"📖 Hammasi ({pending + verified})", callback_data="kb:rev:all:0")],
+        [InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")],
+    ]
+    return "🔍 Nimani ko'rib chiqasiz?", InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "kb:review")
+async def on_review_filter_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    data = await api_client.knowledge_overview(callback.from_user.id)
+    if data is None:
+        await callback.answer("Ruxsat yo'q", show_alert=True)
+        return
+    text, markup = _filter_choice_view(data)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
 def _conflict_card(
-    entry: dict, group: list[dict], remaining: int, processing: int
+    entry: dict, group: list[dict], filter_: str, remaining: int, processing: int
 ) -> tuple[str, InlineKeyboardMarkup]:
     """Ziddiyatli savol kartasi: barcha xodimlar javoblari yonma-yon, rahbar
     birini qabul qiladi yoki birini tahrirlab o'tkazadi (qolganlari o'chadi)."""
     lines = [
-        f"🔍 <b>Ko'rib chiqish</b> — qolgan: {remaining}"
+        f"{_FILTER_TITLES[filter_]} ({_FILTER_LABELS[filter_]}) — qolgan: {remaining}"
         + (f" (+{processing} AI ishlovida)" if processing else ""),
         "",
         "⚠️ <b>Ziddiyatli javoblar</b> — bitta savolga xodimlar har xil javob bergan.",
@@ -222,113 +203,27 @@ def _conflict_card(
 
     rows = [
         [
-            InlineKeyboardButton(text=f"✅ {i}-javobni qabul qilish", callback_data=f"kb:ok:{m['id']}"),
-            InlineKeyboardButton(text=f"✏️ {i}-ni tahrirlash", callback_data=f"kb:edit:{m['id']}"),
+            InlineKeyboardButton(text=f"✅ {i}-javobni qabul qilish", callback_data=f"kb:ok:{filter_}:{m['id']}"),
+            InlineKeyboardButton(text=f"✏️ {i}-ni tahrirlash", callback_data=f"kb:edit:{filter_}:{m['id']}"),
         ]
         for i, m in enumerate(group, start=1)
     ]
     max_id = max(m["id"] for m in group)
     rows.append([
-        InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"kb:review:{max_id}"),
+        InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"kb:rev:{filter_}:{max_id}"),
+        InlineKeyboardButton(text="🔀 Filtr", callback_data="kb:review"),
         InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
     ])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _review_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
-    """review-next javobidan karta quradi (oddiy / ziddiyatli guruh / tugadi)."""
-    entry = data.get("entry")
-    if entry is None:
-        extra = (
-            f"\n⏳ {data['processing']} ta yozuv hali AI ishlovida — birozdan keyin qaytib ko'ring."
-            if data.get("processing")
-            else ""
-        )
-        return (
-            f"✅ Ko'rib chiqiladigan yozuv qolmadi.{extra}",
-            InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
-            ),
-        )
-    group = data.get("conflict_group")
-    if group and len(group) > 1:
-        return _conflict_card(entry, group, data["remaining"], data.get("processing", 0))
-    return _entry_card(entry, data["remaining"], data.get("processing", 0))
-
-
-async def _show_next(callback: CallbackQuery, after_id: int) -> None:
-    data = await api_client.knowledge_review_next(callback.from_user.id, after_id)
-    if data is None:
-        await callback.answer("Ruxsat yo'q", show_alert=True)
-        return
-    text, markup = _review_view(data)
-    await callback.message.edit_text(text, reply_markup=markup)
-    await callback.answer()
-
-
-# ─── Tasdiqlanganlarni QAYTA ko'rib chiqish ──────────────────────────────────
-
-def _verified_card(entry: dict, remaining: int) -> tuple[str, InlineKeyboardMarkup]:
-    date_flag = "✅" if entry["date_sensitive"] else "❌"
-    lines = [
-        f"🔁 <b>Qayta ko'rib chiqish</b> — tasdiqlanganlar: {remaining}",
-        "",
-        f"Holat: ✅ tasdiqlangan · Kategoriya: {entry['category']}",
-        f"Manba: {html.escape(entry.get('source') or '-')}",
-        f"📅 Sana-sezgir (narx/muddat): {date_flag}",
-        "",
-        f"<b>Savol:</b> {html.escape(entry['question'])}",
-        f"<b>Javob:</b> {html.escape(entry['answer'])}",
-    ]
-    eid = entry["id"]
-    rows = [
-        [
-            InlineKeyboardButton(text="✏️ Javobni tahrirlash", callback_data=f"kb:vedit:{eid}"),
-            InlineKeyboardButton(text="🔙 Tasdiqdan qaytarish", callback_data=f"kb:unv:{eid}"),
-        ],
-        [
-            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:vdate:{eid}"),
-            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:vdel:{eid}"),
-        ],
-        [
-            InlineKeyboardButton(text="⏭ Keyingisi", callback_data=f"kb:vnext:{eid}"),
-            InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
-        ],
-    ]
-    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _verified_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
-    entry = data.get("entry")
-    if entry is None:
-        return (
-            "Tasdiqlangan yozuvlar tugadi (yoki hali yo'q).",
-            InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
-            ),
-        )
-    return _verified_card(entry, data["remaining"])
-
-
-async def _show_verified_next(callback: CallbackQuery, after_id: int) -> None:
-    data = await api_client.knowledge_review_next(callback.from_user.id, after_id, mode="verified")
-    if data is None:
-        await callback.answer("Ruxsat yo'q", show_alert=True)
-        return
-    text, markup = _verified_view(data)
-    await callback.message.edit_text(text, reply_markup=markup)
-    await callback.answer()
-
-
-# ─── HAMMASINI ko'rib chiqish (holatidan qat'i nazar, draft'dan tashqari) ────
-
-def _all_card(entry: dict, remaining: int, processing: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Universal karta: yozuv holatiga qarab tugmalar moslashadi — javobsiz/
-    o'tkazib yuborilganlarga javob yozish, tasdiqlanganlarni qaytarish mumkin."""
+def _review_card(entry: dict, filter_: str, remaining: int, processing: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Universal karta — yozuv holatiga qarab tugmalar moslashadi (tasdiqlash/
+    tasdiqdan qaytarish), qaysi FILTRDA ochilganidan qat'i nazar bir xil."""
     badge = _STATUS_BADGE.get(entry["status"], entry["status"])
     date_flag = "✅" if entry["date_sensitive"] else "❌"
     lines = [
-        f"📖 <b>To'liq ko'rib chiqish</b> — qolgan: {remaining}"
+        f"{_FILTER_TITLES[filter_]} ({_FILTER_LABELS[filter_]}) — qolgan: {remaining}"
         + (f" (+{processing} AI ishlovida)" if processing else ""),
         "",
         f"Holat: {badge} · Kategoriya: {entry['category']}",
@@ -342,168 +237,85 @@ def _all_card(entry: dict, remaining: int, processing: int) -> tuple[str, Inline
         lines.append(f"\n💬 AI izohi: {html.escape(entry['review_note'])}")
 
     eid = entry["id"]
-    first_row = [InlineKeyboardButton(text="✏️ Javob yozish", callback_data=f"kb:aedit:{eid}")]
+    first_row = [InlineKeyboardButton(text="✏️ Javob yozish", callback_data=f"kb:edit:{filter_}:{eid}")]
     if entry["status"] == "verified":
         first_row.append(
-            InlineKeyboardButton(text="🔙 Tasdiqdan qaytarish", callback_data=f"kb:aunv:{eid}")
+            InlineKeyboardButton(text="🔙 Tasdiqdan qaytarish", callback_data=f"kb:unv:{filter_}:{eid}")
         )
     else:
         first_row.insert(
-            0, InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"kb:aok:{eid}")
+            0, InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"kb:ok:{filter_}:{eid}")
         )
     rows = [
         first_row,
         [
-            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:adate:{eid}"),
-            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:adel:{eid}"),
+            InlineKeyboardButton(text="📅 Sana-sezgir", callback_data=f"kb:date:{filter_}:{eid}"),
+            InlineKeyboardButton(text="❌ O'chirish", callback_data=f"kb:del:{filter_}:{eid}"),
         ],
         [
-            InlineKeyboardButton(text="⏭ Keyingisi", callback_data=f"kb:anext:{eid}"),
-            InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu"),
+            InlineKeyboardButton(text="⏭ Keyingisi", callback_data=f"kb:rev:{filter_}:{eid}"),
+            InlineKeyboardButton(text="🔀 Filtr", callback_data="kb:review"),
         ],
+        [InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")],
     ]
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _all_view(data: dict) -> tuple[str, InlineKeyboardMarkup]:
+def _unified_review_view(data: dict, filter_: str) -> tuple[str, InlineKeyboardMarkup]:
     entry = data.get("entry")
     if entry is None:
+        extra = (
+            f"\n⏳ {data['processing']} ta yozuv hali AI ishlovida — birozdan keyin qaytib ko'ring."
+            if data.get("processing")
+            else ""
+        )
         return (
-            "📖 Ro'yxat tugadi — barcha yozuvlar ko'rib chiqildi.",
+            f"✅ «{_FILTER_LABELS[filter_]}» ro'yxati tugadi.{extra}",
             InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")]]
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔀 Boshqa filtr", callback_data="kb:review")],
+                    [InlineKeyboardButton(text="⬅️ Menyu", callback_data="kb:menu")],
+                ]
             ),
         )
     group = data.get("conflict_group")
     if group and len(group) > 1:
-        return _conflict_card(entry, group, data["remaining"], data.get("processing", 0))
-    return _all_card(entry, data["remaining"], data.get("processing", 0))
+        return _conflict_card(entry, group, filter_, data["remaining"], data.get("processing", 0))
+    return _review_card(entry, filter_, data["remaining"], data.get("processing", 0))
 
 
-async def _show_all_next(callback: CallbackQuery, after_id: int) -> None:
-    data = await api_client.knowledge_review_next(callback.from_user.id, after_id, mode="all")
+async def _show_review(callback: CallbackQuery, filter_: str, after_id: int) -> None:
+    data = await api_client.knowledge_review_next(callback.from_user.id, after_id, mode=filter_)
     if data is None:
         await callback.answer("Ruxsat yo'q", show_alert=True)
         return
-    text, markup = _all_view(data)
+    text, markup = _unified_review_view(data, filter_)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("kb:anext:"))
-async def on_all_next(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(F.data.startswith("kb:rev:"))
+async def on_review_next(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await _show_all_next(callback, int(callback.data.rsplit(":", 1)[1]))
-
-
-async def _all_decide(callback: CallbackQuery, action: str, next_after: int) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
     try:
-        await api_client.knowledge_decide(callback.from_user.id, entry_id, action)
-    except httpx.HTTPStatusError as exc:
-        detail = (exc.response.json() or {}).get("detail", "Xatolik")
-        await callback.answer(detail, show_alert=True)
-        return
-    # next_after: 0 — o'sha yozuvni yangilangan holda qayta ko'rsat (id-1),
-    # 1 — keyingisiga o't (id)
-    await _show_all_next(callback, entry_id - 1 + next_after)
+        _, _, filter_, after_id_s = callback.data.split(":", 3)
+        await _show_review(callback, filter_, int(after_id_s))
+    except ValueError:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("kb:aok:"))
-async def on_all_approve(callback: CallbackQuery) -> None:
-    await _all_decide(callback, "approve", 1)
+def _next_after(action: str, entry_id: int) -> int:
+    """Amaldan keyin qaysi ID'dan davom etish. «Yakuniy» amallar (tasdiqlash/
+    tahrir/o'chirish) — 0'dan qayta skanerlaydi, shunda oldinroq «⏭» bilan
+    o'tkazib yuborilgan yozuvlar ham qaytadan chiqadi (doimiy yo'qolib
+    qolmaydi). «Qaytariladigan» amallar (tasdiqdan qaytarish/sana-sezgirlik)
+    — xuddi shu yozuvni yangilangan holda qayta ko'rsatadi."""
+    if action in ("unverify", "toggle_date"):
+        return entry_id - 1
+    return 0
 
 
-@router.callback_query(F.data.startswith("kb:aunv:"))
-async def on_all_unverify(callback: CallbackQuery) -> None:
-    await _all_decide(callback, "unverify", 0)
-
-
-@router.callback_query(F.data.startswith("kb:adate:"))
-async def on_all_toggle_date(callback: CallbackQuery) -> None:
-    await _all_decide(callback, "toggle_date", 0)
-
-
-@router.callback_query(F.data.startswith("kb:adel:"))
-async def on_all_delete(callback: CallbackQuery) -> None:
-    await _all_decide(callback, "delete", 1)
-
-
-@router.callback_query(F.data.startswith("kb:aedit:"))
-async def on_all_edit(callback: CallbackQuery, state: FSMContext) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
-    await state.set_state(KbEdit.waiting_answer)
-    await state.update_data(entry_id=entry_id, mode="all")
-    await callback.message.answer(
-        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlanadi):",
-        reply_markup=cancel_menu(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kb:vnext:"))
-async def on_verified_next(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await _show_verified_next(callback, int(callback.data.rsplit(":", 1)[1]))
-
-
-@router.callback_query(F.data.startswith("kb:unv:"))
-async def on_unverify(callback: CallbackQuery) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
-    try:
-        await api_client.knowledge_decide(callback.from_user.id, entry_id, "unverify")
-    except httpx.HTTPStatusError as exc:
-        detail = (exc.response.json() or {}).get("detail", "Xatolik")
-        await callback.answer(detail, show_alert=True)
-        return
-    await callback.answer("Tasdiqdan qaytarildi — endi «🔍 Ko'rib chiqish» navbatida")
-    await _show_verified_next(callback, entry_id)
-
-
-@router.callback_query(F.data.startswith("kb:vdel:"))
-async def on_verified_delete(callback: CallbackQuery) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
-    try:
-        await api_client.knowledge_decide(callback.from_user.id, entry_id, "delete")
-    except httpx.HTTPStatusError as exc:
-        detail = (exc.response.json() or {}).get("detail", "Xatolik")
-        await callback.answer(detail, show_alert=True)
-        return
-    await _show_verified_next(callback, entry_id)
-
-
-@router.callback_query(F.data.startswith("kb:vdate:"))
-async def on_verified_toggle_date(callback: CallbackQuery) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
-    try:
-        await api_client.knowledge_decide(callback.from_user.id, entry_id, "toggle_date")
-    except httpx.HTTPStatusError as exc:
-        detail = (exc.response.json() or {}).get("detail", "Xatolik")
-        await callback.answer(detail, show_alert=True)
-        return
-    await _show_verified_next(callback, entry_id - 1)  # o'sha yozuv yangilangan holda
-
-
-@router.callback_query(F.data.startswith("kb:vedit:"))
-async def on_verified_edit(callback: CallbackQuery, state: FSMContext) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
-    await state.set_state(KbEdit.waiting_answer)
-    await state.update_data(entry_id=entry_id, mode="verified")
-    await callback.message.answer(
-        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlangan holda yangilanadi):",
-        reply_markup=cancel_menu(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kb:review:"))
-async def on_review(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    after_id = int(callback.data.rsplit(":", 1)[1])
-    await _show_next(callback, after_id)
-
-
-async def _decide_and_next(callback: CallbackQuery, entry_id: int, action: str) -> None:
+async def _decide_and_continue(callback: CallbackQuery, filter_: str, entry_id: int, action: str) -> None:
     try:
         await api_client.knowledge_decide(callback.from_user.id, entry_id, action)
     except httpx.HTTPStatusError as exc:
@@ -512,35 +324,76 @@ async def _decide_and_next(callback: CallbackQuery, entry_id: int, action: str) 
             await callback.answer(detail, show_alert=True)
             return
         raise
-    # Amaldan keyin navbatdagi yozuvga o'tamiz (toggle'da o'sha yozuv qayta ko'rsatiladi)
-    if action == "toggle_date":
-        await _show_next(callback, entry_id - 1)
-    else:
-        await _show_next(callback, 0)
+    await _show_review(callback, filter_, _next_after(action, entry_id))
+
+
+def _parse_decide_callback(data: str) -> tuple[str, int] | None:
+    """"kb:ok:pending:123" → ("pending", 123). Eski (filtr'siz) formatdagi
+    tugmalar — None (chaqiruvchi tushunarli xato ko'rsatadi)."""
+    parts = data.split(":")
+    if len(parts) != 4:
+        return None
+    _, _, filter_, id_s = parts
+    if filter_ not in _FILTER_LABELS or not id_s.isdigit():
+        return None
+    return filter_, int(id_s)
 
 
 @router.callback_query(F.data.startswith("kb:ok:"))
 async def on_approve(callback: CallbackQuery) -> None:
-    await _decide_and_next(callback, int(callback.data.rsplit(":", 1)[1]), "approve")
+    parsed = _parse_decide_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
+        return
+    await _decide_and_continue(callback, *parsed, "approve")
 
 
 @router.callback_query(F.data.startswith("kb:del:"))
 async def on_delete(callback: CallbackQuery) -> None:
-    await _decide_and_next(callback, int(callback.data.rsplit(":", 1)[1]), "delete")
+    parsed = _parse_decide_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
+        return
+    await _decide_and_continue(callback, *parsed, "delete")
 
 
 @router.callback_query(F.data.startswith("kb:date:"))
 async def on_toggle_date(callback: CallbackQuery) -> None:
-    await _decide_and_next(callback, int(callback.data.rsplit(":", 1)[1]), "toggle_date")
+    parsed = _parse_decide_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
+        return
+    await _decide_and_continue(callback, *parsed, "toggle_date")
+
+
+@router.callback_query(F.data.startswith("kb:unv:"))
+async def on_unverify(callback: CallbackQuery) -> None:
+    parsed = _parse_decide_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
+        return
+    filter_, entry_id = parsed
+    try:
+        await api_client.knowledge_decide(callback.from_user.id, entry_id, "unverify")
+    except httpx.HTTPStatusError as exc:
+        detail = (exc.response.json() or {}).get("detail", "Xatolik")
+        await callback.answer(detail, show_alert=True)
+        return
+    await callback.answer("Tasdiqdan qaytarildi")
+    await _show_review(callback, filter_, _next_after("unverify", entry_id))
 
 
 @router.callback_query(F.data.startswith("kb:edit:"))
 async def on_edit(callback: CallbackQuery, state: FSMContext) -> None:
-    entry_id = int(callback.data.rsplit(":", 1)[1])
+    parsed = _parse_decide_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Bu tugma eskirgan — «🔍 Ko'rib chiqish»ni qaytadan oching", show_alert=True)
+        return
+    filter_, entry_id = parsed
     await state.set_state(KbEdit.waiting_answer)
-    await state.update_data(entry_id=entry_id, mode="pending")
+    await state.update_data(entry_id=entry_id, filter=filter_)
     await callback.message.answer(
-        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlangan bo'ladi):",
+        "✏️ Yangi RASMIY javob matnini yozing (saqlangach yozuv tasdiqlanadi):",
         reply_markup=cancel_menu(),
     )
     await callback.answer()
@@ -564,18 +417,14 @@ async def on_edit_text(message: Message, state: FSMContext) -> None:
         await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
         return
     await message.answer("✅ Javob saqlandi va tasdiqlandi.", reply_markup=menu_for_user(user))
-    # Avtomatik davom: qaysi rejimdan kelgan bo'lsa (tasdiq kutayotganlar yoki
-    # tasdiqlanganlarni qayta ko'rish) o'sha ro'yxatning navbatdagisini ko'rsatamiz
-    mode = data.get("mode", "pending")
-    # verified/all rejimlarida tahrirlangan yozuv ro'yxatda qoladi — takror
-    # chiqmasligi uchun undan keyingisiga o'tamiz; pending'da esa boshidan
-    # (tahrirlangan yozuv u ro'yxatdan chiqib ketgan)
-    after = data["entry_id"] if mode in ("verified", "all") else 0
-    next_data = await api_client.knowledge_review_next(message.from_user.id, after, mode=mode)
+
+    filter_ = data.get("filter", "pending")
+    after = _next_after("edit", data["entry_id"])
+    next_data = await api_client.knowledge_review_next(message.from_user.id, after, mode=filter_)
     if next_data is not None:
-        view = {"verified": _verified_view, "all": _all_view}.get(mode, _review_view)
-        text, markup = view(next_data)
+        text, markup = _unified_review_view(next_data, filter_)
         await message.answer(text, reply_markup=markup)
+
 
 
 @router.callback_query(F.data == "kb:add")
