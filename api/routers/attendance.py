@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     AttendanceOut,
     EmployeeAttendanceSummary,
@@ -355,13 +355,9 @@ async def employee_summary(
     ]
 
 
-@router.get("/late-stats", response_model=list[LateStatRow])
-async def late_stats(
-    days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
-) -> list[LateStatRow]:
-    """Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
-    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: faqat xodimlar
-    (rahbarlar ro'yxatga kirmaydi). Jami kechikish bo'yicha kamayish tartibida."""
+async def _late_stats_data(db: AsyncSession, days: int) -> list[LateStatRow]:
+    """Kechikish statistikasi ma'lumoti — web (JWT) va bot (X-Bot-Secret)
+    endpointlari uchun YAGONA manba. days=0 — faqat bugun."""
     since = today_local() - timedelta(days=days)
     rows = await db.execute(
         select(Attendance.user_id, User.full_name, Attendance.date, Attendance.late_minutes)
@@ -396,6 +392,32 @@ async def late_stats(
     ]
     out.sort(key=lambda r: r.total_late_minutes, reverse=True)
     return out
+
+
+@router.get("/late-stats", response_model=list[LateStatRow])
+async def late_stats(
+    days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
+) -> list[LateStatRow]:
+    """Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
+    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: faqat xodimlar
+    (rahbarlar ro'yxatga kirmaydi). Jami kechikish bo'yicha kamayish tartibida."""
+    return await _late_stats_data(db, days)
+
+
+@router.get(
+    "/late-stats-bot/{telegram_id}",
+    response_model=list[LateStatRow],
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def late_stats_bot(
+    telegram_id: int, days: int = 7, db: AsyncSession = Depends(get_db)
+) -> list[LateStatRow]:
+    """Bot uchun kechikish statistikasi («🕐 Davomat statistikasi» tugmasi).
+    So'ragan telegram foydalanuvchisi rahbar (hr/rop/boss/dasturchi) bo'lishi shart."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user or not user.is_active or user.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ma'lumot faqat rahbarlar uchun")
+    return await _late_stats_data(db, days)
 
 
 # ─────────────────────────────────────────────

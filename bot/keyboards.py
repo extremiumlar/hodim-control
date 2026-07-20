@@ -8,6 +8,7 @@ BTN_EXCUSED = "🙋 Sababli kun so'rash"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
+BTN_ATTENDANCE_STATS = "🕐 Davomat statistikasi"
 BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
 BTN_SCHEDULE = "🗓 Ish jadvali"
 BTN_HOURLY_PLAN = "📋 Bugungi rejam"
@@ -88,6 +89,8 @@ def main_menu(
         rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
         rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
         rows.append([KeyboardButton(text=BTN_LEAD_STATS), KeyboardButton(text=BTN_HOURLY_PLAN_CONTROL)])
+        # Davomat (kelib-ketish) — kim nechada keldi/kechikdi statistikasi
+        rows.append([KeyboardButton(text=BTN_ATTENDANCE_STATS)])
         if role in {"rop", "boss", "dasturchi"}:
             # Sotuv AI sinovi — rahbar mijoz savolini yozib javob sifatini tekshiradi
             rows.append([KeyboardButton(text=BTN_SALES_AI)])

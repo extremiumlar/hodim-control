@@ -744,3 +744,15 @@ async def claim_hot_lead(telegram_id: int, hot_lead_id: int) -> dict | None:
         return None
     resp.raise_for_status()
     return resp.json()
+
+
+async def attendance_late_stats(telegram_id: int, days: int = 7) -> list[dict] | None:
+    """Kechikish statistikasi (kunma-kun) — faqat rahbarlar; ruxsat yo'q bo'lsa None.
+    days=0 — faqat bugun."""
+    resp = await _get_client().get(
+        f"/attendance/late-stats-bot/{telegram_id}", params={"days": days}
+    )
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
