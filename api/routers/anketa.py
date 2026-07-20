@@ -406,6 +406,7 @@ async def candidates(telegram_id: int, db: AsyncSession = Depends(get_db)) -> di
                 "full_name": u.full_name.strip(),
                 "role": u.role,
                 "position": positions.get(u.position_id) if u.position_id else None,
+                "position_id": u.position_id,
                 "bot_started": u.bot_started,
             }
             for u in users

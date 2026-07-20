@@ -493,21 +493,61 @@ async def on_template_chosen(callback: CallbackQuery, state: FSMContext) -> None
 
 # ─── «Har kimga alohida» taqsimoti ──────────────────────────────────────────
 
+def _user_matches_filter(user: dict, filt: str | None) -> bool:
+    """Band 7: lavozim/rol bo'yicha tezkor filtr — katta jamoada per-user
+    ro'yxatni skroll qilib yurmaslik uchun."""
+    if not filt or filt == "all":
+        return True
+    if filt.startswith("role_"):
+        return user["role"] == filt[len("role_"):]
+    if filt.startswith("pos_"):
+        return user.get("position_id") == int(filt[len("pos_"):])
+    return True
+
+
+async def _quick_filter_rows(prefix: str, active: str | None) -> list[list[InlineKeyboardButton]]:
+    """`prefix` — masalan "anketa:pfilter" yoki "anketa:bfilter". Tanlangan
+    chip ✅ bilan belgilanadi. Rol/lavozim tanlovlari _targets_keyboard bilan
+    bir xil (role_boss/role_rop/role_hr/pos_<id>)."""
+    def mark(spec: str, label: str) -> str:
+        return f"✅ {label}" if (active or "all") == spec else label
+
+    rows = [[
+        InlineKeyboardButton(text=mark("all", "Hammasi"), callback_data=f"{prefix}:all"),
+        InlineKeyboardButton(text=mark("role_boss", "👑 Boshliq"), callback_data=f"{prefix}:role_boss"),
+        InlineKeyboardButton(text=mark("role_rop", "🧭 ROP"), callback_data=f"{prefix}:role_rop"),
+        InlineKeyboardButton(text=mark("role_hr", "🗂 HR"), callback_data=f"{prefix}:role_hr"),
+    ]]
+    try:
+        positions = await api_client.list_positions()
+    except Exception:  # noqa: BLE001 — lavozimlar kelmasa ham asosiy filtr qolsin
+        positions = []
+    pos_buttons = [
+        InlineKeyboardButton(
+            text=mark(f"pos_{p['id']}", p["name"]), callback_data=f"{prefix}:pos_{p['id']}"
+        )
+        for p in positions
+    ]
+    for i in range(0, len(pos_buttons), 3):
+        rows.append(pos_buttons[i : i + 3])
+    return rows
+
+
 async def _picker_view(telegram_id: int, state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
     data = await state.get_data()
     assign: dict = data.get("assign") or {}
+    filt = data.get("picker_filter")
     users = (await api_client.anketa_candidates(telegram_id)).get("users", [])
     templates = (await api_client.anketa_templates(telegram_id) or {}).get("templates", [])
     name_by_id = {str(t["id"]): t["name"] for t in templates}
+    filtered = [u for u in users if _user_matches_filter(u, filt)]
 
     lines = ["👤 <b>Har kimga alohida taqsimot</b>", ""]
-    chosen = 0
-    rows: list[list[InlineKeyboardButton]] = []
-    for u in users:
+    rows: list[list[InlineKeyboardButton]] = list(await _quick_filter_rows("anketa:pfilter", filt))
+    for u in filtered:
         key = str(u["user_id"])
         tid = assign.get(key)
         if tid:
-            chosen += 1
             mark = f"✅ {name_by_id.get(str(tid), 'to`plam')[:18]}"
         else:
             mark = "✖️ bermayman"
@@ -520,12 +560,19 @@ async def _picker_view(telegram_id: int, state: FSMContext) -> tuple[str, Inline
                 callback_data=f"anketa:pu:{u['user_id']}",
             )
         ])
+    if filt and not filtered:
+        lines.append("(bu filtrga mos xodim yo'q)")
 
+    chosen = sum(1 for v in assign.values() if v)
     lines.append("")
-    lines.append(f"Tanlangan: <b>{chosen}</b> kishi. Xodim ustiga bosib to'plam tanlang.")
+    lines.append(f"Jami tanlangan: <b>{chosen}</b> kishi. Xodim ustiga bosib to'plam tanlang.")
     if not templates:
         lines.append("\n⚠️ Hali savol to'plami yuklanmagan — Word faylni chatga tashlang.")
 
+    if templates:
+        rows.append([
+            InlineKeyboardButton(text="📦 Ko'p kishiga bitta to'plam", callback_data="anketa:bulk")
+        ])
     rows.append([
         InlineKeyboardButton(text="✅ Tayyor", callback_data="anketa:pdone"),
         InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back"),
@@ -541,6 +588,120 @@ async def on_each_start(callback: CallbackQuery, state: FSMContext) -> None:
     text, markup = await _picker_view(callback.from_user.id, state)
     await callback.message.edit_text(text, reply_markup=markup)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:pfilter:"))
+async def on_picker_filter(callback: CallbackQuery, state: FSMContext) -> None:
+    spec = callback.data.split(":", 2)[2]
+    await state.update_data(picker_filter=None if spec == "all" else spec)
+    text, markup = await _picker_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+# ─── Ko'p kishiga bitta to'plam (bulk) — avval to'plam, keyin xodimlar ──────
+
+async def _bulk_view(telegram_id: int, state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
+    data = await state.get_data()
+    template_id = data.get("bulk_template_id")
+    selected: set[int] = set(data.get("bulk_selected") or [])
+    filt = data.get("bulk_filter")
+    users = (await api_client.anketa_candidates(telegram_id)).get("users", [])
+    templates = (await api_client.anketa_templates(telegram_id) or {}).get("templates", [])
+    tname = next((t["name"] for t in templates if t["id"] == template_id), "to'plam")
+    filtered = [u for u in users if _user_matches_filter(u, filt)]
+
+    lines = [f"📦 <b>{html.escape(tname)}</b> — kimlarga berilsin?", "Xodimlarni belgilang:", ""]
+    rows: list[list[InlineKeyboardButton]] = list(await _quick_filter_rows("anketa:bfilter", filt))
+    for u in filtered:
+        uid = u["user_id"]
+        mark = "✅" if uid in selected else "▫️"
+        lines.append(f"{mark} {html.escape(u['full_name'])}")
+        rows.append([
+            InlineKeyboardButton(text=f"{mark} {u['full_name'][:24]}", callback_data=f"anketa:bu:{uid}")
+        ])
+    if filt and not filtered:
+        lines.append("(bu filtrga mos xodim yo'q)")
+    lines.append("")
+
+    lines.append(f"Belgilangan: <b>{len(selected)}</b> kishi.")
+    rows.append([
+        InlineKeyboardButton(text=f"✅ Belgilash ({len(selected)})", callback_data="anketa:bulkdone"),
+        InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="anketa:plist"),
+    ])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "anketa:bulk")
+async def on_bulk_start(callback: CallbackQuery) -> None:
+    templates = (await api_client.anketa_templates(callback.from_user.id) or {}).get("templates", [])
+    if not templates:
+        await callback.answer("Hali to'plam yuklanmagan", show_alert=True)
+        return
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📄 {t['name'][:28]} ({t['question_count']})",
+                callback_data=f"anketa:bulkt:{t['id']}",
+            )
+        ]
+        for t in templates
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:plist")])
+    await callback.message.edit_text(
+        "📦 Ko'p kishiga qaysi to'plam berilsin?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:bulkt:"))
+async def on_bulk_template(callback: CallbackQuery, state: FSMContext) -> None:
+    template_id = int(callback.data.rsplit(":", 1)[1])
+    await state.update_data(bulk_template_id=template_id, bulk_selected=[], bulk_filter=None)
+    text, markup = await _bulk_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:bfilter:"))
+async def on_bulk_filter(callback: CallbackQuery, state: FSMContext) -> None:
+    spec = callback.data.split(":", 2)[2]
+    await state.update_data(bulk_filter=None if spec == "all" else spec)
+    text, markup = await _bulk_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:bu:"))
+async def on_bulk_toggle_user(callback: CallbackQuery, state: FSMContext) -> None:
+    user_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    selected: set[int] = set(data.get("bulk_selected") or [])
+    if user_id in selected:
+        selected.discard(user_id)
+    else:
+        selected.add(user_id)
+    await state.update_data(bulk_selected=list(selected))
+    text, markup = await _bulk_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "anketa:bulkdone")
+async def on_bulk_done(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    template_id = data.get("bulk_template_id")
+    selected = data.get("bulk_selected") or []
+    if not selected or not template_id:
+        await callback.answer("Hech kim belgilanmadi", show_alert=True)
+        return
+    assign = dict(data.get("assign") or {})
+    for uid in selected:
+        assign[str(uid)] = template_id
+    await state.update_data(assign=assign, bulk_template_id=None, bulk_selected=[], bulk_filter=None)
+    text, markup = await _picker_view(callback.from_user.id, state)
+    await callback.message.edit_text(text, reply_markup=markup)
+    await callback.answer(f"{len(selected)} kishiga biriktirildi")
 
 
 @router.callback_query(F.data.startswith("anketa:pu:"))
