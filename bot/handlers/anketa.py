@@ -108,6 +108,18 @@ def _overview_keyboard(data: dict) -> InlineKeyboardMarkup:
                     text="🏁 Yakunlash (javoblar saqlanadi)", callback_data="anketa:finish"
                 )
             ])
+            # Xatoni tuzatish: hali javob yozmagan xodimning to'plamini
+            # almashtirish/uni sessiyadan olib tashlash — javob yozib
+            # ulgurganlarga bu tugma chiqmaydi (endi kech, faqat yakunlash/
+            # bekor qilish qoladi).
+            for a in session.get("assignments", []):
+                if a["status"] == "in_progress" and a["answered"] == 0:
+                    rows.append([
+                        InlineKeyboardButton(
+                            text=f"✏️ {a['full_name']} ({a.get('label', '')})",
+                            callback_data=f"anketa:aedit:{a['assignment_id']}",
+                        )
+                    ])
         rows.append([
             InlineKeyboardButton(
                 text="❌ Bekor qilish (javoblar o'chadi)", callback_data="anketa:cancel"
@@ -931,6 +943,108 @@ async def on_confirm_explicit(callback: CallbackQuery, state: FSMContext) -> Non
         raise
     await state.clear()
     await _finish_schedule(callback, result)
+
+
+# ─── Xatoni tuzatish: hali javob yozmagan xodimni almashtirish/olib tashlash ─
+
+@router.callback_query(F.data.startswith("anketa:aedit:"))
+async def on_assignment_edit(callback: CallbackQuery) -> None:
+    assignment_id = int(callback.data.rsplit(":", 1)[1])
+    await callback.message.edit_text(
+        "✏️ Bu xodim uchun nima qilamiz?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔁 Boshqa to'plam berish", callback_data=f"anketa:areass:{assignment_id}")],
+                [InlineKeyboardButton(text="🗑 Sessiyadan olib tashlash", callback_data=f"anketa:aremove:{assignment_id}")],
+                [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="anketa:back")],
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:areass:"))
+async def on_assignment_retemplate_start(callback: CallbackQuery) -> None:
+    assignment_id = int(callback.data.rsplit(":", 1)[1])
+    templates = (await api_client.anketa_templates(callback.from_user.id) or {}).get("templates", [])
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"📄 {t['name'][:28]} ({t['question_count']})",
+                callback_data=f"anketa:areasst:{assignment_id}:t{t['id']}",
+            )
+        ]
+        for t in templates
+    ]
+    # Ichki 5 to'plam — har biri o'z raqami bilan (bittasiga o'tkazishda "qaysi
+    # 5tadan biri" aniq tanlanishi kerak, aylanma emas)
+    rows.append([
+        InlineKeyboardButton(text=f"🎯 №{n}", callback_data=f"anketa:areasst:{assignment_id}:n{n}")
+        for n in range(1, 6)
+    ])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"anketa:aedit:{assignment_id}")])
+    await callback.message.edit_text(
+        "🔁 Qaysi to'plam berilsin?", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:areasst:"))
+async def on_assignment_retemplate_apply(callback: CallbackQuery) -> None:
+    _, _, assignment_id_s, tsel = callback.data.split(":", 3)
+    assignment_id = int(assignment_id_s)
+    template_id: int | None = None
+    toplam: int | None = None
+    if tsel.startswith("t") and tsel[1:].isdigit():
+        template_id = int(tsel[1:])
+    elif tsel.startswith("n") and tsel[1:].isdigit():
+        toplam = int(tsel[1:])
+    try:
+        await api_client.anketa_assignment_retemplate(
+            callback.from_user.id, assignment_id, template_id=template_id, toplam=toplam
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403, 404):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await callback.answer(detail, show_alert=True)
+            return
+        raise
+    await callback.answer("Yangilandi — xodimga yangi birinchi savol yuborildi")
+    data = await api_client.anketa_overview(callback.from_user.id)
+    if data is not None:
+        await callback.message.edit_text(_overview_text(data), reply_markup=_overview_keyboard(data))
+
+
+@router.callback_query(F.data.startswith("anketa:aremove:"))
+async def on_assignment_remove_ask(callback: CallbackQuery) -> None:
+    assignment_id = int(callback.data.rsplit(":", 1)[1])
+    await callback.message.edit_text(
+        "🗑 Bu xodim sessiyadan butunlay olib tashlansinmi? U endi anketa savollarini olmaydi.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Ha, olib tashla", callback_data=f"anketa:aremoveok:{assignment_id}"),
+                InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"anketa:aedit:{assignment_id}"),
+            ]]
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("anketa:aremoveok:"))
+async def on_assignment_remove_apply(callback: CallbackQuery) -> None:
+    assignment_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        await api_client.anketa_assignment_remove(callback.from_user.id, assignment_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 403, 404):
+            detail = (exc.response.json() or {}).get("detail", "Xatolik")
+            await callback.answer(detail, show_alert=True)
+            return
+        raise
+    await callback.answer("Olib tashlandi")
+    data = await api_client.anketa_overview(callback.from_user.id)
+    if data is not None:
+        await callback.message.edit_text(_overview_text(data), reply_markup=_overview_keyboard(data))
 
 
 # ─── Sessiyani yakunlash / bekor qilish / natijalar ─────────────────────────

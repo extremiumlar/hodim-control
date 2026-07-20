@@ -557,6 +557,38 @@ async def anketa_cancel(telegram_id: int) -> dict:
     return resp.json()
 
 
+async def anketa_assignment_remove(telegram_id: int, assignment_id: int) -> dict:
+    """Xatoni tuzatish: hali javob yozishni boshlamagan xodimni sessiyadan
+    olib tashlaydi. 400 — allaqachon javob yozgan (detail'da tushuntirilgan)."""
+    resp = await _get_client().post(
+        "/anketa/assignment/edit",
+        json={"telegram_id": telegram_id, "assignment_id": assignment_id, "action": "remove"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def anketa_assignment_retemplate(
+    telegram_id: int, assignment_id: int, template_id: int | None = None, toplam: int | None = None
+) -> dict:
+    """Xatoni tuzatish: hali javob yozishni boshlamagan xodimning to'plamini
+    almashtiradi (template_id — yuklangan to'plam, toplam — ichki 1-5)."""
+    resp = await _get_client().post(
+        "/anketa/assignment/edit",
+        json={
+            "telegram_id": telegram_id,
+            "assignment_id": assignment_id,
+            "action": "retemplate",
+            "template_id": template_id,
+            "toplam": toplam,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def anketa_answer(telegram_id: int, text: str) -> dict:
     """Xodim matnini anketa javobi sifatida sinab ko'radi.
     {"handled": false} — anketa kutilmayotgan edi (bot boshqa oqimlarga o'tkazadi)."""

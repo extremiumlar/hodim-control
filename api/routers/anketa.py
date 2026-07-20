@@ -70,6 +70,14 @@ class ActorPayload(BaseModel):
     telegram_id: int
 
 
+class AssignmentEditPayload(BaseModel):
+    telegram_id: int
+    assignment_id: int
+    action: str  # "retemplate" | "remove"
+    template_id: int | None = None  # retemplate: yuklangan to'plam
+    toplam: int | None = None  # retemplate: ichki 1-5 to'plam (template_id bilan bir vaqtda berilmaydi)
+
+
 class AnswerPayload(BaseModel):
     telegram_id: int
     text: str
@@ -257,6 +265,7 @@ async def _session_view(db: AsyncSession, session: AnketaSession | None) -> dict
         questions, label = await _questions_and_label(db, a)
         rows.append(
             {
+                "assignment_id": a.id,
                 "user_id": a.user_id,
                 "full_name": name_by_id.get(a.user_id, "?"),
                 "toplam": a.toplam,
@@ -711,6 +720,98 @@ async def finish(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> d
         "done": done_count,
         "stopped": len(stopped_users),
     }
+
+
+@router.post("/assignment/edit")
+async def edit_assignment(payload: AssignmentEditPayload, db: AsyncSession = Depends(get_db)) -> dict:
+    """Xatoni tuzatish: sessiya boshlangandan keyin ham, XODIM HALI JAVOB
+    YOZISHNI BOSHLAMAGAN bo'lsa (current_q == 0), uning to'plamini
+    almashtirish yoki uni sessiyadan butunlay olib tashlash mumkin. Javob
+    yozib ulgurgan xodimga tegilmaydi — bu holatda faqat butun sessiyani
+    yakunlash/bekor qilish (mavjud /finish, /cancel) qo'llaniladi."""
+    actor = await _require_dasturchi(db, payload.telegram_id)
+    assignment = await db.get(AnketaAssignment, payload.assignment_id)
+    if assignment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Biriktirma topilmadi")
+
+    session = await db.get(AnketaSession, assignment.session_id)
+    if session is None or session.status != AnketaSessionStatus.in_progress.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sessiya faol emas")
+    if assignment.status != "in_progress" or assignment.current_q > 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Bu xodim allaqachon javob yozishni boshlagan — endi almashtirib bo'lmaydi.",
+        )
+
+    user = await db.get(User, assignment.user_id)
+
+    if payload.action == "remove":
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="anketa_assignment_removed",
+                after={"assignment_id": assignment.id, "user_id": assignment.user_id},
+            )
+        )
+        await db.delete(assignment)
+        await db.flush()
+
+        # Olib tashlangani sessiyadagi YAGONA hali javob kutilayotgan biriktirma
+        # bo'lsa — sessiya "osilib" qolmasin (aks holda yangi sessiya ochib
+        # bo'lmaydi, _active_session uni hamon faol deb hisoblaydi).
+        remaining = list(
+            await db.scalars(
+                select(AnketaAssignment).where(AnketaAssignment.session_id == session.id)
+            )
+        )
+        if remaining and all(r.status != "in_progress" for r in remaining):
+            session.status = AnketaSessionStatus.done.value
+            session.finished_at = datetime.utcnow()
+
+        await db.commit()
+        if user and user.telegram_id:
+            await send_message(
+                user.telegram_id, "ℹ️ Anketa sizga endi yuborilmaydi — bekor qilindi. Rahmat!"
+            )
+        return {"removed": True, "session": await _session_view(db, session)}
+
+    if payload.action == "retemplate":
+        if payload.template_id is not None and payload.toplam is not None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "template_id yoki toplam — faqat bittasi")
+        if payload.template_id is not None:
+            await _load_template(db, payload.template_id)
+            assignment.template_id = payload.template_id
+            assignment.toplam = 0
+        elif payload.toplam is not None:
+            assignment.template_id = None
+            assignment.toplam = payload.toplam
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Yangi to'plam ko'rsatilmagan")
+
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="anketa_assignment_retemplate",
+                after={
+                    "assignment_id": assignment.id,
+                    "template_id": assignment.template_id,
+                    "toplam": assignment.toplam,
+                },
+            )
+        )
+        await db.commit()
+
+        questions, label = await _questions_and_label(db, assignment)
+        if user and user.telegram_id and questions:
+            await send_message(
+                user.telegram_id,
+                f"🔄 <b>Savol to'plamingiz yangilandi</b> — endi: {label}\n\n"
+                f"Avvalgi savolni unuting, {len(questions)} ta savol boshidan boshlanadi.",
+            )
+            await send_message(user.telegram_id, _question_text(questions, label, 0))
+        return {"updated": True, "session": await _session_view(db, session)}
+
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum amal")
 
 
 @router.post("/cancel")
