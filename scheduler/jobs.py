@@ -72,6 +72,30 @@ async def snapshot_lead_stages() -> None:
         logger.info("Lid statistikasi snapshot'i: %s", body)
 
 
+async def lead_diff_tick() -> None:
+    """Diff-engine: chegaralangan (so'nggi N kun yaratilgan) tez skan — CRM
+    lidlarining HAQIQIY bosqich/mas'ul o'zgarishini aniqlab `LeadEvent`ga yozadi.
+    Guruh digesti shundan o'qiydi (deyarli real-vaqtli, taxminiy emas)."""
+    body = await call_api("/lead-events/diff-tick", timeout=180, label="Lid diff tick")
+    if body is not None and body.get("ok"):
+        logger.info(
+            "Lid diff: skanerlandi=%s yangi=%s bosqich=%s mas'ul=%s",
+            body.get("scanned"), body.get("new_leads"), body.get("stage_events"), body.get("responsible_events"),
+        )
+
+
+async def lead_diff_reconcile() -> None:
+    """Diff-engine tungi to'liq solishtiruvi: BUTUN bazani skanerlaydi (sekin) —
+    chegaralangan skan oynasidan tashqarida qolgan eski-lekin-qayta-faollashgan
+    lidlarni ushlab qoladigan xavfsizlik to'ri."""
+    body = await call_api("/lead-events/reconcile", timeout=900, label="Lid diff reconcile")
+    if body is not None and body.get("ok"):
+        logger.info(
+            "Lid diff (to'liq): skanerlandi=%s yangi=%s bosqich=%s mas'ul=%s",
+            body.get("scanned"), body.get("new_leads"), body.get("stage_events"), body.get("responsible_events"),
+        )
+
+
 async def group_post_tick() -> None:
     """Har daqiqa: boss belgilagan vaqt kelganda kunlik yagona digestni (vazifa +
     qo'ng'iroq/lid/tashrif + AI xulosa, bitta xabar) guruhga yuboradi (API vaqtni

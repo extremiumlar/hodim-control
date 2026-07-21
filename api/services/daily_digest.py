@@ -16,21 +16,22 @@ hammasi shu yerda bitta kompakt xabarga jamlanadi:
 Operator kesimidagi batafsil bosqichlar guruhga chiqmaydi — botdagi "🧲 Lidlar
 statistikasi" tugmasida bor."""
 import html
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.services import lead_diff
 from api.telegram_notify import send_message
-from api.timeutil import local_range_utc_naive, today_local
+from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
+from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_ID
 from db.models import (
     AiConfig,
     ExcusedDay,
     ExcusedStatus,
     GroupPostConfig,
     HourlyActual,
-    LeadStageDaily,
     OperatorCallsDaily,
     Role,
     TaskModel,
@@ -38,8 +39,15 @@ from db.models import (
     User,
 )
 
-# "Tashrif" bosqichi nom bo'yicha (api/routers/stats.py bilan bir xil qoida)
-_VISIT_STAGE_NAME = "tashrif"
+
+def _visit_pipe_status_id() -> int | None:
+    """"Tashrif" bosqichi ID'si — bitta manba, `api/routers/stats.py`dagi
+    shaxsiy statistika bilan bir xil (ilgari guruh digesti nom bo'yicha, shaxsiy
+    statistika ID bo'yicha hisoblardi — ikki xil ta'rif ikki xil son berardi)."""
+    try:
+        return int(CRM_UYSOT_VISIT_PIPE_STATUS_ID) if CRM_UYSOT_VISIT_PIPE_STATUS_ID else None
+    except (TypeError, ValueError):
+        return None
 
 
 def digest_group_targets(chat_id: int | None = None) -> list[int]:
@@ -54,10 +62,6 @@ def digest_group_targets(chat_id: int | None = None) -> list[int]:
         if cid and cid not in targets:
             targets.append(cid)
     return targets
-
-
-def _is_visit(stage_name: str) -> bool:
-    return stage_name.strip().lower() == _VISIT_STAGE_NAME
 
 
 def _fmt_talk(sec: int) -> str:
@@ -82,16 +86,17 @@ async def _talk_by_user(db: AsyncSession, day: date) -> dict[int, int]:
 
 async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
     """Bir kunning operator kesimi: {responsible_id: {name, calls, leads, visits}}.
-    Lidlar va qo'ng'iroqlar snapshot jadvallaridan (tez, CRM'siz)."""
+    Qo'ng'iroqlar — `OperatorCallsDaily` snapshotidan (tez, CRM call-history
+    asosida). Lid/tashrif — diff-engine `LeadEvent` jurnalidan (`lead_diff.py`):
+    HAQIQIY bosqich/mas'ul o'zgarish voqealari, "bugun tegilgan (istalgan
+    tahrir)" taxminidan farqli."""
     agg: dict[int, dict] = {}
 
-    for r in await db.scalars(select(LeadStageDaily).where(LeadStageDaily.date == day)):
-        a = agg.setdefault(
-            r.responsible_id, {"name": r.responsible_name, "calls": 0, "leads": 0, "visits": 0}
-        )
-        a["leads"] += r.leads_count
-        if _is_visit(r.stage_name):
-            a["visits"] += r.leads_count
+    event_agg = await lead_diff.daily_operator_breakdown(db, day, _visit_pipe_status_id())
+    for rid, a in event_agg.items():
+        entry = agg.setdefault(rid, {"name": a["name"], "calls": 0, "leads": 0, "visits": 0})
+        entry["leads"] = a["leads_touched"]
+        entry["visits"] = a["visits"]
 
     for c in await db.scalars(select(OperatorCallsDaily).where(OperatorCallsDaily.date == day)):
         a = agg.setdefault(
@@ -102,6 +107,17 @@ async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
             a["name"] = c.responsible_name
 
     return agg
+
+
+async def _freshness_line(db: AsyncSession) -> str | None:
+    """Diff-engine oxirgi marta qachon ishlagani — foydalanuvchi guruhdagi sonni
+    CRM bilan solishtirganda "bu necha daqiqa oldingi holat" ekanini bilib
+    tursin (1-bug: avval bu ma'lumot ko'rsatilmasdi)."""
+    ts = await lead_diff.last_diff_tick_at(db)
+    if ts is None:
+        return None
+    local_ts = ts.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+    return f"🕐 Lid/tashrif ma'lumoti yangilangan: {local_ts:%H:%M}"
 
 
 async def _tasks_by_user(db: AsyncSession, day: date) -> dict[int, tuple[int, int]]:
@@ -228,6 +244,9 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         parts.append("🙋 Sababli kun: " + ", ".join(excused_names))
     if idle_names:
         parts.append("😴 Bugun faoliyat qayd etilmagan: " + ", ".join(idle_names))
+    freshness = await _freshness_line(db)
+    if freshness:
+        parts.append(freshness)
     parts.append("")
     parts.append(
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "

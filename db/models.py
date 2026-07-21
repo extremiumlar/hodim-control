@@ -252,6 +252,63 @@ class OperatorCallsDaily(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class CrmLeadState(Base):
+    """CRM (Uysot) lidining OXIRGI KO'RILGAN holati — diff-engine xotirasi.
+
+    CRM ochiq API'sida bosqich-o'tish tarixi (event log) yo'q, faqat joriy holat
+    va `updatedTimestamp` (istalgan tahrir, "bosqichga o'tish" voqeasi emas).
+    Shuning uchun har skanerlashda joriy holatni shu yerdagi OLDINGI holat bilan
+    solishtirib, HAQIQIY o'zgarishni (`LeadEvent`) o'zimiz aniqlaymiz — CRM'ning
+    o'zi voqea bermasa ham (`api/services/lead_diff.py`)."""
+
+    __tablename__ = "crm_lead_state"
+
+    crm_lead_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pipe_status_id: Mapped[int] = mapped_column(Integer)
+    stage_name: Mapped[str] = mapped_column(String(255))
+    responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    responsible_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Lidga birinchi marta duch kelganimizda ko'rilgan mas'ul — keyinchalik
+    # o'zgarmaydi. "Kim olib kelgan" (asl operator) signalini bosqichlar orasidagi
+    # bo'shliqsiz saqlaydi (masalan operator→manager tashrif kreditlash uchun).
+    first_responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crm_updated_ts: Mapped[int] = mapped_column(Integer)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LeadEvent(Base):
+    """CRM lidining HAQIQIY holat o'zgarishi — diff-engine (`lead_diff.py`)
+    tomonidan `CrmLeadState`dagi oldingi holat bilan solishtirib aniqlangan.
+    Kunlik statistika (guruh digesti) shu jadvaldan hisoblanadi —
+    `updatedTimestamp`ga asoslangan taxminiy hisobdan farqli, aniq "qachon,
+    qaysi bosqichdan qaysi bosqichga, kimdan kimga o'tdi" voqeasi.
+
+    `detected_at` — bizning tizim buni PAYQAGAN vaqt (Asia/Tashkent kuni shu
+    asosida olinadi); CRM o'zi voqea vaqtini bermaydi, faqat joriy holatni
+    beradi — detektsiya vaqti haqiqiy o'zgarish vaqtiga eng yaqin taxmin
+    (poll oralig'i xatosi bilan, odatda bir necha daqiqa)."""
+
+    __tablename__ = "lead_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    crm_lead_id: Mapped[int] = mapped_column(Integer, index=True)
+    event_type: Mapped[str] = mapped_column(String(20), index=True)  # stage_change | responsible_change
+    from_pipe_status_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    from_stage_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    to_pipe_status_id: Mapped[int] = mapped_column(Integer)
+    to_stage_name: Mapped[str] = mapped_column(String(255))
+    from_responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    to_responsible_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # CrmLeadState.first_responsible_id'dan shu voqea yozilgan paytdagi nusxa —
+    # keyinchalik "operator olib kelgan, manager tashrifga o'tkazgan" kabi
+    # kreditlash uchun qayta CRM'ga/State'ga murojaat qilmasdan o'qiladi.
+    first_responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crm_updated_ts: Mapped[int] = mapped_column(Integer)
+    detected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class HourlyActual(Base):
     """Operator AI — operatorning bir kundagi bir soatlik haqiqiy natijasi (CRM
     call-history'dan kompozit sifat bilan). Ham real-vaqt "actual" (bugungi kun),

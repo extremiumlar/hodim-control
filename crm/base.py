@@ -92,3 +92,15 @@ class CRMAdapter(ABC):
         ro'yxatini qaytaradi — saytda ism bo'yicha bog'lash uchun. Qo'llab-quvvatlamaydigan
         adapterlar bo'sh ro'yxat qaytaradi."""
         return []
+
+    async def get_active_leads_snapshot(self, created_since_ts: int | None = None) -> list[dict] | None:
+        """Ixtiyoriy (diff-engine, kunlik statistika uchun — `api/services/lead_diff.py`):
+        CRM'dagi lidlarning JORIY holatini (bosqich + mas'ul) qaytaradi — har element
+        kamida {"id", "pipe_status_id", "stage_name", "responsible_id",
+        "responsible_name", "updated_ts"}. `created_since_ts` berilsa faqat shu
+        vaqtdan keyin YARATILGAN lidlar bilan CHEGARALANGAN (tez) skan; `None` —
+        BUTUN baza (sekin, tungi to'liq solishtiruv uchun). Kunlik sana filtri
+        YO'Q — diff-engine o'zi bu holatni oldingi ko'rgan holat bilan solishtirib
+        "haqiqatan o'zgardimi"ni aniqlaydi. `None` — CRM xatosi yoki qo'llab-
+        quvvatlamaydigan adapter (chaqiruvchi mavjud xotirani ustidan yozmasin)."""
+        return None

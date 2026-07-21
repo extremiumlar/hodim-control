@@ -37,6 +37,18 @@ LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
 LEAD_SNAPSHOT_FREEZE_HOUR = 23  # kun yakunida oxirgi holatni "muzlatish"
 LEAD_SNAPSHOT_FREEZE_MINUTE = 57
 
+# Diff-engine (lead_diff.py): lidlarning HAQIQIY bosqich/mas'ul o'zgarishini
+# (LeadEvent) kuzatadi — LEAD_SNAPSHOT'dan farqli, chegaralangan (so'nggi
+# CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS kun yaratilgan) tez skan bo'lgani uchun
+# tez-tez ishlashi mumkin — guruh digesti deyarli real-vaqtli bo'ladi. Jonli
+# o'lchovda (2026-07-21) 30 kunlik oyna ~60-70s davom etdi — 5 daqiqalik
+# interval bemalol yetadi (CRM lid soni o'ssa CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS
+# yoki shu intervalni kattalashtirish kerak). Tungi to'liq solishtiruv
+# (reconcile) kam trafik vaqtida BUTUN bazani qamraydi.
+LEAD_DIFF_INTERVAL_MINUTES = 5
+LEAD_DIFF_RECONCILE_HOUR = 3
+LEAD_DIFF_RECONCILE_MINUTE = 30
+
 # Oylik bonus — oyning oxirgi kuni (8-bo'lim).
 MONTHLY_BONUS_DAY = "last"
 MONTHLY_BONUS_HOUR = 23

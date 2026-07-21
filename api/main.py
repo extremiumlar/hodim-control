@@ -17,6 +17,7 @@ from api.routers import (
     hot_lead,
     hourly_plan,
     knowledge,
+    lead_events,
     mobilograf,
     norms,
     playbook,
@@ -58,6 +59,7 @@ app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
+app.include_router(lead_events.router)
 app.include_router(anketa.router)
 app.include_router(ai_center.router)
 app.include_router(knowledge.router)

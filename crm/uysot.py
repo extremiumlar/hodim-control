@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import date, datetime
 
 import httpx
@@ -7,6 +8,7 @@ import httpx
 from crm.base import CRMAdapter, TASHKENT_TZ, day_bounds_unix
 from crm.config import (
     CRM_API_KEY,
+    CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS,
     CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
     CRM_UYSOT_VISIT_PIPE_STATUS_ID,
 )
@@ -17,6 +19,9 @@ UYSOT_BASE_URL = "https://api.service.app.uysot.uz/v1/open-api"
 CALL_HISTORY_PAGE_SIZE = 100
 LEAD_FILTER_PAGE_SIZE = 50  # /lead/filter uchun API'ning ruxsat etilgan maksimal "size"si
 MAX_PAGES_PER_SYNC = 20  # xavfsizlik chegarasi — kunlik qo'ng'iroqlar/lidlar juda ko'p bo'lib ketsa ham to'xtaydi
+# Diff-engine chegaralangan (tez) skani uchun xavfsizlik chegarasi — MAX_LEAD_SCAN_PAGES'dan
+# kichik, chunki faqat so'nggi CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS kunlik lidlarni qamraydi.
+MAX_ACTIVE_LEAD_SCAN_PAGES = 200
 
 # Operator AI kompozit sifat o'lchovi (1-bosqich tekshiruvi asosida, 2026-07-08):
 # Uysot call-history'da `contacted` va `qualityScore` maydonlari bu instansiyada
@@ -386,18 +391,20 @@ class UysotAdapter(CRMAdapter):
         self._pipe_status_names = names
         return names
 
-    async def _fetch_lead_page(self, client: httpx.AsyncClient, page: int) -> dict:
+    async def _fetch_lead_page(self, client: httpx.AsyncClient, page: int, extra: dict | None = None) -> dict:
         """Bitta `/lead/filter` sahifasini chidamli o'qiydi: 429 (rate limit)da
         `RATE_LIMIT_BACKOFF_SECONDS` kutadi; vaqtinchalik tarmoq xatosida (DNS/timeout)
         `TRANSIENT_RETRY_SECONDS` kutib `MAX_PAGE_RETRIES` martagacha qayta urinadi.
         Butun skaner uzoq davom etgani uchun bitta vaqtinchalik uzilish hammasini
-        bekor qilmasligi kerak — shu sabab retry bu yerda."""
+        bekor qilmasligi kerak — shu sabab retry bu yerda. `extra` — qo'shimcha
+        so'rov maydonlari (masalan `start`/`finish` sana chegarasi)."""
         attempt = 0
+        body = {"page": page, "size": LEAD_FILTER_PAGE_SIZE, **(extra or {})}
         while True:
             try:
                 resp = await client.post(
                     "/lead/filter",
-                    json={"page": page, "size": LEAD_FILTER_PAGE_SIZE},
+                    json=body,
                 )
                 if resp.status_code == 429:
                     logger.warning("Uysot rate limit — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
@@ -500,6 +507,87 @@ class UysotAdapter(CRMAdapter):
             }
             for (responsible_id, status_id), entry in entries.items()
         ]
+
+    # ─── Diff-engine (kunlik statistika, api/services/lead_diff.py) ────────────
+    async def _scan_active_leads(
+        self, client: httpx.AsyncClient, created_since_ts: int | None
+    ) -> list[dict]:
+        """`created_since_ts` berilsa — shu vaqtdan keyin YARATILGAN lidlar bilan
+        CHEGARALANGAN (tez) skan; `None` — BUTUN baza (sekin, tungi to'liq
+        solishtiruv). Ikkalasida ham har sahifadagi lidning JORIY holati (bosqich +
+        mas'ul) to'liq qaytariladi — `updatedTimestamp` bo'yicha kunlik filtr YO'Q,
+        chunki diff-engine "o'zgardimi"ni o'zi oldingi holat bilan solishtirib
+        aniqlaydi (bu yerda faqat "hozir nima" kerak)."""
+        extra: dict = {}
+        if created_since_ts is not None:
+            extra = {"start": created_since_ts, "finish": int(time.time())}
+        max_pages = MAX_LEAD_SCAN_PAGES if created_since_ts is None else MAX_ACTIVE_LEAD_SCAN_PAGES
+
+        records_out: list[dict] = []
+        page = 1
+        total_pages = None
+        while page <= max_pages:
+            body = await self._fetch_lead_page(client, page, extra=extra)
+            if total_pages is None:
+                total_pages = body.get("totalPages") or 1
+            records = body.get("data") or []
+            if not records:
+                break
+            for record in records:
+                if record.get("id") is not None:
+                    records_out.append(record)
+            if page >= total_pages:
+                break
+            page += 1
+            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+        else:
+            logger.warning(
+                "Uysot faol-lidlar skaneri %s sahifada to'xtadi (xavfsizlik chegarasi) — "
+                "natija chala bo'lishi mumkin (created_since_ts=%s)",
+                max_pages, created_since_ts,
+            )
+
+        return records_out
+
+    async def get_active_leads_snapshot(self, created_since_ts: int | None = None) -> list[dict] | None:
+        """Diff-engine uchun: lidlarning joriy holati (bosqich+mas'ul), sana
+        filtrsiz. Qarang: `CRMAdapter.get_active_leads_snapshot`."""
+        if not CRM_API_KEY:
+            return None
+
+        timeout = httpx.Timeout(30.0, read=30.0)
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=timeout) as client:
+            try:
+                records = await self._scan_active_leads(client, created_since_ts)
+                names = await self._load_pipe_status_names(client)
+            except httpx.HTTPError:
+                logger.exception(
+                    "Uysot'dan faol-lidlar skanini olishda xatolik (created_since_ts=%s)", created_since_ts
+                )
+                return None
+
+        out: list[dict] = []
+        for record in records:
+            status_id = record.get("pipeStatusId")
+            if status_id is None:
+                continue
+            out.append(
+                {
+                    "id": record["id"],
+                    "pipe_status_id": status_id,
+                    "stage_name": names.get(status_id, f"Bosqich #{status_id}"),
+                    "responsible_id": record.get("responsibleById"),
+                    "responsible_name": record.get("responsibleBy"),
+                    "updated_ts": record.get("updatedTimestamp"),
+                }
+            )
+        return out
+
+    @staticmethod
+    def default_diff_lookback_ts() -> int:
+        """Chegaralangan diff skani uchun standart "shu vaqtdan keyin yaratilgan"
+        chegarasi (`CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS` kun orqaga)."""
+        return int(time.time()) - CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS * 86400
 
     # "Lid tugadi" tekshiruvi sozlamalari: da'voni rad etish uchun shuncha ochiq lid
     # topilishi kifoya (erta to'xtash — skan tez tugaydi, sahifa chegarasiga bog'liq

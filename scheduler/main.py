@@ -109,6 +109,19 @@ def _build_jobs() -> list[JobSpec]:
             _cron(hour=cfg.LEAD_SNAPSHOT_FREEZE_HOUR, minute=cfg.LEAD_SNAPSHOT_FREEZE_MINUTE),
             max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
         ),
+        # Diff-engine — lidlarning HAQIQIY o'zgarishini kuzatuvchi tez skan
+        # (chegaralangan, guruh digesti shundan o'qiydi — deyarli real-vaqtli)
+        JobSpec(
+            "lead_diff_tick", jobs.lead_diff_tick,
+            IntervalTrigger(minutes=cfg.LEAD_DIFF_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
+        # Diff-engine tungi to'liq solishtiruvi (xavfsizlik to'ri) — kam trafik vaqtida
+        JobSpec(
+            "lead_diff_reconcile", jobs.lead_diff_reconcile,
+            _cron(hour=cfg.LEAD_DIFF_RECONCILE_HOUR, minute=cfg.LEAD_DIFF_RECONCILE_MINUTE),
+            max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
+        ),
         # Oylik bonus — oyning oxirgi kuni
         JobSpec(
             "monthly_bonus", jobs.calculate_monthly_bonus,

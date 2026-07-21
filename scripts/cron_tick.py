@@ -39,6 +39,15 @@ TZ = ZoneInfo(cfg.TIMEZONE)
 LEAD_SYNC_LOCK = ROOT / "logs" / "lead_sync.lock"
 LEAD_SYNC_LOCK_STALE_MINUTES = 25
 
+# Diff-engine (lead_diff.py) — chegaralangan skan ham (200 sahifagacha, 429
+# backoff'da) gateway'ning 180s limitiga sig'maslik xavfi bor, shuning uchun
+# lid skaneri bilan bir xil in-process+lock naqshi ishlatiladi. Interval qisqa
+# (3 daqiqa) bo'lgani uchun stale chegara ham qisqaroq.
+LEAD_DIFF_LOCK = ROOT / "logs" / "lead_diff.lock"
+LEAD_DIFF_LOCK_STALE_MINUTES = 8
+LEAD_DIFF_RECONCILE_LOCK = ROOT / "logs" / "lead_diff_reconcile.lock"
+LEAD_DIFF_RECONCILE_LOCK_STALE_MINUTES = 25
+
 
 def _is_last_day(d: datetime) -> bool:
     return (d + timedelta(days=1)).month != d.month
@@ -117,13 +126,17 @@ def _lead_sync_due(now: datetime) -> bool:
     return now.hour == cfg.LEAD_SNAPSHOT_FREEZE_HOUR and now.minute == cfg.LEAD_SNAPSHOT_FREEZE_MINUTE
 
 
-def _lead_lock_fresh(now: datetime) -> bool:
+def _lock_fresh(lock_path: Path, stale_minutes: int, now: datetime) -> bool:
     """Boshqa skan hali tugamagan bo'lsa True (lock fayl yosh)."""
     try:
-        started = datetime.fromisoformat(LEAD_SYNC_LOCK.read_text().strip())
-        return (now - started) < timedelta(minutes=LEAD_SYNC_LOCK_STALE_MINUTES)
+        started = datetime.fromisoformat(lock_path.read_text().strip())
+        return (now - started) < timedelta(minutes=stale_minutes)
     except (OSError, ValueError):
         return False
+
+
+def _lead_lock_fresh(now: datetime) -> bool:
+    return _lock_fresh(LEAD_SYNC_LOCK, LEAD_SYNC_LOCK_STALE_MINUTES, now)
 
 
 async def _run_lead_sync_inprocess(now: datetime) -> None:
@@ -153,6 +166,44 @@ async def _run_lead_sync_inprocess(now: datetime) -> None:
             pass
 
 
+async def _run_lead_diff_inprocess(now: datetime, full: bool) -> None:
+    """Diff-engine skanerini HTTP'siz, shu cron jarayonining o'zida bajaradi —
+    gateway timeout'iga bog'liq emas (`_run_lead_sync_inprocess` bilan bir xil
+    naqsh, alohida lock fayl bilan)."""
+    lock = LEAD_DIFF_RECONCILE_LOCK if full else LEAD_DIFF_LOCK
+    stale = LEAD_DIFF_RECONCILE_LOCK_STALE_MINUTES if full else LEAD_DIFF_LOCK_STALE_MINUTES
+    label = "lid diff (to'liq)" if full else "lid diff"
+
+    if _lock_fresh(lock, stale, now):
+        print(f"{now:%Y-%m-%d %H:%M} {label}: oldingi skan hali tugamagan — o'tkazib yuborildi")
+        return
+
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(now.isoformat())
+    try:
+        from api.services.lead_diff import diff_tick
+        from db.base import async_session
+
+        async with async_session() as db:
+            result = await diff_tick(db, full=full)
+        print(f"{now:%Y-%m-%d %H:%M} {label} (in-process): {result}")
+    except Exception as exc:  # noqa: BLE001 — cron jim o'lmasin, log qoldirsin
+        print(f"{now:%Y-%m-%d %H:%M} {label} XATO: {type(exc).__name__}: {exc}")
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def _lead_diff_due(now: datetime) -> bool:
+    return now.minute % cfg.LEAD_DIFF_INTERVAL_MINUTES == 0
+
+
+def _lead_diff_reconcile_due(now: datetime) -> bool:
+    return now.hour == cfg.LEAD_DIFF_RECONCILE_HOUR and now.minute == cfg.LEAD_DIFF_RECONCILE_MINUTE
+
+
 async def main() -> None:
     now = datetime.now(TZ)
 
@@ -160,6 +211,14 @@ async def main() -> None:
     # (deploy'dan keyin birinchi to'ldirish yoki diagnostika uchun — :00/:30 kutilmaydi)
     if "--lead-sync-now" in sys.argv:
         await _run_lead_sync_inprocess(now)
+        return
+    # Diff-engine'ni qo'lda sinash: --lead-diff-now (chegaralangan) yoki
+    # --lead-diff-reconcile-now (to'liq, baseline birinchi marta shu bilan seed qilinadi)
+    if "--lead-diff-now" in sys.argv:
+        await _run_lead_diff_inprocess(now, full=False)
+        return
+    if "--lead-diff-reconcile-now" in sys.argv:
+        await _run_lead_diff_inprocess(now, full=True)
         return
 
     jobs = _due(now)
@@ -174,6 +233,12 @@ async def main() -> None:
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):
         await _run_lead_sync_inprocess(now)
+
+    # Diff-engine (haqiqiy lid voqealari) — xuddi shu sabab bilan in-process
+    if _lead_diff_due(now):
+        await _run_lead_diff_inprocess(now, full=False)
+    if _lead_diff_reconcile_due(now):
+        await _run_lead_diff_inprocess(now, full=True)
 
 
 if __name__ == "__main__":
