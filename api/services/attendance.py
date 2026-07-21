@@ -21,7 +21,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.routers.hourly_plan import _effective_today  # ish oynasi qoidasining yagona manbai
 from api.timeutil import TASHKENT_TZ, today_local, work_minutes
-from db.models import Attendance, AttendanceStatus, OfficeLocation, User
+from db.models import Attendance, AttendanceStatus, OfficeLocation, Role, User
+
+
+# Davomat (kelib-ketish) kuzatiladigan rollar — BOSHLIQDAN TASHQARI HAMMA
+# (xodim, HR, ROP, dasturchi). Boshliq jismoniy davomat ro'yxatlariga kirmaydi.
+# Davomat bilan bog'liq HAMMA joyda (dashboard, statistika, digest, ish jadvali)
+# shu yagona qoida ishlatiladi — aks holda web panel bilan guruh digesti turli
+# sonlarni ko'rsatib qolardi.
+ATTENDANCE_TRACKED_ROLES = tuple(r.value for r in Role if r is not Role.boss)
 
 
 class CheckError(Exception):

@@ -22,7 +22,12 @@ from api.schemas import (
     RegisterFaceRequest,
     UserOut,
 )
-from api.services.attendance import CheckError, perform_check_in, perform_check_out
+from api.services.attendance import (
+    ATTENDANCE_TRACKED_ROLES,
+    CheckError,
+    perform_check_in,
+    perform_check_out,
+)
 from api.services.attendance_digest import send_attendance_digest
 from api.timeutil import today_local
 from db.models import (
@@ -255,7 +260,7 @@ async def dashboard(
         )
     }
     default_working = today.weekday() < 5
-    employees = [u for u in active_users if u.role == Role.employee.value]
+    employees = [u for u in active_users if u.role in ATTENDANCE_TRACKED_ROLES]
     employee_ids = {u.id for u in employees}
     working_today = sum(
         1
@@ -336,9 +341,9 @@ async def employee_summary(
             func.coalesce(func.sum(Attendance.worked_minutes), 0).label("worked_minutes"),
         )
         .join(Attendance, Attendance.user_id == User.id)
-        # Faqat xodimlar — rahbarlar davomat xulosasida ko'rsatilmaydi
-        # (dashboard working_today bilan bir xil qoida).
-        .where(Attendance.date >= since, User.role == Role.employee.value)
+        # Boshliqdan tashqari hamma (ATTENDANCE_TRACKED_ROLES) — dashboard va
+        # guruh digesti bilan bir xil qoida.
+        .where(Attendance.date >= since, User.role.in_(ATTENDANCE_TRACKED_ROLES))
         .group_by(User.id, User.full_name)
         .order_by(func.coalesce(func.sum(Attendance.late_minutes), 0).desc())
     )
@@ -366,7 +371,7 @@ async def _late_stats_data(db: AsyncSession, days: int) -> list[LateStatRow]:
         .where(
             Attendance.date >= since,
             Attendance.late_minutes > 0,
-            User.role == Role.employee.value,
+            User.role.in_(ATTENDANCE_TRACKED_ROLES),
         )
         .order_by(Attendance.date)
     )

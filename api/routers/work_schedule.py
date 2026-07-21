@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, verify_bot_secret
+from api.services.attendance import ATTENDANCE_TRACKED_ROLES
 from api.timeutil import today_local
 from api.schemas import (
     EffectiveDay,
@@ -240,15 +241,17 @@ async def my_week(
 async def all_week(
     telegram_id: int, start: date | None = None, db: AsyncSession = Depends(get_db)
 ) -> list[WorkWeekOut]:
-    """Rahbar uchun: barcha faol XODIMLARNING (rahbarlarning o'zi emas) haftalik
-    jadvali."""
+    """Rahbar uchun: davomat kuzatiladigan barcha faol xodimlarning (Boshliqdan
+    tashqari — ATTENDANCE_TRACKED_ROLES) haftalik jadvali. Jadval davomat
+    kechikishini hisoblashda ishlatilgani uchun ro'yxat davomat qamrovi bilan
+    bir xil bo'lishi shart."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not actor or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
     users = list(
         await db.scalars(
             select(User)
-            .where(User.is_active == True, User.role == Role.employee.value)  # noqa: E712
+            .where(User.is_active == True, User.role.in_(ATTENDANCE_TRACKED_ROLES))  # noqa: E712
             .order_by(User.full_name)
         )
     )

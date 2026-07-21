@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import _effective_today
+from api.services.attendance import ATTENDANCE_TRACKED_ROLES
 from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, today_local
@@ -55,7 +56,9 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
 
     employees = list(
         await db.scalars(
-            select(User).where(User.is_active.is_(True), User.role == Role.employee.value)
+            select(User).where(
+                User.is_active.is_(True), User.role.in_(ATTENDANCE_TRACKED_ROLES)
+            )
         )
     )
     att_rows = {
