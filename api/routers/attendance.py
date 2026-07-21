@@ -28,7 +28,11 @@ from api.services.attendance import (
     perform_check_in,
     perform_check_out,
 )
-from api.services.attendance_digest import send_attendance_digest
+from api.services.attendance_digest import (
+    digest_tick,
+    get_digest_config,
+    send_attendance_digest,
+)
 from api.timeutil import today_local
 from db.models import (
     Attendance,
@@ -439,6 +443,67 @@ async def attendance_digest(
     kind=evening — kun yakuni (ish vaqti, kechikish, chiqmaganlar, kelmaganlar).
     dry_run=true — yubormasdan matnni qaytaradi (sinov uchun)."""
     return await send_attendance_digest(db, kind=kind, chat_id=chat_id, dry_run=dry_run)
+
+
+@router.post("/digest-tick", dependencies=[Depends(verify_bot_secret)])
+async def attendance_digest_tick(db: AsyncSession = Depends(get_db)) -> dict:
+    """Cron har daqiqa chaqiradi — sozlangan vaqt yetgan bo'lsa digestni yuboradi."""
+    return await digest_tick(db)
+
+
+@router.get("/digest-time/{telegram_id}", dependencies=[Depends(verify_bot_secret)])
+async def get_digest_time(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    """Bot uchun: joriy digest vaqtlari (rahbarlar ko'ra oladi)."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user or not user.is_active or user.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ma'lumot faqat rahbarlar uchun")
+    cfg = await get_digest_config(db)
+    return {
+        "morning": f"{cfg.morning_hour:02d}:{cfg.morning_minute:02d}",
+        "evening": f"{cfg.evening_hour:02d}:{cfg.evening_minute:02d}",
+        "morning_enabled": cfg.morning_enabled,
+        "evening_enabled": cfg.evening_enabled,
+    }
+
+
+@router.post("/digest-time", dependencies=[Depends(verify_bot_secret)])
+async def set_digest_time(
+    telegram_id: int,
+    kind: str,
+    hour: int | None = None,
+    minute: int | None = None,
+    enabled: bool | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bot uchun: digest vaqtini/yoqilganligini o'zgartirish (faqat Boshliq/Dasturchi).
+    kind: morning | evening. `hour`/`minute` berilsa vaqt, `enabled` berilsa
+    yoqiq-o'chiq holati yangilanadi."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user or not user.is_active or user.role not in (Role.boss.value, Role.dasturchi.value):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Vaqtni faqat Boshliq o'zgartira oladi")
+    if kind not in ("morning", "evening"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "kind: morning yoki evening")
+    if hour is not None and not (0 <= hour <= 23):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Soat 0-23 oralig'ida bo'lsin")
+    if minute is not None and not (0 <= minute <= 59):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Daqiqa 0-59 oralig'ida bo'lsin")
+
+    cfg = await get_digest_config(db)
+    if hour is not None and minute is not None:
+        setattr(cfg, f"{kind}_hour", hour)
+        setattr(cfg, f"{kind}_minute", minute)
+        # Vaqt oldinga surilsa bugun qayta yuborilishi uchun qo'riqchini tozalaymiz
+        setattr(cfg, f"{kind}_last_posted", None)
+    if enabled is not None:
+        setattr(cfg, f"{kind}_enabled", enabled)
+    await db.commit()
+    await db.refresh(cfg)
+    return {
+        "morning": f"{cfg.morning_hour:02d}:{cfg.morning_minute:02d}",
+        "evening": f"{cfg.evening_hour:02d}:{cfg.evening_minute:02d}",
+        "morning_enabled": cfg.morning_enabled,
+        "evening_enabled": cfg.evening_enabled,
+    }
 
 
 # ─────────────────────────────────────────────

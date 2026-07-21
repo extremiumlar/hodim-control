@@ -788,3 +788,34 @@ async def attendance_late_stats(telegram_id: int, days: int = 7) -> list[dict] |
         return None
     resp.raise_for_status()
     return resp.json()
+
+
+async def get_attendance_digest_time(telegram_id: int) -> dict | None:
+    """Davomat digesti vaqtlari (rahbarlar). Ruxsat yo'q — None."""
+    resp = await _get_client().get(f"/attendance/digest-time/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_attendance_digest_time(
+    telegram_id: int,
+    kind: str,
+    hour: int | None = None,
+    minute: int | None = None,
+    enabled: bool | None = None,
+) -> dict | None:
+    """Davomat digesti vaqtini/holatini o'zgartirish (faqat Boshliq). Ruxsat yo'q — None."""
+    params: dict = {"telegram_id": telegram_id, "kind": kind}
+    if hour is not None:
+        params["hour"] = hour
+    if minute is not None:
+        params["minute"] = minute
+    if enabled is not None:
+        params["enabled"] = enabled
+    resp = await _get_client().post("/attendance/digest-time", params=params)
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()

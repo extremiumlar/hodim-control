@@ -32,22 +32,14 @@ async def send_weekly_digest() -> None:
         logger.info("Haftalik digest: %s", body)
 
 
-async def send_attendance_morning_digest() -> None:
-    """Ertalabki davomat digesti guruhga — kim keldi, kim kechikdi, kim kelmadi."""
+async def attendance_digest_tick() -> None:
+    """Davomat digesti tekshiruvi (har daqiqa) — vaqt bazadan sozlanadi
+    (botdan /davomat_vaqt), API o'zi yetganini tekshirib yuboradi."""
     body = await call_api(
-        "/attendance/digest?kind=morning", timeout=60, label="Ertalabki davomat digesti"
+        "/attendance/digest-tick", timeout=60, label="Davomat digesti tick"
     )
-    if body is not None:
-        logger.info("Ertalabki davomat digesti: %s", body)
-
-
-async def send_attendance_evening_digest() -> None:
-    """Kechki davomat digesti guruhga — kun yakuni (ish vaqti, chiqmaganlar)."""
-    body = await call_api(
-        "/attendance/digest?kind=evening", timeout=60, label="Kechki davomat digesti"
-    )
-    if body is not None:
-        logger.info("Kechki davomat digesti: %s", body)
+    if body is not None and body.get("fired"):
+        logger.info("Davomat digesti yuborildi: %s", body)
 
 
 async def send_monthly_digest() -> None:

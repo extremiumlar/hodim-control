@@ -748,3 +748,23 @@ class AnketaAnswer(Base):
     # kuzatiladi — tugallanmagan sessiyani qisman yuklash va keyin faqat yangi
     # javoblarni qo'shib yuklash uchun.
     ingested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AttendanceDigestConfig(Base):
+    """Davomat digesti guruhga yuborish sozlamasi (yagona qator, id=1).
+    Rahbar botdan (/davomat_vaqt) vaqtlarni o'zgartira oladi; cron har daqiqa
+    tekshiradi va vaqt yetganда yuboradi. `*_last_posted` — bir kunda ikki marta
+    yubormaslik uchun qo'riqchi (ertalabki va kechki alohida)."""
+
+    __tablename__ = "attendance_digest_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
+    morning_hour: Mapped[int] = mapped_column(Integer, default=9)
+    morning_minute: Mapped[int] = mapped_column(Integer, default=30)
+    evening_hour: Mapped[int] = mapped_column(Integer, default=22)
+    evening_minute: Mapped[int] = mapped_column(Integer, default=0)
+    morning_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    evening_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    morning_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
+    evening_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

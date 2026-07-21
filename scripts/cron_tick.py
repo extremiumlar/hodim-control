@@ -60,6 +60,7 @@ def _due(now: datetime) -> list:
     add("/anketa/tick", timeout=120)                 # rejalashtirilgan anketani boshlash
     add("/knowledge/tick", timeout=120)              # bilim bazasi AI ishlovi (draft yo'q — no-op)
     add("/playbook/tick", timeout=120)               # playbook qurish bosqichlari (build yo'q — no-op)
+    add("/attendance/digest-tick", timeout=60)       # davomat digesti (API vaqtni bazadan tekshiradi)
 
     # ── Interval ──
     if m % 15 == 0:
@@ -86,11 +87,9 @@ def _due(now: datetime) -> list:
         add("/auto-plan/build-targets", timeout=120)
     if h == 9 and m == 35:
         add("/knowledge/stale-tick", timeout=60)     # eskirgan sana-sezgir yozuvlar eslatmasi
-    # Davomat digesti guruhga (dam olish kunida API o'zi yubormaydi)
-    if h == cfg.ATTENDANCE_MORNING_HOUR and m == cfg.ATTENDANCE_MORNING_MINUTE:
-        add("/attendance/digest?kind=morning", timeout=60)
-    if h == cfg.ATTENDANCE_EVENING_HOUR and m == cfg.ATTENDANCE_EVENING_MINUTE:
-        add("/attendance/digest?kind=evening", timeout=60)
+    # DIQQAT: davomat digesti bu yerda EMAS — vaqti bazadan (botdan /davomat_vaqt
+    # bilan) sozlanadi, shuning uchun har daqiqa chaqiriladigan
+    # /attendance/digest-tick o'zi tekshiradi (yuqorida).
 
     # ── Haftalik (yakshanba) ──
     if dow_sun and h == cfg.AI_COMPUTE_PROFILES_HOUR and m == 0:

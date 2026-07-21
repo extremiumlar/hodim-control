@@ -9,6 +9,7 @@ kunma-kun late_minutes)."""
 import html
 
 from aiogram import F, Router
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -118,3 +119,73 @@ async def send_to_group(callback: CallbackQuery) -> None:
         await callback.answer("✅ Guruhga yuborildi.")
     except Exception:
         await callback.answer("Guruhga yuborib bo'lmadi — bot guruhda bormi?", show_alert=True)
+
+
+# ── Digest vaqtini sozlash (/davomat_vaqt) ────────────────────────────────
+
+USAGE = (
+    "🕐 <b>Davomat digesti vaqti</b>\n\n"
+    "Hozirgi: ertalabki <b>{morning}</b>{m_off}, kechki <b>{evening}</b>{e_off}\n\n"
+    "O'zgartirish (faqat Boshliq):\n"
+    "<code>/davomat_vaqt ertalab 09:30</code>\n"
+    "<code>/davomat_vaqt kechqurun 22:00</code>\n"
+    "O'chirish/yoqish:\n"
+    "<code>/davomat_vaqt ertalab off</code> · <code>/davomat_vaqt kechqurun on</code>"
+)
+
+_KIND_WORDS = {
+    "ertalab": "morning", "ertalabki": "morning", "morning": "morning",
+    "kechqurun": "evening", "kechki": "evening", "kech": "evening", "evening": "evening",
+}
+
+
+def _fmt_cfg(cfg: dict) -> str:
+    return USAGE.format(
+        morning=cfg["morning"],
+        evening=cfg["evening"],
+        m_off="" if cfg.get("morning_enabled", True) else " (o'chiq)",
+        e_off="" if cfg.get("evening_enabled", True) else " (o'chiq)",
+    )
+
+
+@router.message(Command("davomat_vaqt"))
+async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
+    """Davomat digesti vaqtini ko'rish/o'zgartirish. Argumentsiz — joriy holat."""
+    cfg = await api_client.get_attendance_digest_time(message.from_user.id)
+    if cfg is None:
+        await message.reply("Bu buyruq faqat rahbarlar uchun.")
+        return
+
+    args = (command.args or "").split()
+    if not args:
+        await message.reply(_fmt_cfg(cfg))
+        return
+
+    kind = _KIND_WORDS.get(args[0].lower())
+    if kind is None or len(args) < 2:
+        await message.reply("Format: <code>/davomat_vaqt ertalab 09:30</code>\n\n" + _fmt_cfg(cfg))
+        return
+
+    value = args[1].lower()
+    if value in ("off", "o'chir", "ochir"):
+        updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=False)
+    elif value in ("on", "yoq"):
+        updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=True)
+    else:
+        try:
+            hh, mm = value.split(":")
+            hour, minute = int(hh), int(mm)
+        except ValueError:
+            await message.reply("Vaqt formati: <code>09:30</code>")
+            return
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            await message.reply("Vaqt noto'g'ri: soat 0-23, daqiqa 0-59.")
+            return
+        updated = await api_client.set_attendance_digest_time(
+            message.from_user.id, kind, hour=hour, minute=minute
+        )
+
+    if updated is None:
+        await message.reply("Vaqtni faqat Boshliq o'zgartira oladi.")
+        return
+    await message.reply("✅ Saqlandi.\n\n" + _fmt_cfg(updated))

@@ -23,7 +23,13 @@ from api.services.attendance import ATTENDANCE_TRACKED_ROLES
 from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, today_local
-from db.models import Attendance, ExcusedDay, ExcusedStatus, Role, User
+from db.models import (
+    Attendance,
+    AttendanceDigestConfig,
+    ExcusedDay,
+    ExcusedStatus,
+    User,
+)
 
 WEEKDAYS_UZ = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
 MONTHS_UZ = [
@@ -47,11 +53,26 @@ def _name(u: User) -> str:
     return html.escape(u.full_name)
 
 
+def _minute_of_day(dt: datetime) -> int:
+    """naive-UTC vaqtdan Toshkent kunidagi daqiqa (0-1439)."""
+    local = dt.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+    return local.hour * 60 + local.minute
+
+
+def _hm_to_min(hm: str) -> int:
+    h, m = hm.split(":")
+    return int(h) * 60 + int(m)
+
+
 async def collect_day(db: AsyncSession, day=None) -> dict:
     """Kunning davomat manzarasi — ikkala digest uchun YAGONA yig'uvchi.
 
-    Qaytaradi: {day, expected, present, late, absent, excused, no_checkout}
-    (`present` — kelganlar; `late` — ular ichidan kechikkanlari)."""
+    Qaytaradi: {day, expected, present, late, early_in, absent, excused,
+    no_checkout, early_out, late_out}. Har bir "vaqt" ro'yxati (user, att, daqiqa)
+    uchligi: `early_in` — jadvaldan necha daqiqa erta kelgan; `early_out` — erta
+    ketgan; `late_out` — ish oynasi tugagach necha daqiqa ortiqcha qolgan.
+    Kechikish (`late`) Attendance.late_minutes'dan (grace bilan hisoblangan),
+    qolganlari shu yerda ish jadvali oynasidan hisoblanadi."""
     day = day or today_local()
 
     employees = list(
@@ -77,12 +98,15 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
     expected: list[User] = []  # bugun ishlashi kerak bo'lganlar
     present: list[tuple[User, Attendance]] = []
     late: list[tuple[User, Attendance]] = []
+    early_in: list[tuple[User, Attendance, int]] = []
     absent: list[User] = []
     excused: list[User] = []
     no_checkout: list[tuple[User, Attendance]] = []
+    early_out: list[tuple[User, Attendance, int]] = []
+    late_out: list[tuple[User, Attendance, int]] = []
 
     for u in employees:
-        is_working, _s, _e = await _effective_today(db, u, day)
+        is_working, start, end = await _effective_today(db, u, day)
         if not is_working:
             continue  # dam olish kuni — ro'yxatga kirmaydi
         expected.append(u)
@@ -92,14 +116,29 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
             present.append((u, att))
             if att.late_minutes > 0:
                 late.append((u, att))
+            elif start:
+                # Kechikmagan bo'lsa — jadvaldan qancha erta kelgani
+                early = _hm_to_min(start) - _minute_of_day(att.check_in_time)
+                if early > 0:
+                    early_in.append((u, att, early))
+
             if att.check_out_time is None:
                 no_checkout.append((u, att))
+            elif end:
+                diff = _minute_of_day(att.check_out_time) - _hm_to_min(end)
+                if diff > 0:
+                    late_out.append((u, att, diff))
+                elif att.early_leave_minutes > 0:
+                    early_out.append((u, att, att.early_leave_minutes))
         elif u.id in excused_ids:
             excused.append(u)
         else:
             absent.append(u)
 
     late.sort(key=lambda p: p[1].late_minutes, reverse=True)
+    early_in.sort(key=lambda p: p[2], reverse=True)
+    early_out.sort(key=lambda p: p[2], reverse=True)
+    late_out.sort(key=lambda p: p[2], reverse=True)
     present.sort(key=lambda p: p[1].check_in_time or datetime.max)
 
     return {
@@ -107,9 +146,12 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
         "expected": expected,
         "present": present,
         "late": late,
+        "early_in": early_in,
         "absent": absent,
         "excused": excused,
         "no_checkout": no_checkout,
+        "early_out": early_out,
+        "late_out": late_out,
     }
 
 
@@ -127,9 +169,20 @@ def build_morning_text(data: dict) -> str:
         f"keldi: <b>{len(present)}</b> · kelmadi: <b>{len(data['absent'])}</b>",
     ]
 
-    if on_time:
-        lines += ["", f"✅ <b>O'z vaqtida ({len(on_time)}):</b>"]
-        lines += [f"  • {_name(u)} — {_fmt_local(a.check_in_time)}" for u, a in on_time]
+    early_in = data["early_in"]
+    early_ids = {u.id for u, _, _ in early_in}
+
+    if early_in:
+        lines += ["", f"🌟 <b>Erta keldi ({len(early_in)}):</b>"]
+        lines += [
+            f"  • {_name(u)} — {_fmt_local(a.check_in_time)} ({mins} daq erta)"
+            for u, a, mins in early_in
+        ]
+
+    exact = [(u, a) for u, a in on_time if u.id not in early_ids]
+    if exact:
+        lines += ["", f"✅ <b>O'z vaqtida ({len(exact)}):</b>"]
+        lines += [f"  • {_name(u)} — {_fmt_local(a.check_in_time)}" for u, a in exact]
 
     if late:
         total = sum(a.late_minutes for _, a in late)
@@ -162,9 +215,24 @@ def build_evening_text(data: dict) -> str:
 
     if late:
         total = sum(a.late_minutes for _, a in late)
-        lines += ["", f"⏰ <b>Kechikkanlar ({len(late)}) — jami {total} daq:</b>"]
+        lines += ["", f"⏰ <b>Kech kelganlar ({len(late)}) — jami {total} daq:</b>"]
         lines += [f"  • {_name(u)} +{a.late_minutes} daq ({_fmt_local(a.check_in_time)})"
                   for u, a in late]
+
+    if data["early_in"]:
+        lines += ["", f"🌟 <b>Erta kelganlar ({len(data['early_in'])}):</b>"]
+        lines += [f"  • {_name(u)} {mins} daq erta ({_fmt_local(a.check_in_time)})"
+                  for u, a, mins in data["early_in"]]
+
+    if data["early_out"]:
+        lines += ["", f"🏃 <b>Erta ketganlar ({len(data['early_out'])}):</b>"]
+        lines += [f"  • {_name(u)} {mins} daq erta ({_fmt_local(a.check_out_time)})"
+                  for u, a, mins in data["early_out"]]
+
+    if data["late_out"]:
+        lines += ["", f"🌜 <b>Kech ketganlar ({len(data['late_out'])}):</b>"]
+        lines += [f"  • {_name(u)} +{mins} daq ortiqcha ({_fmt_local(a.check_out_time)})"
+                  for u, a, mins in data["late_out"]]
 
     if present:
         lines += ["", "🕐 <b>Ish vaqti:</b>"]
@@ -186,6 +254,55 @@ def build_evening_text(data: dict) -> str:
                   ", ".join(_name(u) for u in data["excused"])]
 
     return "\n".join(lines)
+
+
+async def get_digest_config(db: AsyncSession) -> AttendanceDigestConfig:
+    """Sozlama qatorini (id=1) oladi, bo'lmasa defaultlar bilan yaratadi."""
+    cfg = await db.get(AttendanceDigestConfig, 1)
+    if cfg is None:
+        cfg = AttendanceDigestConfig(id=1)
+        db.add(cfg)
+        await db.commit()
+        await db.refresh(cfg)
+    return cfg
+
+
+async def digest_tick(db: AsyncSession) -> dict:
+    """Cron har daqiqa chaqiradi. Sozlangan vaqt YETGAN yoki O'TGAN va bugun hali
+    yuborilmagan bo'lsa — tegishli digestni yuboradi. `>=` semantikasi ataylab:
+    cron aynan o'sha daqiqani o'tkazib yuborsa ham (restart, kechikish) keyingi
+    tick'da baribir yuboriladi; `*_last_posted` bir kunda ikki marta yuborilishdan
+    saqlaydi (lid digesti group-tick bilan bir xil naqsh)."""
+    cfg = await get_digest_config(db)
+    now = datetime.now(TASHKENT_TZ)
+    today = now.date()
+    fired: list[dict] = []
+
+    for kind, enabled, hour, minute, last in (
+        ("morning", cfg.morning_enabled, cfg.morning_hour, cfg.morning_minute, cfg.morning_last_posted),
+        ("evening", cfg.evening_enabled, cfg.evening_hour, cfg.evening_minute, cfg.evening_last_posted),
+    ):
+        if not enabled or last == today:
+            continue
+        if (now.hour, now.minute) < (hour, minute):
+            continue
+        result = await send_attendance_digest(db, kind=kind)
+        # Dam olish kuni (yuborilmadi) bo'lsa ham bugungi kunni belgilaymiz —
+        # aks holda har daqiqada qayta urinib, keraksiz ish bajarilaverardi.
+        if kind == "morning":
+            cfg.morning_last_posted = today
+        else:
+            cfg.evening_last_posted = today
+        await db.commit()
+        fired.append({"kind": kind, **result})
+
+    if fired:
+        return {"fired": True, "results": fired}
+    return {
+        "fired": False,
+        "morning": f"{cfg.morning_hour:02d}:{cfg.morning_minute:02d}",
+        "evening": f"{cfg.evening_hour:02d}:{cfg.evening_minute:02d}",
+    }
 
 
 async def send_attendance_digest(
