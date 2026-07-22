@@ -460,8 +460,12 @@ class HotLead(Base):
     lead_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # CRM "#8323326"
     contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Mijozning BARCHA ma'lum kontakt raqamlari (CRM ko'pincha bir nechtasini beradi) —
+    # qo'ng'iroq tekshiruvi faqat `phone`ga emas, shu ro'yxatning hammasiga qaraydi
+    # (operator ikkinchi raqamga qo'ng'iroq qilgan bo'lishi mumkin).
+    phones: Mapped[list | None] = mapped_column(JSON, nullable=True)
     source: Mapped[str | None] = mapped_column(String(64), nullable=True)  # FACEBOOK_FORM ...
-    responsible_crm_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # responsibleById
+    responsible_crm_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # responsibleById (JORIY)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     created_ts: Mapped[int] = mapped_column(Integer)  # CRM createdTimestamp (unix sekund)
     detected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -470,7 +474,22 @@ class HotLead(Base):
     first_call_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Lid yaratilishidan birinchi aloqa qo'ng'irog'igacha sekund (speed-to-lead)
     first_call_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Shu lid uchun oxirgi marta qo'ng'iroq TEKSHIRILGAN payt (topilmagan bo'lsa ham) —
+    # eskalatsiya navbatda hali tekshirilmagan lidni "kechikdi" deb yolg'on
+    # aniqlamasligi uchun (backlog holatida poyga himoyasi).
+    last_call_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Eskalatsiyadan KEYIN qo'ng'iroq/qonuniy yopilish topilsa, guruhga tuzatuvchi
+    # xabar shu qo'riqchi bilan bir marta yuboriladi.
+    correction_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # CRM'da mas'ul boshqa operatorga o'tkazilgani aniqlangan payt (diff-engine
+    # CrmLeadState orqali) — aniqlansa `responsible_crm_id`/`user_id` YANGI
+    # mas'ulga ko'chiriladi, eski operator endi ayblanmaydi.
+    reassigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Lid qo'ng'iroqsiz, lekin QONUNIY sabab bilan yopilgan bo'lsa (spam/dublikat/
+    # noto'g'ri raqam — terminal bosqich), shu bosqich nomi — eskalatsiya to'xtaydi.
+    resolved_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # baseline | notified | claimed | called | resolved_no_call
     status: Mapped[str] = mapped_column(String(16), default="notified", index=True)
 
 

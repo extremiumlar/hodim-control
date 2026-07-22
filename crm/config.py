@@ -19,6 +19,17 @@ CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS = [
     int(x) for x in os.getenv("CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
     if x.strip().isdigit()
 ]
+# Issiq lid: lid qo'ng'iroqsiz, lekin QONUNIY sabab bilan yopilgan bo'lishi mumkin
+# (spam/dublikat/noto'g'ri raqam va h.k.) — shu holatda eskalatsiya davom etishi
+# noto'g'ri. Bu bosqich ID'lariga tushgan lid "resolved_no_call" deb belgilanadi,
+# eskalatsiya to'xtaydi. Bo'sh — funksiya o'chiq (xatti-harakat o'zgarmaydi).
+# Sizning Uysot voronkangizdagi mos bosqich ID'larini (Rad etildi/Spam/Noto'g'ri
+# raqam va h.k.) shu yerga to'ldiring — /pipe/all javobidan yoki dashboard'dan.
+CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS = [
+    int(x) for x in os.getenv("CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
+    if x.strip().isdigit()
+]
+
 # Diff-engine (kunlik statistika, lead_diff.py): chegaralangan tez skan qancha
 # kun orqaga yaratilgan lidlarni qamrab olishi kerak — undan eskilari kamdan-kam
 # faol bo'ladi. Tungi to'liq solishtiruv (reconcile) baribir BUTUN bazani

@@ -22,6 +22,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.services import hot_lead as hot_lead_service
 from api.services import lead_diff
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
@@ -118,6 +119,23 @@ async def _freshness_line(db: AsyncSession) -> str | None:
         return None
     local_ts = ts.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
     return f"🕐 Lid/tashrif ma'lumoti yangilangan: {local_ts:%H:%M}"
+
+
+async def _hot_lead_line(db: AsyncSession, day: date) -> str | None:
+    """Issiq lid aniqlik hisoboti — bugun umuman issiq lid bo'lmasa jim
+    (funksiya o'chiq/faoliyatsiz kunda shovqin qilmasin)."""
+    report = await hot_lead_service.daily_accuracy_report(db, day)
+    if report["total"] == 0:
+        return None
+    parts = [f"🔥 Issiq lid: {report['total']} ta"]
+    if report["escalated"]:
+        parts.append(
+            f"eskalatsiya {report['escalated']} "
+            f"(✅{report['escalated_false_alarm']} tasdiqlandi · "
+            f"🚫{report['escalated_legit_closed']} qonuniy yopildi · "
+            f"⚠️{report['escalated_still_open']} hali ochiq)"
+        )
+    return " — ".join(parts)
 
 
 async def _tasks_by_user(db: AsyncSession, day: date) -> dict[int, tuple[int, int]]:
@@ -247,6 +265,9 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     freshness = await _freshness_line(db)
     if freshness:
         parts.append(freshness)
+    hot_lead_line = await _hot_lead_line(db, day)
+    if hot_lead_line:
+        parts.append(hot_lead_line)
     parts.append("")
     parts.append(
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "

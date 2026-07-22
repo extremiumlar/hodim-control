@@ -75,7 +75,9 @@ class CRMAdapter(ABC):
 
     async def get_lead_detail(self, lead_id: int) -> dict | None:
         """Ixtiyoriy (issiq lid uchun): bitta lidning kontakt ma'lumoti —
-        {"id", "name", "contact_name", "phone", "source", "responsible_id"}.
+        {"id", "name", "contact_name", "phone", "phones", "source", "responsible_id"}.
+        `phone` — birinchi (ko'rsatish uchun), `phones` — BARCHA ma'lum kontakt
+        raqamlari ro'yxati (qo'ng'iroq tekshiruvi hammasini ko'rib chiqishi uchun).
         `None` — topilmadi yoki CRM xatosi. Qo'llab-quvvatlamaydigan adapterlar `None`."""
         return None
 

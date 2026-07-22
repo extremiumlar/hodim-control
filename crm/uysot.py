@@ -731,12 +731,12 @@ class UysotAdapter(CRMAdapter):
                 return None
 
         contact_name = None
-        phone = None
+        phones: list[str] = []
         for contact in data.get("contacts") or []:
             contact_name = contact_name or contact.get("name")
             for p in contact.get("phones") or []:
-                if p:
-                    phone = phone or p
+                if p and p not in phones:
+                    phones.append(p)
         source = None
         for attribution in data.get("attributions") or []:
             channel = attribution.get("channel") or {}
@@ -746,7 +746,11 @@ class UysotAdapter(CRMAdapter):
             "id": data.get("id"),
             "name": data.get("name"),
             "contact_name": contact_name,
-            "phone": phone,
+            # `phone` — birinchisi (ko'rsatish uchun), `phones` — BARCHA ma'lum
+            # raqamlar (mijozning ikkinchi/uchinchi raqami bo'lishi mumkin —
+            # operator qaysi biriga qo'ng'iroq qilgani noma'lum, hammasi tekshiriladi).
+            "phone": phones[0] if phones else None,
+            "phones": phones,
             "source": source,
             "responsible_id": data.get("responsibleById"),
         }

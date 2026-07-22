@@ -7,7 +7,7 @@ o'chirsa ham no-op. dry_run — yozmasdan/yubormasdan nima bo'lishini qaytaradi.
 
 `/claim` — bot callback'dan: operator "Qabul qildim" tugmasini bosdi
 (aniqlash→qabul reaksiya vaqti qayd etiladi)."""
-from datetime import datetime
+from datetime import date as date_type, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.services import hot_lead as hot_lead_service
+from api.timeutil import today_local
 from db.models import HotLead, User
 
 router = APIRouter(prefix="/hot-lead", tags=["hot-lead"], dependencies=[Depends(verify_bot_secret)])
@@ -36,6 +37,13 @@ async def tick(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dic
     if not await _runtime_enabled(db) and not dry_run:
         return {"off": True}
     return await hot_lead_service.tick(db, dry_run=dry_run)
+
+
+@router.get("/accuracy-report")
+async def accuracy_report(day: date_type | None = None, db: AsyncSession = Depends(get_db)) -> dict:
+    """Kunlik issiq-lid aniqlik hisoboti — nazorat uchun: jami/vaqtida/eskalatsiya
+    (yolg'on signal avtomatik tuzatilgan/qonuniy yopilgan/hali haqiqiy muammo)."""
+    return await hot_lead_service.daily_accuracy_report(db, day or today_local())
 
 
 class ClaimIn(BaseModel):
