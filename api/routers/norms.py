@@ -9,10 +9,19 @@ from db.models import AuditLog, Norm, Role, User
 
 router = APIRouter(prefix="/norms", tags=["norms"])
 
-# Barcha qo'llab-quvvatlanadigan ko'rsatkichlar. "video" — mobilograf kabi lavozimlar
-# uchun: kunlik tasdiqlangan videolar soni (MobilografVideo jadvalidan hisoblanadi).
-METRIC_LABELS = {"suhbat": "Suhbatlar soni", "tashrif": "Tashriflar soni", "video": "Videolar soni"}
+# Barcha qo'llab-quvvatlanadigan ko'rsatkichlar. "oddiy_video"/"dumaloq_video" —
+# mobilograf kabi lavozimlar uchun: kunlik tasdiqlangan videolar soni (turi bo'yicha
+# alohida — MobilografVideo.video_type dan hisoblanadi).
+METRIC_LABELS = {
+    "suhbat": "Suhbatlar soni",
+    "tashrif": "Tashriflar soni",
+    "oddiy_video": "Oddiy videolar soni",
+    "dumaloq_video": "Dumaloq (doira) videolar soni",
+}
 DEFAULT_METRICS = ["suhbat", "tashrif"]
+
+# Norma/hisob metrikasi kalitidan MobilografVideo.video_type qiymatiga moslash.
+VIDEO_METRIC_TYPES = {"oddiy_video": "oddiy", "dumaloq_video": "dumaloq"}
 
 
 def metrics_for(user: User) -> list[str]:

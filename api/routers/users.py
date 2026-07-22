@@ -243,6 +243,8 @@ async def create_user(
         # CRM ID faqat Boshliq tomonidan belgilanishi mumkin — boshqa rol yuborsa jim
         # e'tiborsiz qoldiriladi (frontendda ham hr uchun bu maydon ko'rsatilmaydi).
         crm_external_id=new_crm_id,
+        # is_seat ham xuddi shunday — faqat Boss/Dasturchi belgilay oladi.
+        is_seat=payload.is_seat if actor.role in {Role.boss.value, Role.dasturchi.value} else False,
     )
     db.add(user)
     await db.flush()
@@ -279,6 +281,14 @@ async def get_invite_link(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    # "O'rin" (seat) uchun link doim ishlaydi — bot_started bo'lishidan qat'i nazar
+    # har chaqiriqda yangi token beriladi, shu orqali joriy egani boshqasiga
+    # almashtirish mumkin (eski token endi yaroqsiz).
+    if user.is_seat:
+        user.invite_token = secrets.token_urlsafe(16)
+        await db.commit()
+        return {"invite_link": _invite_link(user.invite_token), "already_started": False}
 
     if user.bot_started:
         return {"invite_link": None, "already_started": True}
@@ -321,6 +331,21 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
             # UNIQUE(telegram_id) cheklovi ikkala UPDATE bir xil tranzaksiyada noto'g'ri
             # tartibda bajarilsa xato berishi mumkin.
             await db.flush()
+
+        # "O'rin" (seat) egasi almashishi — kim qachon egallaganini kuzatish uchun
+        # alohida audit yozuvi (yuqoridagi "conflicting" holatidan mustaqil: bu yerda
+        # gap shu SEAT userining o'zi ilgari boshqa Telegram akkountga bog'langan
+        # bo'lishida, hozirgi so'rov esa UNI o'chirmasdan yangi qiymat bilan almashtiradi).
+        if user.is_seat and user.telegram_id and user.telegram_id != payload.telegram_id:
+            db.add(
+                AuditLog(
+                    actor_id=None,
+                    action="mobilograf_seat_reassigned",
+                    target_user_id=user.id,
+                    before={"telegram_id": user.telegram_id},
+                    after={"telegram_id": payload.telegram_id},
+                )
+            )
 
         user.telegram_id = payload.telegram_id
         user.bot_started = True

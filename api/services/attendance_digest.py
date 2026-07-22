@@ -321,9 +321,9 @@ async def send_attendance_digest(
     if dry_run:
         return {"sent": False, "dry_run": True, "text": text}
 
-    targets = digest_group_targets(chat_id)
+    targets = await digest_group_targets(db, chat_id)
     if not targets:
-        return {"sent": False, "reason": "guruh sozlanmagan (TELEGRAM_GROUP_CHAT_ID)"}
+        return {"sent": False, "reason": "guruh sozlanmagan (monitored_groups: main/stats)"}
 
     delivered = 0
     for cid in targets:

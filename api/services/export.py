@@ -6,7 +6,7 @@ from openpyxl.styles import Font
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.routers.norms import METRIC_LABELS, metrics_for
+from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, metrics_for
 from api.routers.stats import VISIT_STAGE_NAME, _confirmed_videos_count
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive
 from db.models import (
@@ -26,7 +26,12 @@ from db.models import (
 # Ustunlar tartibi barqaror bo'lishi uchun (faqat faol xodimlar lavozimlarida
 # uchraydigan metrikalar ko'rsatiladi, lekin tartib doim shu).
 METRIC_ORDER = list(METRIC_LABELS)
-METRIC_TOTAL_LABELS = {"suhbat": "Suhbatlar (jami)", "tashrif": "Tashriflar (jami)", "video": "Videolar (jami)"}
+METRIC_TOTAL_LABELS = {
+    "suhbat": "Suhbatlar (jami)",
+    "tashrif": "Tashriflar (jami)",
+    "oddiy_video": "Oddiy videolar (jami)",
+    "dumaloq_video": "Dumaloq videolar (jami)",
+}
 
 # CRM snapshot ustunlari (operator kesimi — crm_visit_external_id orqali bog'lanadi)
 CRM_HEADERS = [
@@ -149,8 +154,11 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
             "suhbat": sum(r.conversations_count for r in results),
             "tashrif": sum(r.visits_count for r in results),
         }
-        if "video" in metrics_by_user[emp.id]:
-            totals["video"] = await _confirmed_videos_count(db, emp.id, date_from, date_to)
+        for metric_key, video_type in VIDEO_METRIC_TYPES.items():
+            if metric_key in metrics_by_user[emp.id]:
+                totals[metric_key] = await _confirmed_videos_count(
+                    db, emp.id, date_from, date_to, video_type=video_type
+                )
 
         metric_cells = [
             totals.get(m, 0) if m in metrics_by_user[emp.id] else "—" for m in used_metrics

@@ -22,6 +22,7 @@ export interface User {
   position: PositionBrief | null;
   bot_started: boolean;
   is_active: boolean;
+  is_seat: boolean;
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
   has_face: boolean;

@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_roles, verify_bot_secret
-from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, can_manage_norms, metrics_for
 from api.schemas import MobilografCreate, MobilografManualCreate, MobilografOut, MobilografReact
 from api.timeutil import local_range_utc_naive
 from db.models import AuditLog, MobilografSource, MobilografStatus, MobilografVideo, Role, User
@@ -24,6 +24,7 @@ async def create_mobilograf_video(payload: MobilografCreate, db: AsyncSession = 
         telegram_message_id=payload.telegram_message_id,
         group_chat_id=payload.group_chat_id,
         status=MobilografStatus.pending.value,
+        video_type=payload.video_type,
     )
     db.add(video)
     await db.commit()
@@ -46,11 +47,13 @@ async def set_manual_mobilograf_videos(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
     if not can_manage_norms(actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga video kiritish huquqingiz yo'q")
-    if "video" not in metrics_for(target):
+    if payload.metric_type not in VIDEO_METRIC_TYPES or payload.metric_type not in metrics_for(target):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            f"Bu xodimning lavozimi uchun '{METRIC_LABELS['video']}' ko'rsatkichi kuzatilmaydi",
+            f"Bu xodimning lavozimi uchun '{METRIC_LABELS.get(payload.metric_type, payload.metric_type)}' "
+            "ko'rsatkichi kuzatilmaydi",
         )
+    video_type = VIDEO_METRIC_TYPES[payload.metric_type]
 
     day_start_utc, day_end_utc = local_range_utc_naive(payload.date, payload.date)
     before_count = (
@@ -58,6 +61,7 @@ async def set_manual_mobilograf_videos(
             select(func.count(MobilografVideo.id)).where(
                 MobilografVideo.user_id == target.id,
                 MobilografVideo.source == MobilografSource.manual.value,
+                MobilografVideo.video_type == video_type,
                 MobilografVideo.sent_at >= day_start_utc,
                 MobilografVideo.sent_at < day_end_utc,
             )
@@ -68,6 +72,7 @@ async def set_manual_mobilograf_videos(
         delete(MobilografVideo).where(
             MobilografVideo.user_id == target.id,
             MobilografVideo.source == MobilografSource.manual.value,
+            MobilografVideo.video_type == video_type,
             MobilografVideo.sent_at >= day_start_utc,
             MobilografVideo.sent_at < day_end_utc,
         )
@@ -84,6 +89,7 @@ async def set_manual_mobilograf_videos(
                 sent_at=day_start_utc,
                 status=MobilografStatus.confirmed.value,
                 source=MobilografSource.manual.value,
+                video_type=video_type,
                 confirmed_by=actor.id,
                 confirmed_at=now,
             )
@@ -94,13 +100,22 @@ async def set_manual_mobilograf_videos(
             actor_id=actor.id,
             action="mobilograf_manual_set",
             target_user_id=target.id,
-            before={"confirmed_count": before_count, "date": payload.date.isoformat()},
-            after={"confirmed_count": payload.confirmed_count, "date": payload.date.isoformat()},
+            before={"metric_type": payload.metric_type, "confirmed_count": before_count, "date": payload.date.isoformat()},
+            after={
+                "metric_type": payload.metric_type,
+                "confirmed_count": payload.confirmed_count,
+                "date": payload.date.isoformat(),
+            },
         )
     )
     await db.commit()
 
-    return {"user_id": target.id, "date": payload.date.isoformat(), "confirmed_count": payload.confirmed_count}
+    return {
+        "user_id": target.id,
+        "date": payload.date.isoformat(),
+        "metric_type": payload.metric_type,
+        "confirmed_count": payload.confirmed_count,
+    }
 
 
 @router.post("/react", response_model=MobilografOut, dependencies=[Depends(verify_bot_secret)])

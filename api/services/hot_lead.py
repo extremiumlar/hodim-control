@@ -7,9 +7,14 @@ Oqim (har tick):
      Birinchi ishga tushishda mavjud lidlar `baseline` sifatida jimgina yoziladi
      (eski lidlar uchun spam bo'lmasin).
   2. XABAR — CRM tayinlagan operator (`responsibleById` →
-     `users.crm_visit_external_id`) ga darhol DM: kontakt ismi, telefon, manba +
-     "Qabul qildim" tugmasi. Mos operator topilmasa guruhga tushadi (egasiz lid
-     ko'rinmay qolmasin). Taqsimotni CRM qiladi — biz buzmaymiz.
+     `users.crm_visit_external_id`) ga darhol DM: kontakt ismi, telefon, manba.
+     Mos operator topilmasa guruhga tushadi (egasiz lid ko'rinmay qolmasin).
+     Taqsimotni CRM qiladi — biz buzmaymiz. Qabul TUGMASI YO'Q — operator
+     hech narsa bosishi shart emas, "qabul" mezoni har doim HAQIQIY qo'ng'iroq
+     (4-bandga qarang), tugma faqat qo'shimcha ish qadami bo'lardi (2026-07-22
+     olib tashlandi: eski xabarlardagi tugma hali ishlaydi — orqaga moslik
+     uchun `/hot-lead/claim` endpointi va bot callback'i saqlanadi, faqat
+     ENDI YANGI xabarlarga tugma qo'shilmaydi).
   3. CRM HOLATI SINXRONI — diff-engine (`lead_diff.py`) allaqachon to'plagan
      `CrmLeadState`dan (qo'shimcha CRM so'rovisiz): mas'ul BOSHQA operatorga
      o'tkazilgan bo'lsa yozuv yangi mas'ulga ko'chiriladi (eski operator endi
@@ -39,11 +44,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.telegram_notify import inline_keyboard, send_message
+from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ
 from crm import get_crm_adapter
 from crm.config import CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS
-from db.models import Attendance, CrmLeadState, HotLead, User
+from db.models import Attendance, CrmLeadState, HotLead, MonitoredGroup, User
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +109,17 @@ def _notify_text(lead: HotLead) -> str:
         "Qo'ng'iroq CRM'dan avtomatik tekshiriladi, kechikkani guruhga chiqadi."
     )
     return "\n".join(lines)
+
+
+async def _main_group_chat_id(db: AsyncSession) -> int | None:
+    """"main" maqsadli faol guruh (`MonitoredGroup`, dasturchi botdan
+    `/guruh_biriktir main` bilan boshqaradi) — mas'ul topilmaganda yoki
+    eskalatsiya/tuzatish xabari uchun zaxira manzil."""
+    return await db.scalar(
+        select(MonitoredGroup.chat_id).where(
+            MonitoredGroup.purpose == "main", MonitoredGroup.is_active == True  # noqa: E712
+        )
+    )
 
 
 async def _map_users_by_crm_id(db: AsyncSession) -> dict[str, User]:
@@ -197,11 +213,9 @@ async def sync_crm_state(db: AsyncSession, dry_run: bool) -> dict:
                 lead.user_id = new_user.id if new_user else None
                 lead.reassigned_at = datetime.utcnow()
                 if not is_backlog and new_user and new_user.telegram_id:
-                    markup = inline_keyboard([[("✅ Qabul qildim", f"hl:{lead.id}")]])
                     await send_message(
                         new_user.telegram_id,
                         _notify_text(lead) + "\n\n↪️ Bu lid sizga CRM'da o'tkazildi.",
-                        reply_markup=markup,
                     )
 
     if not dry_run and (reassigned or resolved):
@@ -256,6 +270,7 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
     fresh = [l for l in fresh if l["id"] not in existing]
 
     users_by_crm = await _map_users_by_crm_id(db)
+    main_chat_id = await _main_group_chat_id(db)
     results = []
     for item in fresh:
         detail = await adapter.get_lead_detail(item["id"]) or {}
@@ -289,12 +304,11 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
             await db.flush()  # tugma callback_data uchun lead.id kerak
             delivered = None
             if user and user.telegram_id:
-                markup = inline_keyboard([[("✅ Qabul qildim", f"hl:{lead.id}")]])
-                delivered = await send_message(user.telegram_id, _notify_text(lead), reply_markup=markup)
-            elif settings.telegram_group_chat_id:
+                delivered = await send_message(user.telegram_id, _notify_text(lead))
+            elif main_chat_id:
                 # Mas'ul tizimda topilmadi — lid ko'rinmay qolmasin, guruhga
                 text = _notify_text(lead) + "\n\n⚠️ Mas'ul operator tizimda topilmadi — kim oladi?"
-                delivered = await send_message(settings.telegram_group_chat_id, text)
+                delivered = await send_message(main_chat_id, text)
             lead.notified_at = datetime.utcnow()
             entry["delivered"] = delivered is not None
         results.append(entry)
@@ -390,6 +404,7 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
         )
     )
 
+    main_chat_id = await _main_group_chat_id(db)
     escalated = []
     absent_skipped: list[dict] = []
     for lead in stale:
@@ -414,8 +429,8 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
         )
         entry = {"crm_lead_id": lead.crm_lead_id, "operator": who, "minutes": minutes, "text": text}
         if not dry_run:
-            if settings.telegram_group_chat_id:
-                await send_message(settings.telegram_group_chat_id, text)
+            if main_chat_id:
+                await send_message(main_chat_id, text)
             lead.escalated_at = datetime.utcnow()
         escalated.append(entry)
 
@@ -447,6 +462,7 @@ async def send_corrections(db: AsyncSession, dry_run: bool) -> dict:
     # lidlarni ko'rishi mumkin — ularning barchasi haqida guruhga xabar
     # yuborish spam bo'ladi. Katta backlog bo'lsa — holat jimgina belgilanadi.
     is_backlog = len(pending) > NOTIFY_BACKLOG_THRESHOLD
+    main_chat_id = await _main_group_chat_id(db)
 
     sent = []
     for lead in pending:
@@ -465,8 +481,8 @@ async def send_corrections(db: AsyncSession, dry_run: bool) -> dict:
             )
         entry = {"crm_lead_id": lead.crm_lead_id, "status": lead.status}
         if not dry_run:
-            if not is_backlog and settings.telegram_group_chat_id:
-                await send_message(settings.telegram_group_chat_id, text)
+            if not is_backlog and main_chat_id:
+                await send_message(main_chat_id, text)
             lead.correction_sent_at = datetime.utcnow()
         sent.append(entry)
 

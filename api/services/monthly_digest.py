@@ -153,7 +153,7 @@ async def send_monthly_digest(db: AsyncSession, chat_id: int | None = None, dry_
     if dry_run:
         return {"sent": False, "dry_run": True, "operators": digest["operators"], "text": digest["text"]}
 
-    targets = digest_group_targets(chat_id)
+    targets = await digest_group_targets(db, chat_id)
     if not targets:
         return {"sent": False, "reason": "Guruh chat ID sozlanmagan", "operators": digest["operators"]}
 

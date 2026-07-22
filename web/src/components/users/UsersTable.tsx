@@ -207,12 +207,12 @@ export default function UsersTable({
       {
         accessorKey: "bot_started",
         header: "Bot",
-        cell: ({ row }) =>
-          row.original.bot_started ? (
-            <span className="text-emerald-700">✅ ulangan</span>
-          ) : (
-            <span className="text-slate-400">— kutilmoqda</span>
-          ),
+        cell: ({ row }) => (
+          <span className={row.original.bot_started ? "text-emerald-700" : "text-slate-400"}>
+            {row.original.bot_started ? "✅ ulangan" : "— kutilmoqda"}
+            {row.original.is_seat && " · o'rin"}
+          </span>
+        ),
       },
     ];
 
@@ -261,7 +261,17 @@ export default function UsersTable({
         const u = row.original;
         return (
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            {!u.bot_started ? (
+            {u.is_seat ? (
+              <Button
+                variant="link"
+                size="sm"
+                className="h-7 px-1 text-xs"
+                onClick={() => showInviteLink(u.id)}
+                title="O'rin uchun havola doimiy qayta olinadi — eski egasi almashadi"
+              >
+                Havolani yangilash
+              </Button>
+            ) : !u.bot_started ? (
               <Button variant="link" size="sm" className="h-7 px-1 text-xs" onClick={() => showInviteLink(u.id)}>
                 Havola olish
               </Button>

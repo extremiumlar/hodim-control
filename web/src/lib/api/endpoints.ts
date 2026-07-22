@@ -71,6 +71,7 @@ export const api = {
     team_id?: number | null;
     manager_id?: number | null;
     crm_external_id?: string | null;
+    is_seat?: boolean;
   }) =>
     apiFetch<{ user: User; invite_link: string }>("/users", {
       method: "POST",
@@ -155,11 +156,16 @@ export const api = {
     conversations_count: number;
     visits_count: number;
   }) => apiFetch<DailyResult>("/daily-results/manual", { method: "POST", body: JSON.stringify(data) }),
-  setManualMobilografVideos: (data: { user_id: number; date: string; confirmed_count: number }) =>
-    apiFetch<{ user_id: number; date: string; confirmed_count: number }>("/mobilograf-videos/manual", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
+  setManualMobilografVideos: (data: {
+    user_id: number;
+    date: string;
+    metric_type: "oddiy_video" | "dumaloq_video";
+    confirmed_count: number;
+  }) =>
+    apiFetch<{ user_id: number; date: string; metric_type: string; confirmed_count: number }>(
+      "/mobilograf-videos/manual",
+      { method: "POST", body: JSON.stringify(data) }
+    ),
   listBonuses: (userId: number) => apiFetch<Bonus[]>(`/bonuses?user_id=${userId}`),
   leadStageMonth: (month?: string) =>
     apiFetch<LeadStageMonth>(`/stats/web/lead-stages${month ? `?month=${month}` : ""}`),

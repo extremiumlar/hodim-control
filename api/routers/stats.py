@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, verify_bot_secret
-from api.routers.norms import METRIC_LABELS, metrics_for
+from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, metrics_for
 from api.services.daily_digest import send_daily_digest
 from api.schemas import (
     LeadOperatorRow,
@@ -54,20 +54,22 @@ async def _current_norm(db: AsyncSession, user_id: int, metric_type: str) -> int
     return norm.value if norm else None
 
 
-async def _confirmed_videos_count(db: AsyncSession, user_id: int, day_from: date, day_to: date) -> int:
+async def _confirmed_videos_count(
+    db: AsyncSession, user_id: int, day_from: date, day_to: date, video_type: str | None = None
+) -> int:
     """[day_from, day_to] mahalliy kunlar oralig'ida tasdiqlangan mobilograf
-    videolar soni (sent_at bazada naive-UTC saqlanadi)."""
+    videolar soni (sent_at bazada naive-UTC saqlanadi). `video_type` berilsa
+    ("oddiy"/"dumaloq") faqat o'sha turdagi videolar hisoblanadi."""
     start_utc, end_utc = local_range_utc_naive(day_from, day_to)
-    return (
-        await db.scalar(
-            select(func.count(MobilografVideo.id)).where(
-                MobilografVideo.user_id == user_id,
-                MobilografVideo.status == MobilografStatus.confirmed.value,
-                MobilografVideo.sent_at >= start_utc,
-                MobilografVideo.sent_at < end_utc,
-            )
-        )
-    ) or 0
+    conditions = [
+        MobilografVideo.user_id == user_id,
+        MobilografVideo.status == MobilografStatus.confirmed.value,
+        MobilografVideo.sent_at >= start_utc,
+        MobilografVideo.sent_at < end_utc,
+    ]
+    if video_type:
+        conditions.append(MobilografVideo.video_type == video_type)
+    return (await db.scalar(select(func.count(MobilografVideo.id)).where(*conditions))) or 0
 
 
 async def today_metric_rows(db: AsyncSession, user: User) -> list[MetricProgressRow]:
@@ -96,8 +98,8 @@ async def today_metric_rows(db: AsyncSession, user: User) -> list[MetricProgress
 
     rows = []
     for key in metrics_for(user):
-        if key == "video":
-            value = await _confirmed_videos_count(db, user.id, today, today)
+        if key in VIDEO_METRIC_TYPES:
+            value = await _confirmed_videos_count(db, user.id, today, today, video_type=VIDEO_METRIC_TYPES[key])
         else:
             value = values.get(key, 0)
         rows.append(
@@ -144,8 +146,9 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
             totals["suhbat"] = int(sums[0])
         if "tashrif" in metric_keys:
             totals["tashrif"] = int(sums[1])
-        if "video" in metric_keys:
-            totals["video"] = await _confirmed_videos_count(db, user.id, day_from, today)
+        for key, video_type in VIDEO_METRIC_TYPES.items():
+            if key in metric_keys:
+                totals[key] = await _confirmed_videos_count(db, user.id, day_from, today, video_type=video_type)
         return totals
 
     week_totals = await _range_totals(week_start)

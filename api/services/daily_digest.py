@@ -33,6 +33,7 @@ from db.models import (
     ExcusedStatus,
     GroupPostConfig,
     HourlyActual,
+    MonitoredGroup,
     OperatorCallsDaily,
     Role,
     TaskModel,
@@ -51,17 +52,25 @@ def _visit_pipe_status_id() -> int | None:
         return None
 
 
-def digest_group_targets(chat_id: int | None = None) -> list[int]:
+async def digest_group_targets(db: AsyncSession, chat_id: int | None = None) -> list[int]:
     """Statistika digesti yuboriladigan guruh(lar). `chat_id` aniq berilsa (rahbar
-    shaxsiy chatda so'raganda) — faqat o'sha. Aks holda: asosiy guruh + statistika
-    guruhi (ikkovi ham sozlangan bo'lsa) — digest asosiy guruhda ham, statistika
-    guruhida ham chiqadi. Takrorlanmaydigan, nol bo'lmagan ID'lar tartibda."""
+    shaxsiy chatda so'raganda) — faqat o'sha. Aks holda: "main" maqsadli faol
+    guruh + "stats" maqsadli faol guruh(lar) (`MonitoredGroup` jadvalidan, dasturchi
+    botdan `/guruh_biriktir` bilan boshqaradi). Takrorlanmaydigan, nol bo'lmagan
+    ID'lar tartibda."""
     if chat_id:
         return [chat_id]
+    rows = list(
+        await db.scalars(
+            select(MonitoredGroup).where(
+                MonitoredGroup.purpose.in_(("main", "stats")), MonitoredGroup.is_active == True  # noqa: E712
+            )
+        )
+    )
     targets: list[int] = []
-    for cid in (settings.telegram_group_chat_id, *settings.stats_group_ids):
-        if cid and cid not in targets:
-            targets.append(cid)
+    for row in rows:
+        if row.chat_id and row.chat_id not in targets:
+            targets.append(row.chat_id)
     return targets
 
 
@@ -320,7 +329,7 @@ async def send_daily_digest(db: AsyncSession, chat_id: int | None = None, dry_ru
     if dry_run:
         return {"sent": False, "dry_run": True, "operators": digest["operators"], "text": text}
 
-    targets = digest_group_targets(chat_id)
+    targets = await digest_group_targets(db, chat_id)
     if not targets:
         return {"sent": False, "reason": "Guruh chat ID sozlanmagan", "operators": digest["operators"]}
 
@@ -395,7 +404,7 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
     if dry_run:
         return {"sent": False, "dry_run": True, "text": text, **result}
 
-    targets = digest_group_targets(None)
+    targets = await digest_group_targets(db, None)
     if not targets:
         return {"sent": False, "reason": "Guruh chat ID sozlanmagan", **result}
 

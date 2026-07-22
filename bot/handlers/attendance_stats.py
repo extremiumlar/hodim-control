@@ -14,7 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.config import TELEGRAM_GROUP_CHAT_ID
+from bot import group_registry
 from bot.keyboards import BTN_ATTENDANCE_STATS
 
 router = Router(name="attendance_stats")
@@ -49,7 +49,7 @@ def format_late_stats(rows: list[dict], days: int) -> str:
     return "\n".join(lines)
 
 
-def _kb(days: int) -> InlineKeyboardMarkup:
+async def _kb(days: int) -> InlineKeyboardMarkup:
     period_row = [
         InlineKeyboardButton(
             text=("✅ " if d == days else "") + label, callback_data=f"attstat:show:{d}"
@@ -57,7 +57,7 @@ def _kb(days: int) -> InlineKeyboardMarkup:
         for d, label in PERIODS
     ]
     rows = [period_row]
-    if TELEGRAM_GROUP_CHAT_ID:
+    if await group_registry.get_group_ids("main"):
         rows.append(
             [InlineKeyboardButton(text="📤 Guruhga yuborish", callback_data=f"attstat:send:{days}")]
         )
@@ -72,7 +72,7 @@ async def show_attendance_stats(message: Message, state: FSMContext) -> None:
     if rows is None:
         await message.answer("Bu bo'lim faqat rahbarlar (HR/ROP/Boshliq) uchun.")
         return
-    await message.answer(format_late_stats(rows, days), reply_markup=_kb(days))
+    await message.answer(format_late_stats(rows, days), reply_markup=await _kb(days))
 
 
 @router.callback_query(F.data.startswith("attstat:show:"))
@@ -91,7 +91,7 @@ async def switch_period(callback: CallbackQuery) -> None:
         await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
         return
     try:
-        await callback.message.edit_text(format_late_stats(rows, days), reply_markup=_kb(days))
+        await callback.message.edit_text(format_late_stats(rows, days), reply_markup=await _kb(days))
     except Exception:
         # "message is not modified" (bir xil matn) — e'tiborsiz qoldiramiz
         pass
@@ -110,12 +110,14 @@ async def send_to_group(callback: CallbackQuery) -> None:
     if rows is None:
         await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
         return
-    if not TELEGRAM_GROUP_CHAT_ID:
-        await callback.answer("Guruh sozlanmagan (TELEGRAM_GROUP_CHAT_ID).", show_alert=True)
+    main_chat_ids = await group_registry.get_group_ids("main")
+    if not main_chat_ids:
+        await callback.answer("Guruh sozlanmagan (/guruh_biriktir main).", show_alert=True)
         return
 
     try:
-        await callback.bot.send_message(TELEGRAM_GROUP_CHAT_ID, format_late_stats(rows, days))
+        for chat_id in main_chat_ids:
+            await callback.bot.send_message(chat_id, format_late_stats(rows, days))
         await callback.answer("✅ Guruhga yuborildi.")
     except Exception:
         await callback.answer("Guruhga yuborib bo'lmadi — bot guruhda bormi?", show_alert=True)

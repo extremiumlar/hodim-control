@@ -61,7 +61,8 @@ export default function EmployeeProfile() {
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [conversations, setConversations] = useState("");
   const [visits, setVisits] = useState("");
-  const [videos, setVideos] = useState("");
+  const [oddiyVideos, setOddiyVideos] = useState("");
+  const [dumaloqVideos, setDumaloqVideos] = useState("");
 
   const employee = userQuery.data;
 
@@ -73,7 +74,8 @@ export default function EmployeeProfile() {
       : ["suhbat", "tashrif"];
   const tracksSuhbat = trackedMetrics.includes("suhbat");
   const tracksTashrif = trackedMetrics.includes("tashrif");
-  const tracksVideo = trackedMetrics.includes("video");
+  const tracksOddiyVideo = trackedMetrics.includes("oddiy_video");
+  const tracksDumaloqVideo = trackedMetrics.includes("dumaloq_video");
 
   const submitting = saveDaily.isPending || saveVideos.isPending;
 
@@ -83,8 +85,13 @@ export default function EmployeeProfile() {
     // Ko'rinmaydigan (lavozimda kuzatilmaydigan) maydonlar 0 sifatida yuboriladi
     const conversationsCount = tracksSuhbat ? Number(conversations) : 0;
     const visitsCount = tracksTashrif ? Number(visits) : 0;
-    const videosCount = tracksVideo ? Number(videos) : 0;
-    if ([conversationsCount, visitsCount, videosCount].some((v) => !Number.isInteger(v) || v < 0)) {
+    const oddiyVideosCount = tracksOddiyVideo ? Number(oddiyVideos) : 0;
+    const dumaloqVideosCount = tracksDumaloqVideo ? Number(dumaloqVideos) : 0;
+    if (
+      [conversationsCount, visitsCount, oddiyVideosCount, dumaloqVideosCount].some(
+        (v) => !Number.isInteger(v) || v < 0
+      )
+    ) {
       toast.error("Ko'rsatkichlar soni manfiy bo'lmagan butun son bo'lishi kerak");
       return;
     }
@@ -98,12 +105,26 @@ export default function EmployeeProfile() {
           visits_count: visitsCount,
         });
       }
-      if (tracksVideo) {
-        await saveVideos.mutateAsync({ user_id: userId, date, confirmed_count: videosCount });
+      if (tracksOddiyVideo) {
+        await saveVideos.mutateAsync({
+          user_id: userId,
+          date,
+          metric_type: "oddiy_video",
+          confirmed_count: oddiyVideosCount,
+        });
+      }
+      if (tracksDumaloqVideo) {
+        await saveVideos.mutateAsync({
+          user_id: userId,
+          date,
+          metric_type: "dumaloq_video",
+          confirmed_count: dumaloqVideosCount,
+        });
       }
       setConversations("");
       setVisits("");
-      setVideos("");
+      setOddiyVideos("");
+      setDumaloqVideos("");
       toast.success("Kunlik natija saqlandi");
     } catch {
       // xato toast'i useApiMutation ichida ko'rsatiladi
@@ -183,21 +204,35 @@ export default function EmployeeProfile() {
                   />
                 </div>
               )}
-              {tracksVideo && (
+              {tracksOddiyVideo && (
                 <div>
-                  <Label htmlFor="ep-videos">Tasdiqlangan videolar soni</Label>
+                  <Label htmlFor="ep-oddiy-videos">Tasdiqlangan oddiy videolar soni</Label>
                   <Input
-                    id="ep-videos"
+                    id="ep-oddiy-videos"
                     type="number"
-                    value={videos}
-                    onChange={(e) => setVideos(e.target.value)}
+                    value={oddiyVideos}
+                    onChange={(e) => setOddiyVideos(e.target.value)}
                     required
                   />
-                  <p className="mt-1 text-xs text-slate-400">
-                    Guruh reaksiyasi ishlamay qolganda shu yerdan kiriting — kun uchun qo'lda
-                    kiritilgan son qayta kiritilsa ustidan yoziladi.
-                  </p>
                 </div>
+              )}
+              {tracksDumaloqVideo && (
+                <div>
+                  <Label htmlFor="ep-dumaloq-videos">Tasdiqlangan dumaloq videolar soni</Label>
+                  <Input
+                    id="ep-dumaloq-videos"
+                    type="number"
+                    value={dumaloqVideos}
+                    onChange={(e) => setDumaloqVideos(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+              {(tracksOddiyVideo || tracksDumaloqVideo) && (
+                <p className="text-xs text-slate-400">
+                  Guruh reaksiyasi ishlamay qolganda shu yerdan kiriting — kun uchun qo'lda
+                  kiritilgan son qayta kiritilsa ustidan yoziladi.
+                </p>
               )}
               <Button type="submit" disabled={submitting} className="w-full">
                 {submitting ? "Saqlanmoqda..." : "Saqlash"}

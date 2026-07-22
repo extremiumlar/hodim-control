@@ -137,13 +137,16 @@ async def update_norm(changer_telegram_id: int, target_user_id: int, metric_type
     return resp.json()
 
 
-async def create_mobilograf_video(telegram_id: int, telegram_message_id: int, group_chat_id: int) -> dict:
+async def create_mobilograf_video(
+    telegram_id: int, telegram_message_id: int, group_chat_id: int, video_type: str = "oddiy"
+) -> dict:
     resp = await _get_client().post(
         "/mobilograf-videos",
         json={
             "telegram_id": telegram_id,
             "telegram_message_id": telegram_message_id,
             "group_chat_id": group_chat_id,
+            "video_type": video_type,
         },
     )
     resp.raise_for_status()
@@ -164,6 +167,36 @@ async def react_mobilograf_video(
     )
     if resp.status_code == 404:
         return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def list_monitored_groups(purpose: str | None = None) -> list[dict]:
+    """Faol kuzatuv guruhlari (`bot/group_registry.py` keshi shu orqali yangilanadi)."""
+    resp = await _get_client().get(
+        "/monitored-groups", params={"purpose": purpose} if purpose else None
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def set_monitored_group(telegram_id: int, purpose: str, chat_id: int, title: str | None = None) -> dict:
+    """Guruh ICHIDA `/guruh_biriktir <purpose>` — joriy chatni shu maqsadga
+    belgilaydi (faqat Dasturchi; 403 chaqiruvchida HTTPStatusError sifatida
+    ushlanadi)."""
+    resp = await _get_client().post(
+        "/monitored-groups",
+        json={"telegram_id": telegram_id, "purpose": purpose, "chat_id": chat_id, "title": title},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def remove_monitored_group(telegram_id: int, purpose: str, chat_id: int) -> dict:
+    resp = await _get_client().post(
+        "/monitored-groups/remove",
+        json={"telegram_id": telegram_id, "purpose": purpose, "chat_id": chat_id},
+    )
     resp.raise_for_status()
     return resp.json()
 

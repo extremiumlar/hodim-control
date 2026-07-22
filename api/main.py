@@ -19,6 +19,7 @@ from api.routers import (
     knowledge,
     lead_events,
     mobilograf,
+    monitored_groups,
     norms,
     playbook,
     positions,
@@ -47,6 +48,7 @@ app.include_router(tasks.router)
 app.include_router(excused_days.router)
 app.include_router(norms.router)
 app.include_router(mobilograf.router)
+app.include_router(monitored_groups.router)
 app.include_router(reports.router)
 app.include_router(daily_results.router)
 app.include_router(bonuses.router)

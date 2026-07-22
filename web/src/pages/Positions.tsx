@@ -16,7 +16,8 @@ import { useCreatePosition, usePositions, useUpdatePosition } from "@/lib/querie
 const METRIC_OPTIONS: { key: string; label: string }[] = [
   { key: "suhbat", label: "Suhbatlar" },
   { key: "tashrif", label: "Tashriflar" },
-  { key: "video", label: "Videolar (mobilograf)" },
+  { key: "oddiy_video", label: "Oddiy videolar (mobilograf)" },
+  { key: "dumaloq_video", label: "Dumaloq videolar (mobilograf)" },
 ];
 
 const MENU_OPTIONS: { key: string; label: string }[] = [

@@ -26,6 +26,7 @@ export default function UserCreateForm({
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("employee");
   const [crmExternalId, setCrmExternalId] = useState("");
+  const [isSeat, setIsSeat] = useState(false);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -35,6 +36,7 @@ export default function UserCreateForm({
         full_name: fullName,
         role,
         crm_external_id: hasFullControl && crmExternalId ? crmExternalId.trim() : undefined,
+        is_seat: hasFullControl ? isSeat : undefined,
       },
       {
         onSuccess: ({ invite_link }) => {
@@ -42,6 +44,7 @@ export default function UserCreateForm({
           onInviteLink(invite_link);
           setFullName("");
           setCrmExternalId("");
+          setIsSeat(false);
         },
       }
     );
@@ -89,6 +92,20 @@ export default function UserCreateForm({
                 placeholder="masalan email@uysot"
               />
             </div>
+          )}
+          {hasFullControl && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={isSeat}
+                onChange={(e) => setIsSeat(e.target.checked)}
+              />
+              <span>
+                Almashinuvchi o'rin (masalan Mobilogrof) — havola doimiy qayta olinadi, boshqa
+                odam shu havola orqali /start bossa joriy egasi almashadi.
+              </span>
+            </label>
           )}
           <Button type="submit" disabled={createUser.isPending} className="w-full">
             {createUser.isPending ? "Yaratilmoqda..." : "Qo'shish"}

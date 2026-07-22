@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.routers.norms import metrics_for
+from api.routers.norms import VIDEO_METRIC_TYPES, metrics_for
 from api.routers.stats import _confirmed_videos_count
 from db.models import DailyResult, User
 
@@ -59,12 +59,14 @@ async def calculate_bonus(db: AsyncSession, user: User, period: str) -> dict:
         breakdown["total_visits"] = total_visits
         breakdown["rate_per_visit"] = PLACEHOLDER_RATE_PER_VISIT
 
-    if "video" in metrics:
+    for metric_key, video_type in VIDEO_METRIC_TYPES.items():
+        if metric_key not in metrics:
+            continue
         total_videos = await _confirmed_videos_count(
-            db, user.id, period_start, period_end - timedelta(days=1)
+            db, user.id, period_start, period_end - timedelta(days=1), video_type=video_type
         )
         amount += total_videos * PLACEHOLDER_RATE_PER_VIDEO
-        breakdown["total_videos"] = total_videos
-        breakdown["rate_per_video"] = PLACEHOLDER_RATE_PER_VIDEO
+        breakdown[f"total_{metric_key}"] = total_videos
+        breakdown[f"rate_per_{metric_key}"] = PLACEHOLDER_RATE_PER_VIDEO
 
     return {"amount": float(amount), "breakdown": breakdown}

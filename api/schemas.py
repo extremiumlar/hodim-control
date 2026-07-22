@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 # Bu ro'yxatlar backend hisob-kitobi mavjud bo'lgan qiymatlar bilan cheklangan —
 # ixtiyoriy satr qabul qilinsa, hech qayerda hisoblanmaydigan "o'lik" norma paydo
 # bo'lar edi (avvalgi audit shuni ko'rsatgan).
-POSITION_METRICS = ["suhbat", "tashrif", "video"]
+POSITION_METRICS = ["suhbat", "tashrif", "oddiy_video", "dumaloq_video"]
 POSITION_MENU_KEYS = ["tasks", "norm", "kpi", "excused"]
 POSITION_MANAGER_ROLES = ["rop", "hr"]
 
@@ -92,6 +92,7 @@ class UserOut(BaseModel):
     position: PositionBrief | None = None
     bot_started: bool
     is_active: bool
+    is_seat: bool = False
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
@@ -119,6 +120,9 @@ class UserCreate(BaseModel):
     team_id: int | None = None
     manager_id: int | None = None
     crm_external_id: str | None = None
+    # "O'rin" (masalan Mobilogrof) — faqat Boss/Dasturchi belgilay oladi (create_user
+    # ichida tekshiriladi, xuddi crm_external_id kabi).
+    is_seat: bool = False
 
 
 class UserCreateOut(BaseModel):
@@ -307,6 +311,7 @@ class MobilografCreate(BaseModel):
     telegram_id: int
     telegram_message_id: int
     group_chat_id: int
+    video_type: str = "oddiy"  # oddiy | dumaloq
 
 
 class MobilografReact(BaseModel):
@@ -324,6 +329,7 @@ class MobilografOut(BaseModel):
     sent_at: datetime
     status: str
     source: str
+    video_type: str
     confirmed_by: int | None
     confirmed_at: datetime | None
 
@@ -336,7 +342,32 @@ class MobilografManualCreate(BaseModel):
 
     user_id: int
     date: date
+    metric_type: str = "oddiy_video"  # oddiy_video | dumaloq_video
     confirmed_count: int = Field(ge=0)
+
+
+class MonitoredGroupOut(BaseModel):
+    purpose: str
+    chat_id: int
+    title: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class MonitoredGroupSet(BaseModel):
+    """Dasturchi guruh ICHIDA `/guruh_biriktir <purpose>` yuborganda ishlatiladi —
+    joriy chatni shu maqsadga belgilaydi (mobilograf/main uchun eskisi almashadi)."""
+
+    telegram_id: int
+    purpose: str
+    chat_id: int
+    title: str | None = None
+
+
+class MonitoredGroupRemove(BaseModel):
+    telegram_id: int
+    purpose: str
+    chat_id: int
 
 
 class DailyResultManualCreate(BaseModel):

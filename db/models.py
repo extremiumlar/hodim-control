@@ -1,7 +1,19 @@
 import enum
 from datetime import date, datetime
 
-from sqlalchemy import JSON, DateTime, Date, ForeignKey, String, Boolean, Integer, Numeric, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    Date,
+    ForeignKey,
+    String,
+    Boolean,
+    Integer,
+    Numeric,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -98,6 +110,10 @@ class User(Base):
     position_id: Mapped[int | None] = mapped_column(ForeignKey("positions.id"), nullable=True, index=True)
     bot_started: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # "O'rin" (masalan Mobilogrof) — bu foydalanuvchining Telegram bog'lanishi doimiy
+    # qayta-egallanadigan: invite-link har doim (bot_started bo'lsa ham) qayta olinadi,
+    # va uni boshqa odam bosib /start qilsa, o'sha avtomatik joriy egasi bo'lib qoladi.
+    is_seat: Mapped[bool] = mapped_column(Boolean, default=False)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     crm_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # Uysot'da tashriflar suhbatlardan (crm_external_id/employeeNum) boshqa ID tizimida
@@ -172,6 +188,8 @@ class MobilografVideo(Base):
     # telegram_reaction — guruhdagi reaksiya orqali; manual — HR/rahbar qo'lda kiritgan
     # (masalan TELEGRAM_GROUP_CHAT_ID sozlanmagan yoki guruh ishlamay qolgan holat uchun).
     source: Mapped[str] = mapped_column(String(20), default=MobilografSource.telegram_reaction.value)
+    # oddiy (F.video) yoki dumaloq (F.video_note) — ikkalasi alohida norma/hisob.
+    video_type: Mapped[str] = mapped_column(String(20), default="oddiy")
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -844,3 +862,22 @@ class AttendanceDigestConfig(Base):
     morning_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
     evening_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MonitoredGroup(Base):
+    """Bot kuzatadigan Telegram guruhlar — maqsad bo'yicha (`purpose`) ro'yxatga
+    olinadi va dasturchi botdan (`/guruh_biriktir`) o'zgartira oladi, .env qayta
+    ishga tushirish shart emas. "mobilograf" va "main" — bir vaqtda faqat bitta
+    faol guruh (yangisi ro'yxatga olinsa eskisi is_active=False bo'ladi — "guruhni
+    o'zgartirish" shunday ishlaydi); "stats" — bir nechtasi faol bo'lishi mumkin."""
+
+    __tablename__ = "monitored_groups"
+    __table_args__ = (UniqueConstraint("purpose", "chat_id", name="uq_monitored_group_purpose_chat"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    purpose: Mapped[str] = mapped_column(String(30), index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -1,21 +1,26 @@
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from bot import api_client
-from bot.config import TELEGRAM_GROUP_CHAT_ID, TELEGRAM_STATS_GROUP_CHAT_IDS
+from bot import group_registry
 from bot.handlers.stats import send_global_stats
 
 router = Router(name="group_stats")
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 
-# /statistika asosiy guruhda ham, qo'shimcha statistika guruh(lar)ida ham ishlaydi
-# (0'lar chiqarib tashlanadi — sozlanmagan guruh hech qachon mos kelmasin).
-STATS_COMMAND_CHATS = {cid for cid in (TELEGRAM_GROUP_CHAT_ID, *TELEGRAM_STATS_GROUP_CHAT_IDS) if cid}
+
+async def _is_stats_chat(message: Message) -> bool:
+    """/statistika asosiy guruhda ham, qo'shimcha statistika guruh(lar)ida ham
+    ishlaydi — MonitoredGroup'dan HAR chaqiruvda dinamik o'qiladi (`/guruh_biriktir`
+    orqali o'zgartirilishi mumkin, .env-frozen filterdan farqli)."""
+    main_ids = await group_registry.get_group_ids("main")
+    stats_ids = await group_registry.get_group_ids("stats")
+    return message.chat.id in main_ids or message.chat.id in stats_ids
 
 
-@router.message(Command("statistika"), F.chat.id.in_(STATS_COMMAND_CHATS))
+@router.message(Command("statistika"), _is_stats_chat)
 async def cmd_statistika(message: Message) -> None:
     """Guruhda /statistika — kunlik yagona digestni (vazifa + qo'ng'iroq/lid/tashrif
     + AI xulosa, bitta xabar) sozlangan guruh(lar)ga darhol yuboradi (asosiy +
