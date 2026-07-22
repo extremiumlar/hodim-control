@@ -219,6 +219,22 @@ async def assignable_users(telegram_id: int) -> list[dict]:
     return resp.json()
 
 
+async def set_busy_period(
+    setter_telegram_id: int, target_user_id: int, minutes: int, reason: str | None = None
+) -> dict:
+    resp = await _get_client().post(
+        "/busy-periods/set",
+        json={
+            "setter_telegram_id": setter_telegram_id,
+            "target_user_id": target_user_id,
+            "minutes": minutes,
+            "reason": reason,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def bot_create_task(assigner_telegram_id: int, assigned_to: int, title: str) -> dict:
     resp = await _get_client().post(
         "/tasks/bot-create",

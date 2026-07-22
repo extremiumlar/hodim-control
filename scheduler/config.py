@@ -86,6 +86,10 @@ AI_WEEKLY_MINUTE = 10
 # ~1 filter so'rovi (+ yangi lid bo'lsa detal), rate limit (60/min)ga bemalol sig'adi.
 HOT_LEAD_POLL_MINUTES = 2
 
+# Real-vaqtli harakatsizlik nazorati (4-band, idle_watch.py): 20 daqiqalik
+# chegarani o'z vaqtida ilg'ash uchun soatlikdan (ai_watch) ancha tezroq.
+IDLE_WATCH_INTERVAL_MINUTES = 5
+
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.
 MISFIRE_GRACE_DEFAULT = 3600

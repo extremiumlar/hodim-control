@@ -16,6 +16,7 @@ from bot.handlers import (
     anketa,
     assign_task,
     attendance_stats,
+    busy_period,
     knowledge,
     excused,
     group_admin,
@@ -67,6 +68,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(norms.router)
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
+    dp.include_router(busy_period.router)
     dp.include_router(group_stats.router)
     dp.include_router(group_admin.router)
     dp.include_router(ai_center.router)

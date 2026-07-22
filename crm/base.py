@@ -95,6 +95,18 @@ class CRMAdapter(ABC):
         adapterlar bo'sh ro'yxat qaytaradi."""
         return []
 
+    async def get_last_call_timestamps(
+        self, employee_nums: set[str], since_ts: int
+    ) -> dict[str, int] | None:
+        """Ixtiyoriy (real-vaqtli harakatsizlik nazorati — `api/services/idle_watch.py`):
+        har operatorning ENG OXIRGI qo'ng'irog'i unix-sekund vaqtini qaytaradi —
+        {employeeNum: startStamp}. `since_ts`dan eskisi e'tiborga olinmaydi (arzon
+        skan — call-history odatda yangidan-eskiga keladi, shuning uchun
+        `employee_nums`dagi barchasi topilgach yoki `since_ts`dan o'tib ketilgach
+        to'xtash mumkin). CRM xatosida yoki qo'llab-quvvatlamaydigan adapterlarda
+        `None` (chaqiruvchi hukm chiqarmasin)."""
+        return None
+
     async def get_active_leads_snapshot(self, created_since_ts: int | None = None) -> list[dict] | None:
         """Ixtiyoriy (diff-engine, kunlik statistika uchun — `api/services/lead_diff.py`):
         CRM'dagi lidlarning JORIY holatini (bosqich + mas'ul) qaytaradi — har element

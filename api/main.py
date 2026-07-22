@@ -12,10 +12,12 @@ from api.routers import (
     auth,
     auto_plan,
     bonuses,
+    busy_period,
     daily_results,
     excused_days,
     hot_lead,
     hourly_plan,
+    idle_watch,
     knowledge,
     lead_events,
     mobilograf,
@@ -62,6 +64,8 @@ app.include_router(ai_coach.router)
 app.include_router(ai_watch.router)
 app.include_router(hot_lead.router)
 app.include_router(lead_events.router)
+app.include_router(busy_period.router)
+app.include_router(idle_watch.router)
 app.include_router(anketa.router)
 app.include_router(ai_center.router)
 app.include_router(knowledge.router)

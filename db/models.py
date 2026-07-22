@@ -404,6 +404,9 @@ class AiConfig(Base):
     group_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     weekly_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     hot_leads_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Real-vaqtli harakatsizlik nazorati (4-band, idle_watch.py) — soatlik shaxsiy
+    # nudge'dan ALOHIDA bayroq (ommaviy/guruh xabari, tezroq va qattiqroq signal).
+    idle_alerts_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     summary_hour: Mapped[int] = mapped_column(Integer, default=19)
     summary_minute: Mapped[int] = mapped_column(Integer, default=0)
     # Bir kunda/haftada ikki marta yubormaslik qo'riqchilari
@@ -880,4 +883,23 @@ class MonitoredGroup(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OperatorBusyPeriod(Base):
+    """Boshliq/Dasturchi operator/managerni ma'lum vaqt oralig'ida "band" (yig'ilish,
+    vazifa va h.k.) deb belgilaydi — real-vaqtli harakatsizlik nazorati
+    (`api/services/idle_watch.py`) shu oraliqda ogohlantirish yubormaydi.
+    `end_at` o'tib ketgan yozuvlar tekshiruvda avtomatik e'tiborsiz qoldiriladi
+    (alohida tozalash job'i shart emas — sana bo'yicha filtrlanadi)."""
+
+    __tablename__ = "operator_busy_periods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    set_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    start_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

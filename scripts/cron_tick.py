@@ -80,6 +80,8 @@ def _due(now: datetime) -> list:
     # yo'l bilan bajariladi (pastda).
     if m % 2 == 0:
         add("/hot-lead/tick", timeout=120)           # issiq lid (o'chiqda no-op)
+    if m % cfg.IDLE_WATCH_INTERVAL_MINUTES == 0:
+        add("/idle-watch/tick", timeout=60)          # harakatsizlik nazorati (o'chiqda no-op)
 
     # ── Soatlik ──
     if m == 0:

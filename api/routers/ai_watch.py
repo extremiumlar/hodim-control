@@ -409,6 +409,7 @@ def _config_out(cfg: AiConfig) -> dict:
         "group_summary_enabled": cfg.group_summary_enabled,
         "weekly_enabled": cfg.weekly_enabled,
         "hot_leads_enabled": cfg.hot_leads_enabled,
+        "idle_alerts_enabled": cfg.idle_alerts_enabled,
         # env bosh kalitlari — bot holatni to'liq ko'rsata olishi uchun
         "ai_enabled": settings.ai_enabled,
         "push_enabled": settings.ai_nudge_enabled,
@@ -431,6 +432,7 @@ class ConfigIn(BaseModel):
     group_summary_enabled: bool | None = None
     weekly_enabled: bool | None = None
     hot_leads_enabled: bool | None = None
+    idle_alerts_enabled: bool | None = None
 
 
 @router.post("/config/{telegram_id}")
@@ -443,7 +445,9 @@ async def set_config(telegram_id: int, payload: ConfigIn, db: AsyncSession = Dep
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Sozlamani faqat Boshliq o'zgartira oladi")
 
     cfg = await _get_ai_config(db)
-    for field in ("nudges_enabled", "group_summary_enabled", "weekly_enabled", "hot_leads_enabled"):
+    for field in (
+        "nudges_enabled", "group_summary_enabled", "weekly_enabled", "hot_leads_enabled", "idle_alerts_enabled",
+    ):
         value = getattr(payload, field)
         if value is not None:
             setattr(cfg, field, value)

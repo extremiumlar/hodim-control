@@ -177,6 +177,55 @@ class UysotAdapter(CRMAdapter):
 
         return breakdown
 
+    async def get_last_call_timestamps(
+        self, employee_nums: set[str], since_ts: int
+    ) -> dict[str, int] | None:
+        """Real-vaqtli harakatsizlik nazorati uchun: har operatorning ENG OXIRGI
+        qo'ng'irog'i vaqti. `/call-history/filter` yangidan-eskiga keladi, shuning
+        uchun `employee_nums`ning HAMMASI birinchi marta ko'rilgach yoki
+        `since_ts`dan eskiroq yozuvga yetilgach darhol to'xtaydi — odatda 1-2
+        sahifa (arzon, tez-tez chaqirsa bo'ladi)."""
+        if not CRM_API_KEY or not employee_nums:
+            return None
+
+        found: dict[str, int] = {}
+        remaining = set(employee_nums)
+        page = 1
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+            try:
+                while page <= MAX_PAGES_PER_SYNC and remaining:
+                    resp = await client.post(
+                        "/call-history/filter",
+                        json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
+                    )
+                    resp.raise_for_status()
+                    body = resp.json().get("data") or {}
+                    records = body.get("data") or []
+                    if not records:
+                        break
+
+                    reached_cutoff = False
+                    for record in records:
+                        ts = record.get("startStamp")
+                        employee_num = record.get("employeeNum")
+                        if ts is None or not employee_num:
+                            continue
+                        if ts < since_ts:
+                            reached_cutoff = True
+                            continue
+                        if employee_num in remaining:
+                            found[employee_num] = ts  # birinchi ko'rinish = eng yangisi
+                            remaining.discard(employee_num)
+
+                    if reached_cutoff or page >= body.get("totalPages", page):
+                        break
+                    page += 1
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan so'nggi qo'ng'iroq vaqtlarini olishda xatolik")
+                return None
+
+        return found
+
     @staticmethod
     def _empty_quality_bucket() -> dict[str, int]:
         return {"calls": 0, "calls_in": 0, "calls_out": 0, "answered": 0, "talk_sec": 0, "short_calls": 0}

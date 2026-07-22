@@ -174,6 +174,18 @@ async def hot_lead_tick() -> None:
         logger.info("Issiq lid eskalatsiya: %s ta", escalation["escalated"])
 
 
+async def idle_watch_tick() -> None:
+    """Real-vaqtli harakatsizlik nazorati: so'nggi qo'ng'iroqdan beri 20+ daqiqa
+    o'tgan, ochiq lidi bor operatorlarni guruhga chiqaradi (adolat filtrlari va
+    shovqin nazorati bilan). API AI_ENABLED va runtime idle_alerts_enabled'ni
+    o'zi tekshiradi (o'chiqda no-op)."""
+    body = await call_api("/idle-watch/tick", timeout=60, label="Harakatsizlik nazorati tick")
+    if body is None or body.get("disabled") or body.get("idle_alerts_disabled"):
+        return
+    if body.get("alerted"):
+        logger.info("Harakatsizlik: %s ta operatorga ogohlantirish", body["alerted"])
+
+
 async def anketa_tick() -> None:
     """Bilim bazasi anketasi: Dasturchi tasdiqlagan vaqti kelgan sessiyalarni
     boshlaydi (xodimlarga birinchi savollarni yuboradi). Faol sessiya bo'lmasa no-op."""

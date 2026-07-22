@@ -161,6 +161,13 @@ def _build_jobs() -> list[JobSpec]:
             IntervalTrigger(minutes=cfg.HOT_LEAD_POLL_MINUTES),
             max_instances=1, coalesce=True,
         ),
+        # Real-vaqtli harakatsizlik nazorati — 20 daqiqalik chegarani o'z vaqtida
+        # ilg'ash uchun soatlik ai_watch'dan tezroq
+        JobSpec(
+            "idle_watch_tick", jobs.idle_watch_tick,
+            IntervalTrigger(minutes=cfg.IDLE_WATCH_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
         # Bilim bazasi anketasi — tasdiqlangan vaqti kelgan sessiyani boshlash
         JobSpec(
             "anketa_tick", jobs.anketa_tick, IntervalTrigger(minutes=1),

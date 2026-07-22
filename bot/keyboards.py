@@ -19,6 +19,7 @@ BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
 BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_AI_CENTER = "🧠 Sotuv AI markazi"
+BTN_SET_BUSY = "⏸ Band qilish"
 # Eski alohida tugmalar — endi asosiy menyuda ko'rinmaydi (BTN_AI_CENTER
 # ularni almashtirdi), lekin /anketa, /bilim buyruqlari va shu matnli xabar
 # hamon ishlaydi (foydalanuvchida eski klaviatura keshi qolgan bo'lishi mumkin).
@@ -98,6 +99,9 @@ def main_menu(
             # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
             rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
             rows.append([KeyboardButton(text=BTN_AUDIT), KeyboardButton(text=BTN_PANEL)])
+            # Operatorni vaqtincha "band" (yig'ilish/vazifa) deb belgilash —
+            # shu vaqt davomida real-vaqtli harakatsizlik ogohlantirishi kelmaydi
+            rows.append([KeyboardButton(text=BTN_SET_BUSY)])
             # Anketa + Bilim bazasi + Sotuv playbook — YAGONA dashboard orqali
             # (ilgari ikkita alohida tugma edi; anketani boshlashni faqat
             # Dasturchi qila oladi, backend shu cheklovni saqlaydi).
