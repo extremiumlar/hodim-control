@@ -96,6 +96,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ position_id: positionId }),
     }),
+  updateUserSeat: (userId: number, isSeat: boolean) =>
+    apiFetch<User>(`/users/${userId}/seat`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_seat: isSeat }),
+    }),
   listPositions: (includeInactive = false) =>
     apiFetch<Position[]>(`/positions${includeInactive ? "?include_inactive=true" : ""}`),
   createPosition: (data: {

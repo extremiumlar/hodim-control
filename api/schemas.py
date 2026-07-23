@@ -114,6 +114,10 @@ class UserPositionUpdate(BaseModel):
     position_id: int | None = None
 
 
+class UserSeatUpdate(BaseModel):
+    is_seat: bool
+
+
 class UserCreate(BaseModel):
     full_name: str
     role: str

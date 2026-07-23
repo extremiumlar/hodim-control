@@ -37,6 +37,7 @@ from api.schemas import (
     UserOut,
     UserPositionUpdate,
     UserRoleUpdate,
+    UserSeatUpdate,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -243,8 +244,9 @@ async def create_user(
         # CRM ID faqat Boshliq tomonidan belgilanishi mumkin — boshqa rol yuborsa jim
         # e'tiborsiz qoldiriladi (frontendda ham hr uchun bu maydon ko'rsatilmaydi).
         crm_external_id=new_crm_id,
-        # is_seat ham xuddi shunday — faqat Boss/Dasturchi belgilay oladi.
-        is_seat=payload.is_seat if actor.role in {Role.boss.value, Role.dasturchi.value} else False,
+        # is_seat — HR ham belgilay oladi (Mobilogrof kabi lavozimlarni odatda HR
+        # boshqaradi), crm_external_iddan farqli bu unchalik nozik maydon emas.
+        is_seat=payload.is_seat if actor.role in {Role.hr.value, Role.boss.value, Role.dasturchi.value} else False,
     )
     db.add(user)
     await db.flush()
@@ -464,6 +466,37 @@ async def update_position(
             target_user_id=user.id,
             before={"position_id": before_position_id},
             after={"position_id": user.position_id, "position_name": position_name},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/seat", response_model=UserOut)
+async def update_seat(
+    user_id: int,
+    payload: UserSeatUpdate,
+    actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Mavjud xodimni "o'rin"ga aylantirish (yoki qaytarish) — yaratishda
+    belgilanmagan bo'lsa ham keyinroq to'g'rilash imkoni. Faqat Boss/Dasturchi
+    (create_user'dagi is_seat cheklovi bilan bir xil darajada nozik amal)."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before_is_seat = user.is_seat
+    user.is_seat = payload.is_seat
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_seat_changed",
+            target_user_id=user.id,
+            before={"is_seat": before_is_seat},
+            after={"is_seat": user.is_seat},
         )
     )
     await db.commit()

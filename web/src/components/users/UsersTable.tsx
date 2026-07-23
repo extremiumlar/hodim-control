@@ -17,6 +17,7 @@ import {
   useUpdateCrmExternalId,
   useUpdateRole,
   useUpdateUserPosition,
+  useUpdateUserSeat,
   useUsers,
 } from "@/lib/queries";
 import { api } from "@/lib/api";
@@ -44,6 +45,7 @@ export default function UsersTable({
   const positionsQuery = usePositions();
   const updateRole = useUpdateRole();
   const updatePosition = useUpdateUserPosition();
+  const updateSeat = useUpdateUserSeat();
   const updateCrmId = useUpdateCrmExternalId();
   const deactivate = useDeactivateUser();
   const activate = useActivateUser();
@@ -283,6 +285,30 @@ export default function UsersTable({
                 onClick={() => setPending({ type: "reset", user: u })}
               >
                 Qayta bog'lash
+              </Button>
+            )}
+            {hasFullControl && u.role === "employee" && (
+              <Button
+                variant="link"
+                size="sm"
+                className="h-7 px-1 text-xs"
+                disabled={updateSeat.isPending}
+                title={
+                  u.is_seat
+                    ? "Bu xodimni oddiy (bir kishilik) hisobga qaytaradi"
+                    : "Bu xodimni almashinuvchi o'ringa aylantiradi (masalan Mobilogrof)"
+                }
+                onClick={() =>
+                  updateSeat.mutate(
+                    { userId: u.id, isSeat: !u.is_seat },
+                    {
+                      onSuccess: () =>
+                        toast.success(u.is_seat ? "Endi oddiy xodim" : "Endi almashinuvchi o'rin"),
+                    }
+                  )
+                }
+              >
+                {u.is_seat ? "O'rinlikni bekor qilish" : "O'ringa aylantirish"}
               </Button>
             )}
             {u.is_active ? (

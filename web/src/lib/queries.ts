@@ -162,6 +162,12 @@ export const useUpdateUserPosition = () =>
     [["users"], qk.teamNorms]
   );
 
+export const useUpdateUserSeat = () =>
+  useApiMutation(
+    ({ userId, isSeat }: { userId: number; isSeat: boolean }) => api.updateUserSeat(userId, isSeat),
+    [["users"]]
+  );
+
 export const useDeleteUser = () => useApiMutation((userId: number) => api.deleteUser(userId), [["users"]]);
 
 export const useDeactivateUser = () =>
