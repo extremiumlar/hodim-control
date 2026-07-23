@@ -87,7 +87,7 @@ class Position(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
     # {"tasks": true, "norm": true, "kpi": true, "excused": true} — bot menyu tugmalari
     menu_flags: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # ["suhbat", "tashrif", "video"] — shu lavozim uchun kuzatiladigan ko'rsatkichlar
+    # ["suhbat", "tashrif", "oddiy_video", "dumaloq_video"] — shu lavozim uchun kuzatiladigan ko'rsatkichlar
     metrics: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # ["rop"] yoki ["hr"] — qaysi rahbar rol shu lavozimga vazifa/norma belgilay oladi
     # (boss/dasturchi har doim hammani boshqaradi, ro'yxatga kiritish shart emas)

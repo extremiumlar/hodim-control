@@ -74,7 +74,8 @@ def main_menu(
 
     # Soatlik reja — kunlik normasi kuzatiladigan (suhbat/tashrif/video) xodimlarga
     has_trackable_metric = bool(
-        set(metrics if metrics is not None else ["suhbat", "tashrif"]) & {"suhbat", "tashrif", "video"}
+        set(metrics if metrics is not None else ["suhbat", "tashrif"])
+        & {"suhbat", "tashrif", "oddiy_video", "dumaloq_video"}
     )
     if role not in MANAGER_ROLES and has_trackable_metric:
         rows.append([KeyboardButton(text=BTN_HOURLY_PLAN)])

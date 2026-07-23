@@ -52,7 +52,12 @@ AUDIT_ACTION_LABELS = {
 
 router = Router(name="stats")
 
-METRIC_MONTH_LABELS = {"suhbat": "Suhbatlar", "tashrif": "Tashriflar", "video": "Videolar"}
+METRIC_MONTH_LABELS = {
+    "suhbat": "Suhbatlar",
+    "tashrif": "Tashriflar",
+    "oddiy_video": "Oddiy videolar",
+    "dumaloq_video": "Dumaloq videolar",
+}
 
 
 @router.message(F.text == BTN_MY_STATS)

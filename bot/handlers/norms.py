@@ -9,7 +9,12 @@ from bot.keyboards import BTN_CANCEL, BTN_CHANGE_NORM, cancel_menu, menu_for_use
 
 router = Router(name="norms")
 
-METRIC_LABELS = {"suhbat": "Suhbatlar soni", "tashrif": "Tashriflar soni", "video": "Videolar soni"}
+METRIC_LABELS = {
+    "suhbat": "Suhbatlar soni",
+    "tashrif": "Tashriflar soni",
+    "oddiy_video": "Oddiy videolar soni",
+    "dumaloq_video": "Dumaloq (doira) videolar soni",
+}
 DEFAULT_METRICS = ["suhbat", "tashrif"]
 
 # Norma belgilay oladigan rollar: ROP (o'z jamoasi), HR (o'ziga biriktirilgan
