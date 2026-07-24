@@ -10,7 +10,7 @@ from crm.config import (
     CRM_API_KEY,
     CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS,
     CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
-    CRM_UYSOT_VISIT_PIPE_STATUS_ID,
+    CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,9 @@ class UysotAdapter(CRMAdapter):
     alohida to'liq skanerlash kerak bo'lib, API'ga ortiqcha yuklama tushardi.
 
     Tashriflar soni: `/lead/filter` endpointi `pipeStatusIds` bo'yicha server tomonida
-    filtrlashni qo'llab-quvvatlaydi, shuning uchun faqat "Tashrif" bosqichidagi (ID
-    `CRM_UYSOT_VISIT_PIPE_STATUS_ID` orqali sozlanadi) lidlarni so'raymiz — bu minglab
+    filtrlashni qo'llab-quvvatlaydi, shuning uchun faqat "Tashrif" bosqich(lar)idagi
+    (ID'lar `CRM_UYSOT_VISIT_PIPE_STATUS_IDS` orqali sozlanadi — bir nechta voronkada
+    alohida "Tashrif" bosqichi bo'lishi mumkin) lidlarni so'raymiz — bu minglab
     lidning bir qismi (masalan yuzlab), to'liq ro'yxatni emas. Natijalar `updatedTimestamp`
     bo'yicha kamayish tartibida kelgani uchun call-history bilan bir xil "eskirgan yozuvga
     yetguncha sahifala" strategiyasi ishlatiladi. `user.crm_visit_external_id` — lid
@@ -371,10 +372,12 @@ class UysotAdapter(CRMAdapter):
         return result
 
     async def _load_day_visits(self, client: httpx.AsyncClient, day: date) -> dict[str, dict]:
-        """"Tashrif" bosqichidagi (`CRM_UYSOT_VISIT_PIPE_STATUS_ID`) lidlarni sahifalab
-        o'qib, `responsibleById` bo'yicha shu kunda tahrirlanganlarni sanaydi. Har bir
-        javobgar uchun oxirgi ko'ringan `responsibleBy` (ism) ham saqlanadi."""
-        if not CRM_UYSOT_VISIT_PIPE_STATUS_ID:
+        """"Tashrif" bosqichlaridagi (`CRM_UYSOT_VISIT_PIPE_STATUS_IDS` — bir nechta
+        voronkada alohida "Tashrif" bosqichi bo'lishi mumkin, 5-band tuzatishi
+        2026-07-24) lidlarni sahifalab o'qib, `responsibleById` bo'yicha shu kunda
+        tahrirlanganlarni sanaydi. Har bir javobgar uchun oxirgi ko'ringan
+        `responsibleBy` (ism) ham saqlanadi."""
+        if not CRM_UYSOT_VISIT_PIPE_STATUS_IDS:
             return {}
 
         day_key = day.isoformat()
@@ -391,7 +394,7 @@ class UysotAdapter(CRMAdapter):
                 json={
                     "page": page,
                     "size": LEAD_FILTER_PAGE_SIZE,
-                    "pipeStatusIds": [int(CRM_UYSOT_VISIT_PIPE_STATUS_ID)],
+                    "pipeStatusIds": list(CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
                 },
             )
             resp.raise_for_status()

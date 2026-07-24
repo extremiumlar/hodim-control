@@ -26,7 +26,7 @@ from api.services import hot_lead as hot_lead_service
 from api.services import lead_diff
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
-from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_ID
+from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_IDS
 from db.models import (
     AiConfig,
     ExcusedDay,
@@ -42,14 +42,11 @@ from db.models import (
 )
 
 
-def _visit_pipe_status_id() -> int | None:
-    """"Tashrif" bosqichi ID'si — bitta manba, `api/routers/stats.py`dagi
-    shaxsiy statistika bilan bir xil (ilgari guruh digesti nom bo'yicha, shaxsiy
-    statistika ID bo'yicha hisoblardi — ikki xil ta'rif ikki xil son berardi)."""
-    try:
-        return int(CRM_UYSOT_VISIT_PIPE_STATUS_ID) if CRM_UYSOT_VISIT_PIPE_STATUS_ID else None
-    except (TypeError, ValueError):
-        return None
+def _visit_pipe_status_ids() -> set[int]:
+    """"Tashrif" bosqichi ID'lari — CRM'da bir nechta voronkada alohida
+    "Tashrif" bosqichi bo'lishi mumkin (5-band tuzatishi, 2026-07-24:
+    production'da ikkitasi tasdiqlangan), shuning uchun to'plam qaytariladi."""
+    return set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS)
 
 
 async def digest_group_targets(db: AsyncSession, chat_id: int | None = None) -> list[int]:
@@ -102,7 +99,7 @@ async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
     tahrir)" taxminidan farqli."""
     agg: dict[int, dict] = {}
 
-    event_agg = await lead_diff.daily_operator_breakdown(db, day, _visit_pipe_status_id())
+    event_agg = await lead_diff.daily_operator_breakdown(db, day, _visit_pipe_status_ids())
     for rid, a in event_agg.items():
         entry = agg.setdefault(rid, {"name": a["name"], "calls": 0, "leads": 0, "visits": 0})
         entry["leads"] = a["leads_touched"]
@@ -222,7 +219,10 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         return f" · 🗣 {_fmt_talk(sec)}" if sec else ""
 
     # Operator qatorlari — bugun faoliyati borlar, qo'ng'iroq bo'yicha kamayish tartibida
-    active = {rid: a for rid, a in today_ops.items() if a["calls"] or a["leads"]}
+    # "yoki visits" — 5-band dual-kredit: lidni olib kelgan operator o'sha kun
+    # boshqa qo'ng'iroq/lid faoliyatisiz, faqat tashrif krediti bilan ham
+    # ro'yxatda ko'rinishi kerak (aks holda kredit hisoblansa-yu ko'rinmasdi).
+    active = {rid: a for rid, a in today_ops.items() if a["calls"] or a["leads"] or a["visits"]}
     lines: list[str] = []
     for rid, a in sorted(active.items(), key=lambda x: -(x[1]["calls"] + x[1]["leads"])):
         user = user_by_rid.get(rid)
@@ -364,7 +364,7 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
         return {"sent": False, "reason": "Bugun allaqachon tekshirilgan"}
 
     final_ops = await _day_by_operator(db, yesterday)
-    active = {rid: a for rid, a in final_ops.items() if a["calls"] or a["leads"]}
+    active = {rid: a for rid, a in final_ops.items() if a["calls"] or a["leads"] or a["visits"]}
     final = {
         "calls": sum(a["calls"] for a in active.values()),
         "leads": sum(a["leads"] for a in active.values()),

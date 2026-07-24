@@ -11,7 +11,18 @@ CRM_WEBHOOK_SECRET = os.getenv("CRM_WEBHOOK_SECRET", "")
 CRM_AMOCRM_SUBDOMAIN = os.getenv("CRM_AMOCRM_SUBDOMAIN", "")
 # Uysot pipeline'idagi "Tashrif" bosqichining pipeStatusId'si (Uysot dashboard'ida
 # sozlanadi, hisobdan hisobga farq qiladi). Bo'sh bo'lsa — tashriflar hisoblanmaydi (0).
+# ESKI, YAGONA ID — orqaga moslik uchun saqlangan (crm/uysot.py'dagi
+# shaxsiy-statistika skaneri hali shuni ishlatadi). Yangi kod uchun pastdagi
+# CRM_UYSOT_VISIT_PIPE_STATUS_IDS (ko'plik) ishlatilsin.
 CRM_UYSOT_VISIT_PIPE_STATUS_ID = os.getenv("CRM_UYSOT_VISIT_PIPE_STATUS_ID", "")
+# 5-band (tashrif hisoblash) tuzatishi (2026-07-24): production'da "Tashrif" nomli
+# IKKITA alohida voronka-bosqich borligi tasdiqlandi (masalan 8787 va 7166) —
+# faqat bittasini hisoblash tashriflarni kam ko'rsatardi. Vergul bilan bir nechta
+# ID kiritish mumkin; bo'sh bo'lsa yuqoridagi yagona ID'ga qaytadi (orqaga moslik).
+CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [
+    int(x) for x in os.getenv("CRM_UYSOT_VISIT_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
+    if x.strip().isdigit()
+] or ([int(CRM_UYSOT_VISIT_PIPE_STATUS_ID)] if CRM_UYSOT_VISIT_PIPE_STATUS_ID.strip().isdigit() else [])
 # Operator AI sabab tekshiruvi uchun: "hali ishlanmagan/ochiq lid" deb hisoblanadigan
 # bosqich ID'lari (vergul bilan, masalan "101,102"). Operator "lid tugadi" desa, shu
 # bosqichlarda unga biriktirilgan lidlar CRM'dan sanaladi. Bo'sh — tekshiruv o'chiq.

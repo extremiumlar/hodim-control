@@ -198,7 +198,7 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
 
 
 async def daily_operator_breakdown(
-    db: AsyncSession, day: date, visit_pipe_status_id: int | None
+    db: AsyncSession, day: date, visit_pipe_status_ids: set[int] | None
 ) -> dict[int, dict]:
     """Kunlik operator kesimi — `LeadEvent`dan (taxminiy `updatedTimestamp`
     emas, haqiqiy voqealardan). Qaytaradi: {responsible_id: {name,
@@ -206,27 +206,57 @@ async def daily_operator_breakdown(
 
     `leads_touched` — shu operatorga (voqea paytidagi `to_responsible_id`)
     tegishli HAQIQIY bosqich/mas'ul o'zgarish (yoki yangi lid) voqealari soni.
-    `visits` — shu voqealardan aynan `visit_pipe_status_id`ga YANGI kirganlari
-    (boshqa bosqichdan yoki yangi lid sifatida — allaqachon shu bosqichda
-    bo'lgan-u boshqa narsasi o'zgargan lid ikkinchi marta sanalmaydi)."""
+
+    `visits` — DUAL-KREDIT (5-band): lid `visit_pipe_status_ids`dan biriga
+    YANGI kirsa (boshqa bosqichdan yoki yangi lid sifatida — allaqachon shu
+    bosqichda bo'lgan-u boshqa narsasi o'zgargan lid ikkinchi marta
+    sanalmaydi), JORIY mas'ul (`to_responsible_id`, "yopgan"/"tashrifga
+    o'tkazgan" odam) +1 oladi. Bundan tashqari, agar shu lidning ENG BIRINCHI
+    ko'rilgan mas'uli (`first_responsible_id` — CrmLeadState'da doimiy
+    saqlanadi, hech qachon almashtirilmaydi) HOZIRGI mas'uldan FARQ QILSA
+    (ya'ni lid boshqa odamdan — masalan operatordan — o'tkazib olingan), O'SHA
+    BIRINCHI mas'ul HAM +1 tashrif oladi (\"lidni olib kelgan\" krediti,
+    to'g'ridan-to'g'ri o'zi yopganidan ALOHIDA). Agar bitta odam boshidan
+    oxirigacha o'zi olib kelib o'zi yopgan bo'lsa (first_responsible_id ==
+    to_responsible_id) — faqat BITTA kredit (ikki marta sanalmaydi).
+
+    Production'da tasdiqlangan (2026-07-24): CRM'da operatordan managerga
+    haqiqiy o'tkazish voqealari (`responsible_change`) mavjud va
+    `first_responsible_id` buni to'g'ri saqlaydi — lekin kuzatuv oynasi hali
+    qisqa bo'lgani uchun operator→manager→Tashrif to'liq zanjiri hali jonli
+    misolda ko'rilmagan (mexanizm to'g'ri qurilgan, vaqt sinovi kerak)."""
     day_start, day_end = local_range_utc_naive(day, day)
     rows = await db.scalars(
         select(LeadEvent).where(LeadEvent.detected_at >= day_start, LeadEvent.detected_at < day_end)
     )
+    visit_ids = visit_pipe_status_ids or set()
+
+    def _bucket(rid: int, name: str | None) -> dict:
+        return agg.setdefault(rid, {"name": name or str(rid), "leads_touched": 0, "visits": 0})
 
     agg: dict[int, dict] = {}
     for ev in rows:
         rid = ev.to_responsible_id
         if rid is None:
             continue
-        a = agg.setdefault(rid, {"name": ev.to_responsible_name or str(rid), "leads_touched": 0, "visits": 0})
+        a = _bucket(rid, ev.to_responsible_name)
         a["leads_touched"] += 1
-        if (
-            visit_pipe_status_id is not None
-            and ev.to_pipe_status_id == visit_pipe_status_id
-            and ev.from_pipe_status_id != visit_pipe_status_id
-        ):
-            a["visits"] += 1
+
+        is_new_visit = (
+            bool(visit_ids)
+            and ev.to_pipe_status_id in visit_ids
+            and ev.from_pipe_status_id not in visit_ids
+        )
+        if not is_new_visit:
+            continue
+        a["visits"] += 1
+        if ev.first_responsible_id is not None and ev.first_responsible_id != rid:
+            # "Olib kelgan" (asl) mas'ulga ALOHIDA kredit — ismi shu voqeada
+            # yo'q (faqat JORIY mas'ul nomi saqlanadi), shuning uchun ID bilan
+            # boshlanadi; chaqiruvchi tomonda (daily_digest) mavjud
+            # User.crm_visit_external_id orqali haqiqiy ismga almashtiriladi
+            # (boshqa "Boshqa operatorlar" holatlari bilan bir xil naqsh).
+            _bucket(ev.first_responsible_id, None)["visits"] += 1
     return agg
 
 
