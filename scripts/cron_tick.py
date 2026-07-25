@@ -120,9 +120,10 @@ def _due(now: datetime) -> list:
 
 
 def _lead_sync_due(now: datetime) -> bool:
-    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES (default :00/:30)
-    va HAR KUNI 23:57 "muzlatish" (scheduler/main.py bilan bir xil — avvalgi
-    versiyada muzlatish xato ravishda faqat oyning oxirgi kuniga bog'langan edi)."""
+    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES (default 15 daqiqa —
+    :00/:15/:30/:45) va HAR KUNI 23:57 "muzlatish" (scheduler/main.py bilan bir
+    xil — avvalgi versiyada muzlatish xato ravishda faqat oyning oxirgi kuniga
+    bog'langan edi)."""
     if now.minute % cfg.LEAD_SNAPSHOT_INTERVAL_MINUTES == 0:
         return True
     return now.hour == cfg.LEAD_SNAPSHOT_FREEZE_HOUR and now.minute == cfg.LEAD_SNAPSHOT_FREEZE_MINUTE

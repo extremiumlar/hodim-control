@@ -32,8 +32,14 @@ ATTENDANCE_EVENING_MINUTE = 0
 # bo'lishi mumkin).
 CRM_SYNC_INTERVAL_SECONDS = 30
 
-# Lid statistikasi snapshoti: butun bazani sekin sahifalaydi — tez-tez emas.
-LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
+# Lid statistikasi snapshoti (LeadStageDaily — haftalik/oylik digest va bot
+# "Lidlar statistikasi"ni ta'minlaydi): butun bazani sekin sahifalaydi (jonli
+# o'lchov, 2026-07-25: ~375s ≈ 6.25 daqiqa, vaqtinchalik CRM xatosi bilan ham).
+# Ilgari 30 daqiqa edi — bu qismlar 30-37 daqiqagacha eskirgan bo'lishi mumkin
+# edi. 15 daqiqaga tushirildi (~8.75 daqiqa zaxira bilan xavfsiz) — kechikish
+# ikki barobar kamaydi. TO'LIQ yechim (LeadEvent/CrmLeadState'ga o'tkazish)
+# alohida, kattaroq loyiha — bu faqat oraliq, arzon yaxshilash.
+LEAD_SNAPSHOT_INTERVAL_MINUTES = 15
 LEAD_SNAPSHOT_FREEZE_HOUR = 23  # kun yakunida oxirgi holatni "muzlatish"
 LEAD_SNAPSHOT_FREEZE_MINUTE = 57
 

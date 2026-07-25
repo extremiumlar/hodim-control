@@ -135,16 +135,21 @@ async def _lead_states_by_id(db: AsyncSession, crm_lead_ids: list[int]) -> dict[
 
 
 async def _operator_absent_reason(db: AsyncSession, user_id: int) -> str | None:
-    """Operator hozir ishda emasligi sababi (yoki `None` — ishda/tasdiqlanmagan).
-    Kelib-ketish yozuvidan: hali check-in qilmagan (kelmagan) yoki check-out
-    qilib ulgurgan (ketgan) — ikkalasida ham "kechikdi" deb ayblash adolatsiz."""
+    """Operator hozir ishda EMASLIGINI ANIQ TASDIQLOVCHI dalil bo'lsa sababini
+    qaytaradi (yoki `None` — ishda deb hisoblanadi). MUHIM (2026-07-25 tuzatish):
+    ilgari "check-in yozuvi yo'q" HAM "ishda emas" deb hisoblanardi — bu Face ID
+    check-in tizimi amalda deyarli ishlatilmagani uchun (production'da bir necha
+    kunda bitta yozuv ham yo'q) DEYARLI HAR DOIM eskalatsiyani bloklab qo'yardi.
+    Endi faqat ANIQ dalil (kimdir uni ishdan chiqib ketgan deb qayd etgan —
+    check_out_time bor) hisobga olinadi; check-in yozuvi umuman yo'qligi
+    "noaniq" deb qabul qilinadi va operatorni AYBLAYDI (aks holda amalda hech
+    qachon eskalatsiya bo'lmasdi — bu tizimning asosiy maqsadini yo'qqa
+    chiqarardi)."""
     today = datetime.now(TASHKENT_TZ).date()
     att = await db.scalar(
         select(Attendance).where(Attendance.user_id == user_id, Attendance.date == today)
     )
-    if att is None or att.check_in_time is None:
-        return "hali ishga kelmagan (check-in yo'q)"
-    if att.check_out_time is not None:
+    if att is not None and att.check_out_time is not None:
         return "ishdan ketgan (check-out qilingan)"
     return None
 
