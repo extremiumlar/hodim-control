@@ -864,6 +864,10 @@ class AttendanceDigestConfig(Base):
     evening_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     morning_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
     evening_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Kelmagan xodimlarga `absent` yozuvini yozish qo'riqchisi (evening_enabled'dan
+    # MUSTAQIL — "xodim kelmadi" haqiqati bildirishnoma sozlamasiga bog'liq
+    # bo'lmasligi kerak). Vaqti evening_hour/minute bilan bir xil ("kun tugadi").
+    absent_marked_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

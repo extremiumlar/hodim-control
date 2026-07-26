@@ -139,7 +139,7 @@ async def perform_check_in(
     radiusida bo'lishi shart. Kechikish o'sha kungi ish oynasi boshlanishidan
     (grace bilan) hisoblanadi."""
     day = today_local()
-    is_working, start, _end = await _effective_today(db, user, day)
+    is_working, start, end = await _effective_today(db, user, day)
 
     _validate_face(user, descriptor, liveness)
     dist = await _validate_location(db, lat, lng)
@@ -162,7 +162,22 @@ async def perform_check_in(
     if is_working and start:
         diff = _minute_of_day(now_local) - _hm_to_min(start)
         grace = settings.attendance_grace_minutes
-        att.late_minutes = max(0, diff - grace) if diff > grace else 0
+        # Grace — BO'SAG'A, chegirma emas: grace ichida kelinsa kechikish 0,
+        # undan oshsa TO'LIQ farq yoziladi (masalan grace=5, kelish 09:06 bo'lsa
+        # late=6, "6-5=1" EMAS). Ilgari har kechikkan kun grace daqiqasiga kam
+        # ko'rsatilardi — oylik statistikada sezilarli xato edi. Mavjud yozuvlar
+        # bu tuzatishdan keyin ham eski (kamaytirilgan) qiymatda qoladi — bu
+        # yerdagi o'zgarish faqat YANGI check-in'larga qo'llanadi.
+        late = diff if diff > grace else 0
+        # Yuqori chegara: ish oynasi uzunligidan (tushliksiz) oshib ketmasin —
+        # aks holda 17:59 da (deyarli kun oxirida) kelgan xodim "534 daqiqa
+        # kechikdi" bo'lib yozilib, oylik jamni bitta kun portlatib yuboradi.
+        # Bunday holat mohiyatan "kunning katta qismini yo'q qilish" — kechikish
+        # sifatida emas, mantiqiy jihatdan ish oynasi bilan chegaralanadi.
+        if end:
+            window = work_minutes(_hm_to_min(start), _hm_to_min(end))
+            late = min(late, window)
+        att.late_minutes = late
     else:
         att.late_minutes = 0
 
@@ -203,7 +218,14 @@ async def perform_check_out(
 
     if is_working and end:
         diff = _hm_to_min(end) - _minute_of_day(now_local)
-        att.early_leave_minutes = max(0, diff)
+        early = max(0, diff)
+        # Yuqori chegara — 1.4-band bilan bir xil sabab: check-in darhol keyin
+        # check-out qilinsa (masalan sinov yoki xato bosish), "erta ketish" ish
+        # oynasidan oshib ketmasin.
+        if start:
+            window = work_minutes(_hm_to_min(start), _hm_to_min(end))
+            early = min(early, window)
+        att.early_leave_minutes = early
     else:
         att.early_leave_minutes = 0
 

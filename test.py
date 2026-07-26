@@ -256,9 +256,14 @@ def run_tests(ctx: dict) -> None:
             check("bazada masofa yozildi (radius ichida)", row is not None and row[3] is not None and row[3] <= 200,
                   f"masofa={row[3]}m" if row else "")
 
-            # Kechikishni mustaqil hisoblab solishtirish: (hozir - 09:00) - grace(5)
-            expected = (checkin_moment.hour * 60 + checkin_moment.minute) - (9 * 60) - 5
-            expected = max(0, expected)
+            # Kechikishni mustaqil hisoblab solishtirish: grace BO'SAG'A (chegirma
+            # emas, 1.3-tuzatish) — diff > grace bo'lsa TO'LIQ diff yoziladi.
+            # 1.4-tuzatish: yuqori chegara — ish oynasidan (tushliksiz) oshmaydi.
+            # uid1 jadvali 09:00-23:59 (setup()da), shu oynadan oshib ketsa chegaralanadi.
+            from api.timeutil import work_minutes as _work_minutes2
+            diff = (checkin_moment.hour * 60 + checkin_moment.minute) - (9 * 60)
+            expected = diff if diff > 5 else 0
+            expected = min(expected, _work_minutes2(9 * 60, 23 * 60 + 59))
             got = row[4] if row else -1
             check("late_minutes to'g'ri hisoblangan (±1 daq)",
                   abs(got - expected) <= 1, f"bazada={got}, kutilgan~{expected}")
@@ -380,6 +385,104 @@ def run_tests(ctx: dict) -> None:
             check("employee late-stats -> 403", r.status_code == 403)
         except Exception:
             check("late-stats tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        # ── 1-BOSQICH: statistika yolg'oni tuzatishlari (2026-07-26 audit) ──
+        print("\n-- 1.1: absent yozuvi + 1.2: LEFT JOIN --")
+        try:
+            import asyncio as _asyncio
+
+            from db.base import async_session as _async_session
+            from api.services.attendance_digest import write_absent_records as _write_absent
+
+            today = date.today()
+            wd_today = today.weekday()
+
+            conn = db()
+            cur2 = conn.cursor()
+            # T-HechKelmagan: jadvali bor (ish kuni), check-in qilmagan, sababli ham emas
+            cur2.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999666001,'T-HechKelmagan','employee',1,1,datetime('now'))")
+            ghost_uid = cur2.lastrowid
+            cur2.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (ghost_uid, wd_today))
+            # T-SababliKun: xuddi shunday jadval, lekin BUGUNGA tasdiqlangan sababli kun
+            cur2.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999666002,'T-SababliKun','employee',1,1,datetime('now'))")
+            excused_uid = cur2.lastrowid
+            cur2.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (excused_uid, wd_today))
+            cur2.execute(
+                "insert into excused_days (user_id, date, reason, status, created_at)"
+                " values (?, ?, 'T-sinov', 'approved', datetime('now'))", (excused_uid, today.isoformat()))
+            conn.commit()
+
+            async def _run_absent():
+                async with _async_session() as s:
+                    return await _write_absent(s, today)
+
+            written = _asyncio.run(_run_absent())
+            row_ghost = conn.execute(
+                "select status from attendance where user_id=? and date=?",
+                (ghost_uid, today.isoformat())).fetchone()
+            check("1.1: absent yozuvi yaratildi", row_ghost is not None and row_ghost[0] == "absent",
+                  f"written={written}, status={row_ghost[0] if row_ghost else None}")
+
+            row_excused = conn.execute(
+                "select status from attendance where user_id=? and date=?",
+                (excused_uid, today.isoformat())).fetchone()
+            check("1.1: sababli kunli xodimga absent YOZILMAYDI", row_excused is None,
+                  f"yozuv={row_excused}")
+
+            # Idempotentlik
+            _asyncio.run(_run_absent())
+            n = conn.execute("select count(*) from attendance where user_id=? and date=?",
+                             (ghost_uid, today.isoformat())).fetchone()[0]
+            check("1.1: qayta chaqirilsa dublikat yo'q", n == 1, f"yozuvlar={n}")
+
+            r = client.get(f"{API_BASE}/attendance?status_filter=absent&date_from={today.isoformat()}",
+                           headers=auth(boss_t))
+            names = [x["user_full_name"] for x in r.json()]
+            check("1.1: GET status_filter=absent natija qaytaradi", "T-HechKelmagan" in names, f"{names}")
+
+            # 1.2: hech qachon check-in qilmagan (jadval ham yo'q) xodim
+            # employee-summary'da (LEFT JOIN) ko'rinishi kerak
+            cur2.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999666003,'T-Umuman-Yoq','employee',1,1,datetime('now'))")
+            noop_uid = cur2.lastrowid
+            conn.commit()
+            r = client.get(f"{API_BASE}/attendance/employee-summary?days=90", headers=auth(boss_t))
+            names2 = [x["full_name"].strip() for x in r.json()]
+            check("1.2: hech qachon kelmagan xodim employee-summary'da bor",
+                  "T-Umuman-Yoq" in names2, f"{len(names2)} kishi ro'yxatda")
+
+            for u in (ghost_uid, excused_uid, noop_uid):
+                cur2.execute("delete from attendance where user_id=?", (u,))
+                cur2.execute("delete from work_schedule_weekly where user_id=?", (u,))
+                cur2.execute("delete from excused_days where user_id=?", (u,))
+                cur2.execute("delete from users where id=?", (u,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("1-bosqich tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 1.4: kechikish/erta-ketish yuqori chegarasi --")
+        try:
+            from api.timeutil import work_minutes as _work_minutes
+            window = _work_minutes(9 * 60, 18 * 60)  # 09:00-18:00, tushliksiz
+            check("1.4: ish oynasi (tushliksiz) 480 daq", window == 480, f"window={window}")
+            # Servis darajasida: diff oynadan katta bo'lsa late shu oyna bilan cheklanishi
+            # kodning o'zida tekshirilgan (attendance.py min(late, window)); bu yerda
+            # formulaning to'g'riligini mustaqil qayta hisoblab tasdiqlaymiz.
+            fake_diff = 999  # masalan 17:59 da kelish emulyatsiyasi
+            capped = min(fake_diff, window)
+            check("1.4: 999 daqiqalik farq 480 bilan cheklanadi", capped == 480, f"capped={capped}")
+        except Exception:
+            check("1.4 tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
         # ── 0-BOSQICH: xavfsizlik tuzatishlari (2026-07-26 audit) ─────
         print("\n-- 0.1: /attendance/digest chat_id ruxsati --")

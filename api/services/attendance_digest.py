@@ -256,6 +256,46 @@ def build_evening_text(data: dict) -> str:
     return "\n".join(lines)
 
 
+async def write_absent_records(db: AsyncSession, day=None) -> int:
+    """Kun tugagach, kelmagan (check-in qilmagan, sababli ham bo'lmagan) xodimlarga
+    `status='absent'` yozuvi yaratadi. Buni yozmasa: (1) `GET /attendance
+    ?status_filter=absent` doim bo'sh qaytardi, (2) `employee-summary`/`late-stats`
+    kabi OUTER JOIN hisobotlar kelmagan kunni "0 kun" deb hisoblay olardi, lekin
+    "necha kun kelmadi" degan raqamning o'zi hech qayerda saqlanmas edi.
+
+    Idempotent: `uq_attendance_user_date` bor yozuv uchun qayta yozmaydi — bir necha
+    marta chaqirilsa ham xavfsiz. `AttendanceDigestConfig.absent_marked_date`
+    bildirishnoma sozlamasidan (evening_enabled) MUSTAQIL — xodim kelmagani
+    haqiqati guruhga xabar yuborish yoqiq-o'chiqligiga bog'liq bo'lmasligi kerak."""
+    data = await collect_day(db, day)
+    if not data["expected"]:
+        return 0  # dam olish kuni — hech kim ishlamaydi
+
+    already = {
+        a.user_id
+        for a in await db.scalars(select(Attendance).where(Attendance.date == data["day"]))
+    }
+    written = 0
+    for u in data["absent"]:
+        if u.id in already:
+            continue  # ehtiyot chorasi — collect_day ham shu mantiqni hisoblaydi
+        db.add(
+            Attendance(
+                user_id=u.id,
+                date=data["day"],
+                status="absent",
+                is_weekend=False,
+                late_minutes=0,
+                early_leave_minutes=0,
+                worked_minutes=0,
+            )
+        )
+        written += 1
+    if written:
+        await db.commit()
+    return written
+
+
 async def get_digest_config(db: AsyncSession) -> AttendanceDigestConfig:
     """Sozlama qatorini (id=1) oladi, bo'lmasa defaultlar bilan yaratadi."""
     cfg = await db.get(AttendanceDigestConfig, 1)
@@ -277,6 +317,16 @@ async def digest_tick(db: AsyncSession) -> dict:
     now = datetime.now(TASHKENT_TZ)
     today = now.date()
     fired: list[dict] = []
+
+    # Kelmaganlarni "absent" deb yozish — bildirishnoma sozlamasidan (evening_enabled)
+    # MUSTAQIL, faqat vaqt (kun tugashi = evening_hour/minute) va bir-kunda-bir-marta
+    # qo'riqchisi bilan boshqariladi.
+    if cfg.absent_marked_date != today and (now.hour, now.minute) >= (cfg.evening_hour, cfg.evening_minute):
+        written = await write_absent_records(db, today)
+        cfg.absent_marked_date = today
+        await db.commit()
+        if written:
+            fired.append({"kind": "absent_marking", "written": written})
 
     for kind, enabled, hour, minute, last in (
         ("morning", cfg.morning_enabled, cfg.morning_hour, cfg.morning_minute, cfg.morning_last_posted),

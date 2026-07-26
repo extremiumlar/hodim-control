@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
@@ -351,6 +351,10 @@ async def employee_summary(
     days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> list[EmployeeAttendanceSummary]:
     since = today_local() - timedelta(days=days)
+    # OUTER JOIN — hech qachon check-in qilmagan xodim ham natijaga kirsin
+    # (0 kun, 0 daqiqa bilan). DIQQAT: sana filtri JOIN shartiga (ON) qo'yilgan,
+    # WHERE'ga EMAS — WHERE'da bo'lsa NULL qatorlarni kesib, LEFT JOIN yana
+    # INNER'ga aylanib qolar edi va muammo saqlanib qolardi.
     rows = await db.execute(
         select(
             User.id,
@@ -361,10 +365,11 @@ async def employee_summary(
             func.coalesce(func.sum(Attendance.early_leave_minutes), 0).label("early_minutes"),
             func.coalesce(func.sum(Attendance.worked_minutes), 0).label("worked_minutes"),
         )
-        .join(Attendance, Attendance.user_id == User.id)
+        .select_from(User)
+        .outerjoin(Attendance, and_(Attendance.user_id == User.id, Attendance.date >= since))
         # Boshliqdan tashqari hamma (ATTENDANCE_TRACKED_ROLES) — dashboard va
         # guruh digesti bilan bir xil qoida.
-        .where(Attendance.date >= since, User.role.in_(ATTENDANCE_TRACKED_ROLES))
+        .where(User.role.in_(ATTENDANCE_TRACKED_ROLES), User.is_active.is_(True))
         .group_by(User.id, User.full_name)
         .order_by(func.coalesce(func.sum(Attendance.late_minutes), 0).desc())
     )
