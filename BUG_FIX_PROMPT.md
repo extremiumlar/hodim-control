@@ -12,7 +12,55 @@
 
 ## 0. AVVAL SO'RANG (kod yozishdan oldin)
 
-### Savol A — Face ID xavfsizligi bilan nima qilamiz? ⚠️ ENG MUHIM
+### Savol A — Face ID bilan nima qilamiz? 🚨 TIZIM UMUMAN ISHLAMAYAPTI
+
+> ⚠️ **Bu endi "xavfsizlik yaxshilash" emas — Face ID hozir odamlarni AJRATMAYAPTI.**
+> Quyidagi ikki fakt jonli baza va jonli API bilan **isbotlangan** (2026-07-26).
+
+**Isbot 1 — bazadagi 4 ta yuzning HAMMASI bir-biriga "o'xshaydi":**
+```
+Boss       <-> Nurullo IT : masofa=0.219  similarity=0.781   ← chegara 0.5, o'tadi
+Boss       <-> Firuzabonu : masofa=0.312  similarity=0.688   ← o'tadi
+Boss       <-> Kamola     : masofa=0.427  similarity=0.573   ← o'tadi
+Nurullo IT <-> Firuzabonu : masofa=0.268  similarity=0.732   ← o'tadi
+Nurullo IT <-> Kamola     : masofa=0.425  similarity=0.575   ← o'tadi
+Firuzabonu <-> Kamola     : masofa=0.454  similarity=0.546   ← o'tadi
+
+6/6 juftlik chegaradan o'tadi. O'rtacha masofa 0.351 (normal: 0.6-1.2)
+```
+
+**Isbot 2 — jonli API testi:**
+```
+T- xodim yaratildi, unga BOSSning deskriptori yozildi, so'ng
+NURULLOning deskriptori bilan check-in qilindi:
+
+  1) O'z yuzi (Boss) bilan:        200  (kutilgan)
+  2) BOSHQA odam (Nurullo) bilan:  200  ← *** QABUL QILDI ***
+  3) Tasodifiy vektor bilan:       400  (to'g'ri rad etildi)
+```
+
+**Ya'ni:** bazadagi har qanday xodim boshqa xodimning hisobiga o'z yuzi bilan
+check-in qila oladi. Face ID faqat "umuman begona vektor"ni to'sadi.
+
+**Ehtimoliy sabab (tekshirish kerak):** `web/src/lib/face.ts` `captureForRegister()`
+8 freym deskriptorini **o'rtachalaydi** (element-wise mean). O'rtachalash shaxsiy
+xususiyatlarni yo'qotib, barcha deskriptorlarni "o'rtacha yuz"ga siljitadi —
+markazdan masofalar 0.161-0.305 (juda kichik). Qo'shimcha omillar: `MIN_FACE_SIZE=60px`
+juda past, `TinyFaceDetector` sifati cheklangan, check-in'da esa o'rtachalash EMAS
+(eng yaxshi freym) — ikki xil usul.
+
+**Nima qilish kerak (minimal):**
+1. Chegarani qattiqlashtirish — hozirgi 0.5 (masofa ≤ 0.5) bu ma'lumot uchun
+   **umuman ishlamaydi**. Real ma'lumotga qarab qayta hisoblash kerak.
+2. O'rtachalashni olib tashlash yoki eng yaxshi freymni tanlash (check-in bilan
+   bir xil usul).
+3. Ro'yxatdan o'tishda sifat nazorati: yuz o'lchami, aniqlik, mavjud xodimlar
+   bilan o'xshashlik tekshiruvi (agar yangi deskriptor mavjud birortasiga
+   chegaradan yaqin bo'lsa — rad etish).
+4. **Barcha mavjud 4 ta deskriptorni bekor qilib, qayta ro'yxatdan o'tkazish**
+   (ular yaroqsiz).
+
+**Va faqat shundan keyin** — quyidagi "klientga ishonish" masalasi:
 
 **Hozirgi holat (kod bilan isbotlangan):**
 - `api/schemas.py` `MeCheckRequest`: `latitude`, `longitude`, `face_descriptor` (128 float),
@@ -140,6 +188,78 @@ test.py                             regressiya testi (ildizda)
 
 > Har bosqich = alohida commit. Bir commitga hammasini tiqmang.
 > Har banddan keyin: **reproduktsiya → tuzatish → qabul mezoni tekshiruvi → test.py**.
+
+---
+
+## 🚨 BOSQICH 0 — DARHOL (xavfsizlik teshiklari)
+
+**Nega birinchi:** bular ochiq turgan eshiklar — tuzatish arzon, zarari katta.
+
+### 0.1 — `/attendance/digest` istalgan chatga yuboradi ⚠️
+
+**Joy:** `api/routers/attendance.py` `attendance_digest()` → `chat_id` parametri
+→ `daily_digest.py` `digest_group_targets()`:
+```python
+if chat_id:
+    return [chat_id]      # ← hech qanday tekshiruvsiz
+```
+Bu **yagona** davomat endpointi bo'lib, unda na `telegram_id`, na rol tekshiruvi bor
+(qolganlarida bor). Bot sekreti sizsa:
+```bash
+curl -X POST -H "X-Bot-Secret: <sekret>" \
+  "https://<domen>/api/attendance/digest?kind=evening&chat_id=<hujumchi chati>"
+# → butun jamoa davomati (ismlar, kelish vaqtlari, kechikishlar) hujumchiga
+```
+`dry_run=true` bilan esa umuman yubormasdan HTTP javobida oladi.
+
+**Tuzatish:** `chat_id` ni faqat rahbar telegram_id tasdig'i bilan qabul qilish yoki
+umuman olib tashlab, faqat sozlangan guruhlarga yuborish.
+
+### 0.2 — Bot sekreti URL yo'lida (server loglariga tushadi)
+
+**Joy:** `scripts/set_webhook.py` — `.../bot/webhook/{BOT_SHARED_SECRET}`;
+`api/routers/bot_webhook.py` — `if secret != settings.bot_shared_secret`.
+
+Bir xil sekret ikki joyda: `X-Bot-Secret` sarlavhasi **va URL yo'li**. URL yo'llari
+nginx/cPanel `access_log` ga to'liq yoziladi. Qo'shimcha: bu yerda `!=` ishlatilgan,
+`api/deps.py` da esa to'g'ri `hmac.compare_digest` — nomuvofiqlik.
+
+**Tuzatish:** webhook uchun **alohida** sekret (`BOT_WEBHOOK_SECRET`), Telegram'ning
+`secret_token` mexanizmi (sarlavhada keladi, URL da emas), `compare_digest`.
+
+### 0.3 — `.env.example` da `DEBUG=true`
+
+**Joy:** `.env.example:5` (`api/config.py` default esa `False` — ya'ni xavf faqat
+shablonni nusxalab deploy qilishda).
+
+DEBUG yoqiq bo'lsa `/auth/dev-login` ochiq: **bitta butun son (telegram_id) bilan
+istalgan foydalanuvchi, jumladan Boshliq tokeni** olinadi. Rate limiting yo'q.
+Ustiga `config.py` DEBUG=true da placeholder sirlar uchun `RuntimeError` o'rniga
+faqat `logger.error` beradi.
+
+**Tuzatish:** `.env.example` da `DEBUG=false`; dev-login uchun qo'shimcha himoya
+(masalan faqat localhost).
+
+### 0.4 — `/docs` va `/openapi.json` production'da ochiq
+
+**Joy:** `api/main.py` — `FastAPI(...)` da `docs_url=None` yo'q.
+Autentifikatsiyasiz butun endpoint xaritasi, jumladan bot-sekret bilan himoyalangan
+yo'llar va parametrlari ko'rinadi (0.1/0.2 hujumlari uchun qo'llanma).
+
+**Tuzatish:** production'da `docs_url=None, redoc_url=None, openapi_url=None`
+(yoki DEBUG bayrog'iga bog'lash).
+
+### 0.5 — `register-face` da hech qanday nazorat yo'q
+
+**Joy:** `api/routers/attendance.py` `register_face()`.
+Yuz allaqachon ro'yxatdan o'tganmi — tekshirilmaydi; eski yuz bilan qayta tasdiqlash
+yo'q; rahbar tasdig'i yo'q; **AuditLog yozilmaydi** (holbuki `delete_attendance` yozadi).
+Bundan tashqari butun kod bazasida **yuzni tozalash uchun rahbar endpointi yo'q** —
+`reset_account` va `deactivate_user` `face_descriptor` ga tegmaydi (ishdan bo'shagan
+odamning biometrikasi bazada abadiy qoladi).
+
+**Tuzatish:** audit yozuvi + rahbarga xabar; yuzni tozalash endpointi;
+`deactivate_user`/`reset_account` da tozalash.
 
 ---
 
@@ -395,6 +515,90 @@ olmaydi, xato xabari esa chalg'ituvchi ("~6000 km uzoqdasiz").
 | 4.9 | Eskirgan izohlar: "faqat employee" deb yozilgan, aslida `ATTENDANCE_TRACKED_ROLES` | `attendance_digest.py`, `routers/attendance.py` |
 | 4.10 | `fmtTime` ikki faylda nusxalangan (drift xavfi) | `CheckIn.tsx`, `Attendance.tsx` |
 | 4.11 | Ro'yxatlarda `key={i}` (indeks); register tugmasi saqlash paytida disabled emas | `Attendance.tsx`, `FaceCapture.tsx` |
+
+---
+
+## 🟠 BOSQICH 5 — Integratsiya (davomat ↔ boshqa tizimlar)
+
+Bu buglar davomatning **o'zida** emas, uning boshqa modullar bilan aloqasida.
+
+### 5.1 — Tasdiqlangan sababli kun davomatga UMUMAN ta'sir qilmaydi ⚠️
+**Joy:** `api/services/attendance.py` `perform_check_in` — `ExcusedDay` **import ham
+qilinmagan**; `AttendanceStatus` da `excused` qiymati yo'q.
+**Stsenariy:** xodim sababli kun oldi (HR tasdiqladi) → shifokordan keyin 11:00 da
+ishga keldi va "Keldim" bosdi → `late_minutes=120`, `status=late`. Bu kechikish
+`late-stats` va `employee-summary` hisobotlariga **kiradi**, digestda esa u "sababli"
+ro'yxatiga tushmaydi (u yerda `excused` faqat check-in **bo'lmagan** holatda).
+**Tuzatish:** `AttendanceStatus.excused` qo'shish; check-in paytida tasdiqlangan
+sababli kunni tekshirib, kechikish yozmaslik.
+
+### 5.2 — Digest bir kunda ikki marta yuborilishi mumkin (poyga)
+**Joy:** `api/services/attendance_digest.py` `digest_tick` — qo'riqchi
+(`*_last_posted = today`) faqat **yuborish tugagandan keyin** yoziladi, yuborish esa
+Telegram tarmoq chaqiruvi (`timeout=60`). Cron har daqiqa chaqiradi, lock yo'q
+(taqqoslang: og'ir lid skaneri uchun lock fayl maxsus qurilgan).
+**Tuzatish:** flagni yuborishdan **oldin** atomik yozish
+(`UPDATE ... WHERE last_posted != today` + `rowcount` tekshiruvi).
+
+### 5.3 — Digest tick ikki joyda ro'yxatdan o'tgan
+**Joy:** `scripts/cron_tick.py` **va** `scheduler/main.py` — ikkalasi bir xil
+`/attendance/digest-tick` ga boradi. Ikkalasi bir vaqtda yoqilsa (gibrid deploy,
+migratsiya) apscheduler'ning `max_instances` himoyasi jarayonlararo ishlamaydi va
+5.2 poygasi kafolatlanadi.
+**Tuzatish:** bayroq bilan bittasini o'chirish yoki 5.2 dagi atomik qo'riqchi.
+
+### 5.4 — Digest vaqtini o'zgartirish o'sha kungi digestni qayta yuboradi
+**Joy:** `api/routers/attendance.py` `set_digest_time` — `*_last_posted = None`
+**har qanday** vaqt o'zgarishida tozalanadi.
+**Stsenariy:** 22:00 da digest chiqdi → 22:30 da boshliq vaqtni 21:00 ga o'zgartirdi
+→ qo'riqchi tozalandi → `(22,30) >= (21,00)` → **digest qayta yuboriladi**.
+**Tuzatish:** faqat vaqt **oldinga** surilganda tozalash.
+
+### 5.5 — Soatlik reja / AI kelmagan xodimga ham xabar yuboradi
+**Joy:** `api/routers/hourly_plan.py` `send_hourly_plan`, `api/services/auto_plan.py`,
+`watch_rules.py` — ular faqat ish **jadvalini** tekshiradi, `Attendance.check_in_time`
+ni **hech biri** tekshirmaydi. (`watch_rules` va `idle_watch` sababli kunni biladi,
+`hourly_plan` esa bilmaydi — izchilsizlik.)
+**Stsenariy:** xodim bugun umuman kelmagan → AI unga "rejadan orqadasiz, sababi nima?"
+deb yozadi. Kasal, sababli kundagi xodim har soatda reja xabarini oladi.
+**Tuzatish:** yagona yordamchi (`is_working_today`) — jadval + sababli kun + davomat.
+
+### 5.6 — Sababli kunni oldindan so'rab bo'lmaydi
+**Joy:** `bot/handlers/excused.py` → `api/routers/excused_days.py` — bot sana
+yubormaydi, backend `today_local()` qo'yadi.
+**Stsenariy:** 09:30 ertalabki digest "❌ Hali kelmadi: Aliyev" deb e'lon qildi →
+09:45 da HR sababli kunni tasdiqladi → tuzatish xabari yo'q, guruh noto'g'ri
+ma'lumot bilan qoladi.
+**Tuzatish:** botda sana tanlash (ertaga/aniq sana).
+
+### 5.7 — Sababli kunda dublikat va idempotentlik yo'q
+**Joy:** `api/routers/excused_days.py` + `db/models.py` `ExcusedDay` — `(user_id, date)`
+unique constraint **yo'q**, kod tekshiruvi ham yo'q. Bitta xodim bitta kunga cheksiz
+so'rov yuboradi, har biri **barcha HR'larga** alohida xabar. Qaror ham idempotent emas:
+allaqachon `approved` bo'lgan kun qayta `rejected` qilinishi mumkin (eski tugma bosilsa).
+
+### 5.8 — Bonus hisobida davomat umuman ishtirok etmaydi
+**Joy:** `api/services/bonus.py` — `Attendance` import ham qilinmagan.
+**Stsenariy:** oyda 10 kun kelmagan yoki har kuni 40 daqiqa kechikkan xodim, CRM
+raqamlari teng bo'lsa, hech qachon kechikmagan xodim bilan **aynan bir xil** bonus oladi.
+**Qaror kerak:** davomat bonusga ta'sir qilsinmi? (Bu biznes qarori.)
+
+### 5.9 — Excel hisobotda davomat yo'q
+**Joy:** `api/services/export.py` — `Attendance` import qilinmagan. Kechikish
+daqiqalari, ishlangan soat, kelgan/kelmagan kunlar birorta varaqda yo'q.
+
+### 5.10 — Ikkala digest bir xil guruhlarga, to'qnashuvdan himoya yo'q
+**Joy:** `attendance_digest.py` lid digestining `digest_group_targets` funksiyasini
+ishlatadi — manzillar bir xil, vaqtlar esa ikki xil jadvaldan (`GroupPostConfig`
+19:10 va `AttendanceDigestConfig` 09:30/22:00).
+**Stsenariy:** vaqtlar yaqinlashsa guruhga bir daqiqada ikkita uzun xabar tushadi.
+
+### 5.11 — Ish jadvali o'zgarishlari audit qilinmaydi
+**Joy:** `api/routers/work_schedule.py` — `AuditLog` **import ham qilinmagan**;
+`set_weekly` eski jadvalni `DELETE` qilib qayta yozadi (oldingi holat yo'qoladi).
+**Nega xavfli:** ish jadvali kechikish hisobining yagona asosi. ROP/HR o'z doirasidagi
+xodimga **bugungi sanaga** `start_time="12:00"` override qo'ysa — o'sha kunning
+kechikishi 0 bo'ladi va **hech qayerda iz qolmaydi**.
 
 ---
 
