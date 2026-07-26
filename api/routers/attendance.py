@@ -126,9 +126,26 @@ async def register_face(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Kirgan xodim o'z yuzini ro'yxatdan o'tkazadi (128-o'lchamli deskriptor)."""
+    """Kirgan xodim o'z yuzini ro'yxatdan o'tkazadi (128-o'lchamli deskriptor).
+
+    XAVFSIZLIK: bu yagona joy — kimning yuzi qaysi hisobga bog'langanini
+    o'zgartiradi. Deskriptorning o'zi audit yozuviga yozilmaydi (128-o'lchamli
+    biometrik ma'lumot, keraksiz saqlash), lekin QAYTA ro'yxatdan o'tish (allaqachon
+    yuz bor bo'lgan hisobda) `AuditLog`ga qayd etiladi — shu orqali "kimningdir
+    yuzi kimningdir hisobiga qo'yildi" holatini keyinroq tekshirish mumkin."""
+    was_reregistration = user.has_face
     user.face_descriptor = json.dumps(payload.face_descriptor)
     user.face_registered_at = datetime.utcnow()
+    if was_reregistration:
+        db.add(
+            AuditLog(
+                actor_id=user.id,
+                action="face_reregistered",
+                target_user_id=user.id,
+                before={"had_face": True},
+                after={"registered_at": user.face_registered_at.isoformat()},
+            )
+        )
     await db.commit()
     await db.refresh(user)
     return user
@@ -433,6 +450,7 @@ async def late_stats_bot(
 @router.post("/digest", dependencies=[Depends(verify_bot_secret)])
 async def attendance_digest(
     kind: str = "morning",
+    telegram_id: int | None = None,
     chat_id: int | None = None,
     dry_run: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -441,7 +459,24 @@ async def attendance_digest(
 
     kind=morning — ertalabki (kim keldi/kechikdi/hali yo'q);
     kind=evening — kun yakuni (ish vaqti, kechikish, chiqmaganlar, kelmaganlar).
-    dry_run=true — yubormasdan matnni qaytaradi (sinov uchun)."""
+    dry_run=true — yubormasdan matnni qaytaradi (sinov uchun).
+
+    XAVFSIZLIK: ixtiyoriy `chat_id` ga yuborish faqat RAHBAR nomidan mumkin —
+    `telegram_id` ham berilishi va u rahbarga tegishli bo'lishi shart. Aks holda
+    bot sekretini bilgan har kim butun jamoa davomatini (ismlar, kelish vaqtlari,
+    kechikishlar) o'zining shaxsiy chatiga yuborib olardi. `chat_id`siz chaqiruv
+    (cron/scheduler) faqat sozlangan guruhlarga boradi — u xavfsiz."""
+    if chat_id is not None:
+        if telegram_id is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "chat_id bilan yuborish uchun telegram_id ham kerak",
+            )
+        actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+        if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Tanlangan chatga yuborish faqat rahbarlar uchun"
+            )
     return await send_attendance_digest(db, kind=kind, chat_id=chat_id, dry_run=dry_run)
 
 

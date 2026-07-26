@@ -1,6 +1,10 @@
 """Telegram webhook'ini o'rnatish yoki o'chirish (cPanel deploy).
 
-Webhook URL: https://<API_DOMEN>/bot/webhook/<BOT_SHARED_SECRET>
+Webhook URL: https://<API_DOMEN>/bot/webhook  (sekret URL'da EMAS)
+Sekret Telegram'ning `secret_token` mexanizmi orqali uzatiladi — Telegram uni
+har update bilan `X-Telegram-Bot-Api-Secret-Token` sarlavhasida yuboradi, server
+esa shu sarlavhani tekshiradi. Bu URL'ga sekret qo'yishdan xavfsizroq: URL
+yo'llari nginx/cPanel access_log'ga to'liq yoziladi, sarlavha esa yozilmaydi.
 API_BASE_URL .env'dan olinadi (masalan https://api.domen.uz).
 
 Ishlatish:
@@ -40,17 +44,19 @@ async def main() -> None:
                 print(f"Oxirgi xato: {info.last_error_date} — {info.last_error_message}")
             return
 
-        url = f"{API_BASE_URL.rstrip('/')}/bot/webhook/{BOT_SHARED_SECRET}"
+        url = f"{API_BASE_URL.rstrip('/')}/bot/webhook"
         # Dispatcher'dan qaysi update turlari kerakligini olamiz (message_reaction ham)
         dp = build_dispatcher(bot)
         from bot.setup import allowed_update_types
 
         await bot.set_webhook(
             url=url,
+            secret_token=BOT_SHARED_SECRET,
             allowed_updates=allowed_update_types(dp),
             drop_pending_updates=False,
         )
         print(f"Webhook o'rnatildi:\n  {url}")
+        print("Sekret X-Telegram-Bot-Api-Secret-Token sarlavhasida uzatiladi (URL'da emas).")
         print("Endi Telegram update'lari shu manzilga keladi.")
     finally:
         await bot.session.close()

@@ -8,6 +8,7 @@ qiladi, biz uni aiogram Dispatcher'iga uzatamiz. Bot va Dispatcher bir marta
 Faqat settings.bot_webhook_enabled=true bo'lganda api/main.py'ga ulanadi
 (Docker/VPS'da bot alohida polling qiladi — bu router ulanmaydi va bot/ paketi
 import ham qilinmaydi)."""
+import hmac
 import logging
 
 from aiogram.types import Update
@@ -46,14 +47,9 @@ def _ensure_bot():
     return _bot, _dp
 
 
-@router.post("/webhook/{secret}")
-async def telegram_webhook(secret: str, request: Request) -> Response:
-    """Telegram update'ini qabul qilib Dispatcher'ga uzatadi. Sekret URL'da —
-    Telegram maxsus sarlavha bermaydi, shuning uchun maxfiylik yo'l orqali.
-    Har qanday xato ushlanadi: 200 qaytaramiz, aks holda Telegram update'ni
-    qayta-qayta yuboraveradi va navbat tiqiladi."""
-    if secret != settings.bot_shared_secret:
-        return Response(status_code=status.HTTP_403_FORBIDDEN)
+async def _handle_update(request: Request) -> Response:
+    """Update'ni Dispatcher'ga uzatadi. Har qanday xato ushlanadi: 200 qaytaramiz,
+    aks holda Telegram update'ni qayta-qayta yuboraveradi va navbat tiqiladi."""
     try:
         bot, dp = _ensure_bot()
         data = await request.json()
@@ -63,3 +59,33 @@ async def telegram_webhook(secret: str, request: Request) -> Response:
         logger.exception("Webhook update ishlashda xatolik")
     # Telegram'ga har doim 200 — muvaffaqiyatli qabul qilindi (qayta yubormasin)
     return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/webhook")
+async def telegram_webhook(request: Request) -> Response:
+    """ASOSIY webhook: sekret Telegram'ning `secret_token` mexanizmi orqali
+    `X-Telegram-Bot-Api-Secret-Token` SARLAVHASIDA keladi (URL'da emas).
+
+    Nega shunday: URL yo'llari nginx/cPanel `access_log` ga to'liq yoziladi va
+    shared hostingda log fayllari boshqa jarayonlarga ham ko'rinishi mumkin —
+    sekret yo'lda bo'lsa u yerdan sizib chiqadi va bot qatlamining barcha
+    endpointlari ochiladi."""
+    token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(token, settings.bot_shared_secret):
+        return Response(status_code=status.HTTP_403_FORBIDDEN)
+    return await _handle_update(request)
+
+
+@router.post("/webhook/{secret}", deprecated=True)
+async def telegram_webhook_legacy(secret: str, request: Request) -> Response:
+    """ESKI yo'l (sekret URL'da) — faqat orqaga moslik uchun: deploy paytida
+    webhook hali yangi manzilga ko'chirilmagan bo'lsa, botning uzilib qolmasligi
+    uchun. `scripts/set_webhook.py --set` ishga tushirilgach bu yo'l ishlatilmaydi
+    va uni olib tashlash mumkin."""
+    if not hmac.compare_digest(secret, settings.bot_shared_secret):
+        return Response(status_code=status.HTTP_403_FORBIDDEN)
+    logger.warning(
+        "Webhook ESKI yo'l bilan keldi (sekret URL'da). "
+        "`python scripts/set_webhook.py --set` bilan yangi manzilga ko'chiring."
+    )
+    return await _handle_update(request)

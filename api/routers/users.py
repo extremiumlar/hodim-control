@@ -557,14 +557,21 @@ async def deactivate_user(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     user.is_active = False
+    # Ishdan bo'shagan xodimning Face ID deskriptori bazada abadiy qolmasin —
+    # aks holda uning o'rniga kelgan yangi xodim (yoki hisobni qayta oluvchi)
+    # eski biometrikaga qo'shilib qolishi yoki uni bilib-bilmay ustiga yozishi
+    # mumkin bo'lardi, hech qanday izsiz.
+    had_face = user.has_face
+    user.face_descriptor = None
+    user.face_registered_at = None
 
     db.add(
         AuditLog(
             actor_id=actor.id,
             action="user_deactivated",
             target_user_id=user.id,
-            before={"is_active": True},
-            after={"is_active": False},
+            before={"is_active": True, "had_face": had_face},
+            after={"is_active": False, "face_cleared": had_face},
         )
     )
     await db.commit()
@@ -611,18 +618,23 @@ async def reset_account(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     before_telegram_id = user.telegram_id
+    had_face = user.has_face
     token = secrets.token_urlsafe(16)
     user.telegram_id = None
     user.bot_started = False
     user.invite_token = token
+    # Akkaunt reset qilinganda ham Face ID tozalanadi (deactivate_user bilan bir
+    # xil sabab) — yangi bog'lanishda xodim yuzini qaytadan ro'yxatdan o'tkazadi.
+    user.face_descriptor = None
+    user.face_registered_at = None
 
     db.add(
         AuditLog(
             actor_id=actor.id,
             action="user_account_reset",
             target_user_id=user.id,
-            before={"telegram_id": before_telegram_id},
-            after={"telegram_id": None},
+            before={"telegram_id": before_telegram_id, "had_face": had_face},
+            after={"telegram_id": None, "face_cleared": had_face},
         )
     )
     await db.commit()

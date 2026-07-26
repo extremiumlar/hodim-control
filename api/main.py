@@ -33,7 +33,16 @@ from api.routers import (
     work_schedule,
 )
 
-app = FastAPI(title="Xodimlar KPI/Bonus tizimi API")
+# Interaktiv hujjatlar (/docs, /redoc, /openapi.json) faqat DEBUG rejimida ochiq.
+# Productionda ular autentifikatsiyasiz butun endpoint xaritasini — jumladan
+# X-Bot-Secret bilan himoyalangan yo'llar va ularning parametrlarini — ko'rsatadi,
+# ya'ni hujumchi uchun tayyor qo'llanma bo'lib xizmat qiladi.
+app = FastAPI(
+    title="Xodimlar KPI/Bonus tizimi API",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
+)
 
 app.add_middleware(
     CORSMiddleware,

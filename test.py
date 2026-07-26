@@ -381,6 +381,101 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("late-stats tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        # ── 0-BOSQICH: xavfsizlik tuzatishlari (2026-07-26 audit) ─────
+        print("\n-- 0.1: /attendance/digest chat_id ruxsati --")
+        try:
+            r = client.post(f"{API_BASE}/attendance/digest",
+                             params={"kind": "morning", "chat_id": 999999, "dry_run": "true"})
+            check("sekretsiz chaqiruv -> 401/403", r.status_code in (401, 403))
+
+            mgr = find_manager_id()
+            mgr_tg = None
+            if mgr:
+                conn = db()
+                row = conn.execute("select telegram_id from users where id=?", (mgr[0],)).fetchone()
+                conn.close()
+                mgr_tg = row[0] if row else None
+
+            # bot-sekret bilan, lekin telegram_id'siz chat_id -> 400
+            import httpx as _httpx  # allaqachon yuqorida import qilingan bo'lsa ham xavfsiz
+
+            with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as f:
+                secret = next(
+                    (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")),
+                    "",
+                )
+            bot_h = {"X-Bot-Secret": secret}
+            r = client.post(f"{API_BASE}/attendance/digest", headers=bot_h,
+                             params={"kind": "morning", "chat_id": 999999, "dry_run": "true"})
+            check("bot-sekret + chat_id, telegram_id'siz -> 400", r.status_code == 400)
+
+            if mgr_tg:
+                r = client.post(f"{API_BASE}/attendance/digest", headers=bot_h,
+                                params={"kind": "morning", "chat_id": 999999,
+                                        "telegram_id": mgr_tg, "dry_run": "true"})
+                check("bot-sekret + rahbar telegram_id + chat_id -> 200", r.status_code == 200)
+
+            # chat_id berilmagan holat — bu cron/scheduler yo'li, telegram_id shart emas
+            r = client.post(f"{API_BASE}/attendance/digest", headers=bot_h,
+                             params={"kind": "morning", "dry_run": "true"})
+            check("chat_id'siz chaqiruv (cron yo'li) hali ishlaydi", r.status_code == 200)
+        except Exception:
+            check("0.1 digest ruxsat tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 0.4: /docs production'da yopiq --")
+        try:
+            r = client.get(f"{API_BASE}/docs")
+            check("/docs -> 404 (DEBUG=false)", r.status_code == 404)
+            r = client.get(f"{API_BASE}/openapi.json")
+            check("/openapi.json -> 404 (DEBUG=false)", r.status_code == 404)
+        except Exception:
+            check("0.4 /docs tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 0.5: register-face audit + deactivate'da yuz tozalash --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444777,'T-AuditTest','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            audit_uid = cur.lastrowid
+            conn.commit()
+
+            audit_tok = token_for(audit_uid, "employee")
+            before_n = conn.execute(
+                "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
+                (audit_uid,)).fetchone()[0]
+            r = client.post(f"{API_BASE}/attendance/me/register-face", headers=auth(audit_tok),
+                             json={"face_descriptor": WRONG_FACE})
+            check("qayta ro'yxatdan o'tish -> 200", r.status_code == 200)
+            after_n = conn.execute(
+                "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
+                (audit_uid,)).fetchone()[0]
+            check("AuditLog yozildi (face_reregistered)", after_n == before_n + 1,
+                  f"before={before_n}, after={after_n}")
+
+            mgr = find_manager_id()
+            if mgr:
+                mgr_t = token_for(mgr[0], mgr[1])
+                has_before = conn.execute(
+                    "select face_descriptor is not null from users where id=?", (audit_uid,)).fetchone()[0]
+                r = client.post(f"{API_BASE}/users/{audit_uid}/deactivate", headers=auth(mgr_t))
+                check("deactivate -> 200", r.status_code == 200)
+                has_after = conn.execute(
+                    "select face_descriptor is not null from users where id=?", (audit_uid,)).fetchone()[0]
+                check("deactivate'dan keyin yuz tozalandi",
+                      has_before == 1 and has_after == 0, f"oldin={has_before}, keyin={has_after}")
+
+            cur.execute("delete from audit_logs where target_user_id=?", (audit_uid,))
+            cur.execute("delete from attendance where user_id=?", (audit_uid,))
+            cur.execute("delete from users where id=?", (audit_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("0.5 register-face audit tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def main() -> None:
     print("=" * 60)
