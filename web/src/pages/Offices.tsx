@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type Office } from "@/lib/api";
 import { useCreateOffice, useDeleteOffice, useOffices, useUpdateOffice } from "@/lib/queries";
+import { translateGeoError } from "@/lib/utils";
 
 // 3.8-band: `z.coerce.number()` bo'sh satrni `Number("") === 0` ga aylantiradi —
 // bo'sh maydon xatosiz -90..90/-180..180 oralig'idan "o'tib ketardi" va ofis
@@ -72,7 +73,7 @@ export default function Offices() {
       },
       (e) => {
         setLocating(false);
-        toast.error("GPS xato: " + e.message);
+        toast.error(translateGeoError(e));
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );

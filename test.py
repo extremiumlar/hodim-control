@@ -1139,6 +1139,44 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("3.4 Boshliq check-in tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- 4.6: days=30 aniq 30 kun (31 EMAS) --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444794,'T-DaysWindow','employee',1,1,datetime('now'))")
+            dw_uid = cur.lastrowid
+            today = date.today()
+            exactly_30 = today - timedelta(days=29)  # bugundan hisoblab 30-chi kun (chegarada)
+            exactly_31 = today - timedelta(days=30)  # 31-chi kun — OYNADAN TASHQARI bo'lishi kerak
+            for d in (exactly_30, exactly_31):
+                cur.execute(
+                    "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                    " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                    " values (?, ?, ?, 10, 0, 0, 'late', 0, datetime('now'), datetime('now'))",
+                    (dw_uid, d.isoformat(), f"{d.isoformat()} 04:00:00"))
+            conn.commit()
+
+            r = client.get(f"{API_BASE}/attendance/employee-summary?days=30", headers=auth(boss_t))
+            check("employee-summary?days=30 -> 200", r.status_code == 200)
+            row = next((x for x in r.json() if x["user_id"] == dw_uid), None)
+            check("30-kunlik oyna: faqat CHEGARADAGI (29 kun oldingi) yozuv hisobga olindi",
+                  row is not None and row["late_minutes"] == 10, f"{row}")
+
+            r2 = client.get(f"{API_BASE}/attendance/late-stats?days=30", headers=auth(boss_t))
+            names_in_window = [x["full_name"] for x in r2.json() if x["user_id"] == dw_uid]
+            late_days_count = next((x["late_days"] for x in r2.json() if x["user_id"] == dw_uid), None)
+            check("late-stats?days=30: 31-kun oldingi yozuv OYNADAN TASHQARI",
+                  late_days_count == 1, f"late_days={late_days_count}")
+
+            cur.execute("delete from attendance where user_id=?", (dw_uid,))
+            cur.execute("delete from users where id=?", (dw_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("4.6 kunlar oynasi tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def main() -> None:
     print("=" * 60)

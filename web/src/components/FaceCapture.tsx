@@ -18,6 +18,13 @@ interface Props {
   livenessThreshold?: number;
   buttonLabel?: string;
   hint?: string;
+  // 4.11-band: `capturing` faqat FaceCapture ICHKI (freym olish) holatini
+  // bildiradi — natija chaqiruvchiga (`onResult`) uzatilgach, chaqiruvchining
+  // O'ZINING tarmoq so'rovi (masalan register-face) hali ketayotgan bo'lsa ham,
+  // ichki holat allaqachon tugaganidan tugma yana bosiladigan bo'lib qolardi
+  // (buttonLabel "Saqlanmoqda..." bo'lsa ham, DISABLED emas edi). Chaqiruvchi
+  // shu prop orqali o'z holatini ham qo'shishi mumkin.
+  disabled?: boolean;
 }
 
 type LiveStatus = { detected: boolean; size: number; score: number };
@@ -29,6 +36,7 @@ export default function FaceCapture({
   livenessThreshold = 0.5,
   buttonLabel,
   hint,
+  disabled = false,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -41,6 +49,10 @@ export default function FaceCapture({
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
   const [live, setLive] = useState<LiveStatus>({ detected: false, size: 0, score: 0 });
+  // 4.2-band: model CDN'dan (uchinchi tomon, justadudewhohacks.github.io)
+  // yuklanadi — u ishlamay qolsa ilgari ekran abadiy "yuklanmoqda..." bo'lib
+  // qolar, qayta urinish uchun butun sahifani yangilash kerak edi.
+  const [modelLoadError, setModelLoadError] = useState("");
 
   // 2.4-band: capture() async davom etayotganda modal bekor qilinsa (yoki komponent
   // unmount bo'lsa), natija E'TIBORGA OLINMASLIGI kerak. Oldin "showFace" guardi
@@ -94,10 +106,21 @@ export default function FaceCapture({
     };
   }, [stream]);
 
-  useEffect(() => {
+  function loadModelsNow() {
+    setModelLoadError("");
     loadModels((loaded, total) => setModelProgress({ loaded, total }))
       .then(() => setModelsReady(true))
-      .catch((e) => setError("Modellarni yuklab bo'lmadi: " + (e?.message || e)));
+      .catch((e) =>
+        setModelLoadError(
+          "Yuz aniqlash modelini yuklab bo'lmadi (internet yoki CDN muammosi). " +
+            (e?.message || e)
+        )
+      );
+  }
+
+  useEffect(() => {
+    loadModelsNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // REAL VAQTLI yuz aniqlash (har 800ms)
@@ -190,7 +213,20 @@ export default function FaceCapture({
     <div className="space-y-3">
       <div className="relative bg-black rounded-xl overflow-hidden aspect-[4/3] w-full max-w-md mx-auto">
         <video ref={videoRef} playsInline muted autoPlay className="w-full h-full object-cover transform scale-x-[-1]" />
-        {!modelsReady && (
+        {!modelsReady && modelLoadError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-white text-sm p-4">
+            <div className="w-full max-w-[280px] text-center">
+              <p className="mb-3">{modelLoadError}</p>
+              <button
+                onClick={loadModelsNow}
+                className="rounded-md bg-white px-4 py-2 text-sm font-medium text-slate-900 hover:bg-slate-100"
+              >
+                Qayta urinish
+              </button>
+            </div>
+          </div>
+        )}
+        {!modelsReady && !modelLoadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-white text-sm">
             <div className="w-full max-w-[220px] text-center">
               <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
@@ -267,14 +303,14 @@ export default function FaceCapture({
       <div className="flex gap-2">
         <button
           onClick={capture}
-          disabled={!modelsReady || capturing || !live.detected || !sizeGood}
+          disabled={disabled || !modelsReady || capturing || !live.detected || !sizeGood}
           className={`${btnPrimary} flex-1`}
           title={!live.detected ? "Yuz aniqlanmadi" : !sizeGood ? "Yaqinroq turing" : ""}
         >
           {capturing ? "Tahlil qilinmoqda..." : buttonLabel || defaultLabel}
         </button>
         {onCancel && (
-          <button onClick={onCancel} className={btnGhost}>
+          <button onClick={onCancel} disabled={disabled} className={btnGhost}>
             Bekor
           </button>
         )}

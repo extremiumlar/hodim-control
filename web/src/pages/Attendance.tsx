@@ -52,13 +52,7 @@ import {
   useDeleteAttendance,
   useManualAttendance,
 } from "@/lib/queries";
-
-// Backend naive-UTC — "Z" qo'shib mahalliy vaqtga o'giramiz.
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  const norm = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
-  return format(new Date(norm), "HH:mm");
-}
+import { fmtLocalTime as fmtTime } from "@/lib/utils";
 
 // <input type="time"> uchun — bo'sh qiymat "" bo'lishi kerak ("—" emas).
 function toHm(iso: string | null): string {
@@ -500,6 +494,15 @@ export default function Attendance() {
             <Skeleton key={i} className="h-[86px] rounded-xl" />
           ))}
         </div>
+      ) : dashQuery.error ? (
+        // 4.8-band: ilgari xato bo'lsa kartalar shunchaki ko'rinmay qolardi —
+        // rahbar buni "bugun hech narsa bo'lmagan" deb tushunishi mumkin edi.
+        <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {dashQuery.error.message}
+          <Button variant="outline" size="sm" onClick={() => dashQuery.refetch()}>
+            Qayta urinish
+          </Button>
+        </div>
       ) : (
         s && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
@@ -532,8 +535,11 @@ export default function Attendance() {
               <div className="text-sm text-slate-400">Hech kim yo'q</div>
             ) : (
               <ul className="space-y-2">
-                {dash?.in_office.map((p, i) => (
-                  <li key={i} className="flex items-center justify-between text-sm">
+                {dash?.in_office.map((p) => (
+                  // 4.11-band: `key={i}` (indeks) o'rniga barqaror kalit — ro'yxat
+                  // yangilanganda (avtomatik refresh) React qatorlarni indeks
+                  // bo'yicha emas, aynan shu odam bo'yicha moslashtiradi.
+                  <li key={`${p.user_name}-${p.check_in_time}`} className="flex items-center justify-between text-sm">
                     <span>{p.user_name}</span>
                     <span className="text-slate-500">
                       {fmtTime(p.check_in_time)}
@@ -560,8 +566,8 @@ export default function Attendance() {
               <div className="text-sm text-slate-400">Hali yozuv yo'q</div>
             ) : (
               <ul className="space-y-2">
-                {dash?.recent.map((p, i) => (
-                  <li key={i} className="flex items-center justify-between text-sm">
+                {dash?.recent.map((p) => (
+                  <li key={`${p.user_name}-${p.check_in_time}`} className="flex items-center justify-between text-sm">
                     <span>{p.user_name}</span>
                     <span className="flex items-center gap-2 text-slate-500">
                       {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)}

@@ -7,8 +7,10 @@ Ikki xil digest:
 
 Ma'lumot manbai: `attendance` jadvali + xodimning o'sha kungi ish jadvali
 (WorkScheduleOverride > WorkScheduleWeekly > default) + tasdiqlangan sababli
-kunlar. Faqat `role=employee` — rahbarlar davomat ro'yxatida ko'rsatilmaydi
-(late-stats/employee-summary bilan bir xil qoida).
+kunlar. `ATTENDANCE_TRACKED_ROLES` — Boshliqdan tashqari HAMMA (xodim, HR, ROP,
+dasturchi) — rahbarlar (Boshliqdan boshqa) ham davomat ro'yxatida ko'rinadi
+(late-stats/employee-summary bilan bir xil qoida; 4.9-band — bu izoh ilgari
+eskirgan edi, faqat "employee" deb yozilgan).
 
 Dam olish kuni (hech kim ishlamaydi) — digest yuborilmaydi (guruhda shovqin
 bo'lmasligi uchun)."""

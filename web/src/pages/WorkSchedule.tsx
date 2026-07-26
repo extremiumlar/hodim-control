@@ -170,6 +170,13 @@ export default function WorkSchedule() {
 
   function onAddOverride() {
     if (selectedId == null) return;
+    // 4.7-band: haftalik andozada bu tekshiruv bor edi, aniq sana
+    // o'zgartirishida esa yo'q — backend rad etadi, lekin xodim buni
+    // saqlashga urinib ko'rmaguncha bilmasdi.
+    if (ovWorking && ovStart >= ovEnd) {
+      toast.error("Tugash vaqti boshlanishdan kechroq bo'lishi kerak");
+      return;
+    }
     saveOverride.mutate(
       {
         userId: selectedId,

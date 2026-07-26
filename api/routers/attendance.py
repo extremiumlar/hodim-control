@@ -502,7 +502,10 @@ async def dashboard(
 async def employee_summary(
     days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> list[EmployeeAttendanceSummary]:
-    since = today_local() - timedelta(days=days)
+    # 4.6-band: `days=30` sifatida so'ralganda bu aslida 31 kunni qamrab olardi
+    # (`>=` filtri bilan birga [bugun-30 .. bugun] oralig'i — 31 ta sana).
+    # "Oxirgi N kun" bugungi kunni ham qo'shib N ta sana bo'lishi kerak.
+    since = today_local() - timedelta(days=days - 1)
     # OUTER JOIN — hech qachon check-in qilmagan xodim ham natijaga kirsin
     # (0 kun, 0 daqiqa bilan). DIQQAT: sana filtri JOIN shartiga (ON) qo'yilgan,
     # WHERE'ga EMAS — WHERE'da bo'lsa NULL qatorlarni kesib, LEFT JOIN yana
@@ -542,7 +545,10 @@ async def employee_summary(
 async def _late_stats_data(db: AsyncSession, days: int) -> list[LateStatRow]:
     """Kechikish statistikasi ma'lumoti — web (JWT) va bot (X-Bot-Secret)
     endpointlari uchun YAGONA manba. days=0 — faqat bugun."""
-    since = today_local() - timedelta(days=days)
+    # 4.6-band: `days=30` sifatida so'ralganda bu aslida 31 kunni qamrab olardi
+    # (`>=` filtri bilan birga [bugun-30 .. bugun] oralig'i — 31 ta sana).
+    # "Oxirgi N kun" bugungi kunni ham qo'shib N ta sana bo'lishi kerak.
+    since = today_local() - timedelta(days=days - 1)
     rows = await db.execute(
         select(Attendance.user_id, User.full_name, Attendance.date, Attendance.late_minutes)
         .join(User, Attendance.user_id == User.id)
@@ -583,8 +589,9 @@ async def late_stats(
     days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> list[LateStatRow]:
     """Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
-    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: faqat xodimlar
-    (rahbarlar ro'yxatga kirmaydi). Jami kechikish bo'yicha kamayish tartibida."""
+    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: ATTENDANCE_TRACKED_ROLES
+    (Boshliqdan tashqari hamma — HR/ROP/dasturchi ham kiradi, faqat Boshliq yo'q).
+    Jami kechikish bo'yicha kamayish tartibida."""
     return await _late_stats_data(db, days)
 
 

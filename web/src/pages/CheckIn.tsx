@@ -9,6 +9,7 @@ import { type Attendance } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useMyAttendanceToday, useMyCheckIn, useMyCheckOut, useRegisterMyFace } from "@/lib/queries";
 import { type LiveResult } from "@/lib/face";
+import { fmtLocalTime as fmtTime, translateGeoError } from "@/lib/utils";
 
 type Action = "check-in" | "check-out";
 
@@ -24,13 +25,6 @@ function getPosition(): Promise<GeolocationPosition> {
       maximumAge: 0,
     });
   });
-}
-
-// Backend naive-UTC qaytaradi — "Z" qo'shib mahalliy vaqtga o'giramiz.
-function fmtTime(iso: string | null): string {
-  if (!iso) return "—";
-  const norm = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
-  return new Date(norm).toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" });
 }
 
 // Ba'zi brauzerlarda uz-UZ locale oy/kun nomlari yo'q ("M07 14, Tue" chiqadi) —
@@ -124,6 +118,11 @@ export default function CheckIn() {
   const [showFace, setShowFace] = useState<null | Action>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [success, setSuccess] = useState<{ action: Action; att: Attendance } | null>(null);
+  // 4.1-band: server rad etsa (masalan ofisdan tashqarida), xabar endi faqat
+  // tez o'tib ketuvchi toast emas — modal ICHIDA doimiy ko'rinadi va modal
+  // YOPILMAYDI, shuning uchun xodim butun GPS/kamera oqimini qaytadan
+  // boshlamay (FaceCapture hali ochiq), DARHOL qayta urinishi mumkin.
+  const [checkError, setCheckError] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -139,6 +138,7 @@ export default function CheckIn() {
       setShowRegister(true);
       return;
     }
+    setCheckError(null);
     setStatusMsg("Joylashuv tekshirilmoqda...");
     try {
       // Faqat ruxsat/xatoni ERTA ushlash uchun — qiymatning o'zi ishlatilmaydi
@@ -148,14 +148,14 @@ export default function CheckIn() {
       setStatusMsg("");
     } catch (e: any) {
       setStatusMsg("");
-      toast.error("GPS xato: " + (e.message || e));
+      toast.error(translateGeoError(e));
     }
   }
 
   function onFaceCaptured(result: LiveResult | any) {
     if (!showFace) return;
     const action = showFace;
-    setShowFace(null);
+    setCheckError(null);
     setStatusMsg("Joylashuv aniqlanmoqda...");
     // 3.6-band: GPS yuz tasdiqlashdan OLDIN emas, ENDI (yuborishdan darhol
     // oldin) olinadi. Model yuklanishi (~10s) + qayta urinishlar 2-3 daqiqagacha
@@ -169,21 +169,30 @@ export default function CheckIn() {
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
           face_descriptor: result.descriptor,
-          liveness: result.liveness ?? 1.0,
+          // 4.5-band: default ENG YUQORI ishonch (1.0) emas — server "liveness
+          // yuborilmadi" holatini "mukammal tiriklik" deb noto'g'ri talqin
+          // qilmasligi uchun eng PAST (0) qo'yiladi.
+          liveness: result.liveness ?? 0,
           accuracy: pos.coords.accuracy ?? null,
         };
         const mutation = action === "check-in" ? checkIn : checkOut;
         mutation.mutate(body, {
           onSuccess: (updated) => {
             setStatusMsg("");
+            setShowFace(null);
             setSuccess({ action, att: updated });
           },
-          onError: () => setStatusMsg(""),
+          onError: (err: any) => {
+            setStatusMsg("");
+            // 4.1-band: modal ATAYLAB yopilmaydi — FaceCapture hali ochiq,
+            // xodim xabarni o'qib, kamerani darhol qayta sinab ko'rishi mumkin.
+            setCheckError(err?.message || "Xatolik yuz berdi. Qaytadan urinib ko'ring.");
+          },
         });
       })
       .catch((e: any) => {
         setStatusMsg("");
-        toast.error("GPS xato: " + (e.message || e));
+        setCheckError(translateGeoError(e));
       });
   }
 
@@ -313,6 +322,7 @@ export default function CheckIn() {
               onResult={onFaceRegistered}
               onCancel={() => setShowRegister(false)}
               buttonLabel={registerFace.isPending ? "Saqlanmoqda..." : "Yuzimni saqlash"}
+              disabled={registerFace.isPending}
             />
           </CardContent>
         </Card>
@@ -329,20 +339,28 @@ export default function CheckIn() {
                 onClick={() => {
                   setShowFace(null);
                   setStatusMsg("");
+                  setCheckError(null);
                 }}
                 className="text-slate-400 hover:text-slate-700"
               >
                 ✕
               </button>
             </div>
+            {checkError && (
+              <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                {checkError}
+              </div>
+            )}
             <FaceCapture
               mode="verify"
               onResult={onFaceCaptured}
               onCancel={() => {
                 setShowFace(null);
                 setStatusMsg("");
+                setCheckError(null);
               }}
               buttonLabel={showFace === "check-in" ? "Keldim" : "Ketdim"}
+              disabled={busy}
             />
           </div>
         </div>

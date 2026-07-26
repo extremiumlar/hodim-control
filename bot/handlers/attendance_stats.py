@@ -22,6 +22,31 @@ router = Router(name="attendance_stats")
 PERIODS = [(0, "Bugun"), (7, "7 kun"), (30, "30 kun")]
 VALID_DAYS = {d for d, _ in PERIODS}
 
+# 4.3-band: Telegramning o'zi 4096 belgigacha xabarni qabul qiladi — 30 kunlik
+# statistikada ko'p xodim kechiksa (har biri kunma-kun ro'yxati bilan) bu
+# chegaradan oshib, xabar UMUMAN yuborilmay qolishi mumkin edi. Xavfsizlik
+# marzhasi bilan 4000 belgida bo'lamiz.
+TELEGRAM_MSG_LIMIT = 4000
+
+
+def _split_for_telegram(text: str, limit: int = TELEGRAM_MSG_LIMIT) -> list[str]:
+    """Matnni Telegram xabar chegarasidan oshib ketmaydigan bo'laklarga ajratadi —
+    bitta xodim yozuvi o'rtasidan emas, QATOR chegarasidan bo'linadi."""
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        add_len = len(line) + 1
+        if current and current_len + add_len > limit:
+            chunks.append("\n".join(current))
+            current, current_len = [], 0
+        current.append(line)
+        current_len += add_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or [""]
+
 
 def _period_title(days: int) -> str:
     return "bugun" if days == 0 else f"oxirgi {days} kun"
@@ -68,11 +93,20 @@ async def _kb(days: int) -> InlineKeyboardMarkup:
 async def show_attendance_stats(message: Message, state: FSMContext) -> None:
     await state.clear()  # boshqa menyu tugmalari kabi chala FSM oqimini tozalaydi
     days = 7
-    rows = await api_client.attendance_late_stats(message.from_user.id, days)
+    # 4.3-band: backend xato qaytarsa (500, tarmoq uzilishi) ilgari bu yerda
+    # ushlanmagan istisno ko'tarilib, xodim HECH QANDAY javob olmasdi.
+    try:
+        rows = await api_client.attendance_late_stats(message.from_user.id, days)
+    except Exception:
+        await message.answer("⚠️ Statistikani olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
+        return
     if rows is None:
         await message.answer("Bu bo'lim faqat rahbarlar (HR/ROP/Boshliq) uchun.")
         return
-    await message.answer(format_late_stats(rows, days), reply_markup=await _kb(days))
+    chunks = _split_for_telegram(format_late_stats(rows, days))
+    for i, chunk in enumerate(chunks):
+        is_last = i == len(chunks) - 1
+        await message.answer(chunk, reply_markup=await _kb(days) if is_last else None)
 
 
 @router.callback_query(F.data.startswith("attstat:show:"))
@@ -86,15 +120,31 @@ async def switch_period(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
-    rows = await api_client.attendance_late_stats(callback.from_user.id, days)
+    try:
+        rows = await api_client.attendance_late_stats(callback.from_user.id, days)
+    except Exception:
+        # 4.3-band: bu yerda ushlanmasa callback.answer() hech qachon chaqirilmay,
+        # tugma spinneri Telegram'da abadiy "yuklanmoqda" holida qolib ketardi.
+        await callback.answer("Statistikani olishda xatolik yuz berdi.", show_alert=True)
+        return
     if rows is None:
         await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
         return
+
+    chunks = _split_for_telegram(format_late_stats(rows, days))
     try:
-        await callback.message.edit_text(format_late_stats(rows, days), reply_markup=await _kb(days))
+        if len(chunks) == 1:
+            await callback.message.edit_text(chunks[0], reply_markup=await _kb(days))
+        else:
+            # Bir nechta xabarga bo'lingan — birinchisi tahrirlanadi, qolgani
+            # yangi xabar sifatida yuboriladi (tugmalar OXIRGISIDA).
+            await callback.message.edit_text(chunks[0])
     except Exception:
         # "message is not modified" (bir xil matn) — e'tiborsiz qoldiramiz
         pass
+    for i, extra in enumerate(chunks[1:]):
+        is_last = i == len(chunks) - 2
+        await callback.message.answer(extra, reply_markup=await _kb(days) if is_last else None)
     await callback.answer()
 
 
@@ -106,7 +156,11 @@ async def send_to_group(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
-    rows = await api_client.attendance_late_stats(callback.from_user.id, days)
+    try:
+        rows = await api_client.attendance_late_stats(callback.from_user.id, days)
+    except Exception:
+        await callback.answer("Statistikani olishda xatolik yuz berdi.", show_alert=True)
+        return
     if rows is None:
         await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
         return
@@ -115,9 +169,11 @@ async def send_to_group(callback: CallbackQuery) -> None:
         await callback.answer("Guruh sozlanmagan (/guruh_biriktir main).", show_alert=True)
         return
 
+    chunks = _split_for_telegram(format_late_stats(rows, days))
     try:
         for chat_id in main_chat_ids:
-            await callback.bot.send_message(chat_id, format_late_stats(rows, days))
+            for chunk in chunks:
+                await callback.bot.send_message(chat_id, chunk)
         await callback.answer("✅ Guruhga yuborildi.")
     except Exception:
         await callback.answer("Guruhga yuborib bo'lmadi — bot guruhda bormi?", show_alert=True)
@@ -153,7 +209,13 @@ def _fmt_cfg(cfg: dict) -> str:
 @router.message(Command("davomat_vaqt"))
 async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
     """Davomat digesti vaqtini ko'rish/o'zgartirish. Argumentsiz — joriy holat."""
-    cfg = await api_client.get_attendance_digest_time(message.from_user.id)
+    # 4.3-band: backend bilan bog'liq HAMMA chaqiruv shu bir xil xavfga ega —
+    # ushlanmagan istisno bo'lsa foydalanuvchi hech qanday javob olmasdi.
+    try:
+        cfg = await api_client.get_attendance_digest_time(message.from_user.id)
+    except Exception:
+        await message.reply("⚠️ Xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
+        return
     if cfg is None:
         await message.reply("Bu buyruq faqat rahbarlar uchun.")
         return
@@ -169,23 +231,27 @@ async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
         return
 
     value = args[1].lower()
-    if value in ("off", "o'chir", "ochir"):
-        updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=False)
-    elif value in ("on", "yoq"):
-        updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=True)
-    else:
-        try:
-            hh, mm = value.split(":")
-            hour, minute = int(hh), int(mm)
-        except ValueError:
-            await message.reply("Vaqt formati: <code>09:30</code>")
-            return
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            await message.reply("Vaqt noto'g'ri: soat 0-23, daqiqa 0-59.")
-            return
-        updated = await api_client.set_attendance_digest_time(
-            message.from_user.id, kind, hour=hour, minute=minute
-        )
+    try:
+        if value in ("off", "o'chir", "ochir"):
+            updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=False)
+        elif value in ("on", "yoq"):
+            updated = await api_client.set_attendance_digest_time(message.from_user.id, kind, enabled=True)
+        else:
+            try:
+                hh, mm = value.split(":")
+                hour, minute = int(hh), int(mm)
+            except ValueError:
+                await message.reply("Vaqt formati: <code>09:30</code>")
+                return
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                await message.reply("Vaqt noto'g'ri: soat 0-23, daqiqa 0-59.")
+                return
+            updated = await api_client.set_attendance_digest_time(
+                message.from_user.id, kind, hour=hour, minute=minute
+            )
+    except Exception:
+        await message.reply("⚠️ Saqlashda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
+        return
 
     if updated is None:
         await message.reply("Vaqtni faqat Boshliq o'zgartira oladi.")

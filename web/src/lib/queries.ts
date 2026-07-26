@@ -80,8 +80,16 @@ export const useAttendanceList = (
   params: { user_id?: number; date_from?: string; date_to?: string; status_filter?: string } = {}
 ) => useQuery({ queryKey: qk.attendance(params), queryFn: () => api.listAttendance(params) });
 
+// 4.8-band: "Hozir ofisda" jonli ma'lumot bo'lsa-da avval avtomatik
+// yangilanmasdi — rahbar sahifani qo'lda "Yangilash" bosmasa, ro'yxat eskirib
+// qolardi. 30 soniyada bir avtomatik yangilanadi (sahifa faol bo'lgandagina —
+// react-query'ning o'z default xatti-harakati, fon rejimida so'rov ketmaydi).
 export const useAttendanceDashboard = () =>
-  useQuery({ queryKey: qk.attendanceDashboard, queryFn: api.attendanceDashboard });
+  useQuery({
+    queryKey: qk.attendanceDashboard,
+    queryFn: api.attendanceDashboard,
+    refetchInterval: 30_000,
+  });
 
 export const useAttendanceEmployeeSummary = (days = 30) =>
   useQuery({ queryKey: qk.attendanceSummary(days), queryFn: () => api.attendanceEmployeeSummary(days) });
