@@ -617,11 +617,49 @@ Overtime/Settings yo'q, to'g'ridan-to'g'ri `/payroll/settings`ga kirish
 `/payroll`ga qaytardi. Hech qanday real ma'lumot yaratilmadi/o'zgartirilmadi
 (faqat o'qish so'rovlari) — jonli kompaniya ma'lumotlariga tegilmadi.
 
-### Bosqich 5 — Bot
-**Fayllar:** `bot/handlers/payroll.py`, `bot/keyboards.py`, `bot/main.py`,
-`bot/api_client.py`, `BOT_BUYRUQLARI.md`
-**DoD:** xodim o'z varaqasini ko'radi (faqat tasdiqlangan); limit
-ogohlantirishlari keladi; HR tasdiq xabarini oladi.
+### Bosqich 5 — Bot ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `bot/handlers/payroll.py` (yangi), `bot/keyboards.py`,
+`bot/setup.py` (routerlar shu yerda ro'yxatga olinadi, `bot/main.py` emas —
+reja qoralamasidagi fayl ro'yxati bittasida noaniq edi), `bot/api_client.py`,
+`api/schemas.py` (`POSITION_MENU_KEYS`ga `"payroll"`),
+`web/src/pages/Positions.tsx` (yangi bayroqni HR sozlashi uchun)
+
+**Ish:**
+- `BTN_PAYROLL = "💵 Mening oyligim"` — Boshliqdan tashqari HAMMAGA
+  (xodim + HR/ROP/Dasturchi ham, `PAYROLL_TRACKED_ROLES` bilan bir xil
+  qamrov; oddiy `BTN_KPI` xodim-only naqshidan farqli, chunki rahbarlar ham
+  payroll orqali maosh oladi).
+- Xabar: oxirgi TASDIQLANGAN payslip (asosiy, overtime, bonus, jarima
+  sababi bilan, jami) + shu xabar ostida inline **«🕐 Kechikishlarim»**
+  tugmasi — bosilganda joriy (hali yakunlanmagan) oy uchun JONLI hisoblangan
+  limit holati ko'rsatiladi (`GET /payroll/my/{tg_id}/late-status`).
+- `Position.menu_flags.payroll` — tugma HR tomonidan pozitsiya darajasida
+  yashirilishi mumkin (mavjud tasks/norm/kpi/excused naqshi bilan bir xil).
+- HR/Boss "Payroll tayyor"/xodimga "tasdiqlandi" xabarlari — **YANGI KOD
+  TALAB QILMADI**: Bosqich 3'da `api/routers/payroll.py`ning `calculate`/
+  `approve` endpointlari ichida ALLAQACHON `send_message` chaqirilgan edi
+  (DoD'dagi "HR tasdiq xabarini oladi" shu orqali avvaldan qondirilgan).
+
+**⭐ Ataylab QILINMAGAN (Bosqich 6ga qoldirilgan):** proaktiv ogohlantirish
+("limitdan 1 kun qolganda", "limit tugagan zahoti darhol xabar") — bular
+PUSH (backend tomonidan o'zi boshlab yuboradigan) xabarlar, bot esa faqat
+PULL (xodim so'raganda javob beradigan) qismni qamrab oladi. Reja bo'yicha
+ham bu Bosqich 6ning "kechikish limiti ogohlantirish jobi (kunlik)" o'z
+ichiga oladi — ikki marta qurmaslik uchun shu yerda YO'Q.
+
+`BOT_BUYRUQLARI.md` YANGILANMADI — hujjat o'z ta'rifi bo'yicha faqat
+slash-buyruqlarni ("/...") qamraydi, oddiy menyu tugmalari (mavjud
+"💰 Oylik KPI'm" ham) u yerda yo'q — izchillik uchun yangi tugma ham
+qo'shilmadi.
+
+**DoD:** xodim (va HR/ROP/Dasturchi) o'z varaqasini ko'radi, faqat
+tasdiqlangan bo'lsa; «Kechikishlarim» joriy oy holatini jonli ko'rsatadi;
+HR "Payroll tayyor" va xodim "tasdiqlandi" xabarlarini oladi (Bosqich 3'dan
+meros). Tekshirildi: `build_dispatcher()` 25 router bilan xatosiz
+yig'ildi; `bot.api_client.my_payslip`/`my_payroll_late_status` real
+API'ga qarshi to'g'ri javob qaytardi; `_payslip_text` formatlash sun'iy
+ma'lumot bilan tasdiqlandi; `tsc` toza; real xizmatlarga qarshi to'liq
+`test.py`: 208/209 OK.
 
 ### Bosqich 6 — avtomatika
 **Fayllar:** `scheduler/jobs.py`, `scheduler/main.py`, `scheduler/config.py`,

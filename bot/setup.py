@@ -27,6 +27,7 @@ from bot.handlers import (
     menu,
     mobilograf,
     norms,
+    payroll,
     playbook,
     sales_ai,
     start,
@@ -66,6 +67,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
     dp.include_router(norms.router)
+    dp.include_router(payroll.router)
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
     dp.include_router(busy_period.router)

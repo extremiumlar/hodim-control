@@ -224,6 +224,21 @@ async def my_latest_bonus(telegram_id: int) -> dict:
     return resp.json()
 
 
+async def my_payslip(telegram_id: int) -> dict:
+    """Oxirgi TASDIQLANGAN payslip (`calculated=False` — hali yo'q)."""
+    resp = await _get_client().get(f"/payroll/my/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def my_payroll_late_status(telegram_id: int) -> dict:
+    """Joriy oyda kechikish limiti holati — JONLI hisoblanadi (hali
+    yakunlanmagan oy uchun, Payslip'dan emas)."""
+    resp = await _get_client().get(f"/payroll/my/{telegram_id}/late-status")
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def assignable_users(telegram_id: int) -> list[dict]:
     resp = await _get_client().get(f"/tasks/assignable-users/{telegram_id}")
     resp.raise_for_status()

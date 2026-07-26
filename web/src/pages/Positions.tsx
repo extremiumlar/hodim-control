@@ -25,6 +25,7 @@ const MENU_OPTIONS: { key: string; label: string }[] = [
   { key: "norm", label: "📊 Bugungi normam" },
   { key: "kpi", label: "💰 Oylik KPI'm" },
   { key: "excused", label: "🙋 Sababli kun so'rash" },
+  { key: "payroll", label: "💵 Mening oyligim" },
 ];
 
 const MANAGER_OPTIONS: { key: string; label: string }[] = [
@@ -39,10 +40,12 @@ interface Draft {
   managedBy: string[];
 }
 
+const DEFAULT_MENU_FLAGS = { tasks: true, norm: true, kpi: true, excused: true, payroll: true };
+
 const emptyDraft = (): Draft => ({
   name: "",
   metrics: ["suhbat", "tashrif"],
-  menuFlags: { tasks: true, norm: true, kpi: true, excused: true },
+  menuFlags: { ...DEFAULT_MENU_FLAGS },
   managedBy: [],
 });
 
@@ -65,7 +68,7 @@ export default function Positions() {
     setDraft({
       name: p.name,
       metrics: p.metrics ?? [],
-      menuFlags: { tasks: true, norm: true, kpi: true, excused: true, ...(p.menu_flags ?? {}) },
+      menuFlags: { ...DEFAULT_MENU_FLAGS, ...(p.menu_flags ?? {}) },
       managedBy: p.managed_by_roles ?? [],
     });
   };

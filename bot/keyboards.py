@@ -3,6 +3,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 BTN_TASKS = "📋 Vazifalarim"
 BTN_NORM = "📊 Bugungi normam"
 BTN_KPI = "💰 Oylik KPI'm"
+BTN_PAYROLL = "💵 Mening oyligim"
 BTN_PANEL = "📈 Panelim"
 BTN_EXCUSED = "🙋 Sababli kun so'rash"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
@@ -32,7 +33,7 @@ MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
 # bo'lsa) — barcha tugmalar ko'rinadi (orqaga moslik).
-DEFAULT_MENU_FLAGS = {"tasks": True, "norm": True, "kpi": True, "excused": True}
+DEFAULT_MENU_FLAGS = {"tasks": True, "norm": True, "kpi": True, "excused": True, "payroll": True}
 
 
 def main_menu(
@@ -71,6 +72,12 @@ def main_menu(
 
     # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
     rows.append([KeyboardButton(text=BTN_SCHEDULE)])
+
+    # Oylik — Boshliqdan tashqari hamma (davomat/payroll bilan bir xil qamrov,
+    # ATTENDANCE_TRACKED_ROLES/PAYROLL_TRACKED_ROLES): xodim ham, HR/ROP/
+    # Dasturchi ham o'z oyligini shu yerdan ko'radi.
+    if flags.get("payroll") and role != "boss":
+        rows.append([KeyboardButton(text=BTN_PAYROLL)])
 
     # Soatlik reja — kunlik normasi kuzatiladigan (suhbat/tashrif/video) xodimlarga
     has_trackable_metric = bool(

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # ixtiyoriy satr qabul qilinsa, hech qayerda hisoblanmaydigan "o'lik" norma paydo
 # bo'lar edi (avvalgi audit shuni ko'rsatgan).
 POSITION_METRICS = ["suhbat", "tashrif", "oddiy_video", "dumaloq_video"]
-POSITION_MENU_KEYS = ["tasks", "norm", "kpi", "excused"]
+POSITION_MENU_KEYS = ["tasks", "norm", "kpi", "excused", "payroll"]
 POSITION_MANAGER_ROLES = ["rop", "hr"]
 
 
