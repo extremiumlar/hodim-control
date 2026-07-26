@@ -661,14 +661,81 @@ API'ga qarshi to'g'ri javob qaytardi; `_payslip_text` formatlash sun'iy
 ma'lumot bilan tasdiqlandi; `tsc` toza; real xizmatlarga qarshi to'liq
 `test.py`: 208/209 OK.
 
-### Bosqich 6 — avtomatika
-**Fayllar:** `scheduler/jobs.py`, `scheduler/main.py`, `scheduler/config.py`,
-`.env.example`
-**Ish:** `monthly_payroll` jobi (keyingi oy 1-kuni, bonusdan keyin);
-kechikish limiti ogohlantirish jobi (kunlik); overtime nomzodlarini avtomatik
-yaratish (kunlik).
-**DoD:** job muvaffaqiyatsiz bo'lsa log + rahbarlarga xabar (mavjud
-`call_api(label=...)` naqshi).
+### Bosqich 6 — avtomatika ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `api/services/payroll.py` (`previous_period`, `detect_overtime_candidates`,
+`late_limit_event_for`, `_minute_of_day_local`), `api/routers/payroll.py`
+(`POST /payroll/calculate-monthly`, `POST /payroll/late-warnings-tick`,
+`POST /payroll/overtime/auto-detect` — barchasi bot-secret), `scheduler/jobs.py`,
+`scheduler/main.py`, `scheduler/config.py`, `test.py` (`test_payroll_automation`,
+21 tekshiruv). `.env.example` YANGILANMADI — yangi env o'zgaruvchisi qo'shilmadi
+(barcha yangi sozlamalar `scheduler/config.py`da qattiq kodlangan
+soat/daqiqa konstantalari, mavjud boshqa job'lar bilan bir xil naqsh).
+
+**Ish:**
+- `monthly_payroll` — keyingi oyning 1-kuni ertalab soat 06:00 (9-bo'lim,
+  savol 10, QAROR; oylik bonus soat 23:30da va davomat yopilishi soat 22:00da
+  allaqachon tugagan bo'ladi). Davr avtomatik "o'tgan oy" (`previous_period`) —
+  scheduler o'zi sana hisoblamaydi, API'ning o'zi `today_local()`dan chiqarib
+  oladi (`bonuses.py::calculate_monthly`ning "berilmasa joriy oy" naqshi bilan
+  bir xil, faqat "o'tgan oy" — chunki bu job YANGI oyning 1-kunida ishlaydi).
+  Muvaffaqiyatli hisoblansa HR/Boshliqqa xuddi qo'lda `calculate` bilan bir xil
+  "Payroll tayyor" DM ketadi.
+- Kechikish limiti ogohlantirishi (1.5-band) — kunlik, soat 07:30 (ish kuni
+  boshlanishidan oldin). ⭐ **Muhim dizayn qarori**: alohida "allaqachon
+  yuborilganmi" jadval/ustun QO'SHILMADI (ongli qaror — yangi migratsiya
+  shart emas). Buning o'rniga `late_limit_event_for` HAR SAFAR
+  `compute_late_fine`dan qaytadan hisoblab, FAQAT aniq berilgan sanaga
+  ("kecha") tegishli voqeani aniqlaydi: (a) `near_limit` — bepul limitdan
+  ≤15 daqiqa (`LATE_WARNING_BUFFER_MINUTES`) qolgan birinchi kun, (b)
+  `limit_reached` — limitni birinchi marta OSHIRGAN kun. `compute_late_fine`
+  qoidasi bo'yicha "chegaradan o'tkazgan kunning o'zi hali bepul" — ya'ni
+  limitni TO'LDIRGAN kunning o'zi emas, undan KEYINGI kechikkan kun birinchi
+  jarimali (shu injiqlik testda ikki marta xato natijaga olib keldi, pastda).
+  Job kuniga bir marta ishlatilsa, bu hisoblash usuli tabiiy ravishda ikki
+  marta ogohlantirmaydi — DB holatiga bog'liq emas.
+- Qo'shimcha ish avtomatik aniqlash (1.3-band) — kunlik, soat 01:00 (kam
+  trafik). `detect_overtime_candidates`: `OvertimeProfile.enabled=True`
+  xodimlarning check-out vaqti rejadagi tugash vaqtidan (`min_minutes`dan
+  ko'p) keyin bo'lsa — `OvertimeEntry(source='auto_attendance', status='pending')`
+  yaratadi (model docstringida oldindan e'lon qilingan qiymat, Bosqich 1'dan
+  buyon kutilgan). Tasdiqsiz pul hisoblanmaydi — HR/rahbar mavjud
+  `Overtime.tsx` navbatida ko'rib tasdiqlaydi/rad etadi (Bosqich 4, yangi
+  UI SHART EMAS). ⭐ **Ma'lum cheklov**: yarim tundan oshgan (tungi) smenalar
+  hisobga olinmaydi (xavfsiz tomonga og'adi — nomzod o'tkazib yuboriladi,
+  noto'g'ri katta summa YARATILMAYDI) — to'liq yechim kelajakka qoldirilgan.
+- Ikkala kunlik job ham (`late-warnings-tick`, `overtime/auto-detect`) va
+  `calculate-monthly` ixtiyoriy sana/davr parametri qabul qiladi (berilmasa
+  mos ravishda "kecha"/"o'tgan oy") — bu HAM scheduler uchun, HAM qo'lda
+  orqaga to'ldirish (backfill) uchun ishlatiladi, HAM AYNAN shu tufayli
+  test.py xavfsiz: real "bugun/kecha" o'rniga uzoq o'tmishdagi izolyatsiyalangan
+  sanalar bilan chaqirilib, REAL xodimlarga tasodifiy xabar/yozuv ketishining
+  oldi olindi (2026-07-27dagi "test.py botdan xabar yuborяpti" muammosi bilan
+  bir xil sinf xato — bu safar OLDINDAN hisobga olindi).
+- `[LABEL FAILED]`/`[LABEL OK]` log-prefiks naqshi (`monthly_bonus` bilan bir
+  xil) — DoD'dagi "job muvaffaqiyatsiz bo'lsa log + rahbarlarga xabar" shu
+  orqali qondirildi; bu repoda alohida "job xatosi haqida Telegram xabari"
+  tizimi hech qachon bo'lmagan — `call_api`ning o'zi xatoni log qiladi,
+  distinktiv prefiks esa grep qilishni osonlashtiradi (mavjud naqsh, YANGI
+  ixtiro emas).
+
+**Test:** `test_payroll_automation` — izolyatsiyalangan davr "2020-03".
+To'g'ridan-to'g'ri servis chaqiruvlari (`detect_overtime_candidates`
+idempotentligi + ish oynasi ichidagi check-out filtri; `late_limit_event_for`
+5 kunlik ssenariy: near_limit → (jimlik) → limit_reached → (jimlik,
+allaqachon boshlangan) → kechikmagan; `previous_period` yil chegarasi) VA
+HTTP darajasida (bot-secretsiz → 401; barcha 3 endpoint aniq
+sana/davr bilan → 200, natija to'g'ri). Xizmatlar qayta ishga tushirilib
+(`schtasks /run /tn "HodimlarTizimi_StartAll"` — foydalanuvchi roziligi
+bilan, chunki real xodimlarga bir necha soniyalik uzilish beradi), yangi
+route'lar jonli serverda tasdiqlandi. Natija: **232 OK / 233** (yagona FAIL —
+oldindan mavjud "2.2 avtomatik yopish tekshiruvi", Windows konsol kodlash
+xatosi, mantiqqa aloqasi yo'q).
+
+**Bajarilgan deb hisoblanadi:** oylik ish haqi HR aralashuvisiz keyingi oy
+1-kunida hisoblanadi (HR baribir tasdiqlashi kerak — pul tasdig'i qo'lda
+qoladi, ongli qaror); xodim limitga yaqinlashganda va limit tugaganda botdan
+avtomatik xabar oladi; overtime-yoqilgan xodimlarning kechki qolishlari
+HR/rahbar ko'rib chiqishi uchun avtomatik navbatga tushadi.
 
 ### Bosqich 7 — hisobot, maxfiylik, hujjat
 **Fayllar:** `api/services/export.py`, `api/services/monthly_digest.py`,

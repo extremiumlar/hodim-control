@@ -2095,6 +2095,295 @@ def test_admin_override() -> None:
         conn.close()
 
 
+def test_payroll_automation() -> None:
+    """Bosqich 6: avtomatika — `api/services/payroll.py`ning yangi
+    funksiyalari (`detect_overtime_candidates`, `late_limit_event_for`,
+    `previous_period`) va `api/routers/payroll.py`ning yangi tick
+    endpointlari (`/calculate-monthly`, `/late-warnings-tick`,
+    `/overtime/auto-detect`). Izolyatsiyalangan davr "2020-03"
+    (test_payroll_engine'ning "2020-01"idan ALOHIDA).
+
+    ⭐ MUHIM: `/late-warnings-tick` va `/overtime/auto-detect` odatda BARCHA
+    real faol xodimlarni "kecha" sanasi bo'yicha skanerlaydi — shu sabab bu
+    testda ular HAR DOIM aniq `target_date` bilan (uzoq o'tmishdagi, 2020-03)
+    chaqiriladi, hech qachon default ("kecha") bilan EMAS — aks holda real
+    xodimlarga botdan chinakam xabar ketishi yoki real ma'lumot o'zgarishi
+    mumkin edi (xuddi shu sabab bilan test.py'dan yuzni qayta tekshirish
+    testi ilgari olib tashlangan edi)."""
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("BOSQICH 6: PAYROLL AVTOMATIKA (scheduler + tick endpointlari)")
+    print("=" * 60)
+
+    PERIOD = "2020-03"
+    WINDOW_MIN = 480  # work_minutes(09:00,18:00) — tushliksiz 8 soat
+
+    async def _setup_and_direct_checks() -> dict:
+        from sqlalchemy import delete, select
+
+        from api.services import payroll as pr
+        from api.services.attendance import local_hm_to_utc
+        from db.base import async_session
+        from db.models import (
+            Attendance,
+            AuditLog,
+            FinePolicy,
+            OvertimeEntry,
+            OvertimeProfile,
+            PayrollPeriod,
+            Payslip,
+            PayslipItem,
+            SalaryRate,
+            User,
+            WorkScheduleOverride,
+            WorkScheduleWeekly,
+        )
+
+        async with async_session() as s:
+            # Oldingi (yarim yo'lda qulagan) ishga tushirishdan qolganlarni tozalash.
+            stale_ids = list(await s.scalars(select(User.id).where(User.full_name.like("T-Payroll6%"))))
+            if stale_ids:
+                stale_payslips = list(await s.scalars(select(Payslip.id).where(Payslip.user_id.in_(stale_ids))))
+                if stale_payslips:
+                    await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(stale_payslips)))
+                await s.execute(delete(Payslip).where(Payslip.user_id.in_(stale_ids)))
+                await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id.in_(stale_ids)))
+                await s.execute(delete(OvertimeProfile).where(OvertimeProfile.user_id.in_(stale_ids)))
+                await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(stale_ids)))
+                await s.execute(delete(FinePolicy).where(FinePolicy.scope_id.in_(stale_ids)))
+                await s.execute(delete(Attendance).where(Attendance.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(stale_ids)))
+                await s.execute(
+                    delete(AuditLog).where(
+                        AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
+                    )
+                )
+                await s.execute(delete(User).where(User.id.in_(stale_ids)))
+            await s.execute(
+                delete(Attendance).where(Attendance.date >= date(2020, 3, 1), Attendance.date < date(2020, 4, 1))
+            )
+            await s.execute(
+                delete(WorkScheduleOverride).where(
+                    WorkScheduleOverride.date >= date(2020, 3, 1), WorkScheduleOverride.date < date(2020, 4, 1)
+                )
+            )
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.commit()
+
+            # ── T-Payroll6OT — qo'shimcha ish avtomatik aniqlash (1.3-band) ──
+            uot = User(telegram_id=999600901, full_name="T-Payroll6OT", role="employee",
+                       bot_started=True, is_active=True)
+            s.add(uot)
+            await s.flush()
+            for wd in range(7):
+                s.add(WorkScheduleWeekly(user_id=uot.id, weekday=wd, is_working=False))
+            day_over, day_within, day_http = date(2020, 3, 10), date(2020, 3, 11), date(2020, 3, 12)
+            for d in (day_over, day_within, day_http):
+                s.add(WorkScheduleOverride(user_id=uot.id, date=d, is_working=True,
+                                            start_time="09:00", end_time="18:00"))
+            s.add(OvertimeProfile(user_id=uot.id, enabled=True, mode="fixed_rate",
+                                   fixed_rate_per_hour=10_000, min_minutes=15))
+            s.add(Attendance(user_id=uot.id, date=day_over, status="present", worked_minutes=WINDOW_MIN,
+                              check_out_time=local_hm_to_utc(day_over, "18:30")))  # 30 daq keyin -> nomzod
+            s.add(Attendance(user_id=uot.id, date=day_within, status="present", worked_minutes=WINDOW_MIN,
+                              check_out_time=local_hm_to_utc(day_within, "17:50")))  # oyna ichida -> yo'q
+            s.add(Attendance(user_id=uot.id, date=day_http, status="present", worked_minutes=WINDOW_MIN,
+                              check_out_time=local_hm_to_utc(day_http, "18:25")))  # HTTP orqali tekshiriladi
+            await s.commit()
+
+            created1 = await pr.detect_overtime_candidates(s, day_over)
+            await s.commit()
+            check("Bosqich6: overtime nomzodi yaratildi (check-out 30 daq keyin)", len(created1) == 1,
+                  f"soni={len(created1)}")
+            if created1:
+                check("Bosqich6: nomzod minutes=30", created1[0].minutes == 30, f"={created1[0].minutes}")
+                check("Bosqich6: nomzod source=auto_attendance", created1[0].source == "auto_attendance",
+                      f"={created1[0].source}")
+                check("Bosqich6: nomzod status=pending", created1[0].status == "pending",
+                      f"={created1[0].status}")
+
+            created_again = await pr.detect_overtime_candidates(s, day_over)
+            check("Bosqich6: overtime idempotent - qayta chaqirilsa dublikat YO'Q", created_again == [],
+                  f"={created_again}")
+
+            created_within = await pr.detect_overtime_candidates(s, day_within)
+            check("Bosqich6: ish oynasi ichida check-out -> nomzod YO'Q", created_within == [],
+                  f"={created_within}")
+
+            # ── T-Payroll6Late — kechikish limiti ogohlantirishi (1.5-band) ──
+            ul = User(telegram_id=999600902, full_name="T-Payroll6Late", role="employee",
+                      bot_started=True, is_active=True)
+            s.add(ul)
+            await s.flush()
+            for wd in range(7):
+                s.add(WorkScheduleWeekly(user_id=ul.id, weekday=wd, is_working=False))
+            d1, d2, d3, d4, d5 = (
+                date(2020, 3, 2), date(2020, 3, 3), date(2020, 3, 4), date(2020, 3, 5), date(2020, 3, 6),
+            )
+            for d in (d1, d2, d3, d4, d5):
+                s.add(WorkScheduleOverride(user_id=ul.id, date=d, is_working=True,
+                                            start_time="09:00", end_time="18:00"))
+            # `compute_late_fine`ning QOIDASI: "chegaradan o'tkazgan kunning o'zi
+            # hali bepul" — `fined = (before >= limit)`, ya'ni limitni TO'LDIRGAN
+            # kunning O'ZI EMAS, undan KEYINGI kun birinchi jarimali hisoblanadi.
+            # d1: 0->20 (limit 30ga 10 daq qoldi) -> near_limit.
+            # d2: 20->35 (limitni TO'LDIRGAN kun, before=20<30 -> hali JARIMASIZ,
+            #     lekin remaining_before(10) allaqachon buferdan (15) kichik ->
+            #     near_limit ILGARI (d1'da) berilgan, shu sabab bu yerda YANGI
+            #     voqea YO'Q) -> None.
+            # d3: 35->40 (before=35>=30 -> BIRINCHI jarimali kun) -> limit_reached.
+            # d4: 40->45 (before=40>=30 -> jarimali, lekin ALLAQACHON d3'da
+            #     boshlangan) -> yangi voqea emas -> None.
+            # d5: kechikmagan (present) -> None.
+            s.add(Attendance(user_id=ul.id, date=d1, status="late", late_minutes=20, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=ul.id, date=d2, status="late", late_minutes=15, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=ul.id, date=d3, status="late", late_minutes=5, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=ul.id, date=d4, status="late", late_minutes=5, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=ul.id, date=d5, status="present", worked_minutes=WINDOW_MIN))
+            s.add(FinePolicy(scope="user", scope_id=ul.id, is_active=True,
+                              free_late_minutes_per_month=30, fine_mode="per_day", fine_per_day=50_000,
+                              absent_mode="none", monthly_cap_amount=1_000_000, fine_applies_to="net_salary"))
+            s.add(SalaryRate(user_id=ul.id, amount=2_000_000, pay_basis="monthly",
+                              effective_from=date(2019, 1, 1), changed_by=ul.id))
+            await s.commit()
+
+            ev1 = await pr.late_limit_event_for(s, ul, d1)
+            check("Bosqich6: d1 (0->20, limit 30) -> near_limit",
+                  ev1 is not None and ev1["kind"] == "near_limit", f"={ev1}")
+            if ev1:
+                check("Bosqich6: d1 remaining_minutes=10", ev1.get("remaining_minutes") == 10, f"={ev1}")
+
+            ev2 = await pr.late_limit_event_for(s, ul, d2)
+            check("Bosqich6: d2 (limitni to'ldirgan kun, hali jarimasiz) -> None",
+                  ev2 is None, f"={ev2}")
+
+            ev3 = await pr.late_limit_event_for(s, ul, d3)
+            check("Bosqich6: d3 (birinchi jarimali kun) -> limit_reached",
+                  ev3 is not None and ev3["kind"] == "limit_reached", f"={ev3}")
+
+            ev4 = await pr.late_limit_event_for(s, ul, d4)
+            check("Bosqich6: d4 (jarimali, lekin ALLAQACHON d3'da boshlangan) -> None (yangi voqea emas)",
+                  ev4 is None, f"={ev4}")
+
+            ev5 = await pr.late_limit_event_for(s, ul, d5)
+            check("Bosqich6: d5 (kechikmagan) -> None", ev5 is None, f"={ev5}")
+
+            u_nopolicy = User(telegram_id=999600903, full_name="T-Payroll6NoPolicy", role="employee",
+                               bot_started=True, is_active=True)
+            s.add(u_nopolicy)
+            await s.flush()
+            ev_none = await pr.late_limit_event_for(s, u_nopolicy, d1)
+            check("Bosqich6: qoidasiz xodim -> None", ev_none is None, f"={ev_none}")
+
+            check("Bosqich6: previous_period(2020-03-15) = 2020-02",
+                  pr.previous_period(date(2020, 3, 15)) == "2020-02",
+                  f"={pr.previous_period(date(2020, 3, 15))}")
+            check("Bosqich6: previous_period(2020-01-01) = 2019-12 (yil chegarasi)",
+                  pr.previous_period(date(2020, 1, 1)) == "2019-12",
+                  f"={pr.previous_period(date(2020, 1, 1))}")
+
+            return {"d1": d1.isoformat(), "day_http": day_http.isoformat()}
+
+    async def _cleanup() -> None:
+        from sqlalchemy import delete, select
+
+        from db.base import async_session
+        from db.models import (
+            Attendance,
+            AuditLog,
+            FinePolicy,
+            OvertimeEntry,
+            OvertimeProfile,
+            PayrollPeriod,
+            Payslip,
+            PayslipItem,
+            SalaryRate,
+            User,
+            WorkScheduleOverride,
+            WorkScheduleWeekly,
+        )
+
+        async with async_session() as s:
+            ids = list(await s.scalars(select(User.id).where(User.full_name.like("T-Payroll6%"))))
+            if not ids:
+                return
+            pslips = list(await s.scalars(select(Payslip.id).where(Payslip.user_id.in_(ids))))
+            if pslips:
+                await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(pslips)))
+            await s.execute(delete(Payslip).where(Payslip.user_id.in_(ids)))
+            await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id.in_(ids)))
+            await s.execute(delete(OvertimeProfile).where(OvertimeProfile.user_id.in_(ids)))
+            await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(ids)))
+            await s.execute(delete(FinePolicy).where(FinePolicy.scope_id.in_(ids)))
+            await s.execute(delete(Attendance).where(Attendance.user_id.in_(ids)))
+            await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(ids)))
+            await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(ids)))
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(ids) | AuditLog.actor_id.in_(ids)))
+            await s.execute(delete(User).where(User.id.in_(ids)))
+            await s.commit()
+
+    ctx: dict = {}
+    try:
+        ctx = asyncio.run(_setup_and_direct_checks())
+    except Exception:
+        check("Bosqich6: sozlash/servis funksiyalari (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+    if ctx:
+        try:
+            with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as f:
+                secret = next(
+                    (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")), ""
+                )
+            BOT_SECRET_HDR = {"X-Bot-Secret": secret}
+            with httpx.Client(timeout=15) as client:
+                # ── bot-secret himoyasi ──
+                r = client.post(f"{API_BASE}/payroll/calculate-monthly", json={})
+                check("calculate-monthly bot-secretsiz -> 401", r.status_code == 401, f"kod={r.status_code}")
+                r = client.post(f"{API_BASE}/payroll/late-warnings-tick", json={})
+                check("late-warnings-tick bot-secretsiz -> 401", r.status_code == 401, f"kod={r.status_code}")
+                r = client.post(f"{API_BASE}/payroll/overtime/auto-detect", json={})
+                check("overtime/auto-detect bot-secretsiz -> 401", r.status_code == 401, f"kod={r.status_code}")
+
+                # ── calculate-monthly: ANIQ (izolyatsiyalangan) davr — default
+                # ("o'tgan oy") ATAYLAB sinalmaydi, aks holda jonli joriy oy
+                # ma'lumotiga tegib qo'yardi. ──
+                r = client.post(f"{API_BASE}/payroll/calculate-monthly", headers=BOT_SECRET_HDR,
+                                 json={"period": PERIOD})
+                check("calculate-monthly -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+                body = r.json() if r.status_code == 200 else {}
+                check("calculate-monthly natijada period to'g'ri", body.get("period") == PERIOD, f"={body}")
+
+                # ── late-warnings-tick: to'g'ridan-to'g'ri chaqiruvda near_limit
+                # bo'lgan d1'ni endi HTTP orqali (aniq target_date bilan) ──
+                r = client.post(f"{API_BASE}/payroll/late-warnings-tick", headers=BOT_SECRET_HDR,
+                                 json={"target_date": ctx["d1"]})
+                check("late-warnings-tick -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+                lw = r.json() if r.status_code == 200 else {}
+                check("late-warnings-tick kamida 1 ta ogohlantirdi (T-Payroll6Late)",
+                      lw.get("warned", 0) >= 1, f"={lw}")
+
+                # ── overtime/auto-detect: HTTP orqali YANGI (hali test qilinmagan)
+                # kun — aniq target_date bilan ──
+                r = client.post(f"{API_BASE}/payroll/overtime/auto-detect", headers=BOT_SECRET_HDR,
+                                 json={"target_date": ctx["day_http"]})
+                check("overtime/auto-detect -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+                oad = r.json() if r.status_code == 200 else {}
+                check("overtime/auto-detect kamida 1 ta nomzod yaratdi (T-Payroll6OT)",
+                      oad.get("created", 0) >= 1, f"={oad}")
+        except Exception:
+            check("Bosqich6: HTTP tick endpointlari (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+    try:
+        asyncio.run(_cleanup())
+    except Exception:
+        check("Bosqich6: tozalash (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -2131,6 +2420,11 @@ def main() -> None:
         test_admin_override()
     except Exception:
         print("Admin override testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_automation()
+    except Exception:
+        print("Payroll avtomatika testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

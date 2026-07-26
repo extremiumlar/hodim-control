@@ -122,6 +122,38 @@ async def calculate_monthly_bonus() -> None:
         logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", body)
 
 
+# ─── Payroll (oylik ish haqi + jarima) — OYLIK_JARIMA_REJASI.md, Bosqich 6 ──────
+async def calculate_monthly_payroll() -> None:
+    """Oylik ish haqi — keyingi oyning 1-kuni ertalab (9-bo'lim, savol 10, QAROR).
+    Muvaffaqiyatsiz bo'lsa xodimlarga payroll umuman hisoblanmaydi — bonus jobi
+    bilan bir xil [OK]/[FAILED] log naqshi (grep uchun)."""
+    body = await call_api(
+        "/payroll/calculate-monthly", json={}, timeout=120, label="[PAYROLL FAILED] Oylik ish haqi"
+    )
+    if body is not None:
+        logger.info("[PAYROLL OK] Oylik ish haqi muvaffaqiyatli hisoblandi: %s", body)
+
+
+async def payroll_late_warnings_tick() -> None:
+    """Kechikish limiti ogohlantirishi (1.5-band): kecha limitni birinchi marta
+    oshirgan/unga yaqinlashtirgan xodimlarga botga darhol shaxsiy xabar."""
+    body = await call_api(
+        "/payroll/late-warnings-tick", json={}, timeout=60, label="Kechikish limiti ogohlantirish"
+    )
+    if body is not None and body.get("warned"):
+        logger.info("Kechikish limiti ogohlantirish: %s", body)
+
+
+async def payroll_overtime_auto_detect() -> None:
+    """Qo'shimcha ish avtomatik aniqlash (1.3-band): kechagi check-out'lardan
+    nomzod (`pending`) yaratadi — HR/rahbar hali tasdiqlashi kerak."""
+    body = await call_api(
+        "/payroll/overtime/auto-detect", json={}, timeout=60, label="Overtime avtomatik aniqlash"
+    )
+    if body is not None and body.get("created"):
+        logger.info("Overtime nomzodlari avtomatik yaratildi: %s", body)
+
+
 # ─── Operator AI (avto-reja dvigateli) — API tomonda AI o'chiq bo'lsa no-op ──────
 async def ai_snapshot_actuals() -> None:
     """Bugungi soatlik actual'ni CRM'dan o'qib `hourly_actual`ga yozadi (reja vs

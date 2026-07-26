@@ -21,14 +21,14 @@ Muhim qoidalar:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import DEFAULT_END, DEFAULT_START
-from api.timeutil import work_minutes
+from api.timeutil import TASHKENT_TZ, work_minutes
 from db.models import (
     AbsentMode,
     Attendance,
@@ -65,6 +65,10 @@ PAYROLL_TRACKED_ROLES = tuple(r.value for r in Role if r is not Role.boss)
 # Oxirgi yaxlitlash bosqichi — faqat `gross`/`net` ga qo'llanadi, oraliq
 # summalar (satrlar) to'liq aniqlik bilan saqlanadi.
 PAYROLL_ROUND_TO = 100
+
+# 1.5-band (Shaffoflik): bepul kechikish limitidan shuncha daqiqa (yoki kam)
+# qolganda "yaqinlashyapsiz" ogohlantirishi yuboriladi (Bosqich 6).
+LATE_WARNING_BUFFER_MINUTES = 15
 
 
 class PayrollLocked(Exception):
@@ -756,3 +760,134 @@ async def run_payroll(db: AsyncSession, period: str, user_ids: list[int] | None 
     period_row.calculated_at = datetime.utcnow()
     await db.commit()
     return {"period": period, "calculated": calculated}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Bosqich 6 — avtomatika (scheduler chaqiradi, api/routers/payroll.py orqali)
+# ─────────────────────────────────────────────────────────────────
+
+
+def previous_period(today: date) -> str:
+    """"YYYY-MM" — `today` turgan oydan OLDINGI oy (9-bo'lim, savol 10: oylik
+    hisob "keyingi oyning 1-kuni ertalab" ishga tushganda, o'sha payt
+    "joriy oy" allaqachon YANGI oy bo'lgani uchun tugagan oyni hisoblash kerak)."""
+    year, month = today.year, today.month
+    if month == 1:
+        return f"{year - 1}-12"
+    return f"{year}-{month - 1:02d}"
+
+
+def _minute_of_day_local(dt_utc: datetime) -> int:
+    """Bazadagi naive-UTC vaqtni (masalan `Attendance.check_out_time`) mahalliy
+    devor-soatining kun ichidagi daqiqasiga o'giradi (`attendance.py::_to_local`
+    + `_minute_of_day` bilan bir xil qoida, faqat shu yerga ko'chirilmagan —
+    servis fayllari o'rtasida doiraviy import xavfi past bo'lgani uchun to'g'ridan
+    -to'g'ri yozilgan)."""
+    local = dt_utc.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+    return local.hour * 60 + local.minute
+
+
+async def detect_overtime_candidates(db: AsyncSession, for_date: date) -> list[OvertimeEntry]:
+    """1.3-band: check-out rejadagi ish oynasi tugaganidan KEYIN bo'lgan
+    kunlarni avtomatik "qo'shimcha ish" NOMZODI (`pending`) sifatida yaratadi —
+    faqat `OvertimeProfile.enabled=True` xodimlarga. Tasdiqsiz pul
+    hisoblanmaydi (`compute_overtime` faqat `approved` yozuvlarni o'qiydi) —
+    bu funksiya faqat NOMZOD yaratadi, HR/rahbar keyin tasdiqlaydi/rad etadi.
+
+    Allaqachon shu kunga yozuv bo'lsa (qo'lda yoki avvalgi ishga tushirishdan)
+    tegilmaydi — `UniqueConstraint(user_id, date)` shunday ham himoya qiladi,
+    lekin oldindan tekshirish keraksiz IntegrityError'dan qochadi.
+
+    ⭐ MA'LUM CHEKLOV: yarim tundan oshgan (tungi) smenalar hisobga olinmaydi —
+    `check_out_time` ertasi kalendar kuniga o'tib ketsa, kun ichidagi daqiqa
+    hisобi noto'g'ri (kichik) chiqib, nomzod yaratilmay qoladi. Bu xavfsiz
+    tomonga og'adi (nomzod o'tkazib yuboriladi, noto'g'ri katta summa
+    yaratilmaydi) — to'liq yechim kelajakka qoldirilgan."""
+    profiles = {
+        p.user_id: p for p in await db.scalars(select(OvertimeProfile).where(OvertimeProfile.enabled.is_(True)))
+    }
+    if not profiles:
+        return []
+
+    existing = set(
+        await db.scalars(
+            select(OvertimeEntry.user_id).where(
+                OvertimeEntry.date == for_date, OvertimeEntry.user_id.in_(profiles.keys())
+            )
+        )
+    )
+    candidate_ids = [uid for uid in profiles if uid not in existing]
+    if not candidate_ids:
+        return []
+
+    users = {u.id: u for u in await db.scalars(select(User).where(User.id.in_(candidate_ids)))}
+    atts = {
+        a.user_id: a
+        for a in await db.scalars(
+            select(Attendance).where(Attendance.date == for_date, Attendance.user_id.in_(candidate_ids))
+        )
+    }
+
+    # Doiraviy importdan qochish uchun mahalliy (boshqa servislar — attendance.py,
+    # idle_watch.py, watch_rules.py — ham xuddi shunday qiladi).
+    from api.routers.hourly_plan import _effective_today
+
+    created: list[OvertimeEntry] = []
+    for user_id in candidate_ids:
+        att = atts.get(user_id)
+        user = users.get(user_id)
+        profile = profiles[user_id]
+        if att is None or user is None or att.check_out_time is None or att.status not in ("present", "late"):
+            continue
+        is_working, _start, end = await _effective_today(db, user, for_date)
+        if not is_working:
+            continue
+        over_minutes = _minute_of_day_local(att.check_out_time) - _hm_to_min(end)
+        if over_minutes < profile.min_minutes:
+            continue
+        entry = OvertimeEntry(
+            user_id=user_id,
+            date=for_date,
+            minutes=over_minutes,
+            source="auto_attendance",
+            status=OvertimeEntryStatus.pending.value,
+            note=f"Avtomatik aniqlandi: check-out {end}dan {over_minutes} daqiqa keyin",
+        )
+        db.add(entry)
+        created.append(entry)
+    return created
+
+
+async def late_limit_event_for(db: AsyncSession, user: User, for_date: date) -> dict | None:
+    """1.5-band (Shaffoflik): `for_date` (odatda "kecha") shu oyda xodimning
+    bepul kechikish limitini birinchi marta OSHIRGAN yoki unga YAQINLASHTIRGAN
+    kun bo'lsa — ogohlantirish turini qaytaradi, aks holda `None`.
+
+    Holat HAR SAFAR `compute_late_fine`dan qaytadan hisoblanadi (alohida
+    "allaqachon ogohlantirilgan" jadval/ustun YO'Q) — shu sabab faqat
+    ANIQ `for_date`ga tegishli voqea tekshiriladi (masalan "shu kun birinchi
+    jarimali kunmi"), umumiy "limit tugaganmi" holati EMAS — aks holda job
+    har kuni qayta-qayta xabar yuborardi."""
+    policy = await resolve_policy(db, user)
+    if policy is None or policy.free_late_minutes_per_month is None:
+        return None
+
+    period = for_date.strftime("%Y-%m")
+    days = await collect_attendance(db, user, period)
+    late = compute_late_fine(days, policy)
+    today_entry = next((d for d in late["detail"] if d["date"] == for_date.isoformat()), None)
+    if today_entry is None:
+        return None  # for_date kechikmagan yoki sababli edi
+
+    free_limit = policy.free_late_minutes_per_month
+    if today_entry["fined"]:
+        earlier_fined = any(d["fined"] and d["date"] < today_entry["date"] for d in late["detail"])
+        if earlier_fined:
+            return None  # limit ilgariroq tugagan — bu yangi voqea emas
+        return {"kind": "limit_reached", "fine_per_day": policy.fine_per_day}
+
+    remaining_after = free_limit - (today_entry["cumulative_before"] + today_entry["late_minutes"])
+    remaining_before = free_limit - today_entry["cumulative_before"]
+    if remaining_after <= LATE_WARNING_BUFFER_MINUTES < remaining_before:
+        return {"kind": "near_limit", "remaining_minutes": max(0, remaining_after)}
+    return None

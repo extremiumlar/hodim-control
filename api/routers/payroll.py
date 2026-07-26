@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +52,9 @@ from api.services.payroll import (
     _period_bounds,
     collect_attendance,
     compute_late_fine,
+    detect_overtime_candidates,
+    late_limit_event_for,
+    previous_period,
     resolve_policy,
     run_payroll,
 )
@@ -760,6 +764,105 @@ async def calculate_cron(period: str, db: AsyncSession = Depends(get_db)) -> dic
         return await run_payroll(db, period)
     except PayrollLocked as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+
+
+class PayrollCalculateMonthlyRequest(BaseModel):
+    period: str | None = None  # "YYYY-MM"; berilmasa avtomatik o'tgan oy (`bonuses.py` bilan bir xil naqsh)
+
+
+@router.post("/calculate-monthly", dependencies=[Depends(verify_bot_secret)])
+async def calculate_monthly_cron(
+    payload: PayrollCalculateMonthlyRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Scheduler — keyingi oyning 1-kuni ertalab (9-bo'lim, savol 10, QAROR).
+    Davr `payload.period` berilmasa avtomatik "o'tgan oy" (`previous_period`) —
+    chunki job ishga tushganda `today_local()` allaqachon YANGI oyga o'tgan
+    bo'ladi. Muvaffaqiyatli hisoblansa `calculate` (qo'lda) bilan BIR XIL
+    "Payroll tayyor" DM'ini HR/Boshliqqa yuboradi — avtomatik hisoblash ham,
+    qo'lda ham HR uchun bir xil "tasdiqlash kerak" signalini beradi."""
+    period = payload.period or previous_period(today_local())
+    try:
+        result = await run_payroll(db, period)
+    except PayrollLocked as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+
+    rows = list(await db.scalars(select(Payslip).where(Payslip.period == period)))
+    total = sum(float(p.net) for p in rows)
+    managers = list(
+        await db.scalars(
+            select(User).where(User.role.in_((Role.hr.value, Role.boss.value)), User.telegram_id.isnot(None))
+        )
+    )
+    for m in managers:
+        await send_message(
+            m.telegram_id,
+            f"💰 Payroll avtomatik hisoblandi ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
+            f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
+        )
+    return result
+
+
+class PayrollDateTickRequest(BaseModel):
+    # E'TIBOR: maydon nomi ataylab `target_date` (`date` EMAS) — pydantic
+    # forward-ref baholashda maydon nomi o'z turi bilan bir xil bo'lsa
+    # (`date: date | None`), sinf nazomasida `date` maydon qiymati bilan
+    # SOYALANIB, tur eval'i "NoneType | NoneType" xatosini beradi.
+    target_date: date | None = None  # berilmasa "kecha" (scheduler kunlik ishlatadi)
+
+
+@router.post("/late-warnings-tick", dependencies=[Depends(verify_bot_secret)])
+async def late_warnings_tick(
+    payload: PayrollDateTickRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Scheduler — kunlik (1.5-band, "Shaffoflik"). `payload.target_date`
+    (odatda "kecha") shu oyda kimningdir bepul kechikish limitini birinchi
+    marta OSHIRGAN yoki unga YAQINLASHTIRGAN bo'lsa — botga darhol shaxsiy
+    xabar. Alohida "allaqachon yuborilganmi" jadval YO'Q — `late_limit_event_for`
+    faqat ANIQ shu kunga tegishli voqeani tekshiradi, shuning uchun kuniga
+    bir marta ishlatilsa tabiiy ravishda ikki marta yubormaydi."""
+    target_date = payload.target_date or date.fromordinal(today_local().toordinal() - 1)
+    users = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(PAYROLL_TRACKED_ROLES), User.is_active.is_(True), User.telegram_id.isnot(None)
+            )
+        )
+    )
+    warned = 0
+    limit_reached = 0
+    for user in users:
+        event = await late_limit_event_for(db, user, target_date)
+        if event is None:
+            continue
+        if event["kind"] == "limit_reached":
+            fine = float(event["fine_per_day"]) if event["fine_per_day"] is not None else 0
+            text = (
+                "⚠️ Diqqat: bu oy bepul kechikish limitingiz tugadi. Bugundan boshlab har kechikkan "
+                f"kunga {fine:,.0f} so'm jarima yoziladi.".replace(",", " ")
+            )
+            limit_reached += 1
+        else:
+            text = (
+                f"🕐 Ogohlantirish: bepul kechikish limitingizdan atigi {event['remaining_minutes']} daqiqa "
+                "qoldi. Keyingi kechikish jarima boshlanishiga olib kelishi mumkin."
+            )
+        await send_message(user.telegram_id, text)
+        warned += 1
+    return {"date": target_date.isoformat(), "checked": len(users), "warned": warned, "limit_reached": limit_reached}
+
+
+@router.post("/overtime/auto-detect", dependencies=[Depends(verify_bot_secret)])
+async def overtime_auto_detect(
+    payload: PayrollDateTickRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Scheduler — kunlik (1.3-band). `payload.target_date` (odatda "kecha")
+    uchun check-out rejadagi tugash vaqtidan keyin bo'lgan, overtime-yoqilgan
+    xodimlarga NOMZOD (`pending`) yaratadi — HR/rahbar tasdiqlamaguncha
+    payslip hisobiga kirmaydi."""
+    target_date = payload.target_date or date.fromordinal(today_local().toordinal() - 1)
+    created = await detect_overtime_candidates(db, target_date)
+    await db.commit()
+    return {"date": target_date.isoformat(), "created": len(created)}
 
 
 @router.get("/my/{telegram_id}", response_model=BotPayslipOut, dependencies=[Depends(verify_bot_secret)])

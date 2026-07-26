@@ -128,6 +128,26 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_BONUS_DAY, hour=cfg.MONTHLY_BONUS_HOUR, minute=cfg.MONTHLY_BONUS_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # ─── Payroll avtomatikasi (OYLIK_JARIMA_REJASI.md, Bosqich 6) ────────────
+        # Oylik ish haqi — keyingi oyning 1-kuni ertalab (bonus va davomat
+        # yopilishidan keyin, 9-bo'lim savol 10 QAROR)
+        JobSpec(
+            "monthly_payroll", jobs.calculate_monthly_payroll,
+            _cron(day=cfg.MONTHLY_PAYROLL_DAY, hour=cfg.MONTHLY_PAYROLL_HOUR, minute=cfg.MONTHLY_PAYROLL_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+        # Kechikish limiti ogohlantirishi — ish kuni boshlanishidan oldin (1.5-band)
+        JobSpec(
+            "payroll_late_warnings", jobs.payroll_late_warnings_tick,
+            _cron(hour=cfg.LATE_WARNING_HOUR, minute=cfg.LATE_WARNING_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
+        # Qo'shimcha ish avtomatik aniqlash — tungi, kam trafik vaqtida (1.3-band)
+        JobSpec(
+            "payroll_overtime_auto_detect", jobs.payroll_overtime_auto_detect,
+            _cron(hour=cfg.OVERTIME_AUTO_DETECT_HOUR, minute=cfg.OVERTIME_AUTO_DETECT_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # ─── Operator AI (avto-reja) — API o'chiq bo'lsa no-op ───────────────────
         # Bugungi actual snapshoti — davomiy (reja vs haqiqiy + ertangi tarix)
         JobSpec(

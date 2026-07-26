@@ -100,3 +100,21 @@ IDLE_WATCH_INTERVAL_MINUTES = 5
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.
 MISFIRE_GRACE_DEFAULT = 3600
 MISFIRE_GRACE_SHORT = 600
+
+# ─── Payroll avtomatikasi (OYLIK_JARIMA_REJASI.md, Bosqich 6) ───────────────────
+# Oylik ish haqi — keyingi oyning 1-kuni ertalab (9-bo'lim, savol 10, QAROR).
+# Oylik bonus (kechagi oyning oxirgi kuni 23:30) va kechagi kunning davomat
+# yopilishi (22:00)dan YETARLICHA keyin — ikkalasi ham allaqachon tugagan bo'ladi.
+MONTHLY_PAYROLL_DAY = 1
+MONTHLY_PAYROLL_HOUR = 6
+MONTHLY_PAYROLL_MINUTE = 0
+
+# Kechikish limiti ogohlantirishi (1.5-band) — ish kuni boshlanishidan oldin,
+# xodim "bugun ehtiyot bo'lishi kerak"ligini bilib ishga chiqsin.
+LATE_WARNING_HOUR = 7
+LATE_WARNING_MINUTE = 30
+
+# Qo'shimcha ish avtomatik aniqlash (1.3-band) — kam trafik vaqtida (tungi),
+# HR ish kuni boshlanguncha nomzodlar tayyor bo'lishi uchun.
+OVERTIME_AUTO_DETECT_HOUR = 1
+OVERTIME_AUTO_DETECT_MINUTE = 0
