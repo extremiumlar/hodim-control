@@ -212,9 +212,13 @@ async def delete_policy(
 async def list_rates(
     user_id: int, _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
 ) -> list[SalaryRate]:
+    # Yumshoq o'chirilgan (Bosqich 3.5) yozuvlar bu yerda ko'rinmaydi — ularni
+    # ko'rish/tiklash faqat `/admin/records/salary_rate` orqali (Dasturchi).
     return list(
         await db.scalars(
-            select(SalaryRate).where(SalaryRate.user_id == user_id).order_by(SalaryRate.effective_from.desc())
+            select(SalaryRate)
+            .where(SalaryRate.user_id == user_id, SalaryRate.deleted_at.is_(None))
+            .order_by(SalaryRate.effective_from.desc())
         )
     )
 
@@ -226,6 +230,11 @@ async def create_rate(
     target = await db.get(User, payload.user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    # UNIQUE(user_id, effective_from) YUMSHOQ o'chirilganlarni ham hisobga
+    # oladi (baza darajasida) — shuning uchun bu yerdagi tekshiruv ham xuddi
+    # shunday, `deleted_at`dan qat'i nazar. Xato sanani tuzatish uchun
+    # `/admin/records/salary_rate/{id}` orqali TAHRIRLASH kerak, o'chirib
+    # qayta yaratish EMAS (aks holda baza UNIQUE xatosi beradi).
     existing = await db.scalar(
         select(SalaryRate).where(
             SalaryRate.user_id == payload.user_id, SalaryRate.effective_from == payload.effective_from

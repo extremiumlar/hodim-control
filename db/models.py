@@ -246,6 +246,12 @@ class Norm(Base):
     changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     effective_from: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Bosqich 3.5 (Dasturchi rejimi) — YUMSHOQ o'chirish: xato kiritilgan tarixiy
+    # yozuvni butunlay yo'qotmasdan "faol emas" qilish. Barcha o'qish so'rovlari
+    # (masalan `_current_value`) `deleted_at IS NULL` bilan filtrlanishi shart.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class DailyResult(Base):
@@ -1032,6 +1038,10 @@ class SalaryRate(Base):
     changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Bosqich 3.5 — `Norm` bilan bir xil yumshoq o'chirish naqshi.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class OvertimeProfile(Base):

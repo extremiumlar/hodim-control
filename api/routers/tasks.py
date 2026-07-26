@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, is_superadmin, require_roles, verify_bot_secret
 from api.schemas import (
     TaskBotCreate,
     TaskBulkBotCreate,
@@ -38,7 +38,7 @@ def _can_assign(actor: User, target: User) -> bool:
       "yetim" (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
     if not target.is_active or target.id == actor.id:
         return False
-    if actor.role == Role.dasturchi.value:
+    if is_superadmin(actor):  # Bosqich 3.5 — yagona darvoza (11.2-band)
         return True
     if actor.role == Role.boss.value:
         return target.role in {Role.employee.value, Role.rop.value, Role.hr.value}
@@ -154,7 +154,7 @@ def _can_manage_existing_task(actor: User, assignee: User) -> bool:
     keyinchalik faolsizlantirilgan bo'lsa ham, avvalgi vazifasini bekor qilish
     kerak bo'lishi mumkin): Dasturchi — hammaga; Boshliq — ROP/HR/xodimlarga;
     ROP — o'z jamoasi yoki lavozimi orqali boshqaradigan xodimlarga."""
-    if actor.role == Role.dasturchi.value:
+    if is_superadmin(actor):  # Bosqich 3.5 — yagona darvoza (11.2-band)
         return True
     if actor.role == Role.boss.value:
         return assignee.role in {Role.employee.value, Role.rop.value, Role.hr.value}

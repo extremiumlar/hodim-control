@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.security import decode_access_token
 from db.base import async_session
-from db.models import User
+from db.models import Role, User
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -43,6 +43,20 @@ def require_roles(*roles: str):
         return user
 
     return checker
+
+
+def is_superadmin(user: User) -> bool:
+    """Bosqich 3.5 (Dasturchi rejimi) — YAGONA DARVOZA. Har bir `can_manage_*`/
+    matritsa funksiyasi eng boshida shuni tekshiradi va `True` bo'lsa darhol
+    ruxsat beradi — cheklov mantig'i tarqoq bo'lib ketmasligi uchun."""
+    return user.role == Role.dasturchi.value
+
+
+async def require_dasturchi(user: User = Depends(get_current_user)) -> User:
+    """`/admin/*` — cheklovsiz boshqaruv endpointlari FAQAT Dasturchi uchun."""
+    if not is_superadmin(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat Dasturchi uchun")
+    return user
 
 
 async def verify_bot_secret(x_bot_secret: str | None = Header(default=None)) -> None:

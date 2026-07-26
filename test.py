@@ -1427,12 +1427,32 @@ def test_payroll_engine() -> None:
                 await s.execute(delete(Attendance).where(Attendance.user_id.in_(stale_ids)))
                 await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(stale_ids)))
                 await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(stale_ids)))
-                # audit_logs.target_user_id — boshqa test bloklari (masalan
-                # umumiy run_tests) shu id'larga tegishli yozuv qoldirishi
-                # mumkin (SQLite ROWID o'chirilgan id'larni qayta beradi);
-                # FK cheklovi tufayli bu tozalanmasa User o'chirilmay qoladi.
-                await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(stale_ids)))
+                # audit_logs.target_user_id VA actor_id — boshqa test bloklari
+                # (masalan test_admin_override, dasturchi sifatida `override_*`
+                # yozadi — actor_id orqali) shu id'larga tegishli yozuv
+                # qoldirishi mumkin (SQLite ROWID o'chirilgan id'larni qayta
+                # beradi); FK cheklovi tufayli bu tozalanmasa User o'chirilmay
+                # qoladi (jonli isbot: 2026-07-27).
+                await s.execute(
+                    delete(AuditLog).where(
+                        AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
+                    )
+                )
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
+            # Qo'shimcha himoya: agar avvalgi qulagan ishga tushirishda AVVAL
+            # User o'chirilib, keyingi qadam (masalan Attendance o'chirish)
+            # bajarilmay qolgan bo'lsa — ORFAN (egasiz) yozuv qoladi. SQLite
+            # ROWID'ni o'chirilgan eng katta id qayta beradi, shuning uchun
+            # KEYINGI ishga tushirishda yangi u1 xuddi O'SHA id'ni olib,
+            # egasiz yozuvga to'qnashishi mumkin (jonli isbot: 2026-07-27).
+            # Shu sabab test davri (2020-01) va aniq telegram_id'lar bo'yicha
+            # HAM, User mavjudligidan qat'i nazar, to'g'ridan-to'g'ri tozalanadi.
+            await s.execute(delete(Attendance).where(Attendance.date >= date(2020, 1, 1), Attendance.date < date(2020, 2, 1)))
+            await s.execute(
+                delete(WorkScheduleOverride).where(
+                    WorkScheduleOverride.date >= date(2020, 1, 1), WorkScheduleOverride.date < date(2020, 2, 1)
+                )
+            )
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
             await s.execute(
                 delete(FinePolicy).where(
@@ -1637,7 +1657,11 @@ def test_payroll_engine() -> None:
             await s.execute(delete(FinePolicy).where(FinePolicy.scope == "global",
                                                        FinePolicy.free_late_minutes_per_month == 999_999))
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
-            await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_([u1.id, u2.id])))
+            await s.execute(
+                delete(AuditLog).where(
+                    AuditLog.target_user_id.in_([u1.id, u2.id]) | AuditLog.actor_id.in_([u1.id, u2.id])
+                )
+            )
             await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
             await s.commit()
 
@@ -1674,6 +1698,7 @@ def test_payroll_api() -> None:
                     "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
             cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
         cur.execute(f"delete from fine_policies where scope_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
         cur.execute(f"delete from users where id in ({qm})", stale)
     cur.execute("delete from payroll_periods where period=?", (PERIOD,))
     conn.commit()
@@ -1715,6 +1740,7 @@ def test_payroll_api() -> None:
                 c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
             c2.execute(f"delete from fine_policies where scope_id in ({qm})", uids)
             c2.execute("delete from payroll_periods where period=?", (PERIOD,))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
             c2.execute(f"delete from users where id in ({qm})", uids)
             conn2.commit()
             conn2.close()
@@ -1900,6 +1926,252 @@ def test_payroll_api() -> None:
         conn.close()
 
 
+def test_admin_override() -> None:
+    """Bosqich 3.5: `api/routers/admin_override.py` — Dasturchi rejimi
+    (super-admin). HTTP darajasida: ruxsat (faqat dasturchi), yumshoq
+    o'chirish/tiklash, normalar matritsasi bypass, payroll qulflari."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("BOSQICH 3.5: DASTURCHI REJIMI (api/routers/admin_override.py)")
+    print("=" * 60)
+
+    PERIOD = "2022-03"
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-Admin%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        pslip_ids = [r[0] for r in cur.execute(f"select id from payslips where user_id in ({qm})", stale).fetchall()]
+        if pslip_ids:
+            qm2 = ",".join("?" * len(pslip_ids))
+            cur.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
+        for tbl in ("payslips", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from norms where user_id in ({qm})", stale)
+        # actor_id HAM tozalanadi — bu test dasturchi (T-Admin-Dev) sifatida
+        # `override_*` amallar bajaradi, ular AuditLog.actor_id (target_user_id
+        # EMAS) orqali shu userga bog'lanadi. Jonli isbot (2026-07-27): shu
+        # tozalanmasa keyingi ishga tushirishda FOREIGN KEY xatosi bilan
+        # user o'chirilmay qolgan (SQLite ROWID qayta berilgani sabab boshqa
+        # test blokining foydalanuvchisiga to'qnashgan).
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from payroll_periods where period=?", (PERIOD,))
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999700901,'T-Admin-Dev','dasturchi',1,1,datetime('now'))")
+    dev_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999700902,'T-Admin-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999700903,'T-Admin-Hr','hr',1,1,datetime('now'))")
+    hr_target_uid = cur.lastrowid
+    conn.commit()
+
+    dev_t = token_for(dev_uid, "dasturchi")
+    emp_t = token_for(emp_uid, "employee")
+    mgr = find_manager_id()
+    mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+
+    def cleanup_admin():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [dev_uid, emp_uid, hr_target_uid]
+            qm = ",".join("?" * len(uids))
+            pslip_ids = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", uids).fetchall()]
+            if pslip_ids:
+                qm2 = ",".join("?" * len(pslip_ids))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
+            for tbl in ("payslips", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
+            c2.execute(f"delete from norms where user_id in ({qm})", uids)
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute("delete from payroll_periods where period=?", (PERIOD,))
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Admin override tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            # ── Ruxsat: FAQAT dasturchi ──
+            r = client.get(f"{API_BASE}/admin/audit/overrides", headers=auth(emp_t))
+            check("xodim /admin/* -> 403", r.status_code == 403, f"kod={r.status_code}")
+            if mgr_t:
+                r = client.get(f"{API_BASE}/admin/audit/overrides", headers=auth(mgr_t))
+                check("HR/Boss /admin/* -> 403 (faqat dasturchi)", r.status_code == 403, f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/admin/audit/overrides", headers=auth(dev_t))
+            check("dasturchi /admin/* -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            # ── Sababsiz override -> 422 ──
+            r = client.put(f"{API_BASE}/admin/norms/{emp_uid}/suhbat", headers=auth(dev_t), json={"value": 50})
+            check("override_reason'siz -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # ── Normalar: xodim bo'lmaganga (HR) ham norma qo'yish ──
+            r = client.put(f"{API_BASE}/admin/norms/{hr_target_uid}/suhbat", headers=auth(dev_t), json={
+                "value": 77, "override_reason": "T-sinov: HR'ga norma",
+            })
+            check("dasturchi HR (xodim EMAS) ga norma qo'ydi -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
+            check("javobda qiymat 77", r.status_code == 200 and r.json().get("value") == 77,
+                  f"={r.json().get('value') if r.status_code == 200 else None}")
+
+            # Oddiy yo'l (odatdagi HR/Boss) xuddi shu HR'ga norma qo'ya OLMAYDI
+            if mgr_t:
+                r = client.post(f"{API_BASE}/norms", headers=auth(mgr_t), json={
+                    "user_id": hr_target_uid, "metric_type": "suhbat", "value": 10,
+                })
+                check("oddiy /norms HR nishoniga -> 400 (xodim emas)", r.status_code == 400,
+                      f"kod={r.status_code}")
+
+            # ── Metrika cheklovisiz (lavozimida yo'q ko'rsatkich) ──
+            r = client.put(f"{API_BASE}/admin/norms/{emp_uid}/dumaloq_video", headers=auth(dev_t), json={
+                "value": 5, "override_reason": "T-sinov: metrika cheklovisiz",
+            })
+            check("dasturchi lavozimga mos kelmagan metrikaga norma qo'ydi -> 200",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            norm_id = r.json().get("id") if r.status_code == 200 else None
+
+            # ── Yumshoq o'chirish + tiklash ──
+            if norm_id:
+                r = client.request("DELETE", f"{API_BASE}/admin/norms/{norm_id}", headers=auth(dev_t), json={
+                    "override_reason": "T-sinov: yumshoq o'chirish",
+                })
+                check("norma yumshoq o'chirildi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                check("javobda hard=False", r.status_code == 200 and r.json().get("hard") is False,
+                      f"={r.json() if r.status_code == 200 else None}")
+
+                r = client.get(f"{API_BASE}/admin/records/norm?include_deleted=true", headers=auth(dev_t))
+                found = [row for row in r.json() if row.get("id") == norm_id] if r.status_code == 200 else []
+                check("o'chirilgan norma include_deleted=true da ko'rinadi",
+                      len(found) == 1 and found[0].get("deleted_at") is not None,
+                      f"topildi={found}")
+
+                r = client.get(f"{API_BASE}/admin/records/norm?include_deleted=false", headers=auth(dev_t))
+                found2 = [row for row in r.json() if row.get("id") == norm_id] if r.status_code == 200 else []
+                check("include_deleted=false da ko'rinmaydi", len(found2) == 0, f"topildi={found2}")
+
+                r = client.post(f"{API_BASE}/admin/records/norm/{norm_id}/restore", headers=auth(dev_t), json={
+                    "override_reason": "T-sinov: tiklash",
+                })
+                check("norma tiklandi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            # ── PATCH oq ro'yxat tashqarisidagi maydon -> 400 ──
+            if norm_id:
+                r = client.patch(f"{API_BASE}/admin/records/norm/{norm_id}", headers=auth(dev_t), json={
+                    "fields": {"user_id": 99999}, "override_reason": "T-sinov: ruxsatsiz maydon",
+                })
+                check("ruxsat etilmagan maydon -> 400", r.status_code == 400, f"kod={r.status_code}")
+
+                r = client.patch(f"{API_BASE}/admin/records/norm/{norm_id}", headers=auth(dev_t), json={
+                    "fields": {"value": 123}, "override_reason": "T-sinov: qiymatni tahrirlash",
+                })
+                check("ruxsat etilgan maydon -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+                check("qiymat yangilandi", r.status_code == 200 and r.json().get("value") == 123,
+                      f"={r.json().get('value') if r.status_code == 200 else None}")
+
+            # ── Metrikani butunlay tozalash ──
+            r = client.request("DELETE", f"{API_BASE}/admin/norms/{emp_uid}/dumaloq_video", headers=auth(dev_t), json={
+                "override_reason": "T-sinov: metrikani tozalash",
+            })
+            check("metrika tozalandi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            # ── revert: 2 marta norma qo'yib, oldingisiga qaytarish ──
+            client.put(f"{API_BASE}/admin/norms/{emp_uid}/tashrif", headers=auth(dev_t), json={
+                "value": 10, "override_reason": "T-sinov: revert 1-qadam",
+            })
+            client.put(f"{API_BASE}/admin/norms/{emp_uid}/tashrif", headers=auth(dev_t), json={
+                "value": 20, "override_reason": "T-sinov: revert 2-qadam",
+            })
+            r = client.post(f"{API_BASE}/admin/norms/{emp_uid}/revert?metric=tashrif", headers=auth(dev_t), json={
+                "override_reason": "T-sinov: revert",
+            })
+            check("revert -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            check("revert oldingi qiymatga (10) qaytardi",
+                  r.status_code == 200 and r.json().get("current_value") == 10,
+                  f"={r.json() if r.status_code == 200 else None}")
+
+            # ── Payroll: qulf va super-admin amallar ──
+            for wd in range(7):
+                cur.execute(
+                    "insert into work_schedule_weekly (user_id, weekday, is_working, updated_at)"
+                    " values (?,?,0,datetime('now'))", (emp_uid, wd))
+            cur.execute(
+                "insert into work_schedule_override (user_id, date, is_working, start_time, end_time, updated_at)"
+                " values (?, '2022-03-01', 1, '09:00', '18:00', datetime('now'))", (emp_uid,))
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, '2022-03-01', '2022-03-01 04:00:00', 0, 0, 480, 'present', 0,"
+                " datetime('now'), datetime('now'))", (emp_uid,))
+            conn.commit()
+            if mgr_t:
+                client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
+                    "user_id": emp_uid, "amount": 1_800_000, "pay_basis": "monthly",
+                    "effective_from": "2020-01-01",
+                })
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={"user_ids": [emp_uid]})
+                check("payroll hisoblandi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+                check("payroll tasdiqlandi (qulflandi) -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+                check("qulflangan davrni HR qayta hisoblay OLMAYDI -> 409", r.status_code == 409,
+                      f"kod={r.status_code}")
+
+                r = client.post(f"{API_BASE}/admin/payroll/{PERIOD}/unlock", headers=auth(mgr_t), json={
+                    "override_reason": "T-sinov: HR unlock urinishi",
+                })
+                check("HR /admin/payroll/unlock -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+                r = client.post(f"{API_BASE}/admin/payroll/{PERIOD}/unlock", headers=auth(dev_t), json={
+                    "override_reason": "T-sinov: dasturchi qulfni ochadi",
+                })
+                check("dasturchi qulfni ochadi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+                check("qulf ochilgach HR qayta hisoblay oladi -> 200", r.status_code == 200,
+                      f"kod={r.status_code}")
+
+                r = client.patch(f"{API_BASE}/admin/payroll/{PERIOD}/user/{emp_uid}", headers=auth(dev_t), json={
+                    "fields": {"net": 999999}, "override_reason": "T-sinov: qo'lda tuzatish",
+                })
+                check("dasturchi payslip summasini qo'lda tuzatdi -> 200", r.status_code == 200,
+                      f"kod={r.status_code} {r.text[:150]}")
+                check("net=999999 ga o'zgardi", r.status_code == 200 and r.json().get("net") == 999999.0,
+                      f"={r.json().get('net') if r.status_code == 200 else None}")
+
+                r = client.request("DELETE", f"{API_BASE}/admin/payroll/{PERIOD}", headers=auth(dev_t), json={
+                    "override_reason": "T-sinov: butun davrni bekor qilish",
+                })
+                check("davr butunlay bekor qilindi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{emp_uid}", headers=auth(mgr_t))
+                check("bekor qilingandan keyin payslip topilmaydi -> 404", r.status_code == 404,
+                      f"kod={r.status_code}")
+
+            # ── Audit tarixi ──
+            r = client.get(f"{API_BASE}/admin/audit/overrides", headers=auth(dev_t))
+            check("audit/overrides -> 200", r.status_code == 200, f"kod={r.status_code}")
+            actions = [row["action"] for row in r.json()] if r.status_code == 200 else []
+            check("audit tarixida override_norm_set bor", "override_norm_set" in actions,
+                  f"amallar namunasi={actions[:5]}")
+    except Exception:
+        check("Admin override (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_admin()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -1931,6 +2203,11 @@ def main() -> None:
         test_payroll_api()
     except Exception:
         print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_admin_override()
+    except Exception:
+        print("Admin override testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

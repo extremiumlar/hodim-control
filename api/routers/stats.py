@@ -47,7 +47,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 async def _current_norm(db: AsyncSession, user_id: int, metric_type: str) -> int | None:
     norm = await db.scalar(
         select(Norm)
-        .where(Norm.user_id == user_id, Norm.metric_type == metric_type)
+        .where(Norm.user_id == user_id, Norm.metric_type == metric_type, Norm.deleted_at.is_(None))
         .order_by(Norm.effective_from.desc(), Norm.created_at.desc())
         .limit(1)
     )

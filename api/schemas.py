@@ -260,6 +260,10 @@ class ExcusedDayOut(BaseModel):
 class ExcusedDayDecide(BaseModel):
     decider_telegram_id: int
     decision: str  # approved | rejected
+    # Bosqich 3.5: allaqachon hal qilingan so'rovni Dasturchi QAYTA hal
+    # qilmoqchi bo'lsa majburiy (11.2-band, "har bir override — sabab").
+    # Oddiy (birinchi marta) qarorda ishlatilmaydi.
+    override_reason: str | None = Field(default=None, max_length=500)
 
 
 class NormCreate(BaseModel):
@@ -1114,3 +1118,35 @@ class BotLateStatusOut(BaseModel):
     remaining_minutes: int | None
     fined_days_so_far: int
     fine_per_day: float | None
+
+
+# ─────────────────────────────────────────────
+# Dasturchi rejimi (super-admin) — Bosqich 3.5
+# ─────────────────────────────────────────────
+
+
+class AdminOverrideReason(BaseModel):
+    """Sabab talab qiladigan sof override amallar uchun umumiy body
+    (o'chirish, qulfni ochish va h.k.) — 11.2-band: har bir override
+    majburiy sabab bilan."""
+
+    override_reason: str = Field(min_length=5, max_length=500)
+
+
+class AdminNormSet(BaseModel):
+    value: int
+    override_reason: str = Field(min_length=5, max_length=500)
+
+
+class AdminRecordPatch(BaseModel):
+    """Universal yozuv tahrirlash — `fields` faqat entity uchun oq
+    ro'yxatdagi kalitlarni o'z ichiga olishi kerak (router darajasida
+    tekshiriladi, bu yerda emas — chunki oq ro'yxat entity'ga bog'liq)."""
+
+    fields: dict
+    override_reason: str = Field(min_length=5, max_length=500)
+
+
+class AdminForceRole(BaseModel):
+    role: str
+    override_reason: str = Field(min_length=5, max_length=500)

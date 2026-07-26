@@ -118,16 +118,25 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
     item = await db.get(ExcusedDay, item_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
-    # 5.7-band: idempotentlik — allaqachon hal qilingan so'rov qayta
-    # o'zgartirilmaydi (masalan eski xabardagi tugma ikkinchi marta bosilsa,
-    # yoki ikki HR bir vaqtda javob bersa — "approved" bo'lgan kun qayta
-    # "rejected" bo'lib qolmasin).
-    if item.status != ExcusedStatus.pending.value:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
 
     decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
     if not decider or decider.role not in {Role.hr.value, Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+    # 5.7-band: idempotentlik — allaqachon hal qilingan so'rov ODDIY yo'l bilan
+    # qayta o'zgartirilmaydi (masalan eski xabardagi tugma ikkinchi marta
+    # bosilsa, yoki ikki HR bir vaqtda javob bersa — "approved" bo'lgan kun
+    # qayta "rejected" bo'lib qolmasin). Bosqich 3.5 QAROR: Dasturchi buni
+    # majburiy sabab (`override_reason`) bilan bekor qila oladi (11.4-band).
+    is_override = item.status != ExcusedStatus.pending.value
+    if is_override:
+        if decider.role != Role.dasturchi.value:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
+        if not payload.override_reason or len(payload.override_reason.strip()) < 5:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Allaqachon hal qilingan so'rovni qayta hal qilish uchun sabab kerak (kamida 5 belgi)",
+            )
 
     if payload.decision not in {ExcusedStatus.approved.value, ExcusedStatus.rejected.value}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri qaror")
@@ -140,10 +149,10 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
     db.add(
         AuditLog(
             actor_id=decider.id,
-            action="excused_day_decided",
+            action="excused_day_override_decided" if is_override else "excused_day_decided",
             target_user_id=item.user_id,
             before={"status": before_status},
-            after={"status": item.status},
+            after={"status": item.status, "override_reason": payload.override_reason if is_override else None},
         )
     )
     await db.commit()

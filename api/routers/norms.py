@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles, verify_bot_secret
+from api.deps import get_db, is_superadmin, require_roles, verify_bot_secret
 from api.timeutil import today_local
 from api.schemas import NormBotUpdate, NormCreate, NormOut, TeamNormRow, UserOut
 from db.models import AuditLog, Norm, Role, User
@@ -46,7 +46,13 @@ def can_manage_norms(actor: User, target: User) -> bool:
     Boshliq/Dasturchi — barcha xodimlarga; ROP — o'z jamoasiga (manager_id) yoki
     lavozimi "ROP boshqaradi" deb belgilangan xodimlarga; HR — lavozimi
     "HR boshqaradi" deb belgilangan xodimlarga, hamda zaxira sifatida "yetim"
-    (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga."""
+    (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga.
+
+    Bosqich 3.5 (Dasturchi rejimi): superadmin `target.role != employee`
+    tekshiruvidan HAM OLDIN — Dasturchi HR/ROP/Boss'ga ham norma qo'ya oladi
+    (11.4-band QAROR). Odatdagi (Dasturchi bo'lmagan) yo'l o'zgarmagan."""
+    if is_superadmin(actor):
+        return True
     if target.role != Role.employee.value or not target.is_active:
         return False
     if actor.role in {Role.boss.value, Role.dasturchi.value}:
@@ -67,7 +73,7 @@ def can_manage_norms(actor: User, target: User) -> bool:
 async def _current_value(db: AsyncSession, user_id: int, metric_type: str) -> int | None:
     norm = await db.scalar(
         select(Norm)
-        .where(Norm.user_id == user_id, Norm.metric_type == metric_type)
+        .where(Norm.user_id == user_id, Norm.metric_type == metric_type, Norm.deleted_at.is_(None))
         .order_by(Norm.effective_from.desc(), Norm.created_at.desc())
         .limit(1)
     )
@@ -100,7 +106,13 @@ async def _create_norm(db: AsyncSession, actor: User, target_user: User, metric_
     return norm
 
 
-def _validate_metric(target: User, metric_type: str) -> None:
+def _validate_metric(target: User, metric_type: str, actor: User | None = None) -> None:
+    """Lavozim metrika cheklovi. Bosqich 3.5: Dasturchi bu cheklovdan HAM
+    o'tkaziladi (11.4-band QAROR) — masalan sinov uchun lavozimida yo'q
+    ko'rsatkichga vaqtincha norma qo'yish kerak bo'lganda. Odatdagi yo'lda
+    `actor=None` — o'zgarish yo'q."""
+    if actor is not None and is_superadmin(actor):
+        return
     allowed = metrics_for(target)
     if metric_type not in allowed:
         labels = ", ".join(METRIC_LABELS.get(m, m) for m in allowed)
@@ -167,11 +179,13 @@ async def create_norm(
     db: AsyncSession = Depends(get_db),
 ) -> Norm:
     target = await db.get(User, payload.user_id)
-    if not target or target.role != Role.employee.value:
+    # Bosqich 3.5 QAROR: Dasturchi xodim bo'lmaganlarga (hr/rop/boss) ham
+    # norma qo'ya oladi — role tekshiruvi superadmin uchun o'tkazib yuboriladi.
+    if not target or (target.role != Role.employee.value and not is_superadmin(actor)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
     if not can_manage_norms(actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga norma belgilash huquqingiz yo'q")
-    _validate_metric(target, payload.metric_type)
+    _validate_metric(target, payload.metric_type, actor)
 
     return await _create_norm(db, actor, target, payload.metric_type, payload.value)
 
@@ -183,10 +197,10 @@ async def bot_update_norm(payload: NormBotUpdate, db: AsyncSession = Depends(get
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     target = await db.get(User, payload.target_user_id)
-    if not target or target.role != Role.employee.value:
+    if not target or (target.role != Role.employee.value and not is_superadmin(actor)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
     if not can_manage_norms(actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga norma belgilash huquqingiz yo'q")
-    _validate_metric(target, payload.metric_type)
+    _validate_metric(target, payload.metric_type, actor)
 
     return await _create_norm(db, actor, target, payload.metric_type, payload.value)

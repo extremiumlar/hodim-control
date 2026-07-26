@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
 from api.routers import (
+    admin_override,
     ai_center,
     ai_coach,
     ai_watch,
@@ -69,6 +70,7 @@ app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
 app.include_router(payroll.router)
+app.include_router(admin_override.router)
 app.include_router(hourly_plan.router)
 app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)

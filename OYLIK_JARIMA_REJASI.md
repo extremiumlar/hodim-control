@@ -494,14 +494,78 @@ ishlagani (`collect_attendance`ning ataylab qilingan defensiv qoidasi),
 test sozlashi Bosqich 2'dagi izolyatsiya naqshiga (faqat kerakli kunlarga
 `WorkScheduleOverride`) moslashtirildi.
 
-### Bosqich 3.5 — ⭐ Dasturchi rejimi (super-admin qatlami)
-**Fayllar:** `api/deps.py`, `api/routers/admin_override.py` (yangi),
-`api/routers/norms.py`, `api/routers/payroll.py`, `api/routers/attendance.py`,
-`db/models.py` (soft-delete ustunlari), `test.py`
-**Ish:** 11-bo'lim to'liq.
-**DoD:** dasturchi istalgan normani o'zgartira/o'chira oladi; har bir override
-majburiy sabab bilan `AuditLog` ga tushadi; boshqa rollar bu endpointlarga
-403 oladi.
+### Bosqich 3.5 — ⭐ Dasturchi rejimi (super-admin qatlami) ✅ BACKEND BAJARILDI (2026-07-27)
+**Fayllar:** `api/deps.py` (`is_superadmin`, `require_dasturchi`),
+`api/routers/admin_override.py` (yangi, ~450 qator), `api/routers/norms.py`,
+`api/routers/tasks.py`, `api/routers/excused_days.py`, `api/routers/stats.py`,
+`api/services/payroll.py`, `api/schemas.py` (+4 sxema), `api/main.py`,
+`db/models.py` (`Norm`/`SalaryRate`ga soft-delete ustunlari),
+`db/alembic/versions/26061eade58d_soft_delete_norm_salary_rate.py`, `test.py`
+(`test_admin_override`, 33 tekshiruv)
+
+**Ish — 11-bo'lim deyarli to'liq:**
+- `is_superadmin`/`require_dasturchi` — yagona darvoza (11.2-band #1).
+- Normalar (11.3-band, "asosiy talab"): `PUT/DELETE /admin/norms/{user_id}/
+  {metric}`, `POST .../revert` — metrika/lavozim/rol cheklovisiz.
+  `can_manage_norms`/`_validate_metric` (norms.py) va `_can_assign`/
+  `_can_manage_existing_task` (tasks.py) endi `is_superadmin` orqali qisqa
+  yo'l oladi — dasturchi HR/ROP/Boss'ga ham norma qo'ya oladi.
+- `excused_days.py`: dasturchi tasdiqlangan/rad etilgan so'rovni
+  `override_reason` bilan qayta hal qila oladi (oddiy HR/Boss — yo'q).
+- Universal yozuv boshqaruvi: `GET/PATCH/DELETE/POST-restore
+  /admin/records/{entity}/{id}` — 10 ta entity (norm, attendance,
+  excused_day, task, daily_result, mobilograf_video, overtime, salary_rate,
+  payroll_adjustment, fine_policy, bonus), har biri uchun `PATCH` oq
+  ro'yxati bilan himoyalangan.
+- Payroll qulflari: `unlock`, `force-recalculate`, `PATCH .../user/{uid}`
+  (qo'lda summa tuzatish), `DELETE /admin/payroll/{period}` (butun oyni
+  bekor qilish).
+- Tizim darajasi: `POST /admin/attendance/recalculate` (sana oralig'i bo'yicha
+  qayta hisoblash), `POST /admin/users/{id}/force-role`, `GET /admin/audit/
+  overrides`.
+
+**Yumshoq o'chirish (11.2-band #4)** — QARORDAN TORROQ qamrov: rejada 5 ta
+jadval (`Payslip`, `SalaryRate`, `Attendance`, `OvertimeEntry`, `Norm`)
+taklif qilingan edi, lekin ONGLI RAVISHDA faqat **`Norm` va `SalaryRate`**ga
+qo'llandi — bular haqiqiy append-only tarixiy jadvallar ("xato yozuvni
+tarixdan chiqarish" asosiy stsenariy). Qolganlari uchun mavjud mexanizmlar
+yetarli: `Attendance` allaqachon Bosqich 0'dan qattiq o'chirishga ega
+(semantikasini o'zgartirish xavfli bo'lardi); `OvertimeEntry`da `status`
+maydoni bor (rad etish = bekor qilish); `Payslip` esa `run_payroll` orqali
+QAYTA HISOBLANADI (upsert), "o'chirish" tabiiy ravishda butun davr darajasida
+(`DELETE /admin/payroll/{period}`), bitta yozuv emas.
+
+**Ishlash jarayonida topilgan va tuzatilgan muammolar:**
+1. SQLite `batch_alter_table` FK ustunli yangi qatorga NOM talab qiladi —
+   migratsiyada `sa.ForeignKey(..., name=...)` bilan tuzatildi.
+2. `_row_to_dict()` xom `date`/`datetime`/`Decimal` qiymatlarni
+   `AuditLog.before/after` (JSON ustun)ga yozganda SQLAlchemy oddiy
+   `json.dumps` bilan 500 berardi — `_json_safe()` bilan oldindan ISO
+   satr/floatga o'girildi.
+3. **Test infratuzilmasi zaifligi** (mening kodimga aloqasi yo'q, lekin
+   ochilgan): `AuditLog.actor_id` (Dasturchi override amallarida) tozalash
+   bloklaridan tushib qolgan edi — faqat `target_user_id` tozalanardi. SQLite
+   ROWID o'chirilgan id'larni qayta berishi bilan birga, bu keyingi test
+   ishga tushirishda FK xatosi bilan yashirin xato zanjiriga olib kelardi.
+   `test_payroll_engine`, `test_payroll_api`, `test_admin_override`ning
+   barcha tozalash bloklariga `actor_id` ham qo'shildi.
+
+**⭐ Ataylab QILINMAGAN (Bosqich 4/5ga qoldirilgan, rejadagi 11.5-band):**
+- `web/src/pages/AdminOverride.tsx` — "Dasturchi rejimi" sahifasi (banner,
+  tumbler, yozuvlar jadvali, tarix tab). Bosqich 4 (Web panel) qismida.
+- `bot/handlers/admin_override.py` — `/norm_set`, `/att_fix`, `/unlock`,
+  `/undo` buyruqlari. Bosqich 5 (Bot) qismida.
+- Boshqa sahifalarga (Norms, Attendance, Payroll) "Dasturchi" qo'shimcha
+  menyusi — Bosqich 4 bilan birga.
+
+**DoD:** dasturchi istalgan normani (hatto HR/ROP/Boss'ga, hatto lavozimga
+mos kelmagan metrikada) o'zgartira/o'chira/tiklay oladi; har bir override
+majburiy sabab (`override_reason`, min 5 belgi, yo'q bo'lsa 422) bilan
+`AuditLog(action="override_*")` ga tushadi; boshqa rollar (HR/Boss/ROP/xodim)
+BARCHA `/admin/*` endpointlariga 403 oladi. 33 ta HTTP test + real
+xizmatlarga qarshi to'liq `test.py`: **217 OK / 218** (yagona FAIL —
+oldindan mavjud Windows konsol kodlash muammosi), ikki marta ketma-ket
+ishga tushirilib barqarorlik tasdiqlandi.
 
 ### Bosqich 4 — Web panel
 **Fayllar:** `web/src/pages/Payroll.tsx`, `PayrollSettings.tsx`, `Overtime.tsx`,

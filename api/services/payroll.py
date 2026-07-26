@@ -139,10 +139,15 @@ async def resolve_policy(db: AsyncSession, user: User) -> FinePolicy | None:
 
 async def resolve_rate(db: AsyncSession, user_id: int, on_date: date) -> SalaryRate | None:
     """Amaldagi oylik stavka: `effective_from <= on_date` bo'yicha eng
-    so'nggisi (`Norm`dagi bilan bir xil "tarixiy versiya" naqshi)."""
+    so'nggisi (`Norm`dagi bilan bir xil "tarixiy versiya" naqshi). Yumshoq
+    o'chirilgan (Bosqich 3.5, Dasturchi rejimi) yozuvlar chetlab o'tiladi."""
     return await db.scalar(
         select(SalaryRate)
-        .where(SalaryRate.user_id == user_id, SalaryRate.effective_from <= on_date)
+        .where(
+            SalaryRate.user_id == user_id,
+            SalaryRate.effective_from <= on_date,
+            SalaryRate.deleted_at.is_(None),
+        )
         .order_by(SalaryRate.effective_from.desc())
         .limit(1)
     )
@@ -151,7 +156,7 @@ async def resolve_rate(db: AsyncSession, user_id: int, on_date: date) -> SalaryR
 async def _first_rate(db: AsyncSession, user_id: int) -> SalaryRate | None:
     return await db.scalar(
         select(SalaryRate)
-        .where(SalaryRate.user_id == user_id)
+        .where(SalaryRate.user_id == user_id, SalaryRate.deleted_at.is_(None))
         .order_by(SalaryRate.effective_from.asc())
         .limit(1)
     )
