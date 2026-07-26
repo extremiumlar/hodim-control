@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, verify_bot_secret
 from api.routers.hourly_plan import DEFAULT_END, DEFAULT_START
-from api.services.attendance import ATTENDANCE_TRACKED_ROLES
+from api.services.attendance import ATTENDANCE_TRACKED_ROLES, recompute_attendance
 from api.timeutil import today_local
 from api.schemas import (
     EffectiveDay,
@@ -17,7 +17,7 @@ from api.schemas import (
     WorkWeeklyOut,
     WorkWeekOut,
 )
-from db.models import Role, User, WorkScheduleOverride, WorkScheduleWeekly
+from db.models import Attendance, Role, User, WorkScheduleOverride, WorkScheduleWeekly
 
 router = APIRouter(prefix="/work-schedule", tags=["work-schedule"])
 
@@ -53,6 +53,30 @@ async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: Use
 def _week_start(d: date) -> date:
     """Sanani o'z ichiga olgan haftaning dushanbasi."""
     return d - timedelta(days=d.weekday())
+
+
+async def _recalc_from(db: AsyncSession, user: User, from_day: date) -> None:
+    """3.1-band: ish jadvali o'zgarganda, O'SHA XODIMNING allaqachon mavjud
+    (check-in qilingan) yozuvlarini — BUGUNGI va KELAJAKDAGI (`from_day`dan
+    boshlab) — yangi jadvalga qarab qayta hisoblaydi. O'TGAN kunlarga
+    TEGILMAYDI — tarix o'zgarmas qoladi.
+
+    Nima uchun kerak edi: xodim 09:30 da keldi (late=25 yozildi), rahbar
+    startni 10:00 ga o'zgartirdi — baza eski (25) qiymatda qolib, guruh
+    digesti esa JORIY jadvaldan hisoblab bir odamni bir vaqtning o'zida ham
+    "kechikkan", ham "erta kelgan" deb ko'rsatardi."""
+    rows = list(
+        await db.scalars(
+            select(Attendance).where(Attendance.user_id == user.id, Attendance.date >= from_day)
+        )
+    )
+    if not rows:
+        return
+    for att in rows:
+        if att.check_in_time is None:
+            continue  # hech narsa yozilmagan kun — qayta hisoblashning ma'nosi yo'q
+        await recompute_attendance(db, att, user)
+    await db.commit()
 
 
 async def _effective_week(db: AsyncSession, user: User, start: date) -> WorkWeekOut:
@@ -108,6 +132,40 @@ async def _effective_week(db: AsyncSession, user: User, start: date) -> WorkWeek
     return WorkWeekOut(user_id=user.id, user_full_name=user.full_name, days=days)
 
 
+def _build_week(user: User, weekly: dict, overrides: dict, week_start: date) -> WorkWeekOut:
+    """`_effective_week`ning bitta xodim uchun sof (so'rovsiz) versiyasi — 3.5-band:
+    `all_week` barcha xodimlar uchun oldindan BITTA so'rovda olingan `weekly`/
+    `overrides` lug'atlaridan foydalanadi, har biriga alohida murojaat qilmaydi."""
+    days: list[EffectiveDay] = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        ov = overrides.get((user.id, d))
+        if ov is not None:
+            days.append(
+                EffectiveDay(
+                    date=d, weekday=d.weekday(), is_working=ov.is_working,
+                    start_time=ov.start_time, end_time=ov.end_time, source="override", note=ov.note,
+                )
+            )
+            continue
+        w = weekly.get((user.id, d.weekday()))
+        if w is not None:
+            days.append(
+                EffectiveDay(
+                    date=d, weekday=d.weekday(), is_working=w.is_working,
+                    start_time=w.start_time, end_time=w.end_time, source="weekly",
+                )
+            )
+        else:
+            days.append(
+                EffectiveDay(
+                    date=d, weekday=d.weekday(), is_working=d.weekday() < 5,
+                    start_time=None, end_time=None, source="unset",
+                )
+            )
+    return WorkWeekOut(user_id=user.id, user_full_name=user.full_name, days=days)
+
+
 # --- Web (rahbarlar) — haftalik andoza ---
 
 
@@ -144,7 +202,7 @@ async def get_weekly(
 async def set_weekly(
     user_id: int, payload: WorkWeeklyIn, actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> WorkWeeklyOut:
-    await _get_manageable_user_or_404(db, user_id, actor)
+    user = await _get_manageable_user_or_404(db, user_id, actor)
     seen_weekdays: set[int] = set()
     for entry in payload.days:
         if entry.weekday in seen_weekdays:
@@ -167,6 +225,7 @@ async def set_weekly(
             )
         )
     await db.commit()
+    await _recalc_from(db, user, today_local())
     return await get_weekly(user_id, actor, db)
 
 
@@ -194,7 +253,7 @@ async def list_overrides(
 async def set_override(
     user_id: int, payload: WorkOverrideIn, actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> WorkScheduleOverride:
-    await _get_manageable_user_or_404(db, user_id, actor)
+    user = await _get_manageable_user_or_404(db, user_id, actor)
     if payload.is_working and (payload.start_time is None or payload.end_time is None):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ish kuni uchun boshlanish va tugash vaqti kerak")
     if payload.start_time and payload.end_time and payload.start_time >= payload.end_time:
@@ -214,6 +273,17 @@ async def set_override(
     existing.note = payload.note
     await db.commit()
     await db.refresh(existing)
+    # 3.1-band: faqat BUGUNGI yoki KELAJAKDAGI sana uchun qayta hisoblaymiz —
+    # o'tgan kunga override qo'yish (masalan orqaga qarab sababli kun belgilash)
+    # tarixni o'zgartirmasligi kerak. Faqat SHU sanaga tegishli — boshqa kunlar
+    # bu override'dan ta'sirlanmaydi.
+    if payload.date >= today_local():
+        att = await db.scalar(
+            select(Attendance).where(Attendance.user_id == user_id, Attendance.date == payload.date)
+        )
+        if att is not None and att.check_in_time is not None:
+            await recompute_attendance(db, att, user)
+            await db.commit()
     return existing
 
 
@@ -253,7 +323,12 @@ async def all_week(
     """Rahbar uchun: davomat kuzatiladigan barcha faol xodimlarning (Boshliqdan
     tashqari — ATTENDANCE_TRACKED_ROLES) haftalik jadvali. Jadval davomat
     kechikishini hisoblashda ishlatilgani uchun ro'yxat davomat qamrovi bilan
-    bir xil bo'lishi shart."""
+    bir xil bo'lishi shart.
+
+    3.5-band: ilgari har xodim uchun `_effective_week` alohida chaqirilardi —
+    2 ta so'rov (weekly + override) xodimlar soniga ko'paytirilardi (N+1).
+    `digest_tick` har daqiqa ishlagani uchun bu sezilarli yuk edi. Endi hamma
+    xodim uchun weekly/override BITTA so'rovda olinib, lug'atga solinadi."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not actor or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
@@ -264,4 +339,26 @@ async def all_week(
             .order_by(User.full_name)
         )
     )
-    return [await _effective_week(db, u, start or today_local()) for u in users]
+    if not users:
+        return []
+    user_ids = [u.id for u in users]
+    week_start = _week_start(start or today_local())
+    week_end = week_start + timedelta(days=6)
+
+    weekly = {
+        (w.user_id, w.weekday): w
+        for w in await db.scalars(
+            select(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(user_ids))
+        )
+    }
+    overrides = {
+        (o.user_id, o.date): o
+        for o in await db.scalars(
+            select(WorkScheduleOverride).where(
+                WorkScheduleOverride.user_id.in_(user_ids),
+                WorkScheduleOverride.date >= week_start,
+                WorkScheduleOverride.date <= week_end,
+            )
+        )
+    }
+    return [_build_week(u, weekly, overrides, week_start) for u in users]

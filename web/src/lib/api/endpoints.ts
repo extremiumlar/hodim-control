@@ -2,12 +2,14 @@ import { apiFetch, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "
 import type {
   Attendance,
   AttendanceDashboard,
+  AttendanceReadiness,
   AuditLog,
   Bonus,
   DailyResult,
   EmployeeAttendanceSummary,
   ExcusedDay,
   LateStatRow,
+  ManualAttendancePayload,
   CrmOperatorRow,
   CrmVisitOperatorRow,
   LeadStageDay,
@@ -51,6 +53,15 @@ export const api = {
     apiFetch<LateStatRow[]>(`/attendance/late-stats?days=${days}`),
   deleteAttendance: (attendanceId: number) =>
     apiFetch<{ deleted: boolean }>(`/attendance/${attendanceId}`, { method: "DELETE" }),
+  // HR/Boshliq qo'lda tuzatishi — Face ID/GPS ishlamay qolgan kunlar uchun.
+  manualAttendance: (data: ManualAttendancePayload) =>
+    apiFetch<Attendance>("/attendance/manual", { method: "PUT", body: JSON.stringify(data) }),
+  attendanceReadiness: (params: { date_from?: string; date_to?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+    ).toString();
+    return apiFetch<AttendanceReadiness>(`/attendance/readiness${q ? `?${q}` : ""}`);
+  },
   listOffices: () => apiFetch<Office[]>("/attendance/offices"),
   createOffice: (data: { name: string; latitude: number; longitude: number; radius_meters: number; is_active: boolean }) =>
     apiFetch<Office>("/attendance/offices", { method: "POST", body: JSON.stringify(data) }),

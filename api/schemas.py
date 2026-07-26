@@ -1,4 +1,5 @@
 import datetime as dt
+import re
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
@@ -696,6 +697,56 @@ class EmployeeAttendanceSummary(BaseModel):
     late_minutes: int
     early_minutes: int
     worked_minutes: int
+
+
+class AttendanceManualUpdate(BaseModel):
+    """HR/Boshliq qo'lda davomat tuzatishi. Vaqtlar MAHALLIY devor-soati
+    ("HH:MM") — server ularni yozuv sanasi bo'yicha naive-UTC ga o'giradi.
+    `null` — o'sha vaqtni tozalash (masalan "aslida kelmagan" deb belgilash).
+
+    `late_minutes`/`worked_minutes` bevosita kiritilmaydi — ular kelish/ketish
+    vaqti va o'sha kungi ish jadvalidan qayta hisoblanadi. Kechikishni "kechirish"
+    uchun sabab (`ExcusedDay`) mexanizmi bor; vaqtni soxtalashtirish emas."""
+
+    user_id: int
+    date: dt.date
+    check_in: str | None = None
+    check_out: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+    # Majburiy: qo'lda o'zgartirish har doim izohlanadi va audit jurnaliga tushadi.
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator("check_in", "check_out")
+    @classmethod
+    def _valid_hm(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("Vaqt formati «HH:MM» bo'lishi kerak (masalan 09:15)")
+        return v
+
+
+class ReadinessIssue(BaseModel):
+    """Davomat ma'lumotidagi bitta "e'tibor bering" holati."""
+
+    user_id: int
+    full_name: str
+    date: dt.date | None = None
+    detail: str | None = None
+
+
+class AttendanceReadiness(BaseModel):
+    """Davr bo'yicha davomat ma'lumotining tayyorlik hisoboti — oylik/jarima
+    hisobidan OLDIN ko'riladi (payroll `preflight` shu ustiga quriladi)."""
+
+    date_from: dt.date
+    date_to: dt.date
+    ok: bool
+    no_schedule: list[ReadinessIssue]
+    open_checkouts: list[ReadinessIssue]
+    auto_closed: list[ReadinessIssue]
+    pending_excused: list[ReadinessIssue]
+    no_face: list[ReadinessIssue]
 
 
 class LateDayEntry(BaseModel):

@@ -50,6 +50,34 @@ export interface Attendance {
   note: string | null;
 }
 
+export interface ReadinessIssue {
+  user_id: number;
+  full_name: string;
+  date: string | null;
+  detail: string | null;
+}
+
+export interface AttendanceReadiness {
+  date_from: string;
+  date_to: string;
+  ok: boolean;
+  no_schedule: ReadinessIssue[];
+  open_checkouts: ReadinessIssue[];
+  auto_closed: ReadinessIssue[];
+  pending_excused: ReadinessIssue[];
+  no_face: ReadinessIssue[];
+}
+
+export interface ManualAttendancePayload {
+  user_id: number;
+  date: string;
+  /** Mahalliy devor-soati "HH:MM"; null — tozalash */
+  check_in: string | null;
+  check_out: string | null;
+  note?: string | null;
+  reason: string;
+}
+
 export interface Office {
   id: number;
   name: string;

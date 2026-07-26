@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, subDays } from "date-fns";
 import {
+  AlertTriangle,
   CalendarCheck,
+  CheckCircle2,
   Clock,
   DoorOpen,
   Hourglass,
   LogIn,
+  Pencil,
   RefreshCw,
   Trash2,
   UserX,
@@ -21,11 +24,23 @@ import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   type Attendance as AttendanceRow,
+  type AttendanceReadiness,
   type EmployeeAttendanceSummary,
   type LateStatRow,
+  type ReadinessIssue,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
@@ -33,7 +48,9 @@ import {
   useAttendanceEmployeeSummary,
   useAttendanceLateStats,
   useAttendanceList,
+  useAttendanceReadiness,
   useDeleteAttendance,
+  useManualAttendance,
 } from "@/lib/queries";
 
 // Backend naive-UTC — "Z" qo'shib mahalliy vaqtga o'giramiz.
@@ -41,6 +58,223 @@ function fmtTime(iso: string | null): string {
   if (!iso) return "—";
   const norm = iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`;
   return format(new Date(norm), "HH:mm");
+}
+
+// <input type="time"> uchun — bo'sh qiymat "" bo'lishi kerak ("—" emas).
+function toHm(iso: string | null): string {
+  return iso ? fmtTime(iso) : "";
+}
+
+// Davomat yozuvini qo'lda tuzatish — HR/Boshliq (backend ATTENDANCE_EDIT_ROLES).
+// Vaqtlar mahalliy devor-soati bo'yicha yuboriladi; kechikish/ishlangan vaqtni
+// server ish jadvalidan qayta hisoblaydi, shuning uchun bu yerda ular yo'q.
+function EditAttendanceDialog({
+  row,
+  onClose,
+}: {
+  row: AttendanceRow | null;
+  onClose: () => void;
+}) {
+  const [checkIn, setCheckIn] = useState("");
+  const [checkOut, setCheckOut] = useState("");
+  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const mutation = useManualAttendance();
+
+  // Yangi qator tanlanganda maydonlarni o'sha yozuv qiymatlari bilan to'ldiramiz.
+  useEffect(() => {
+    setCheckIn(toHm(row?.check_in_time ?? null));
+    setCheckOut(toHm(row?.check_out_time ?? null));
+    setNote(row?.note ?? "");
+    setReason("");
+  }, [row]);
+
+  const reasonTooShort = reason.trim().length < 5;
+  const invalidOrder = !!checkIn && !!checkOut && checkOut <= checkIn;
+  const outWithoutIn = !!checkOut && !checkIn;
+
+  return (
+    <Dialog open={row !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {row?.user_full_name} — {row ? format(new Date(row.date), "dd.MM.yyyy") : ""}
+          </DialogTitle>
+          <DialogDescription>
+            Face ID yoki GPS ishlamay qolgan kunni tuzatish. Kechikish va ishlangan vaqt
+            ish jadvali bo'yicha qayta hisoblanadi. O'zgarish audit jurnaliga tushadi.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="att-in">Keldim</Label>
+              <Input
+                id="att-in"
+                type="time"
+                value={checkIn}
+                onChange={(e) => setCheckIn(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="att-out">Ketdim</Label>
+              <Input
+                id="att-out"
+                type="time"
+                value={checkOut}
+                onChange={(e) => setCheckOut(e.target.value)}
+              />
+            </div>
+          </div>
+          <p className="-mt-2 text-xs text-slate-500">
+            Bo'sh qoldirilsa — o'sha belgi tozalanadi (masalan «Keldim» bo'sh bo'lsa,
+            kun «kelmagan» bo'lib qoladi).
+          </p>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="att-note">Izoh (ixtiyoriy)</Label>
+            <Input
+              id="att-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Masalan: telefon kamerasi ishlamadi"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="att-reason">
+              Sabab <span className="text-rose-600">*</span>
+            </Label>
+            <Input
+              id="att-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Nima uchun tuzatilyapti (kamida 5 belgi)"
+            />
+          </div>
+
+          {invalidOrder && (
+            <p className="text-sm text-rose-600">«Ketdim» «Keldim» dan keyin bo'lishi kerak.</p>
+          )}
+          {outWithoutIn && (
+            <p className="text-sm text-rose-600">«Ketdim» ni «Keldim» siz belgilab bo'lmaydi.</p>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Bekor qilish
+          </Button>
+          <Button
+            disabled={
+              !row || reasonTooShort || invalidOrder || outWithoutIn || mutation.isPending
+            }
+            onClick={() => {
+              if (!row) return;
+              mutation.mutate(
+                {
+                  user_id: row.user_id,
+                  date: row.date,
+                  check_in: checkIn || null,
+                  check_out: checkOut || null,
+                  note: note.trim() || null,
+                  reason: reason.trim(),
+                },
+                {
+                  onSuccess: (updated) => {
+                    toast.success(
+                      updated.late_minutes > 0
+                        ? `Saqlandi — kechikish ${updated.late_minutes} daqiqa.`
+                        : "Saqlandi — kechikish yo'q."
+                    );
+                    onClose();
+                  },
+                }
+              );
+            }}
+          >
+            {mutation.isPending ? "Saqlanmoqda..." : "Saqlash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Ma'lumot tayyorligi — oylik/jarima hisobidan oldin ko'riladigan "bo'sh joylar".
+function ReadinessSection({ dateFrom, dateTo }: { dateFrom: string; dateTo: string }) {
+  const query = useAttendanceReadiness({ date_from: dateFrom, date_to: dateTo });
+  const data: AttendanceReadiness | undefined = query.data;
+
+  const groups: { key: keyof AttendanceReadiness; label: string; hint: string }[] = [
+    { key: "no_schedule", label: "Ish jadvali yo'q", hint: "kechikish taxminiy hisoblanadi" },
+    { key: "open_checkouts", label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt 0 bo'lib qolgan" },
+    { key: "auto_closed", label: "Avtomatik yopilgan", hint: "ishlangan vaqt taxminiy" },
+    { key: "pending_excused", label: "Sababli kun hal qilinmagan", hint: "jarimani bekor qilishi mumkin" },
+    { key: "no_face", label: "Yuz ro'yxatdan o'tmagan", hint: "umuman check-in qila olmaydi" },
+  ];
+
+  if (query.isLoading) return <Skeleton className="h-24 w-full rounded-xl" />;
+  if (query.error || !data) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          {data.ok ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+          ) : (
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+          )}
+          Ma'lumot tayyorligi ({format(new Date(data.date_from), "dd.MM")}—
+          {format(new Date(data.date_to), "dd.MM")})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.ok ? (
+          <p className="text-sm text-slate-500">
+            Bo'sh joy yo'q — davomat ma'lumoti oylik hisob uchun tayyor.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {groups.map(({ key, label, hint }) => {
+              const items = data[key] as ReadinessIssue[];
+              if (!items.length) return null;
+              return (
+                <li key={key}>
+                  <div className="mb-1 text-sm font-medium">
+                    {label}{" "}
+                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">
+                      {items.length}
+                    </span>
+                    <span className="ml-2 text-xs font-normal text-slate-500">— {hint}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {items.slice(0, 12).map((it, i) => (
+                      <span
+                        key={`${it.user_id}-${it.date ?? i}`}
+                        className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
+                        title={it.detail ?? undefined}
+                      >
+                        {it.full_name}
+                        {it.date && ` · ${format(new Date(it.date), "dd.MM")}`}
+                      </span>
+                    ))}
+                    {items.length > 12 && (
+                      <span className="px-1 text-xs text-slate-500">
+                        va yana {items.length - 12} ta
+                      </span>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 const summaryColumns: ColumnDef<EmployeeAttendanceSummary>[] = [
@@ -186,9 +420,13 @@ function LateStatsSection() {
 export default function Attendance() {
   const { user } = useAuth();
   const isDasturchi = user?.role === "dasturchi";
+  // Qo'lda tuzatish — HR/Boshliq/Dasturchi. ROP'da yo'q: u kechikishni ko'radi,
+  // lekin uni tuzata olmaydi (backend ham xuddi shu ro'yxatni tekshiradi).
+  const canEdit = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
   const [deleting, setDeleting] = useState<AttendanceRow | null>(null);
+  const [editing, setEditing] = useState<AttendanceRow | null>(null);
 
   const dashQuery = useAttendanceDashboard();
   const listQuery = useAttendanceList({ date_from: dateFrom, date_to: dateTo });
@@ -198,12 +436,11 @@ export default function Attendance() {
   const dash = dashQuery.data;
   const s = dash?.summary;
 
-  // Dasturchi uchun o'chirish ustuni — check-in/check-out oqimini qaytadan
-  // sinash uchun (masalan bugungi yozuvni tozalab, yana "Keldim" bosish).
-  // Boshliq/HR/ROP'da bu tugma yo'q; backend ham faqat dasturchini qabul qiladi.
+  // Amallar ustuni: qalam — HR/Boshliq qo'lda tuzatishi; savat — faqat Dasturchi
+  // (check-in oqimini qaytadan sinash uchun yozuvni butunlay tozalash).
   const rowColumns = useMemo<ColumnDef<AttendanceRow>[]>(() => {
     const cols = baseRowColumns();
-    if (!isDasturchi) return cols;
+    if (!canEdit && !isDasturchi) return cols;
     return [
       ...cols,
       {
@@ -211,18 +448,33 @@ export default function Attendance() {
         header: "",
         enableSorting: false,
         cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-rose-600 hover:text-rose-700"
-            onClick={() => setDeleting(row.original)}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          <div className="flex gap-1">
+            {canEdit && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Qo'lda tuzatish"
+                onClick={() => setEditing(row.original)}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {isDasturchi && (
+              <Button
+                variant="ghost"
+                size="sm"
+                title="O'chirish"
+                className="text-rose-600 hover:text-rose-700"
+                onClick={() => setDeleting(row.original)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
         ),
       },
     ];
-  }, [isDasturchi]);
+  }, [canEdit, isDasturchi]);
 
   return (
     <div className="space-y-6">
@@ -323,6 +575,9 @@ export default function Attendance() {
         </Card>
       </div>
 
+      {/* Ma'lumot tayyorligi — oylik/jarima hisobidan oldingi tekshiruv */}
+      <ReadinessSection dateFrom={dateFrom} dateTo={dateTo} />
+
       {/* Kechikish statistikasi — har xodim kunma-kun necha daqiqa kech qolgani */}
       <LateStatsSection />
 
@@ -362,6 +617,8 @@ export default function Attendance() {
           empty={{ text: "Tanlangan oraliqda yozuv yo'q" }}
         />
       </div>
+
+      {canEdit && <EditAttendanceDialog row={editing} onClose={() => setEditing(null)} />}
 
       {isDasturchi && (
         <ConfirmDialog

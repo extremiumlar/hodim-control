@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -81,6 +81,30 @@ export default function WorkSchedule() {
       }
     }
   }, [weeklyQuery.data]);
+
+  // 3.7-band: xodim almashtirilganda `weeklyQuery` yangi ma'lumotni olib
+  // kelguncha `week` eski xodimning (allaqachon tahrirlangan bo'lishi mumkin)
+  // holatida qolib ketardi. Tez "Saqlash" bosilsa — YANGI xodimga ESKI (yoki
+  // hatto boshqa xodimning) jadvali yozilib ketardi. Ikki himoya:
+  // (1) `isDirty` — saqlanmagan o'zgarish bo'lsa xodim almashtirishda ogohlantirish;
+  // (2) yuklanish/qayta yuklanish paytida (`isFetching`) forma bloklanadi.
+  const isDirty = useMemo(() => {
+    if (!weeklyQuery.data) return false;
+    const original = [...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday);
+    return JSON.stringify(week) !== JSON.stringify(original);
+  }, [week, weeklyQuery.data]);
+
+  function trySelectUser(id: number) {
+    if (
+      isDirty &&
+      !window.confirm(
+        "Saqlanmagan o'zgarishlar bor. Xodimni almashtirsangiz ular yo'qoladi. Davom etasizmi?"
+      )
+    ) {
+      return;
+    }
+    setSelectedId(id);
+  }
 
   function toggleRestDay(wd: number) {
     setRestDays((prev) => (prev.includes(wd) ? prev.filter((d) => d !== wd) : [...prev, wd]));
@@ -171,7 +195,7 @@ export default function WorkSchedule() {
       <PageHeader title="Ish jadvali">
         <Select
           value={selectedId != null ? String(selectedId) : ""}
-          onValueChange={(v) => setSelectedId(Number(v))}
+          onValueChange={(v) => trySelectUser(Number(v))}
         >
           <SelectTrigger className="min-w-[220px]">
             <SelectValue placeholder="Xodim tanlang" />
@@ -239,7 +263,10 @@ export default function WorkSchedule() {
               </div>
             </div>
 
-            <Button onClick={onApplyQuick} disabled={saveWeekly.isPending || selectedId == null}>
+            <Button
+              onClick={onApplyQuick}
+              disabled={saveWeekly.isPending || selectedId == null || weeklyQuery.isFetching}
+            >
               {saveWeekly.isPending ? "Saqlanmoqda..." : "Qo'llash va saqlash"}
             </Button>
           </div>
@@ -258,7 +285,7 @@ export default function WorkSchedule() {
             <CardTitle className="text-base">Haftalik andoza (har hafta takrorlanadi)</CardTitle>
           </CardHeader>
           <CardContent>
-            {weeklyQuery.isLoading ? (
+            {weeklyQuery.isLoading || weeklyQuery.isFetching ? (
               <div className="space-y-2">
                 {Array.from({ length: 7 }).map((_, i) => (
                   <Skeleton key={i} className="h-9 w-full" />
@@ -299,7 +326,11 @@ export default function WorkSchedule() {
                 ))}
               </div>
             )}
-            <Button className="mt-4" onClick={onSaveWeekly} disabled={saveWeekly.isPending}>
+            <Button
+              className="mt-4"
+              onClick={onSaveWeekly}
+              disabled={saveWeekly.isPending || weeklyQuery.isFetching}
+            >
               {saveWeekly.isPending ? "Saqlanmoqda..." : "Haftalik jadvalni saqlash"}
             </Button>
           </CardContent>

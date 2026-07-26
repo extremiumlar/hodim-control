@@ -879,6 +879,266 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("2.3 poyga tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        # ─────────────────────────────────────────────────────────
+        # 0-BOSQICH (oylik/jarima poydevori): HR qo'lda tuzatishi
+        # va ma'lumot tayyorligi hisoboti
+        # ─────────────────────────────────────────────────────────
+        print("\n-- 0.1: PUT /attendance/manual (HR qo'lda tuzatishi) --")
+        try:
+            mgr = find_manager_id()
+            mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+            check("rahbar tokeni olindi", bool(mgr_t))
+
+            def _manual(payload: dict, token: str | None = None):
+                return client.request(
+                    "PUT", f"{API_BASE}/attendance/manual",
+                    headers=auth(token or mgr_t), json=payload,
+                )
+
+            # Sabab majburiy: 5 belgidan qisqa -> 422 (pydantic)
+            r = _manual({"user_id": uid1, "date": today_iso, "check_in": "10:30", "reason": "qis"})
+            check("sababsiz (qisqa) tuzatish -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # Noto'g'ri vaqt formati -> 422
+            r = _manual({"user_id": uid1, "date": today_iso, "check_in": "25:99",
+                         "reason": "format tekshiruvi"})
+            check("noto'g'ri vaqt formati -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # «Ketdim» ni «Keldim» siz belgilash -> 400
+            r = _manual({"user_id": uid1, "date": today_iso, "check_out": "18:00",
+                         "reason": "faqat ketdim sinovi"})
+            check("«Ketdim» «Keldim» siz -> 400", r.status_code == 400, f"kod={r.status_code}")
+
+            # ROP'da bu huquq YO'Q (kechikish jarimasini o'zi bekor qila olmasin)
+            conn = db()
+            cur = conn.cursor()
+            # Audit tozalash uchun chegara: SHU testdan keyin yaratilgan yozuvlarnigina
+            # o'chiramiz (id > audit_before). Keng `action`/`target_user_id` filtri
+            # haqiqiy tarixiy yozuvlarni ham ushlab qolishi mumkin edi.
+            audit_before = conn.execute("select coalesce(max(id), 0) from audit_logs").fetchone()[0]
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444790,'T-RopEdit','rop',1,1,datetime('now'))")
+            rop_uid = cur.lastrowid
+            conn.commit()
+            rop_t = token_for(rop_uid, "rop")
+            r = _manual({"user_id": uid1, "date": today_iso, "check_in": "10:30",
+                         "reason": "ROP urinishi"}, token=rop_t)
+            check("ROP qo'lda tuzata OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # Haqiqiy tuzatish: uid1 jadvali bugun 09:00-23:59 -> 10:30 = 90 daq kechikish
+            r = _manual({"user_id": uid1, "date": today_iso, "check_in": "10:30",
+                         "check_out": "19:00", "reason": "Face ID ishlamadi (sinov)"})
+            check("tuzatish -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            body = r.json() if r.status_code == 200 else {}
+            check("kechikish jadvaldan qayta hisoblandi (90 daq)",
+                  body.get("late_minutes") == 90, f"late={body.get('late_minutes')}")
+            check("status 'late' ga o'tdi", body.get("status") == "late", f"status={body.get('status')}")
+            check("ishlangan vaqt hisoblandi (>0)",
+                  (body.get("worked_minutes") or 0) > 0, f"worked={body.get('worked_minutes')}")
+            check("qo'lda tuzatishda GPS masofasi tozalandi",
+                  body.get("check_in_distance_m") is None, f"dist={body.get('check_in_distance_m')}")
+
+            # Audit jurnaliga tushdimi
+            log = conn.execute(
+                "select action, after from audit_logs where action='attendance_manual_edit'"
+                " and target_user_id=? order by id desc limit 1", (uid1,)).fetchone()
+            check("audit jurnaliga yozildi", log is not None, f"{log}")
+            check("auditda sabab saqlandi",
+                  bool(log) and "Face ID ishlamadi" in (log[1] or ""), f"{log[1] if log else None}")
+
+            # «Keldim» ni tozalash -> kun "kelmagan" bo'lib qoladi
+            r = _manual({"user_id": uid1, "date": today_iso, "check_in": None,
+                         "check_out": None, "reason": "Aslida kelmagan (sinov)"})
+            check("«Keldim» tozalandi -> absent",
+                  r.status_code == 200 and r.json().get("status") == "absent",
+                  f"kod={r.status_code} status={r.json().get('status') if r.status_code == 200 else None}")
+
+            # O'TGAN kunga YANGI yozuv yaratish (yozuv yo'q edi) — 7 kun oldin,
+            # ayni hafta kuni, ya'ni uid1 ning o'sha jadvali amal qiladi.
+            past = (date.today() - timedelta(days=7)).isoformat()
+            r = _manual({"user_id": uid1, "date": past, "check_in": "09:20",
+                         "check_out": "18:00", "reason": "Yo'qolgan kun tiklandi"})
+            check("o'tgan kunga yangi yozuv yaratildi -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:120]}")
+            check("yangi yozuvda kechikish 20 daq",
+                  r.status_code == 200 and r.json().get("late_minutes") == 20,
+                  f"late={r.json().get('late_minutes') if r.status_code == 200 else None}")
+
+            # Dam olish kunida (uid2 bugun override bilan dam) kechikish bo'lmaydi
+            r = _manual({"user_id": uid2, "date": today_iso, "check_in": "12:00",
+                         "check_out": "15:00", "reason": "Dam olish kuni sinovi"})
+            check("dam olish kunida kechikish 0 va status 'weekend'",
+                  r.status_code == 200 and r.json().get("late_minutes") == 0
+                  and r.json().get("status") == "weekend",
+                  f"{r.json() if r.status_code == 200 else r.status_code}")
+
+            # Kelajakdagi kun -> 400
+            future = (date.today() + timedelta(days=1)).isoformat()
+            r = _manual({"user_id": uid1, "date": future, "check_in": "09:00",
+                         "reason": "Kelajak sinovi"})
+            check("kelajakdagi kunni tuzatib bo'lmaydi -> 400", r.status_code == 400,
+                  f"kod={r.status_code}")
+
+            cur.execute("delete from users where id=?", (rop_uid,))
+            cur.execute("delete from attendance where user_id=? and date=?", (uid1, past))
+            # Shu testda yozilgan audit yozuvlarini (id chegarasi bilan) tozalaymiz —
+            # eski haqiqiy tarixga tegilmaydi.
+            cur.execute("delete from audit_logs where id > ? and action='attendance_manual_edit'",
+                        (audit_before,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("0.1 qo'lda tuzatish tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 0.3: GET /attendance/readiness (ma'lumot tayyorligi) --")
+        try:
+            mgr = find_manager_id()
+            mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+
+            # Yuzi ro'yxatdan o'tmagan xodim — hisobotda ko'rinishi kerak
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444791,'T-NoFace','employee',1,1,datetime('now'))")
+            nf_uid = cur.lastrowid
+            conn.commit()
+
+            r = client.get(f"{API_BASE}/attendance/readiness", headers=auth(mgr_t))
+            check("readiness -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            data = r.json() if r.status_code == 200 else {}
+            for key in ("no_schedule", "open_checkouts", "auto_closed", "pending_excused", "no_face"):
+                check(f"readiness '{key}' guruhi bor", key in data)
+            check("yuzsiz xodim 'no_face' ro'yxatida",
+                  any(i["user_id"] == nf_uid for i in data.get("no_face", [])),
+                  f"no_face={len(data.get('no_face', []))} ta")
+            check("jadvalsiz xodim 'no_schedule' ro'yxatida",
+                  any(i["user_id"] == nf_uid for i in data.get("no_schedule", [])),
+                  f"no_schedule={len(data.get('no_schedule', []))} ta")
+            check("muammo bor ekan ok=False", data.get("ok") is False, f"ok={data.get('ok')}")
+
+            # Noto'g'ri sana oralig'i -> 400
+            r = client.get(
+                f"{API_BASE}/attendance/readiness?date_from=2026-07-10&date_to=2026-07-01",
+                headers=auth(mgr_t))
+            check("teskari sana oralig'i -> 400", r.status_code == 400, f"kod={r.status_code}")
+
+            cur.execute("delete from users where id=?", (nf_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("0.3 tayyorlik tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 3.1: jadval o'zgarsa BUGUNGI yozuv qayta hisoblanadi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444792,'T-Recalc','employee',1,1,datetime('now'))")
+            rc_uid = cur.lastrowid
+            wd = date.today().weekday()
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (rc_uid, wd))
+            # 09:30 Toshkent = 04:30 UTC check-in -> 09:00 jadval bilan late=30
+            checkin_utc = f"{date.today().isoformat()} 04:30:00"
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, ?, ?, 30, 0, 0, 'late', 0, datetime('now'), datetime('now'))",
+                (rc_uid, date.today().isoformat(), checkin_utc))
+            conn.commit()
+
+            mgr_rc = find_manager_id()
+            if mgr_rc:
+                mgr_rc_tok = token_for(mgr_rc[0], mgr_rc[1])
+                # Rahbar startni 10:00 ga surdi -> 09:30 kelish endi kechikish EMAS.
+                r = client.put(
+                    f"{API_BASE}/work-schedule/{rc_uid}/weekly", headers=auth(mgr_rc_tok),
+                    json={"days": [
+                        {"weekday": d, "is_working": d == wd, "start_time": "10:00" if d == wd else None,
+                         "end_time": "18:00" if d == wd else None}
+                        for d in range(7)
+                    ]})
+                check("PUT weekly -> 200", r.status_code == 200, f"kod={r.status_code}")
+                row = conn.execute(
+                    "select late_minutes, status from attendance where user_id=? and date=?",
+                    (rc_uid, date.today().isoformat())).fetchone()
+                check("3.1: bugungi yozuv qayta hisoblandi (late=0)",
+                      row is not None and row[0] == 0, f"late={row[0] if row else None}, status={row[1] if row else None}")
+            else:
+                check("3.1 rahbar topilmadi", False)
+
+            cur.execute("delete from attendance where user_id=?", (rc_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (rc_uid,))
+            cur.execute("delete from users where id=?", (rc_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("3.1 qayta hisoblash tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 3.2: eng yaqin EMAS, BIRORTA ofis radiusi ichida bo'lsa yetarli --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444793,'T-NearestOffice','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            no_uid = cur.lastrowid
+            # A ofis (ENG YAQIN, ~78m): radius 50m -> xodim A dan TASHQARIDA.
+            cur.execute(
+                "insert into office_locations (name, latitude, longitude, radius_meters, is_active, created_at)"
+                " values ('T-YaqinOfis', ?, ?, 50, 1, datetime('now'))",
+                (OFFICE[0] + 0.0007, OFFICE[1]))
+            office_a_id = cur.lastrowid
+            # B ofis (uzoqroq, ~156m), lekin radiusi 200m -> xodim B radiusi ICHIDA.
+            cur.execute(
+                "insert into office_locations (name, latitude, longitude, radius_meters, is_active, created_at)"
+                " values ('T-UzoqOfis', ?, ?, 200, 1, datetime('now'))",
+                (OFFICE[0] + 0.0014, OFFICE[1]))
+            office_b_id = cur.lastrowid
+            conn.commit()
+
+            no_tok = token_for(no_uid, "employee")
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(no_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9,
+            })
+            check("eng yaqin ofis radiusidan tashqarida bo'lsa ham, B radiusida -> 200",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            cur.execute("delete from attendance where user_id=?", (no_uid,))
+            cur.execute("delete from office_locations where id in (?,?)", (office_a_id, office_b_id))
+            cur.execute("delete from users where id=?", (no_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("3.2 eng yaqin ofis tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 3.4: Boshliq check-in qila olmaydi (izchillik) --")
+        try:
+            boss_row = conn2 = None
+            conn2 = db()
+            boss_row = conn2.execute(
+                "select id, telegram_id, face_descriptor from users where role='boss' limit 1").fetchone()
+            if boss_row:
+                boss_uid = boss_row[0]
+                boss_tok = token_for(boss_uid, "boss")
+                r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(boss_tok), json={
+                    "latitude": OFFICE[0], "longitude": OFFICE[1],
+                    "face_descriptor": FACE, "liveness": 0.9,
+                })
+                check("Boshliq check-in -> 400 (bloklangan)", r.status_code == 400, f"kod={r.status_code} {r.text[:150]}")
+            else:
+                check("3.4 Boshliq topilmadi", False)
+            conn2.close()
+        except Exception:
+            check("3.4 Boshliq check-in tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def main() -> None:
     print("=" * 60)

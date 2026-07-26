@@ -3,7 +3,7 @@ Keldim/Ketdim qiladi (`/attendance/me/*`); rahbar (boss/rop/hr/dasturchi) barcha
 xodimlar davomatini ko'radi va ofislarni sozlaydi. verifix (hodim_crm Django)
 `attendance/views.py` dan birlashtirildi."""
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import and_, func, select
@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
+    AttendanceManualUpdate,
     AttendanceOut,
+    AttendanceReadiness,
     EmployeeAttendanceSummary,
     FaceReregDecide,
     FaceReregOut,
@@ -28,9 +30,12 @@ from api.schemas import (
 from api.services.attendance import (
     ATTENDANCE_TRACKED_ROLES,
     CheckError,
+    collect_readiness,
     find_similar_face,
+    local_hm_to_utc,
     perform_check_in,
     perform_check_out,
+    recompute_attendance,
 )
 from api.services.attendance_digest import (
     digest_tick,
@@ -55,6 +60,12 @@ from db.models import (
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
 MANAGER_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
+
+# Davomat yozuvini QO'LDA tuzatish huquqi — ROP'da YO'Q. Sabab: kechikish
+# daqiqalari oylik jarimasiga aylanadi, ya'ni bu endi kadrlar/pul qarori.
+# ROP o'z jamoasining kechikishini ko'radi, lekin uni "tuzata" olmaydi —
+# aks holda jarimani o'zi bekor qilib yuborishi mumkin bo'lardi.
+ATTENDANCE_EDIT_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 
 
 def _require_manager(user: User = Depends(get_current_user)) -> User:
@@ -387,14 +398,21 @@ async def dashboard(
     today = today_local()
     month_start = today.replace(day=1)
 
+    # 3.4-band: BUTUN dashboard bir xil qamrovda bo'lishi kerak — ATTENDANCE_TRACKED_ROLES
+    # (Boshliqdan tashqari hamma). Ilgari `total_employees`/`checked_in_today`/
+    # `late_today` BARCHA userlardan, `working_today`/`not_checked_in` esa faqat
+    # xodimlardan hisoblanardi — Boshliq check-in qilsa `checked_in_today >
+    # working_today` kabi mantiqsiz holat chiqardi.
     active_users = list(await db.scalars(select(User).where(User.is_active.is_(True))))
-    total_employees = len(active_users)
+    employees = [u for u in active_users if u.role in ATTENDANCE_TRACKED_ROLES]
+    employee_ids = {u.id for u in employees}
+    total_employees = len(employees)
 
     today_rows = list(
         await db.execute(
             select(Attendance, User.full_name)
             .join(User, Attendance.user_id == User.id)
-            .where(Attendance.date == today)
+            .where(Attendance.date == today, Attendance.user_id.in_(employee_ids))
         )
     )
     checked_in_today = sum(1 for a, _ in today_rows if a.check_in_time is not None)
@@ -405,8 +423,6 @@ async def dashboard(
     left_today = sum(1 for a, _ in today_rows if a.check_out_time is not None)
 
     # Bugun ishlashi kerak bo'lganlar (ish jadvali bo'yicha) — kutilgan davomat.
-    # Faqat XODIMLAR (employee) sanaladi — rahbarlar (boss/rop/hr/dasturchi)
-    # davomat kutiluvchilar qatoriga kirmaydi (egasi qarori, 2026-07-15).
     # Har foydalanuvchi uchun _effective_today chaqirish N+1 so'rov bo'lardi;
     # o'rniga bugungi override'lar va shu hafta-kunidagi weekly yozuvlar bittadan
     # so'rov bilan olinadi, qoida esa ayni o'sha: override > weekly > default
@@ -424,28 +440,21 @@ async def dashboard(
         )
     }
     default_working = today.weekday() < 5
-    employees = [u for u in active_users if u.role in ATTENDANCE_TRACKED_ROLES]
-    employee_ids = {u.id for u in employees}
     working_today = sum(
         1
         for u in employees
         if overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working))
     )
-    # "Kelmagan" ham xodimlar kesimida: rahbar check-in qilsa working_today'siz
-    # checked_in_today'dan ayirish sonni noto'g'ri kamaytirardi.
-    checked_in_employees = sum(
-        1 for a, _ in today_rows if a.check_in_time is not None and a.user_id in employee_ids
-    )
-    not_checked_in = max(0, working_today - checked_in_employees)
+    not_checked_in = max(0, working_today - checked_in_today)
 
     month_late = await db.scalar(
         select(func.coalesce(func.sum(Attendance.late_minutes), 0)).where(
-            Attendance.date >= month_start, Attendance.date <= today
+            Attendance.date >= month_start, Attendance.date <= today, Attendance.user_id.in_(employee_ids)
         )
     )
     month_worked = await db.scalar(
         select(func.coalesce(func.sum(Attendance.worked_minutes), 0)).where(
-            Attendance.date >= month_start, Attendance.date <= today
+            Attendance.date >= month_start, Attendance.date <= today, Attendance.user_id.in_(employee_ids)
         )
     )
 
@@ -687,6 +696,131 @@ async def set_digest_time(
         "morning_enabled": cfg.morning_enabled,
         "evening_enabled": cfg.evening_enabled,
     }
+
+
+# ─────────────────────────────────────────────
+# HR/Boshliq — qo'lda tuzatish va ma'lumot tayyorligi
+# ─────────────────────────────────────────────
+
+
+@router.get("/readiness", response_model=AttendanceReadiness)
+async def attendance_readiness(
+    date_from: str | None = None,
+    date_to: str | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> AttendanceReadiness:
+    """Davr bo'yicha davomat ma'lumotining tayyorligi: jadvalsiz xodimlar,
+    yopilmagan «Ketdim»lar, avtomatik yopilgan kunlar, hal qilinmagan sababli
+    kunlar, yuzsiz xodimlar. Default davr — joriy oy boshidan bugungacha.
+
+    Oylik/jarima hisobidan OLDIN ko'riladi: bu ro'yxat bo'sh bo'lmasa, hisob
+    taxminlar ustiga qurilgan bo'ladi."""
+    today = today_local()
+    try:
+        start = date.fromisoformat(date_from) if date_from else today.replace(day=1)
+        end = date.fromisoformat(date_to) if date_to else today
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sana formati «YYYY-MM-DD» bo'lishi kerak")
+    if end < start:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "«date_to» «date_from» dan oldin bo'lmasin")
+
+    return AttendanceReadiness(**await collect_readiness(db, start, end))
+
+
+@router.put("/manual", response_model=AttendanceOut)
+async def manual_attendance(
+    payload: AttendanceManualUpdate,
+    actor: User = Depends(require_roles(*ATTENDANCE_EDIT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> AttendanceOut:
+    """Bir kunlik davomat yozuvini QO'LDA tuzatadi yoki yaratadi (HR/Boshliq).
+
+    Nima uchun kerak: Face ID yoki GPS ishlamay qolsa, xodim «Keldim» bosa
+    olmaydi va tizimda "kelmagan" bo'lib qoladi. Kechikish daqiqalari oylik
+    jarimasiga aylanadigan bo'lgach, bunday har bir xato real nizoga aylanadi.
+    Ilgari bu holatni faqat Dasturchi, faqat butunlay O'CHIRISH orqali "tuzata"
+    olardi — ya'ni ma'lumotni yo'qotish evaziga.
+
+    Vaqtlar mahalliy "HH:MM" ko'rinishida keladi; `late_minutes`/`worked_minutes`
+    kiritilmaydi — ular o'sha kungi ish jadvalidan qayta hisoblanadi
+    (`recompute_attendance`), shu sababli check-in oqimi bilan bir xil qoida
+    qo'llanadi. Sabab MAJBURIY va audit jurnaliga tushadi."""
+    target = await db.get(User, payload.user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    if target.role not in ATTENDANCE_TRACKED_ROLES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Bu rol uchun davomat kuzatuvi yoqilmagan"
+        )
+    if payload.date > today_local():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kelajakdagi kunni tuzatib bo'lmaydi")
+    if payload.check_out and not payload.check_in:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "«Ketdim» ni «Keldim» siz belgilab bo'lmaydi"
+        )
+
+    check_in_utc = local_hm_to_utc(payload.date, payload.check_in) if payload.check_in else None
+    check_out_utc = local_hm_to_utc(payload.date, payload.check_out) if payload.check_out else None
+    if check_in_utc and check_out_utc and check_out_utc <= check_in_utc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "«Ketdim» vaqti «Keldim» dan keyin bo'lishi kerak"
+        )
+
+    att = await db.scalar(
+        select(Attendance).where(
+            Attendance.user_id == payload.user_id, Attendance.date == payload.date
+        )
+    )
+    created = att is None
+    if att is None:
+        att = Attendance(user_id=payload.user_id, date=payload.date)
+        db.add(att)
+
+    before = {
+        "check_in_time": att.check_in_time.isoformat() if att.check_in_time else None,
+        "check_out_time": att.check_out_time.isoformat() if att.check_out_time else None,
+        "late_minutes": att.late_minutes,
+        "worked_minutes": att.worked_minutes,
+        "status": att.status,
+        "note": att.note,
+    }
+
+    att.check_in_time = check_in_utc
+    att.check_out_time = check_out_utc
+    if payload.note is not None:
+        att.note = payload.note or None
+    # Qo'lda kiritilgan vaqtda GPS o'lchovi yo'q — eski masofa yangi vaqtga
+    # tegishli emas, shuning uchun tozalanadi (aks holda "ofisdan 12 m" degan
+    # raqam soxta ishonch berardi).
+    att.check_in_distance_m = None
+    att.check_in_lat = att.check_in_lng = None
+    att.check_out_lat = att.check_out_lng = None
+
+    await recompute_attendance(db, att, target)
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="attendance_manual_edit",
+            target_user_id=target.id,
+            before=None if created else before,
+            after={
+                "date": payload.date.isoformat(),
+                "check_in": payload.check_in,
+                "check_out": payload.check_out,
+                "late_minutes": att.late_minutes,
+                "worked_minutes": att.worked_minutes,
+                "status": att.status,
+                "note": att.note,
+                "reason": payload.reason,
+                "created": created,
+            },
+        )
+    )
+    await db.commit()
+    await db.refresh(att)
+    return _att_out(att, target.full_name)
 
 
 # ─────────────────────────────────────────────

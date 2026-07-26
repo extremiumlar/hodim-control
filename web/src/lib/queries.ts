@@ -21,6 +21,7 @@ export const qk = {
   attendanceDashboard: ["attendance", "dashboard"] as const,
   attendanceSummary: (days: number) => ["attendance", "summary", days] as const,
   attendanceLateStats: (days: number) => ["attendance", "late-stats", days] as const,
+  attendanceReadiness: (params?: object) => ["attendance", "readiness", params ?? {}] as const,
   offices: ["offices"] as const,
   users: (role?: string, includeInactive?: boolean) =>
     ["users", role ?? "all", !!includeInactive] as const,
@@ -88,9 +89,23 @@ export const useAttendanceEmployeeSummary = (days = 30) =>
 export const useAttendanceLateStats = (days = 30) =>
   useQuery({ queryKey: qk.attendanceLateStats(days), queryFn: () => api.attendanceLateStats(days) });
 
+export const useAttendanceReadiness = (
+  params: { date_from?: string; date_to?: string } = {},
+  enabled = true
+) =>
+  useQuery({
+    queryKey: qk.attendanceReadiness(params),
+    queryFn: () => api.attendanceReadiness(params),
+    enabled,
+  });
+
 // Faqat Dasturchi (backend ham tekshiradi) — sinov uchun davomat yozuvini o'chirish
 export const useDeleteAttendance = () =>
   useApiMutation((attendanceId: number) => api.deleteAttendance(attendanceId), [["attendance"]]);
+
+// HR/Boshliq qo'lda tuzatishi — barcha davomat ko'rinishlarini yangilaydi.
+export const useManualAttendance = () =>
+  useApiMutation(api.manualAttendance, [["attendance"]]);
 
 export const useMyCheckIn = () =>
   useApiMutation(api.myCheckIn, [qk.attendanceToday, ["attendance"]]);

@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import _effective_today
-from api.services.attendance import ATTENDANCE_TRACKED_ROLES
+from api.services.attendance import ATTENDANCE_TRACKED_ROLES, AUTO_CLOSED_MARK
 from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, today_local, work_minutes
@@ -29,6 +29,8 @@ from db.models import (
     ExcusedDay,
     ExcusedStatus,
     User,
+    WorkScheduleOverride,
+    WorkScheduleWeekly,
 )
 
 WEEKDAYS_UZ = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
@@ -95,6 +97,20 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
         )
     }
 
+    # 3.5-band: ilgari har xodim uchun `_effective_today` alohida chaqirilardi —
+    # 2 ta so'rov (override + weekly) xodimlar soniga ko'paytirilardi. `digest_tick`
+    # har daqiqa ishlagani uchun bu sezilarli yuk edi (`dashboard()`dagi bilan
+    # bir xil naqsh: hamma xodim uchun BITTA so'rovda olib, lug'atga solish).
+    overrides_by_user = {
+        o.user_id: (o.is_working, o.start_time, o.end_time)
+        for o in await db.scalars(select(WorkScheduleOverride).where(WorkScheduleOverride.date == day))
+    }
+    weekly_by_user = {
+        w.user_id: (w.is_working, w.start_time, w.end_time)
+        for w in await db.scalars(select(WorkScheduleWeekly).where(WorkScheduleWeekly.weekday == day.weekday()))
+    }
+    default_schedule = (day.weekday() < 5, None, None)
+
     expected: list[User] = []  # bugun ishlashi kerak bo'lganlar
     present: list[tuple[User, Attendance]] = []
     late: list[tuple[User, Attendance]] = []
@@ -106,7 +122,7 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
     late_out: list[tuple[User, Attendance, int]] = []
 
     for u in employees:
-        is_working, start, end = await _effective_today(db, u, day)
+        is_working, start, end = overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_schedule))
         if not is_working:
             continue  # dam olish kuni — ro'yxatga kirmaydi
         expected.append(u)
@@ -345,7 +361,10 @@ async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
             worked = 0
         att.worked_minutes = max(0, worked)
         att.early_leave_minutes = 0
-        note = "⚠️ Avtomatik yopildi — xodim «Ketdim» bosmagan."
+        # Belgi matni `AUTO_CLOSED_MARK` dan olinadi — tayyorlik hisoboti
+        # (`collect_readiness`) aynan shu bo'yicha "ishlangan vaqt taxminiy"
+        # kunlarni topadi, ikki joyda matn ajralib ketmasin.
+        note = f"⚠️ {AUTO_CLOSED_MARK} — xodim «Ketdim» bosmagan."
         att.note = f"{att.note} {note}" if att.note else note
         closed += 1
     if closed:
@@ -400,13 +419,17 @@ async def digest_tick(db: AsyncSession) -> dict:
         if (now.hour, now.minute) < (hour, minute):
             continue
         result = await send_attendance_digest(db, kind=kind)
-        # Dam olish kuni (yuborilmadi) bo'lsa ham bugungi kunni belgilaymiz —
-        # aks holda har daqiqada qayta urinib, keraksiz ish bajarilaverardi.
-        if kind == "morning":
-            cfg.morning_last_posted = today
-        else:
-            cfg.evening_last_posted = today
-        await db.commit()
+        # 3.3-band: faqat HAQIQATAN yuborilganda YOKI "dam olish kuni" kabi
+        # TO'G'RI yakunlangan holatda (`final`) `*_last_posted` belgilanadi.
+        # Ilgari HAR doim belgilanardi — guruh sozlanmagan kabi VAQTINCHA
+        # muvaffaqiyatsizlikda ham "bugun yuborildi" deb yozilib, o'sha kunning
+        # digesti butunlay yo'qolib ketardi.
+        if result.get("sent") or result.get("final"):
+            if kind == "morning":
+                cfg.morning_last_posted = today
+            else:
+                cfg.evening_last_posted = today
+            await db.commit()
         fired.append({"kind": kind, **result})
 
     if fired:
@@ -428,7 +451,9 @@ async def send_attendance_digest(
 
     data = await collect_day(db)
     if not data["expected"]:
-        return {"sent": False, "reason": "bugun hech kim ishlamaydi (dam olish kuni)"}
+        # 3.3-band: bu TO'G'RI xatti-harakat (dam olish kuni) — qayta urinishning
+        # hojati yo'q, shuning uchun "final" (bugun bo'yicha yakunlangan holat).
+        return {"sent": False, "final": True, "reason": "bugun hech kim ishlamaydi (dam olish kuni)"}
 
     text = build_morning_text(data) if kind == "morning" else build_evening_text(data)
     if dry_run:
@@ -436,6 +461,10 @@ async def send_attendance_digest(
 
     targets = await digest_group_targets(db, chat_id)
     if not targets:
+        # 3.3-band: guruh hali sozlanmagan — bu VAQTINCHA holat, `final` EMAS.
+        # `digest_tick` shuning uchun `*_last_posted`ni BELGILAMAYDI, guruh
+        # sozlangach keyingi tick'da digest baribir yuboriladi. Ilgari har doim
+        # belgilanardi — ya'ni sozlanmagan kunning digesti butunlay yo'qolardi.
         return {"sent": False, "reason": "guruh sozlanmagan (monitored_groups: main/stats)"}
 
     delivered = 0

@@ -15,15 +15,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { type Office } from "@/lib/api";
 import { useCreateOffice, useDeleteOffice, useOffices, useUpdateOffice } from "@/lib/queries";
 
+// 3.8-band: `z.coerce.number()` bo'sh satrni `Number("") === 0` ga aylantiradi —
+// bo'sh maydon xatosiz -90..90/-180..180 oralig'idan "o'tib ketardi" va ofis
+// "Null Island"da (0,0) yaratilardi. Bo'sh/undefined qiymatni oldindan
+// `undefined`ga aylantiramiz — shunda `Number(undefined) = NaN` chiqib, zod
+// buni "raqam emas" deb TO'G'RI rad etadi.
+const requiredNumber = (message: string) =>
+  z.preprocess(
+    (v) => (v === "" || v === null || v === undefined ? undefined : v),
+    z.coerce.number({ message })
+  );
+
 const officeSchema = z.object({
   name: z.string().trim().min(1, "Nomi to'ldirilishi shart"),
-  latitude: z.coerce.number({ message: "Raqam kiriting" }).min(-90).max(90),
-  longitude: z.coerce.number({ message: "Raqam kiriting" }).min(-180).max(180),
-  radius_meters: z.coerce
-    .number({ message: "Raqam kiriting" })
-    .int("Butun son bo'lsin")
-    .min(10, "Kamida 10 m")
-    .max(10000, "Ko'pi bilan 10 km"),
+  latitude: requiredNumber("Kenglikni kiriting").pipe(z.number().min(-90).max(90)),
+  longitude: requiredNumber("Uzunlikni kiriting").pipe(z.number().min(-180).max(180)),
+  radius_meters: requiredNumber("Radiusni kiriting").pipe(
+    z.number().int("Butun son bo'lsin").min(10, "Kamida 10 m").max(10000, "Ko'pi bilan 10 km")
+  ),
 });
 
 // zod v4 + react-hook-form: kirish (string bo'lishi mumkin) va chiqish (coerce'dan

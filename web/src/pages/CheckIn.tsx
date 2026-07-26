@@ -122,7 +122,6 @@ export default function CheckIn() {
   const [statusMsg, setStatusMsg] = useState("");
   const [time, setTime] = useState(new Date());
   const [showFace, setShowFace] = useState<null | Action>(null);
-  const [position, setPosition] = useState<GeolocationPosition | null>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [success, setSuccess] = useState<{ action: Action; att: Attendance } | null>(null);
 
@@ -140,10 +139,11 @@ export default function CheckIn() {
       setShowRegister(true);
       return;
     }
-    setStatusMsg("Joylashuv aniqlanmoqda...");
+    setStatusMsg("Joylashuv tekshirilmoqda...");
     try {
-      const pos = await getPosition();
-      setPosition(pos);
+      // Faqat ruxsat/xatoni ERTA ushlash uchun — qiymatning o'zi ishlatilmaydi
+      // (3.6-band: yuz tasdiqlangandan keyin QAYTA olinadi, aks holda eskiradi).
+      await getPosition();
       setShowFace(action);
       setStatusMsg("");
     } catch (e: any) {
@@ -153,25 +153,38 @@ export default function CheckIn() {
   }
 
   function onFaceCaptured(result: LiveResult | any) {
-    if (!position || !showFace) return;
+    if (!showFace) return;
     const action = showFace;
     setShowFace(null);
-    setStatusMsg("Serverga yuborilmoqda...");
-    const body = {
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude,
-      face_descriptor: result.descriptor,
-      liveness: result.liveness ?? 1.0,
-      accuracy: position.coords.accuracy ?? null,
-    };
-    const mutation = action === "check-in" ? checkIn : checkOut;
-    mutation.mutate(body, {
-      onSuccess: (updated) => {
+    setStatusMsg("Joylashuv aniqlanmoqda...");
+    // 3.6-band: GPS yuz tasdiqlashdan OLDIN emas, ENDI (yuborishdan darhol
+    // oldin) olinadi. Model yuklanishi (~10s) + qayta urinishlar 2-3 daqiqagacha
+    // cho'zilishi mumkin edi — oldin olingan joylashuv shuncha vaqt eskirib,
+    // xodim allaqachon ofisga kirgan bo'lsa ham eski (masalan tashqaridagi)
+    // koordinata yuborilardi.
+    getPosition()
+      .then((pos) => {
+        setStatusMsg("Serverga yuborilmoqda...");
+        const body = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          face_descriptor: result.descriptor,
+          liveness: result.liveness ?? 1.0,
+          accuracy: pos.coords.accuracy ?? null,
+        };
+        const mutation = action === "check-in" ? checkIn : checkOut;
+        mutation.mutate(body, {
+          onSuccess: (updated) => {
+            setStatusMsg("");
+            setSuccess({ action, att: updated });
+          },
+          onError: () => setStatusMsg(""),
+        });
+      })
+      .catch((e: any) => {
         setStatusMsg("");
-        setSuccess({ action, att: updated });
-      },
-      onError: () => setStatusMsg(""),
-    });
+        toast.error("GPS xato: " + (e.message || e));
+      });
   }
 
   function onFaceRegistered(result: any) {

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -90,20 +90,6 @@ def _hm_to_min(hm: str) -> int:
     return int(h) * 60 + int(m)
 
 
-async def _nearest_active_office(
-    db: AsyncSession, lat: float, lng: float
-) -> tuple[OfficeLocation | None, int | None]:
-    """Berilgan nuqtaga eng yaqin FAOL ofis va ungacha masofa (metr)."""
-    offices = list(await db.scalars(select(OfficeLocation).where(OfficeLocation.is_active.is_(True))))
-    best: OfficeLocation | None = None
-    best_d: float | None = None
-    for o in offices:
-        d = haversine_distance(float(o.latitude), float(o.longitude), lat, lng)
-        if best_d is None or d < best_d:
-            best_d, best = d, o
-    return best, (int(best_d) if best_d is not None else None)
-
-
 async def _validate_location(
     db: AsyncSession, lat: float, lng: float, accuracy: float | None = None
 ) -> int:
@@ -114,14 +100,25 @@ async def _validate_location(
         raise CheckError(
             f"GPS aniqligi yetarli emas (~{accuracy:.0f} m). Ochiq joyga chiqib qayta urinib ko'ring."
         )
-    office, dist = await _nearest_active_office(db, lat, lng)
-    if office is None or dist is None:
+    offices = list(await db.scalars(select(OfficeLocation).where(OfficeLocation.is_active.is_(True))))
+    if not offices:
         raise CheckError("Tizimda faol ofis manzili sozlanmagan. Rahbaringizga murojaat qiling.")
-    if dist > office.radius_meters:
-        raise CheckError(
-            f"Siz ofis hududidan tashqaridasiz (~{dist} m, «{office.name}»). Avval ofisga keling."
-        )
-    return dist
+
+    # 3.2-band: "ENG YAQIN ofis"ning radiusi emas — BIRORTA faol ofis radiusi
+    # ichidami tekshiriladi. Ilgari: A ofis 100m (radius 50) yaqinroq bo'lgani
+    # uchun tanlanardi, B ofis 120m (radius 200) — xodim aslida B radiusida
+    # bo'lsa ham, "eng yaqin" A ekani sabab RAD ETILARDI.
+    best_dist: float | None = None
+    for o in offices:
+        d = haversine_distance(float(o.latitude), float(o.longitude), lat, lng)
+        if best_dist is None or d < best_dist:
+            best_dist = d
+        if d <= o.radius_meters:
+            return int(d)
+
+    raise CheckError(
+        f"Siz ofis hududidan tashqaridasiz (~{int(best_dist)} m). Avval ofisga keling."
+    )
 
 
 async def find_similar_face(
@@ -164,6 +161,196 @@ def _apply_status(att: Attendance, is_working: bool) -> None:
         att.status = AttendanceStatus.present.value
 
 
+def _to_local(dt_utc: datetime | None) -> datetime | None:
+    """Bazadagi naive-UTC vaqtni mahalliy (Asia/Tashkent) devor-soatiga o'giradi."""
+    if dt_utc is None:
+        return None
+    return dt_utc.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+
+
+def local_hm_to_utc(day: date, hm: str) -> datetime:
+    """Mahalliy "HH:MM" (berilgan sanada) → bazaga yoziladigan naive-UTC.
+    HR qo'lda tuzatishida ishlatiladi: rahbar devor-soatini kiritadi, baza esa
+    hamma joyda naive-UTC saqlaydi."""
+    h, m = (int(part) for part in hm.split(":"))
+    local = datetime(day.year, day.month, day.day, h, m, tzinfo=TASHKENT_TZ)
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) -> None:
+    """Yozuvdagi kelish/ketish vaqtlaridan `late_minutes`, `early_leave_minutes`,
+    `worked_minutes` va `status` ni QAYTA hisoblaydi. HR qo'lda tuzatishi
+    (`PUT /attendance/manual`) shu funksiyadan foydalanadi.
+
+    Vaqtlar `att` ning O'ZIDAN o'qiladi (`datetime.now()` dan emas) — shu sababli
+    o'tgan kunni ham qayta hisoblash mumkin; `perform_check_in/out` esa "hozir"
+    bo'yicha ishlaydi va o'z qo'shimcha shartlari bor (yarim tundan oshgan smena,
+    atomik UPDATE bilan poyga himoyasi), shuning uchun ular alohida qolgan.
+    Qoidalar — grace bo'sag'asi, ish oynasi bilan chegaralash, tushlik chegirmasi —
+    ular bilan AYNAN bir xil bo'lishi shart; birini o'zgartirsangiz, ikkinchisini
+    ham o'zgartiring."""
+    in_local = _to_local(att.check_in_time)
+    out_local = _to_local(att.check_out_time)
+    window = work_minutes(_hm_to_min(start), _hm_to_min(end)) if (start and end) else None
+
+    # Kechikish. Grace — BO'SAG'A, chegirma emas: grace ichida kelinsa kechikish 0,
+    # undan oshsa TO'LIQ farq yoziladi (masalan grace=5, kelish 09:06 bo'lsa
+    # late=6, "6-5=1" EMAS). Ilgari har kechikkan kun grace daqiqasiga kam
+    # ko'rsatilardi — oylik statistikada sezilarli xato edi.
+    if is_working and start and in_local is not None:
+        diff = _minute_of_day(in_local) - _hm_to_min(start)
+        late = diff if diff > settings.attendance_grace_minutes else 0
+        # Yuqori chegara: ish oynasi uzunligidan (tushliksiz) oshib ketmasin —
+        # aks holda 17:59 da (deyarli kun oxirida) kelgan xodim "534 daqiqa
+        # kechikdi" bo'lib yozilib, oylik jamni bitta kun portlatib yuboradi.
+        if window is not None:
+            late = min(late, window)
+        att.late_minutes = late
+    else:
+        att.late_minutes = 0
+
+    # Erta ketish — yuqori chegara bir xil sabab bilan (check-in'dan darhol keyin
+    # check-out qilinsa, "erta ketish" ish oynasidan oshmasin).
+    if is_working and end and out_local is not None:
+        early = max(0, _hm_to_min(end) - _minute_of_day(out_local))
+        if window is not None:
+            early = min(early, window)
+        att.early_leave_minutes = early
+    else:
+        att.early_leave_minutes = 0
+
+    # Ishlangan vaqt — soatlik reja bilan BIR XIL ta'rif (timeutil.work_minutes):
+    # tushlik (13:00–14:00) chiqariladi, ish kunida faqat ish oynasi [start, end]
+    # bilan kesishgan qism sanaladi (erta kelib o'tirish yoki kech qolib ketish
+    # ishlangan soatni shishirmaydi). Dam olish kunida oyna yo'q — kelish-ketish
+    # oralig'ining o'zi (tushliksiz) olinadi.
+    if in_local is not None and out_local is not None:
+        in_min, out_min = _minute_of_day(in_local), _minute_of_day(out_local)
+        if is_working and start and end:
+            worked = work_minutes(max(in_min, _hm_to_min(start)), min(out_min, _hm_to_min(end)))
+        else:
+            worked = work_minutes(in_min, out_min)
+        att.worked_minutes = max(0, worked)
+    else:
+        att.worked_minutes = 0
+
+    _apply_status(att, is_working)
+
+
+async def recompute_attendance(db: AsyncSession, att: Attendance, user: User) -> None:
+    """`recompute_fields` ning DB varianti — o'sha kungi amaldagi ish oynasini
+    (override > haftalik > default) o'zi topadi."""
+    is_working, start, end = await _effective_today(db, user, att.date)
+    recompute_fields(att, is_working, start, end)
+
+
+AUTO_CLOSED_MARK = "Avtomatik yopildi"
+
+
+async def collect_readiness(db: AsyncSession, date_from: date, date_to: date) -> dict:
+    """Davomat ma'lumotining berilgan davr bo'yicha TAYYORLIK hisoboti.
+
+    Nima uchun kerak: davomat raqamlari pulga aylanganda (kechikish jarimasi,
+    soatbay to'lov) har bir "bo'sh joy" real nizoga aylanadi. Oylik hisobdan
+    oldin rahbar shu ro'yxatni ko'rib, avval tuzatishi kerak:
+
+    - `no_schedule`   — ish jadvali umuman belgilanmagan xodim: unga default
+                        (Du–Ju 09:00–18:00) qo'llanadi, ya'ni kechikishi
+                        TAXMIN asosida hisoblanadi.
+    - `open_checkouts`— «Keldim» bor, «Ketdim» yo'q (bugundan oldingi kunlar).
+                        Kechki avtomatik yopish ishlamay qolgan holat.
+    - `auto_closed`   — avtomatik yopilgan kunlar: ishlangan vaqt haqiqiy emas,
+                        taxminiy (ish oynasi oxiri bo'yicha).
+    - `pending_excused` — hal qilinmagan sababli kun so'rovi: tasdiqlansa
+                        jarima bekor bo'ladi, shuning uchun avval hal qilinsin.
+    - `no_face`       — yuzi ro'yxatdan o'tmagan xodim: umuman check-in
+                        qila olmaydi, ya'ni "kelmagan" bo'lib chiqaveradi.
+    """
+    from db.models import ExcusedDay, ExcusedStatus, WorkScheduleOverride, WorkScheduleWeekly
+
+    users = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(ATTENDANCE_TRACKED_ROLES), User.is_active.is_(True)
+            )
+        )
+    )
+    names = {u.id: u.full_name for u in users}
+    tracked_ids = set(names)
+
+    def issue(uid: int, day: date | None = None, detail: str | None = None) -> dict:
+        return {
+            "user_id": uid,
+            "full_name": names.get(uid, f"#{uid}"),
+            "date": day,
+            "detail": detail,
+        }
+
+    with_weekly = set(await db.scalars(select(WorkScheduleWeekly.user_id).distinct()))
+    with_override = set(
+        await db.scalars(
+            select(WorkScheduleOverride.user_id)
+            .where(WorkScheduleOverride.date >= date_from, WorkScheduleOverride.date <= date_to)
+            .distinct()
+        )
+    )
+    no_schedule = [
+        issue(u.id, detail="Ish jadvali belgilanmagan — default Du–Ju 09:00–18:00 qo'llanadi")
+        for u in users
+        if u.id not in with_weekly and u.id not in with_override
+    ]
+
+    today = today_local()
+    rows = list(
+        await db.scalars(
+            select(Attendance).where(Attendance.date >= date_from, Attendance.date <= date_to)
+        )
+    )
+    open_checkouts = [
+        issue(a.user_id, a.date, "«Ketdim» bosilmagan")
+        for a in rows
+        if a.user_id in tracked_ids
+        and a.date < today
+        and a.check_in_time is not None
+        and a.check_out_time is None
+    ]
+    auto_closed = [
+        issue(a.user_id, a.date, "Avtomatik yopilgan — ishlangan vaqt taxminiy")
+        for a in rows
+        if a.user_id in tracked_ids and a.note and AUTO_CLOSED_MARK in a.note
+    ]
+
+    pending_excused = [
+        issue(e.user_id, e.date, e.reason[:120] if e.reason else None)
+        for e in await db.scalars(
+            select(ExcusedDay).where(
+                ExcusedDay.date >= date_from,
+                ExcusedDay.date <= date_to,
+                ExcusedDay.status == ExcusedStatus.pending.value,
+            )
+        )
+        if e.user_id in tracked_ids
+    ]
+
+    no_face = [
+        issue(u.id, detail="Yuz ro'yxatdan o'tmagan — check-in qila olmaydi")
+        for u in users
+        if not u.has_face
+    ]
+
+    groups = (no_schedule, open_checkouts, auto_closed, pending_excused, no_face)
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "ok": not any(groups),
+        "no_schedule": no_schedule,
+        "open_checkouts": open_checkouts,
+        "auto_closed": auto_closed,
+        "pending_excused": pending_excused,
+        "no_face": no_face,
+    }
+
+
 async def perform_check_in(
     db: AsyncSession,
     user: User,
@@ -176,6 +363,12 @@ async def perform_check_in(
     """Xodimni bugungi kunga «Keldim» qiladi. Yuz (Face ID) tasdiqlangan va GPS ofis
     radiusida bo'lishi shart. Kechikish o'sha kungi ish oynasi boshlanishidan
     (grace bilan) hisoblanadi."""
+    # 3.4-band qo'shimcha savoli: Boshliq davomat tizimining HECH bir qismida
+    # (dashboard, statistika, digest, jadval) hisobga olinmaydi — shu izchillikni
+    # saqlash uchun check-in ham bloklanadi. Aks holda "yozuv bor-u, hech qayerda
+    # ko'rinmaydi" degan chalkash holat paydo bo'lardi.
+    if user.role not in ATTENDANCE_TRACKED_ROLES:
+        raise CheckError("Boshliq roli uchun davomat kuzatuvi yoqilmagan.")
     day = today_local()
     is_working, start, end = await _effective_today(db, user, day)
 
@@ -251,6 +444,8 @@ async def perform_check_out(
 ) -> Attendance:
     """Xodimni «Ketdim» qiladi. GPS + yuz tasdiqlanadi. Erta ketish ish oynasi
     tugashidan, ishlangan vaqt check-in/out orasidan hisoblanadi."""
+    if user.role not in ATTENDANCE_TRACKED_ROLES:
+        raise CheckError("Boshliq roli uchun davomat kuzatuvi yoqilmagan.")
     today = today_local()
     now_local = datetime.now(TASHKENT_TZ)
 
