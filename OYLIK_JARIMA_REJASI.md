@@ -30,26 +30,39 @@ ko'rsatish.
 
 Egasi aytgan 4 ta talab + men qo'shgan takomillashtirishlar (⭐ bilan belgilangan).
 
-### 1.1 Kechikish limiti va jarima
-- Har xodimga **oylik bepul kechikish limiti** beriladi (kun soni bo'yicha,
-  masalan "oyiga 3 marta kechiksa jarima yo'q").
-- ⭐ Limit **daqiqada** ham bo'lishi mumkin (masalan "oyiga jami 60 daqiqa").
-  Ikkalasi ham sozlanadi; ikkalasi yoqilgan bo'lsa — qaysi biri birinchi
-  tugasa, jarima o'shandan boshlanadi.
-- Limit tugagach jarima rejimi (`fine_mode`):
-  - `per_day` — kechikkan **har bir kun** uchun qat'iy summa *(egasi so'ragan asosiy rejim)*
-  - ⭐ `per_minute` — har kechikkan daqiqa uchun summa
-  - ⭐ `tiered` — pog'onali: 1–15 daq → X, 16–60 daq → Y, 60+ daq → Z
-  - ⭐ `percent_of_daily` — o'sha kunlik ish haqining foizi (oyligi katta odamga
-    jarima ham sezilarli bo'lsin)
-- ⭐ **Oylik jarima shifti (cap)**: bir oyda jarima oylikning N% idan oshmaydi.
-  Himoya to'siq — hisobdagi xato yoki 20 kun kechikish oylikni yeb yubormaydi.
-- ⭐ **Jarima qayerdan yechiladi** (`fine_applies_to`): `bonus_first` (avval
-  bonus/KPI dan, yetmasa qolgani oylikdan) yoki `net_salary` (to'g'ridan-to'g'ri).
-  Sukut bo'yicha `bonus_first` — bu huquqiy jihatdan xavfsizroq (7.4-bandga qarang).
-- ⭐ **Sababli (approved `ExcusedDay`) kun jarimaga kirmaydi** va limitni yemaydi.
-- ⭐ Kelmagan kun (`absent`) uchun alohida qoida: qat'iy summa yoki kunlik
-  ish haqini ushlab qolish (`absent_deduct_daily`).
+### 1.1 Kechikish limiti va jarima — QAROR QILINDI (2026-07-27, 9-bo'lim javoblari)
+- Har xodimga **oylik bepul kechikish limiti DAQIQADA** beriladi (masalan
+  "oyiga jami 60 daqiqa bepul"). Kun soni bo'yicha limit ISHLATILMAYDI —
+  faqat daqiqa yig'indisi kuzatiladi (`FinePolicy.free_late_minutes_per_month`).
+- Limit (daqiqa) tugagandan keyin — **shundan keyingi HAR BIR kechikkan kun**
+  uchun (kechikish necha daqiqa bo'lishidan qat'i nazar) qat'iy summa
+  jarimalanadi. Summani **HR web saytdan kiritadi** (`fine_mode='per_day'`,
+  `FinePolicy.fine_per_day`). Ya'ni ikki bosqichli qoida: limitgacha —
+  jarimasiz; limitdan keyingi HAR bir kechikkan kun — bitta qat'iy summa
+  (kechikish 6 daqiqa ham, 90 daqiqa ham bo'lsin — jarima bir xil).
+  Limit qaysi kunda "tugaganini" aniqlash — 3-bo'limdagi
+  "Limit xronologik yeyiladi" qoidasi bilan bir xil: oy boshidan kunma-kun
+  yig'iladi, chegaradan **o'tkazgan** kunning o'zi hali bepul, undan keyingi
+  har bir kechikkan kun jarimali.
+- ⭐ `per_minute`/`tiered`/`percent_of_daily` rejimlari **kod darajasida
+  qoldiriladi** (kengaytirish uchun `FinePolicy.fine_mode` enum'ida), lekin
+  HR uchun default va asosiy ishlatiladigan rejim — yuqoridagi `per_day`.
+- **Jarima qayerdan yechiladi** (`fine_applies_to`): **to'g'ridan-to'g'ri
+  oylikdan** (`net_salary`) — QAROR. ⚠️ Huquqiy eslatma (8.4-bandga qarang):
+  O'zbekiston mehnat qonunchiligida ish haqidan ushlab qolish cheklangan
+  bo'lishi mumkin; bu qaror HR/yurist tomonidan tekshirilishi tavsiya
+  etiladi. Tizim ikkala rejimni ham (`bonus_first`/`net_salary`) qo'llab-
+  quvvatlaydi — HR istalgan vaqt `net_salary`dan `bonus_first`ga o'tkaza oladi.
+- **Oylik jarima shifti (cap) — MAJBURIY**. Qiymatni (foiz yoki qat'iy summa)
+  **HR web saytdan kiritadi** (`FinePolicy.monthly_cap_percent` yoki
+  `monthly_cap_amount`) — tizimda qattiq kodlangan default (masalan 20%) YO'Q,
+  HR har doim o'zi belgilashi shart (validatsiya: policy saqlanmasdan oldin
+  ikkalasidan kamida bittasi to'ldirilgan bo'lishi kerak).
+- **Sababli (approved `ExcusedDay`) kun jarimaga kirmaydi** va limit
+  daqiqalarini yemaydi.
+- **Kelmagan kun (`absent`)** — kunlik ish haqidan ULUSH EMAS, **HR web
+  saytdan kiritgan QAT'IY SUMMA** (`FinePolicy.absent_fine`,
+  `absent_mode='fixed'`). Kechikish jarimasidan alohida, mustaqil summa.
 - ⭐ Erta ketish uchun ixtiyoriy qoida (default: o'chiq).
 - ⭐ Qoida **3 darajada**: global → lavozim (`Position`) → xodim. Amaldagisi:
   xodim > lavozim > global. HR bir marta global qo'yadi, istisnolarni nuqtaviy beradi.
@@ -64,11 +77,15 @@ Egasi aytgan 4 ta talab + men qo'shgan takomillashtirishlar (⭐ bilan belgilang
 - ⭐ Oy o'rtasida ishga kirgan/ketgan xodim uchun **prorata** (rejadagi ish
   kunlariga nisbatan).
 
-### 1.3 Qo'shimcha ish (overtime)
+### 1.3 Qo'shimcha ish (overtime) — QAROR QILINDI
 - Faqat **HR belgilagan xodimlarga** yoqiladi (`overtime_enabled`).
 - Hisoblash rejimi (`overtime_mode`) — HR tanlaydi:
   - `derived` — xodimning **o'z oyligidan kelib chiqib**: soatlik stavka =
-    oylik ÷ o'sha oydagi rejadagi ish soatlari, × koeffitsient (1.0 / 1.5 / 2.0)
+    oylik ÷ o'sha oydagi rejadagi ish soatlari (norma soati **ish
+    jadvalidan avtomatik** — `WorkScheduleWeekly`/`Override`dan hisoblangan
+    reja soatlar, QAROR). Koeffitsient (`OvertimeProfile.multiplier`) uchun
+    **tizimda default YO'Q** — HR har xodim yoki lavozim uchun o'zi
+    belgilaydi (1.0/1.5/2.0 yoki boshqa qiymat, majburiy maydon).
   - `fixed_rate` — HR **o'zi summa belgilaydi** (so'm/soat)
 - ⭐ Manbasi: check-out ish oynasi tugaganidan **keyin** bo'lsa, farq
   avtomatik "qo'shimcha ish" nomzodi bo'ladi; HR/rahbar **tasdiqlaydi**
@@ -124,22 +141,34 @@ SalaryRate                 # oylik stavka tarixi
 
 OvertimeProfile            # kimga qo'shimcha ish yoqilgan
   user_id(uniq), enabled, mode(derived|fixed_rate),
-  fixed_rate_per_hour(12,2), multiplier(3,2)=1.0,
-  norm_hours_source(schedule|fixed), fixed_norm_hours_per_month,
+  fixed_rate_per_hour(12,2),
+  # multiplier'da TIZIM DEFAULTI YO'Q (9-bo'lim, savol 6, QAROR) — HR har
+  # xodim/lavozim uchun MAJBURIY kiritadi (`derived` rejimda NULL bo'lsa
+  # saqlanmaydi, 422).
+  multiplier(3,2),
+  norm_hours_source(schedule|fixed)="schedule",  # QAROR: ish jadvalidan avtomatik
+  fixed_norm_hours_per_month,
   min_minutes=15, daily_cap_minutes, monthly_cap_minutes,
   updated_by, updated_at
 
 FinePolicy                 # jarima qoidasi (3 darajali)
   scope(global|position|user), scope_id(nullable),
   grace_minutes(nullable → global settings),
-  free_late_days_per_month, free_late_minutes_per_month,
-  fine_mode(per_day|per_minute|tiered|percent_of_daily),
-  fine_per_day(12,2), fine_per_minute(12,2), tiers(JSON),
-  percent_of_daily(5,2),
-  absent_mode(none|fixed|deduct_daily), absent_fine(12,2),
+  # Limit FAQAT daqiqada (9-bo'lim, savol 1, QAROR) — free_late_days_per_month
+  # KENGAYTIRISH uchun saqlanadi (kod tayyor bo'ladi), lekin HR uchun
+  # ishlatiladigan yagona maydon free_late_minutes_per_month.
+  free_late_days_per_month,  # ⭐ kelajakda, hozir ishlatilmaydi
+  free_late_minutes_per_month,  # ← QAROR: asosiy maydon
+  fine_mode(per_day|per_minute|tiered|percent_of_daily)="per_day",  # QAROR
+  fine_per_day(12,2),  # ← QAROR: limitdan keyingi HAR kechikkan kunga qat'iy summa, HR kiritadi
+  fine_per_minute(12,2), tiers(JSON), percent_of_daily(5,2),  # ⭐ kelajakda
+  absent_mode(none|fixed|deduct_daily)="fixed",  # QAROR
+  absent_fine(12,2),  # ← QAROR: HR kiritgan qat'iy summa (kelmagan kun)
   early_leave_enabled, early_leave_per_minute(12,2),
+  # Cap MAJBURIY (9-bo'lim, savol 4, QAROR) — saqlashda ikkalasidan
+  # kamida bittasi to'ldirilgan bo'lishi shart, qattiq default YO'Q.
   monthly_cap_percent(5,2), monthly_cap_amount(12,2),
-  fine_applies_to(bonus_first|net_salary),
+  fine_applies_to(bonus_first|net_salary)="net_salary",  # QAROR (8.4-band, huquqiy eslatma)
   is_active, updated_by, updated_at
   UNIQUE(scope, scope_id)
 
@@ -241,9 +270,21 @@ GET    /payroll/my/{telegram_id}/late-status # bu oy: kechikish / limit
 POST   /payroll/{period}/calculate-cron      # scheduler chaqiruvi
 ```
 
-Ruxsat: yangi `PAYROLL_ROLES = (hr, boss, dasturchi)`. **ROP pul summalarini
-ko'rmaydi** — u faqat o'z jamoasining kechikish statistikasini ko'radi (mavjud
-`/attendance/late-stats`). Bu ataylab: maosh maxfiy ma'lumot.
+Ruxsat — QAROR (9-bo'lim, savol 8): `PAYROLL_ROLES = (hr, rop, boss, dasturchi)`.
+**ROP KO'RADI, lekin FAQAT O'Z JAMOASI uchun** — HR/Boss/Dasturchi hammani
+ko'radi. Qamrov mavjud `norms.py::can_manage_norms` bilan bir xil naqsh
+(`target.manager_id == actor.id` yoki lavozim `managed_by_roles`da "rop" bor):
+- `GET /payroll/{period}` — ROP so'rasa, natija avtomatik uning jamoasiga
+  filtrlanadi (boshqa xodimlar ro'yxatda umuman ko'rinmaydi, 403 emas —
+  bo'sh/qisman ro'yxat).
+- `GET /payroll/{period}/user/{user_id}` — ROP faqat o'z jamoasidagi
+  `user_id` uchun 200 oladi, boshqasiga 403.
+- Sozlamalar (`/payroll/policies`, `/payroll/rates`, `/payroll/overtime-profiles`,
+  `/approve`, `/reopen`, `adjustments`) — ROP'da YO'Q, faqat HR/Boss/Dasturchi
+  (stavka/qoida belgilash va tasdiqlash kadrlar qarori bo'lib qoladi).
+- `PAYROLL_VIEW_ROLES = (hr, rop, boss, dasturchi)` (qamrov bilan) vs
+  `PAYROLL_MANAGE_ROLES = (hr, boss, dasturchi)` (sozlash/tasdiqlash) — ikki
+  alohida ro'yxat.
 
 ---
 
@@ -263,7 +304,8 @@ jadval** — sana, kelgan vaqt, kechikish daqiqasi, "bepul limit" yoki "jarima
 X so'm" belgisi, sababli bo'lsa izoh. Har bir raqamning kelib chiqishi ko'rinadi.
 
 `App.tsx` ga 3 ta route + `Layout.tsx` nav guruhiga "Ish haqi" bo'limi
-(faqat `PAYROLL_ROLES` ga ko'rinadi), `lib/api/endpoints.ts` + `lib/queries.ts`
+(`PAYROLL_VIEW_ROLES` ga ko'rinadi — ROP ham kiradi, lekin `PayrollSettings.tsx`
+faqat `PAYROLL_MANAGE_ROLES`ga), `lib/api/endpoints.ts` + `lib/queries.ts`
 ga mos hooklar.
 
 ### 5.2 Bot (`bot/handlers/payroll.py`)
@@ -351,9 +393,10 @@ sababli kun limitni yemaydi; dam olish kuni jarimasiz; cap ishlaydi;
 
 ### Bosqich 3 — API
 **Fayllar:** `api/routers/payroll.py`, `api/schemas.py`, `api/main.py`,
-`api/deps.py` (`PAYROLL_ROLES`), `api/services/export.py`
-**DoD:** 4-bo'limdagi barcha endpointlar; ruxsat testlari (ROP → 403,
-xodim → faqat o'ziniki); qulflangan davrga `calculate` → 409.
+`api/deps.py` (`PAYROLL_VIEW_ROLES`, `PAYROLL_MANAGE_ROLES`), `api/services/export.py`
+**DoD:** 4-bo'limdagi barcha endpointlar; ruxsat testlari (ROP o'z jamoasini
+ko'radi, boshqa jamoaga 403; ROP sozlash endpointlariga 403; xodim → faqat
+o'ziniki); qulflangan davrga `calculate` → 409.
 
 ### Bosqich 3.5 — ⭐ Dasturchi rejimi (super-admin qatlami)
 **Fayllar:** `api/deps.py`, `api/routers/admin_override.py` (yangi),
@@ -403,32 +446,38 @@ fondi" satri (faqat boss), barcha pul o'zgarishlari uchun `AuditLog`.
 3. **Vaqt mintaqasi**: hamma sana chegarasi `today_local()` (Asia/Tashkent),
    DB da naive-UTC. Yangi kodda `local_range_utc_naive` ishlatiladi.
 4. ⭐ **Huquqiy eslatma**: O'zbekiston mehnat qonunchiligida ish haqidan
-   "jarima" sifatida ushlab qolish cheklangan. Shuning uchun default
-   `fine_applies_to = bonus_first` — jarima avval mukofot/bonusdan yechiladi.
-   Buni yakuniy tanlash HR/yuristning qarori; tizim ikkala rejimni ham
-   qo'llab-quvvatlaydi va tanlovni auditga yozadi.
+   "jarima" sifatida ushlab qolish cheklangan. Egasi qarori (2026-07-27,
+   9-bo'lim savol 3) bilan `fine_applies_to = net_salary` (to'g'ridan-to'g'ri
+   oylikdan) tanlandi. Tizim `bonus_first` rejimini ham qo'llab-quvvatlaydi —
+   HR istalgan vaqt o'zgartira oladi; tanlov `AuditLog`ga yoziladi. **Ijro
+   qilishdan oldin HR/yurist bilan tasdiqlash tavsiya etiladi** — bu kod
+   darajasidagi huquqiy maslahat emas.
 5. **Yaxlitlash** — bitta joyda (`payroll.round_money`), default 100 so'mgacha.
-6. **Maxfiylik** — summalar faqat `PAYROLL_ROLES` ga; botda faqat o'ziga;
+6. **Maxfiylik** — summalar `PAYROLL_VIEW_ROLES`ga (HR/ROP/Boss/Dasturchi),
+   ROP faqat o'z jamoasini ko'radi (yuqoridagi 4-bo'lim); botda faqat o'ziga;
    guruh digestiga xodim summasi **hech qachon** chiqmaydi.
 7. **Qayta hisoblash** — `approved` davr uchun faqat `reopen` dan keyin,
    sabab bilan, auditga yozilib.
 
 ---
 
-## 9. HR/egasidan kerakli qarorlar (kod yozishdan oldin)
+## 9. HR/egasidan kerakli qarorlar — QARORLAR QILINDI (2026-07-27)
 
-| # | Savol | Taklif (default) |
+Hammasi egasi bilan bevosita muhokama qilinib, javob berilgan. Kod bu
+qarorlarga muvofiq yoziladi (yuqoridagi 1.1/1.3/4-bo'limlarga singdirildi).
+
+| # | Savol | QAROR |
 |---|---|---|
-| 1 | Limit **kun** bo'yicha, **daqiqa** bo'yicha yoki ikkalasi? | Kun bo'yicha (masalan 3) |
-| 2 | Jarima rejimi? | `per_day` — qat'iy summa |
-| 3 | Jarima qayerdan yechiladi? | Avval bonusdan, qolgani oylikdan |
-| 4 | Oylik jarima chegarasi? | Oylikning 20% i |
-| 5 | Sababsiz kelmagan kun? | O'sha kunlik ish haqi ushlanadi |
-| 6 | Qo'shimcha ish koeffitsienti (`derived` rejim)? | 1.5× |
-| 7 | Qo'shimcha ish norma soati manbai? | Ish jadvali (avtomatik) |
-| 8 | ROP oylik summalarni ko'radimi? | Yo'q |
-| 9 | Avans (oy o'rtasi to'lovi) bormi? | Bor — `PayrollAdjustment(minus)` orqali |
-| 10 | Oyning qaysi kuni yopiladi? | Keyingi oyning 1-kuni, 06:00 |
+| 1 | Limit **kun** bo'yicha, **daqiqa** bo'yicha yoki ikkalasi? | **Daqiqa bo'yicha.** Limit tugagach, keyingi HAR bir kechikkan kun uchun HR web saytda belgilagan qat'iy summa jarima yoziladi (1+2-savol birlashtirilgan qaror). |
+| 2 | Jarima rejimi? | `per_day` — limitdan keyingi har kechikkan kunga qat'iy summa (yuqoriga qarang). |
+| 3 | Jarima qayerdan yechiladi? | **To'g'ridan-to'g'ri oylikdan** (`net_salary`). ⚠️ Huquqiy tekshiruv tavsiya etiladi (8.4-band). |
+| 4 | Oylik jarima chegarasi? | **Majburiy**, lekin qiymati qattiq kodlanmaydi — **HR web saytdan kiritadi**. |
+| 5 | Sababsiz kelmagan kun? | Kunlik ulush EMAS — **HR web saytdan kiritgan qat'iy summa** (`absent_fine`). |
+| 6 | Qo'shimcha ish koeffitsienti (`derived` rejim)? | Tizimda default YO'Q — **HR har xodim/lavozim uchun o'zi belgilaydi** (majburiy maydon). |
+| 7 | Qo'shimcha ish norma soati manbai? | Ish jadvalidan avtomatik (tasdiqlandi). |
+| 8 | ROP oylik summalarni ko'radimi? | **Ha — lekin faqat o'z jamoasi uchun** (`can_manage_norms` bilan bir xil qamrov naqshi). Sozlash/tasdiqlash huquqi hamon YO'Q. |
+| 9 | Avans (oy o'rtasi to'lovi) bormi? | Bor — HR qo'lda kiritadi, `PayrollAdjustment(minus)` orqali (tasdiqlandi). |
+| 10 | Oyning qaysi kuni yopiladi? | Keyingi oyning 1-kuni ertalab (tasdiqlandi). |
 
 ---
 
