@@ -567,12 +567,55 @@ xizmatlarga qarshi to'liq `test.py`: **217 OK / 218** (yagona FAIL —
 oldindan mavjud Windows konsol kodlash muammosi), ikki marta ketma-ket
 ishga tushirilib barqarorlik tasdiqlandi.
 
-### Bosqich 4 — Web panel
-**Fayllar:** `web/src/pages/Payroll.tsx`, `PayrollSettings.tsx`, `Overtime.tsx`,
-`EmployeeProfile.tsx`, `App.tsx`, `Layout.tsx`, `lib/api/endpoints.ts`,
-`lib/api/types.ts`, `lib/queries.ts`
-**DoD:** HR nol koddan: stavka kiritadi → limit va jarima qo'yadi → hisoblaydi
-→ tafsilotda har bir jarimaning sababini ko'radi → tasdiqlaydi → Excel oladi.
+### Bosqich 4 — Web panel ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `web/src/pages/Payroll.tsx`, `PayrollSettings.tsx`, `Overtime.tsx`
+(yangi), `EmployeeProfile.tsx`, `CheckIn.tsx`, `App.tsx`, `Layout.tsx`,
+`components/StatusBadge.tsx`, `lib/api/endpoints.ts`, `lib/api/types.ts`,
+`lib/queries.ts`, `api/routers/payroll.py` (`GET /payroll/me/late-status` —
+JWT versiyasi CheckIn uchun qo'shildi, avvalgisi faqat bot-secret edi)
+
+**Ish:**
+- `Payroll.tsx` (`/payroll`, PAYROLL_VIEW_ROLES — ROP ham kiradi): oy
+  tanlagich, tayyorlik ogohlantirishi (`PreflightSection`, faqat MANAGE),
+  jami statistikalar, payslip jadvali, qatorni bosib tafsilot dialogi
+  (qatorlar + kunma-kun statistika), «Hisoblash»/«Tasdiqlash» tugmalari
+  (faqat MANAGE, ROP ko'rmaydi).
+- `PayrollSettings.tsx` (`/payroll/settings`, faqat MANAGE): 3 tab — Jarima
+  qoidasi (global/lavozim/xodim qamrov, cap validatsiyasi), Oylik stavkalar
+  (xodim tanlash + tarix + yangi stavka), Qo'shimcha ish (profil ro'yxati +
+  yoqish/tahrirlash dialogi).
+- `Overtime.tsx` (`/overtime`, faqat MANAGE): holat filtri, tasdiqlash
+  navbati, qo'lda kiritish dialogi.
+- `EmployeeProfile.tsx`: "Oylik (ish haqi)" bo'limi — davrlar ro'yxati,
+  har biri bosilganda O'SHA davr tafsiloti so'raladi (Bonus tarixi bilan
+  bir xil "kengaytiriladigan qator" naqshi — bitta xodim uchun "barcha
+  davrlar" backend endpointi yo'q, shuning uchun N so'rov o'rniga lazy-fetch).
+- `CheckIn.tsx`: `LateStatusCard` — joriy oy kechikish limiti holati (1.5-band,
+  Shaffoflik). Qoida sozlanmagan bo'lsa (`free_limit_minutes=null`) HECH
+  NARSA ko'rsatilmaydi.
+- ROP kirish cheklovi ikki darajada: `Layout.tsx`da `onlyPayrollManager`
+  nav filtri (Overtime/Settings ko'rinmaydi) + `App.tsx`da
+  `PayrollManageRoute` (to'g'ridan-to'g'ri URL kiritsa ham `/payroll`ga
+  qaytaradi).
+
+**⭐ Ataylab QILINMAGAN:** Excel yuklab olish tugmasi — Bosqich 3'da
+`/export` ATAYLAB Bosqich 7ga (hisobot) qoldirilgan edi, DoD'dagi "Excel
+oladi" shu sababli hozircha yo'q (izchillik uchun reja matni ham
+moslashtirildi).
+
+**Tekshiruv — real xizmatlarga qarshi brauzerda (HTTPS+self-signed sert
+avtomatlashtirilgan brauzerda ishlamagani uchun `VITE_NO_SSL=1` bilan
+vaqtinchalik alohida portda ishga tushirilib, keyin to'xtatildi):**
+`tsc --noEmit` toza; HR (`hr`) sifatida `/payroll` — real preflight
+ma'lumoti (stavkasiz/jadvalsiz/yuzsiz xodimlar) to'g'ri ko'rsatildi;
+`/payroll/settings` — «Yangi qoida» dialogi barcha maydonlar bilan to'liq
+render bo'ldi; `/overtime` — bo'sh holat to'g'ri; `/employees/{id}` — "Oylik"
+bo'limi to'g'ri; xodim sifatida `/check-in` — jarima qoidasi hali
+sozlanmagani uchun `LateStatusCard` to'g'ri KO'RINMADI; ROP sifatida
+`/payroll` — faqat ko'rish (Hisoblash/Tasdiqlash yo'q), nav'da
+Overtime/Settings yo'q, to'g'ridan-to'g'ri `/payroll/settings`ga kirish
+`/payroll`ga qaytardi. Hech qanday real ma'lumot yaratilmadi/o'zgartirilmadi
+(faqat o'qish so'rovlari) — jonli kompaniya ma'lumotlariga tegilmadi.
 
 ### Bosqich 5 — Bot
 **Fayllar:** `bot/handlers/payroll.py`, `bot/keyboards.py`, `bot/main.py`,

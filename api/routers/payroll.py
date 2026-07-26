@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     BotLateStatusOut,
     BotPayslipOut,
@@ -791,17 +791,10 @@ async def my_payslip(telegram_id: int, db: AsyncSession = Depends(get_db)) -> Bo
     )
 
 
-@router.get(
-    "/my/{telegram_id}/late-status", response_model=BotLateStatusOut, dependencies=[Depends(verify_bot_secret)]
-)
-async def my_late_status(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotLateStatusOut:
+async def _late_status_for_user(db: AsyncSession, user: User) -> BotLateStatusOut:
     """Joriy oyda kechikish holati — HALI hisoblanmagan (davom etayotgan) oy
     uchun JONLI hisoblanadi (Payslip'dan emas, chunki oy hali yakunlanmagan).
-    1.5-band: bot xodimga oldindan ogohlantiradi."""
-    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-
+    1.5-band: xodimga oldindan ogohlantirish (bot va web CheckIn'da bir xil)."""
     period = today_local().strftime("%Y-%m")
     policy = await resolve_policy(db, user)
     days = await collect_attendance(db, user, period)
@@ -819,3 +812,22 @@ async def my_late_status(telegram_id: int, db: AsyncSession = Depends(get_db)) -
         fined_days_so_far=late["fined_days"],
         fine_per_day=float(policy.fine_per_day) if policy and policy.fine_per_day is not None else None,
     )
+
+
+@router.get(
+    "/my/{telegram_id}/late-status", response_model=BotLateStatusOut, dependencies=[Depends(verify_bot_secret)]
+)
+async def my_late_status(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotLateStatusOut:
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _late_status_for_user(db, user)
+
+
+@router.get("/me/late-status", response_model=BotLateStatusOut)
+async def my_late_status_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> BotLateStatusOut:
+    """Web (JWT) versiyasi — CheckIn.tsx uchun. Xodim faqat O'ZINING holatini
+    ko'radi (path'da user_id yo'q, tokendan olinadi)."""
+    return await _late_status_for_user(db, user)

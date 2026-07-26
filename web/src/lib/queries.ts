@@ -47,6 +47,15 @@ export const qk = {
   scheduleOverrides: (userId: number, from?: string, to?: string) =>
     ["work-schedule", userId, "overrides", from ?? null, to ?? null] as const,
   auditLogs: (params?: object) => ["audit-logs", params ?? {}] as const,
+  finePolicies: ["payroll", "policies"] as const,
+  salaryRates: (userId: number) => ["payroll", "rates", userId] as const,
+  overtimeProfiles: ["payroll", "overtime-profiles"] as const,
+  overtimeEntries: (params?: object) => ["payroll", "overtime", params ?? {}] as const,
+  payrollPeriods: ["payroll", "periods"] as const,
+  payrollPreflight: (period: string) => ["payroll", "preflight", period] as const,
+  payslips: (period: string) => ["payroll", "payslips", period] as const,
+  payslipDetail: (period: string, userId: number) => ["payroll", "payslip", period, userId] as const,
+  myLateStatus: ["payroll", "me", "late-status"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -315,3 +324,82 @@ export const useDownloadReport = () =>
       api.downloadReportExport(dateFrom, dateTo),
     []
   );
+
+// ─── Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) ───
+export const useFinePolicies = () =>
+  useQuery({ queryKey: qk.finePolicies, queryFn: api.listFinePolicies });
+
+export const useUpsertFinePolicy = () =>
+  useApiMutation(api.upsertFinePolicy, [qk.finePolicies]);
+
+export const useDeleteFinePolicy = () =>
+  useApiMutation((policyId: number) => api.deleteFinePolicy(policyId), [qk.finePolicies]);
+
+export const useSalaryRates = (userId: number, enabled = true) =>
+  useQuery({ queryKey: qk.salaryRates(userId), queryFn: () => api.listSalaryRates(userId), enabled });
+
+export const useCreateSalaryRate = () =>
+  useApiMutation(api.createSalaryRate, [["payroll", "rates"]]);
+
+export const useOvertimeProfiles = () =>
+  useQuery({ queryKey: qk.overtimeProfiles, queryFn: api.listOvertimeProfiles });
+
+export const useUpsertOvertimeProfile = () =>
+  useApiMutation(
+    ({ userId, data }: { userId: number; data: Parameters<typeof api.upsertOvertimeProfile>[1] }) =>
+      api.upsertOvertimeProfile(userId, data),
+    [qk.overtimeProfiles]
+  );
+
+export const useOvertimeEntries = (params: { period?: string; status_filter?: string } = {}) =>
+  useQuery({ queryKey: qk.overtimeEntries(params), queryFn: () => api.listOvertimeEntries(params) });
+
+export const useCreateOvertimeEntry = () =>
+  useApiMutation(api.createOvertimeEntry, [["payroll", "overtime"]]);
+
+export const useDecideOvertimeEntry = () =>
+  useApiMutation(
+    ({ entryId, decision }: { entryId: number; decision: "approved" | "rejected" }) =>
+      api.decideOvertimeEntry(entryId, decision),
+    [["payroll", "overtime"]]
+  );
+
+export const useCreatePayrollAdjustment = () =>
+  useApiMutation(api.createPayrollAdjustment, [["payroll", "payslips"], ["payroll", "payslip"]]);
+
+export const useDeletePayrollAdjustment = () =>
+  useApiMutation(
+    (adjustmentId: number) => api.deletePayrollAdjustment(adjustmentId),
+    [["payroll", "payslips"], ["payroll", "payslip"]]
+  );
+
+export const usePayrollPeriods = () =>
+  useQuery({ queryKey: qk.payrollPeriods, queryFn: api.listPayrollPeriods });
+
+export const usePayrollPreflight = (period: string, enabled = true) =>
+  useQuery({ queryKey: qk.payrollPreflight(period), queryFn: () => api.payrollPreflight(period), enabled });
+
+export const useCalculatePayroll = () =>
+  useApiMutation(
+    ({ period, userIds }: { period: string; userIds?: number[] }) => api.calculatePayroll(period, userIds),
+    [["payroll", "payslips"], ["payroll", "payslip"], qk.payrollPeriods, ["payroll", "preflight"]]
+  );
+
+export const usePayslips = (period: string, enabled = true) =>
+  useQuery({ queryKey: qk.payslips(period), queryFn: () => api.listPayslips(period), enabled });
+
+export const usePayslipDetail = (period: string, userId: number, enabled = true) =>
+  useQuery({
+    queryKey: qk.payslipDetail(period, userId),
+    queryFn: () => api.payslipDetail(period, userId),
+    enabled,
+  });
+
+export const useApprovePayrollPeriod = () =>
+  useApiMutation(
+    (period: string) => api.approvePayrollPeriod(period),
+    [["payroll", "payslips"], ["payroll", "payslip"], qk.payrollPeriods]
+  );
+
+export const useMyLateStatus = () =>
+  useQuery({ queryKey: qk.myLateStatus, queryFn: api.myLateStatus });

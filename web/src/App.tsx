@@ -21,8 +21,14 @@ const WorkSchedule = lazy(() => import("./pages/WorkSchedule"));
 const Attendance = lazy(() => import("./pages/Attendance"));
 const Offices = lazy(() => import("./pages/Offices"));
 const CheckIn = lazy(() => import("./pages/CheckIn"));
+const Payroll = lazy(() => import("./pages/Payroll"));
+const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
+const Overtime = lazy(() => import("./pages/Overtime"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
+// Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
+// maosh sozlamalari/hisob-kitobi faqat HR/Boshliq/Dasturchi qo'lida.
+const PAYROLL_MANAGE_ROLES = ["hr", "boss", "dasturchi"];
 
 function isManager(role?: string): boolean {
   return !!role && MANAGER_ROLES.includes(role);
@@ -47,6 +53,14 @@ function ProtectedRoute({ children }: { children: JSX.Element }) {
 function ManagerRoute({ children }: { children: JSX.Element }) {
   const { user } = useAuth();
   if (!isManager(user?.role)) return <Navigate to="/check-in" replace />;
+  return children;
+}
+
+// Payroll sozlash/hisoblash sahifalari: ROP ham "rahbar", lekin bu yerga kira
+// olmaydi — payslip ro'yxatini o'z jamoasi uchun /payroll'da ko'radi.
+function PayrollManageRoute({ children }: { children: JSX.Element }) {
+  const { user } = useAuth();
+  if (!PAYROLL_MANAGE_ROLES.includes(user?.role ?? "")) return <Navigate to="/payroll" replace />;
   return children;
 }
 
@@ -83,6 +97,12 @@ export default function App() {
           <Route path="reports" element={<ManagerRoute><Reports /></ManagerRoute>} />
           <Route path="audit-logs" element={<ManagerRoute><AuditLogs /></ManagerRoute>} />
           <Route path="positions" element={<ManagerRoute><Positions /></ManagerRoute>} />
+          <Route path="payroll" element={<ManagerRoute><Payroll /></ManagerRoute>} />
+          <Route
+            path="payroll/settings"
+            element={<PayrollManageRoute><PayrollSettings /></PayrollManageRoute>}
+          />
+          <Route path="overtime" element={<PayrollManageRoute><Overtime /></PayrollManageRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

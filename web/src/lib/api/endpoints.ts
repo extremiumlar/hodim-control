@@ -8,6 +8,8 @@ import type {
   DailyResult,
   EmployeeAttendanceSummary,
   ExcusedDay,
+  FinePolicy,
+  FinePolicyInput,
   LateStatRow,
   ManualAttendancePayload,
   CrmOperatorRow,
@@ -16,8 +18,18 @@ import type {
   LeadStageMonth,
   Office,
   OperatorSummary,
+  OvertimeEntry,
+  OvertimeProfile,
+  OvertimeProfileInput,
+  PayrollAdjustment,
+  PayrollLateStatus,
+  PayrollPeriodSummary,
+  PayrollPreflight,
+  PayslipDetail,
+  PayslipRow,
   Position,
   RegisterFaceResult,
+  SalaryRate,
   StatsOverview,
   Task,
   TeamNormRow,
@@ -221,6 +233,51 @@ export const api = {
     ).toString();
     return apiFetch<AuditLog[]>(`/audit-logs${query ? `?${query}` : ""}`);
   },
+  // --- Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) ---
+  listFinePolicies: () => apiFetch<FinePolicy[]>("/payroll/policies"),
+  upsertFinePolicy: (data: FinePolicyInput) =>
+    apiFetch<FinePolicy>("/payroll/policies", { method: "PUT", body: JSON.stringify(data) }),
+  deleteFinePolicy: (policyId: number) =>
+    apiFetch<{ deleted: boolean }>(`/payroll/policies/${policyId}`, { method: "DELETE" }),
+  listSalaryRates: (userId: number) => apiFetch<SalaryRate[]>(`/payroll/rates?user_id=${userId}`),
+  createSalaryRate: (data: { user_id: number; amount: number; pay_basis: string; effective_from: string; note?: string | null }) =>
+    apiFetch<SalaryRate>("/payroll/rates", { method: "POST", body: JSON.stringify(data) }),
+  listOvertimeProfiles: () => apiFetch<OvertimeProfile[]>("/payroll/overtime-profiles"),
+  upsertOvertimeProfile: (userId: number, data: OvertimeProfileInput) =>
+    apiFetch<OvertimeProfile>(`/payroll/overtime-profiles/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  listOvertimeEntries: (params: { period?: string; status_filter?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+    ).toString();
+    return apiFetch<OvertimeEntry[]>(`/payroll/overtime${q ? `?${q}` : ""}`);
+  },
+  createOvertimeEntry: (data: { user_id: number; date: string; minutes: number; note?: string | null }) =>
+    apiFetch<OvertimeEntry>("/payroll/overtime", { method: "POST", body: JSON.stringify(data) }),
+  decideOvertimeEntry: (entryId: number, decision: "approved" | "rejected") =>
+    apiFetch<OvertimeEntry>(`/payroll/overtime/${entryId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ status: decision }),
+    }),
+  createPayrollAdjustment: (data: { user_id: number; period: string; kind: "plus" | "minus"; amount: number; reason: string }) =>
+    apiFetch<PayrollAdjustment>("/payroll/adjustments", { method: "POST", body: JSON.stringify(data) }),
+  deletePayrollAdjustment: (adjustmentId: number) =>
+    apiFetch<{ deleted: boolean }>(`/payroll/adjustments/${adjustmentId}`, { method: "DELETE" }),
+  listPayrollPeriods: () => apiFetch<PayrollPeriodSummary[]>("/payroll/periods"),
+  payrollPreflight: (period: string) => apiFetch<PayrollPreflight>(`/payroll/${period}/preflight`),
+  calculatePayroll: (period: string, userIds?: number[]) =>
+    apiFetch<{ period: string; calculated: number }>(`/payroll/${period}/calculate`, {
+      method: "POST",
+      body: JSON.stringify({ user_ids: userIds ?? null }),
+    }),
+  listPayslips: (period: string) => apiFetch<PayslipRow[]>(`/payroll/${period}`),
+  payslipDetail: (period: string, userId: number) =>
+    apiFetch<PayslipDetail>(`/payroll/${period}/user/${userId}`),
+  approvePayrollPeriod: (period: string) =>
+    apiFetch<{ period: string; approved: number }>(`/payroll/${period}/approve`, { method: "POST" }),
+  myLateStatus: () => apiFetch<PayrollLateStatus>("/payroll/me/late-status"),
   downloadReportExport: async (dateFrom: string, dateTo: string): Promise<void> => {
     const token = getToken();
     const resp = await fetch(`${API_BASE_URL}/reports/export?date_from=${dateFrom}&date_to=${dateTo}`, {

@@ -339,6 +339,197 @@ export interface WorkOverride {
   note: string | null;
 }
 
+// ─── Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) ───
+
+export interface FinePolicy {
+  id: number;
+  scope: "global" | "position" | "user";
+  scope_id: number | null;
+  scope_label: string | null;
+  grace_minutes: number | null;
+  free_late_minutes_per_month: number | null;
+  fine_mode: string;
+  fine_per_day: number | null;
+  absent_mode: string;
+  absent_fine: number | null;
+  early_leave_enabled: boolean;
+  early_leave_per_minute: number | null;
+  monthly_cap_percent: number | null;
+  monthly_cap_amount: number | null;
+  fine_applies_to: "bonus_first" | "net_salary";
+  is_active: boolean;
+  updated_at: string;
+}
+
+export interface FinePolicyInput {
+  scope: "global" | "position" | "user";
+  scope_id?: number | null;
+  grace_minutes?: number | null;
+  free_late_minutes_per_month: number;
+  fine_mode?: string;
+  fine_per_day?: number | null;
+  absent_mode?: string;
+  absent_fine?: number | null;
+  early_leave_enabled?: boolean;
+  early_leave_per_minute?: number | null;
+  monthly_cap_percent?: number | null;
+  monthly_cap_amount?: number | null;
+  fine_applies_to?: "bonus_first" | "net_salary";
+  is_active?: boolean;
+}
+
+export interface SalaryRate {
+  id: number;
+  user_id: number;
+  amount: number;
+  pay_basis: "monthly" | "daily" | "hourly";
+  effective_from: string;
+  changed_by: number;
+  note: string | null;
+  created_at: string;
+}
+
+export interface OvertimeProfile {
+  user_id: number;
+  user_full_name: string | null;
+  enabled: boolean;
+  mode: "derived" | "fixed_rate";
+  fixed_rate_per_hour: number | null;
+  multiplier: number | null;
+  norm_hours_source: "schedule" | "fixed";
+  fixed_norm_hours_per_month: number | null;
+  min_minutes: number;
+  daily_cap_minutes: number | null;
+  monthly_cap_minutes: number | null;
+  updated_at: string;
+}
+
+export interface OvertimeProfileInput {
+  enabled: boolean;
+  mode: "derived" | "fixed_rate";
+  fixed_rate_per_hour?: number | null;
+  multiplier?: number | null;
+  norm_hours_source: "schedule" | "fixed";
+  fixed_norm_hours_per_month?: number | null;
+  min_minutes: number;
+  daily_cap_minutes?: number | null;
+  monthly_cap_minutes?: number | null;
+}
+
+export interface OvertimeEntry {
+  id: number;
+  user_id: number;
+  user_full_name: string | null;
+  date: string;
+  minutes: number;
+  source: "auto_attendance" | "manual";
+  status: "pending" | "approved" | "rejected";
+  note: string | null;
+  decided_by: number | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export interface PayrollAdjustment {
+  id: number;
+  user_id: number;
+  period: string;
+  kind: "plus" | "minus";
+  amount: number;
+  reason: string;
+  created_by: number;
+  created_at: string;
+}
+
+export interface PayslipItem {
+  kind: string;
+  label: string;
+  quantity: number | null;
+  rate: number | null;
+  amount: number;
+  sort_order: number;
+}
+
+export interface PayslipRow {
+  user_id: number;
+  full_name: string;
+  status: string;
+  base_amount: number;
+  late_days: number;
+  fined_late_days: number;
+  fine_amount: number;
+  absent_days: number;
+  absent_deduction: number;
+  overtime_minutes: number;
+  overtime_amount: number;
+  bonus_amount: number;
+  gross: number;
+  net: number;
+}
+
+export interface PayslipDetail {
+  id: number;
+  user_id: number;
+  full_name: string;
+  period: string;
+  status: string;
+  base_amount: number;
+  pay_basis: string;
+  rate_snapshot: number | null;
+  scheduled_days: number;
+  worked_days: number;
+  absent_days: number;
+  excused_days: number;
+  scheduled_minutes: number;
+  worked_minutes: number;
+  late_days: number;
+  late_minutes: number;
+  fined_late_days: number;
+  fined_late_minutes: number;
+  fine_amount: number;
+  absent_deduction: number;
+  overtime_minutes: number;
+  overtime_amount: number;
+  overtime_rate_snapshot: number | null;
+  bonus_amount: number;
+  adjustments_plus: number;
+  adjustments_minus: number;
+  gross: number;
+  net: number;
+  currency: string;
+  calculated_at: string | null;
+  approved_at: string | null;
+  items: PayslipItem[];
+  breakdown: Record<string, unknown> | null;
+}
+
+export interface PayrollPeriodSummary {
+  period: string;
+  status: string;
+  locked: boolean;
+  calculated_at: string | null;
+  approved_at: string | null;
+  employee_count: number;
+  total_net: number;
+}
+
+export interface PayrollPreflight {
+  period: string;
+  ok: boolean;
+  attendance: AttendanceReadiness;
+  no_salary_rate: ReadinessIssue[];
+  pending_overtime: ReadinessIssue[];
+}
+
+export interface PayrollLateStatus {
+  period: string;
+  free_limit_minutes: number | null;
+  used_minutes: number;
+  remaining_minutes: number | null;
+  fined_days_so_far: number;
+  fine_per_day: number | null;
+}
+
 export interface AuditLog {
   id: number;
   actor_id: number | null;

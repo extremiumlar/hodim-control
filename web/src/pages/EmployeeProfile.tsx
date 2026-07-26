@@ -16,6 +16,7 @@ import {
 import { type ColumnDef } from "@tanstack/react-table";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
+import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,9 +27,88 @@ import {
   useBonuses,
   useCreateManualDailyResult,
   useDailyResults,
+  usePayrollPeriods,
+  usePayslipDetail,
   useSetManualMobilografVideos,
   useUser,
 } from "@/lib/queries";
+
+const fmtMoney = (n: number) => `${Math.round(n).toLocaleString("uz-UZ").replace(/,/g, " ")} so'm`;
+
+// Xodimning oylik payslip tarixi — davrlar ro'yxatidan bosib ochiladi (Bonus
+// tarixi bilan bir xil "kengaytiriladigan qator" naqshi). Alohida "bitta
+// xodim uchun barcha davrlar" backend endpointi yo'q — shuning uchun har
+// davr faqat OCHILGANDA so'raladi (bir vaqtda hammasini so'rash o'rniga).
+function PayrollHistoryRow({ userId, period }: { userId: number; period: string }) {
+  const [open, setOpen] = useState(false);
+  const query = usePayslipDetail(period, userId, open);
+  const d = query.data;
+
+  return (
+    <div className="rounded border">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-sm hover:bg-slate-50"
+      >
+        <span className="flex items-center gap-2">
+          {period}
+          {d && <StatusBadge kind="payslip" status={d.status} />}
+        </span>
+        <span className="flex items-center gap-2 text-xs text-slate-400">
+          {d && <span className="font-medium text-slate-700">{fmtMoney(d.net)}</span>}
+          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-1 px-3 pb-3 text-xs text-slate-600">
+          {query.isLoading ? (
+            <Skeleton className="h-16 w-full" />
+          ) : !d ? (
+            <p className="text-slate-400">Bu oy uchun hali hisoblanmagan.</p>
+          ) : (
+            <>
+              {d.items.map((item, i) => (
+                <div key={i} className="flex justify-between border-b border-dashed py-1">
+                  <span className="text-slate-400">{item.label}</span>
+                  <span className={item.amount < 0 ? "text-rose-600" : ""}>
+                    {item.amount < 0 ? "−" : ""}
+                    {fmtMoney(Math.abs(item.amount))}
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PayrollHistorySection({ userId }: { userId: number }) {
+  const periodsQuery = usePayrollPeriods();
+  const periods = periodsQuery.data ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Oylik (ish haqi)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {periodsQuery.isLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : periods.length === 0 ? (
+          <p className="text-sm text-slate-500">Hali oylik hisoblanmagan.</p>
+        ) : (
+          <div className="space-y-2">
+            {periods.slice(0, 6).map((p) => (
+              <PayrollHistoryRow key={p.period} userId={userId} period={p.period} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 const SOURCE_LABELS: Record<string, string> = { crm: "CRM", manual: "Qo'lda" };
 
@@ -338,6 +418,8 @@ export default function EmployeeProfile() {
               )}
             </CardContent>
           </Card>
+
+          <PayrollHistorySection userId={userId} />
         </div>
       </div>
     </div>

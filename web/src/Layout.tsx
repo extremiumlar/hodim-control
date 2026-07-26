@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BarChart3,
+  Banknote,
   Briefcase,
   CalendarCheck,
   CalendarX,
@@ -15,7 +16,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ScrollText,
+  Settings,
   Target,
+  TimerReset,
   TrendingUp,
   UserCheck,
   Users,
@@ -51,6 +54,7 @@ interface NavItem {
   icon: LucideIcon;
   end?: boolean;
   onlyPositionsManager?: boolean; // faqat boss/dasturchi
+  onlyPayrollManager?: boolean; // faqat hr/boss/dasturchi (ROP'da yo'q)
 }
 
 interface NavGroup {
@@ -81,6 +85,14 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/lead-stats", label: "Lidlar", icon: TrendingUp },
       { to: "/norms", label: "Normalar", icon: Target },
+    ],
+  },
+  {
+    title: "Ish haqi",
+    items: [
+      { to: "/payroll", label: "Ish haqi", icon: Banknote },
+      { to: "/overtime", label: "Qo'shimcha ish", icon: TimerReset, onlyPayrollManager: true },
+      { to: "/payroll/settings", label: "Sozlamalar", icon: Settings, onlyPayrollManager: true },
     ],
   },
   {
@@ -148,17 +160,23 @@ function SidebarLink({
 function SidebarNav({
   collapsed,
   canManagePositions,
+  canManagePayroll,
   onNavigate,
 }: {
   collapsed: boolean;
   canManagePositions: boolean;
+  canManagePayroll: boolean;
   onNavigate?: () => void;
 }) {
   return (
     <div className="flex h-full flex-col">
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
         {NAV_GROUPS.map((group) => {
-          const items = group.items.filter((i) => !i.onlyPositionsManager || canManagePositions);
+          const items = group.items.filter(
+            (i) =>
+              (!i.onlyPositionsManager || canManagePositions) &&
+              (!i.onlyPayrollManager || canManagePayroll)
+          );
           if (!items.length) return null;
           return (
             <div key={group.title}>
@@ -217,6 +235,7 @@ export default function Layout() {
   const location = useLocation();
   const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePositions = user?.role === "boss" || user?.role === "dasturchi";
+  const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
 
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -269,7 +288,11 @@ export default function Layout() {
               {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </Button>
           </div>
-          <SidebarNav collapsed={collapsed} canManagePositions={canManagePositions} />
+          <SidebarNav
+            collapsed={collapsed}
+            canManagePositions={canManagePositions}
+            canManagePayroll={canManagePayroll}
+          />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -290,6 +313,7 @@ export default function Layout() {
                   <SidebarNav
                     collapsed={false}
                     canManagePositions={canManagePositions}
+                    canManagePayroll={canManagePayroll}
                     onNavigate={() => setMobileOpen(false)}
                   />
                 </div>

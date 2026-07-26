@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
  * rang xaritasi. "pending" ikki kontekstda har xil: vazifada ko'k
  * (jarayonda), so'rovda esa amber (qaror kutilmoqda) — shuning uchun kind.
  */
-type Kind = "attendance" | "task" | "request";
+type Kind = "attendance" | "task" | "request" | "payslip" | "overtime";
 
 const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   attendance: {
@@ -21,6 +21,17 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
     cancelled: { text: "Bekor qilingan", cls: "bg-slate-200 text-slate-600" },
   },
   request: {
+    pending: { text: "Kutilmoqda", cls: "bg-amber-100 text-amber-700" },
+    approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
+    rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
+  },
+  payslip: {
+    draft: { text: "Qoralama", cls: "bg-slate-200 text-slate-600" },
+    calculated: { text: "Hisoblangan", cls: "bg-blue-100 text-blue-700" },
+    approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
+    paid: { text: "To'langan", cls: "bg-emerald-100 text-emerald-700" },
+  },
+  overtime: {
     pending: { text: "Kutilmoqda", cls: "bg-amber-100 text-amber-700" },
     approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
     rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
