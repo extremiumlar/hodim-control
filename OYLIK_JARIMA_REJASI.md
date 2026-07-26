@@ -374,12 +374,21 @@ backend testlari orqali tekshirildi.
 o'zgarish auditda ko'rinadi; check-out'siz kun avtomatik yopiladi; oylik
 hisobdan oldin "bo'sh joylar" ro'yxati ko'rinadi.
 
-### Bosqich 1 — ma'lumot modeli
-**Fayllar:** `db/models.py`, `db/alembic/versions/<yangi>_payroll.py`
-**Ish:** 2-bo'limdagi 8 ta jadval + indekslar + global `FinePolicy` seed
-(hammasi 0/o'chiq — mavjud tizim xatti-harakati o'zgarmaydi).
-**DoD:** `alembic upgrade head` toza bazada ham, mavjud `app.db` da ham o'tadi;
-`downgrade` ishlaydi.
+### Bosqich 1 — ma'lumot modeli ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `db/models.py` (10 ta yangi enum + 8 ta jadval), `db/alembic/versions/88b50e2fbcb1_payroll_tables.py`
+**Ish:** 2-bo'limdagi 8 ta jadval + indekslar. **Global `FinePolicy` seed
+QILINMADI** (rejadagi dastlabki fikrdan farqli, ongli qaror): cap va
+limit maydonlari MAJBURIY (9-bo'lim), bo'sh/taxminiy qiymatlar bilan qator
+yaratish HRni "sozlangan" deb chalg'itardi. Buning o'rniga Bosqich 2dagi
+`resolve_policy` qoidasi: **hech qanday `FinePolicy` topilmasa — jarima
+UMUMAN QO'LLANMAYDI** (hisoblanadi, lekin 0). HR web orqali birinchi
+`global` qoidani o'zi yaratmaguncha tizim "hammasi o'chiq" holatda qoladi —
+xuddi talab qilingandek.
+**DoD:** `alembic upgrade head` mavjud jonli `app.db`da sinaldi (yangidan
+oldin zaxira olindi: `app.db.bak_2026-07-27_bosqich1_migration`); `downgrade
+-1` barcha 8 jadvalni toza olib tashladi, qayta `upgrade head` tikladi;
+real xizmatlarga qarshi `test.py` — **100 OK / 101** (o'sha bitta oldindan
+mavjud FAIL, mantiqqa aloqasi yo'q).
 
 ### Bosqich 2 — hisoblash yadrosi (kodning yuragi)
 **Fayllar:** `api/services/payroll.py`, `test.py`

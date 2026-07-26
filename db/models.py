@@ -69,6 +69,81 @@ class AttendanceStatus(str, enum.Enum):
     weekend = "weekend"  # dam olish kuni (ish jadvali bo'yicha ishlanmaydi)
 
 
+class PayBasis(str, enum.Enum):
+    monthly = "monthly"  # qat'iy oylik
+    daily = "daily"  # kunbay
+    hourly = "hourly"  # soatbay
+
+
+class OvertimeMode(str, enum.Enum):
+    derived = "derived"  # xodimning o'z oyligidan (soatlik stavka = oylik / norma soat)
+    fixed_rate = "fixed_rate"  # HR o'zi so'm/soat belgilaydi
+
+
+class NormHoursSource(str, enum.Enum):
+    schedule = "schedule"  # ish jadvalidan avtomatik (QAROR — default)
+    fixed = "fixed"  # HR qat'iy son kiritadi
+
+
+class FinePolicyScope(str, enum.Enum):
+    global_ = "global"
+    position = "position"
+    user = "user"
+
+
+class FineMode(str, enum.Enum):
+    per_day = "per_day"  # limitdan keyingi HAR kechikkan kunga qat'iy summa (QAROR — default)
+    per_minute = "per_minute"  # ⭐ kelajakda
+    tiered = "tiered"  # ⭐ kelajakda
+    percent_of_daily = "percent_of_daily"  # ⭐ kelajakda
+
+
+class AbsentMode(str, enum.Enum):
+    none = "none"
+    fixed = "fixed"  # HR kiritgan qat'iy summa (QAROR — default)
+    deduct_daily = "deduct_daily"  # ⭐ kelajakda: kunlik ish haqi ulushi
+
+
+class FineAppliesTo(str, enum.Enum):
+    bonus_first = "bonus_first"  # avval bonusdan, qolgani oylikdan
+    net_salary = "net_salary"  # to'g'ridan-to'g'ri oylikdan (QAROR — default, 8.4-band)
+
+
+class OvertimeEntryStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class PayrollPeriodStatus(str, enum.Enum):
+    draft = "draft"
+    calculated = "calculated"
+    approved = "approved"
+    paid = "paid"
+
+
+class PayslipStatus(str, enum.Enum):
+    draft = "draft"
+    calculated = "calculated"
+    approved = "approved"
+    paid = "paid"
+
+
+class PayslipItemKind(str, enum.Enum):
+    base = "base"
+    overtime = "overtime"
+    bonus = "bonus"
+    fine_late = "fine_late"
+    fine_absent = "fine_absent"
+    adjustment_plus = "adjustment_plus"
+    adjustment_minus = "adjustment_minus"
+
+
+class PayrollAdjustmentKind(str, enum.Enum):
+    plus = "plus"
+    minus = "minus"
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -931,4 +1006,222 @@ class OperatorBusyPeriod(Base):
     end_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SalaryRate(Base):
+    """Xodimning oylik stavkasi — TARIXIY (`Norm` bilan bir xil naqsh:
+    `effective_from`, hech qachon UPDATE qilinmaydi, faqat yangi qator
+    qo'shiladi). Amaldagi stavka — `effective_from <= sana` bo'yicha eng
+    so'nggisi. Shu tufayli oylik oshirilganda o'tgan oylar payslip'i
+    buzilmaydi (ular allaqachon o'sha paytdagi stavka bilan hisoblangan)."""
+
+    __tablename__ = "salary_rates"
+    __table_args__ = (UniqueConstraint("user_id", "effective_from", name="uq_salary_rates_user_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    pay_basis: Mapped[str] = mapped_column(String(20), default=PayBasis.monthly.value)
+    effective_from: Mapped[date] = mapped_column(Date, index=True)
+    changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OvertimeProfile(Base):
+    """Kimga qo'shimcha ish (overtime) yoqilgani va qanday hisoblanishi — faqat
+    HR belgilagan xodimlarga (`enabled`). `multiplier`da tizim darajasidagi
+    default YO'Q (2026-07-27 QAROR, 9-bo'lim savol 6) — `derived` rejimda HR
+    har xodim/lavozim uchun MAJBURIY o'zi kiritadi."""
+
+    __tablename__ = "overtime_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    mode: Mapped[str] = mapped_column(String(20), default=OvertimeMode.derived.value)
+    fixed_rate_per_hour: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    multiplier: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)
+    norm_hours_source: Mapped[str] = mapped_column(String(20), default=NormHoursSource.schedule.value)
+    fixed_norm_hours_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    daily_cap_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    monthly_cap_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FinePolicy(Base):
+    """Kechikish/kelmagan kun jarima qoidasi — 3 DARAJALI (global → lavozim →
+    xodim). Amaldagisi: xodim > lavozim > global (`api/services/payroll.py`
+    `resolve_policy`). `scope_id` polimorfik — `scope='position'` bo'lsa
+    `positions.id`, `scope='user'` bo'lsa `users.id`ga ishora qiladi
+    (shuning uchun FK YO'Q, oddiy Integer); `scope='global'`da NULL.
+
+    2026-07-27 QARORLARI (9-bo'lim):
+    - Limit FAQAT daqiqada (`free_late_minutes_per_month`) — kun bo'yicha
+      limit (`free_late_days_per_month`) kod darajasida qoldirilgan, lekin
+      hozircha ishlatilmaydi.
+    - Limit tugagach — HAR bir keyingi kechikkan KUNGA `fine_per_day`
+      (necha daqiqa kechikishidan qat'i nazar).
+    - `fine_applies_to='net_salary'` — to'g'ridan-to'g'ri oylikdan (huquqiy
+      eslatma: O'zbekiston mehnat qonunchiligida ish haqidan ushlab qolish
+      cheklangan bo'lishi mumkin, HR/yurist tekshiruvi tavsiya etiladi).
+    - `monthly_cap_percent`/`monthly_cap_amount` — MAJBURIY (ikkalasidan
+      birortasi), qiymati tizimda qattiq kodlanmagan, HR web saytdan kiritadi.
+    - `absent_mode='fixed'` — kelmagan kun uchun kunlik ulush emas, alohida
+      qat'iy summa (`absent_fine`)."""
+
+    __tablename__ = "fine_policies"
+    __table_args__ = (UniqueConstraint("scope", "scope_id", name="uq_fine_policies_scope"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20))
+    scope_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    grace_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    free_late_days_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ⭐ kelajakda
+    free_late_minutes_per_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fine_mode: Mapped[str] = mapped_column(String(20), default=FineMode.per_day.value)
+    fine_per_day: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    fine_per_minute: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)  # ⭐ kelajakda
+    tiers: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # ⭐ kelajakda
+    percent_of_daily: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)  # ⭐ kelajakda
+    absent_mode: Mapped[str] = mapped_column(String(20), default=AbsentMode.fixed.value)
+    absent_fine: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    early_leave_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    early_leave_per_minute: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    monthly_cap_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    monthly_cap_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    fine_applies_to: Mapped[str] = mapped_column(String(20), default=FineAppliesTo.net_salary.value)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OvertimeEntry(Base):
+    """Bir kunlik qo'shimcha ish yozuvi. `source='auto_attendance'` — check-out
+    ish oynasi tugaganidan keyin bo'lganda avtomatik nomzod sifatida yaratiladi
+    (`status='pending'`); `source='manual'` — HR/rahbar qo'lda kiritgan. HAR
+    IKKALASI HAM tasdiqdan (`approved`) o'tmaguncha payslip hisobiga kirmaydi —
+    tasdiqsiz pul hisoblanmaydi."""
+
+    __tablename__ = "overtime_entries"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_overtime_entries_user_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    status: Mapped[str] = mapped_column(String(20), default=OvertimeEntryStatus.pending.value, index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PayrollPeriod(Base):
+    """Bir oylik payroll'ning umumiy holati (qulf). `locked=True` (odatda
+    `status='approved'` yoki `'paid'` bilan birga) bo'lsa — shu davr uchun
+    qayta hisoblash rad etiladi (409), faqat Dasturchi `reopen` orqali ochadi
+    (Bosqich 3.5)."""
+
+    __tablename__ = "payroll_periods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), unique=True, index=True)  # "YYYY-MM"
+    status: Mapped[str] = mapped_column(String(20), default=PayrollPeriodStatus.draft.value)
+    calculated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class Payslip(Base):
+    """Bir xodim, bir oy — to'liq hisob-kitob natijasi. `breakdown` (JSON) hisob
+    paytidagi qoida/stavka SNAPSHOT'ini saqlaydi — keyin `FinePolicy`/
+    `SalaryRate` o'zgarsa ham bu yozuv o'zgarmaydi (moliyaviy hujjat
+    barqarorligi). Tafsilot qatorlari — `PayslipItem` (1:N)."""
+
+    __tablename__ = "payslips"
+    __table_args__ = (UniqueConstraint("user_id", "period", name="uq_payslips_user_period"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)  # "YYYY-MM"
+
+    base_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    pay_basis: Mapped[str] = mapped_column(String(20), default=PayBasis.monthly.value)
+    rate_snapshot: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    scheduled_days: Mapped[int] = mapped_column(Integer, default=0)
+    worked_days: Mapped[int] = mapped_column(Integer, default=0)
+    absent_days: Mapped[int] = mapped_column(Integer, default=0)
+    excused_days: Mapped[int] = mapped_column(Integer, default=0)
+    scheduled_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    worked_minutes: Mapped[int] = mapped_column(Integer, default=0)
+
+    late_days: Mapped[int] = mapped_column(Integer, default=0)
+    late_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    fined_late_days: Mapped[int] = mapped_column(Integer, default=0)
+    fined_late_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    fine_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    absent_deduction: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+
+    overtime_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    overtime_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    overtime_rate_snapshot: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    bonus_amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    adjustments_plus: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    adjustments_minus: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+
+    gross: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    net: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+
+    status: Mapped[str] = mapped_column(String(20), default=PayslipStatus.draft.value, index=True)
+    breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    calculated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PayslipItem(Base):
+    """Payslip'ning bitta qatori (masalan "Kechikish jarimasi — 3 kun × 15 000
+    so'm"). Har bir summaning kelib chiqishi shu jadvaldan ko'rinadi — "nega bu
+    summa" degan savolga bir bosishda javob (nizolarning katta qismi shu
+    yerda tugaydi)."""
+
+    __tablename__ = "payslip_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payslip_id: Mapped[int] = mapped_column(ForeignKey("payslips.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    label: Mapped[str] = mapped_column(String(255))
+    quantity: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    rate: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class PayrollAdjustment(Base):
+    """HR qo'lda kiritgan qo'shimcha (mukofot) yoki ushlanma (avans, zarar) —
+    payroll hisobida `plus`/`minus` sifatida qo'shiladi. Avans tizimi ham shu
+    orqali (2026-07-27 QAROR, 9-bo'lim savol 9): oy o'rtasida HR avansni
+    `kind='minus'` bilan kiritadi, oy oxirida payslip'dan avtomatik ayiriladi."""
+
+    __tablename__ = "payroll_adjustments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)  # "YYYY-MM"
+    kind: Mapped[str] = mapped_column(String(10))
+    amount: Mapped[float] = mapped_column(Numeric(14, 2))
+    reason: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
