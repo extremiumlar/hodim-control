@@ -184,6 +184,62 @@ test.py                             regressiya testi (ildizda)
 
 ---
 
+## 1.5. JONLI ISBOT NATIJALARI (2026-07-26)
+
+> Quyidagilar **taxmin emas** — jonli baza va ishlab turgan API'da o'lchangan.
+> Tuzatishdan keyin xuddi shu tekshiruvlarni qayta ishga tushirib solishtiring.
+> Diagnostika skriptlari: `scripts/diag_attendance.py`, `scripts/diag_face_quality.py`.
+
+### Face ID — odamlarni ajratmaydi (0-bosqichdan ham muhimroq)
+```
+$ .venv/Scripts/python.exe scripts/diag_face_quality.py
+
+Boss       <-> Nurullo IT : masofa=0.219  sim=0.781   TIZIM 'BIR XIL ODAM' DEYDI
+Boss       <-> Firuzabonu : masofa=0.312  sim=0.688   TIZIM 'BIR XIL ODAM' DEYDI
+Boss       <-> Kamola     : masofa=0.427  sim=0.573   TIZIM 'BIR XIL ODAM' DEYDI
+Nurullo IT <-> Firuzabonu : masofa=0.268  sim=0.732   TIZIM 'BIR XIL ODAM' DEYDI
+Nurullo IT <-> Kamola     : masofa=0.425  sim=0.575   TIZIM 'BIR XIL ODAM' DEYDI
+Firuzabonu <-> Kamola     : masofa=0.454  sim=0.546   TIZIM 'BIR XIL ODAM' DEYDI
+
+6/6 juftlik chegaradan o'tadi.  O'rtacha masofa 0.351  (normal: 0.6-1.2)
+Markazdan masofalar: 0.161 / 0.181 / 0.212 / 0.305  (juda kichik — siqilgan)
+```
+Jonli API testi (T- xodimga Boss deskriptori yozilib, Nurullo deskriptori yuborildi):
+```
+1) O'z yuzi (Boss) bilan:        200   (kutilgan)
+2) BOSHQA odam (Nurullo) bilan:  200   *** QABUL QILDI ***
+3) Tasodifiy vektor bilan:       400   (to'g'ri rad etildi)
+```
+**Xulosa:** hozirgi 4 ta deskriptor yaroqsiz — tuzatishdan keyin **hammasini bekor
+qilib qayta ro'yxatdan o'tkazish** kerak.
+
+### Bosqich 1-2 buglari — o'lchangan holat
+| Bug | Jonli natija |
+|---|---|
+| **1.1** absent yozilmaydi | Bazada 5 yozuv, `status='absent'` — **0 ta**. `GET /attendance?status_filter=absent` → **bo'sh massiv** |
+| **1.2** kelmagan xodim ko'rinmaydi | `T-HechKelmagan` yaratildi → `employee-summary` da 3 kishi qaytdi, **u yo'q** |
+| **2.1** kechagi kun yopilmaydi | Kechagi ochiq yozuvga check-out → **400** «Avval Keldim qilishingiz kerak», yozuv `check_out=None, ishlangan=0` bo'lib qoldi |
+| **2.3** parallel check-in | Ikki bir vaqtli so'rov → **`[200, 500]`** (ikkinchisi ushlanmagan `IntegrityError`) |
+| **3.4** dashboard qamrovi | `jami=10` (barcha rol) va `bugun ishlashi kerak=2` (Boshliqsiz) — bir ekranda ikki xil qamrov |
+
+### Bazadagi haqiqiy anomaliyalar (tuzatishdan keyin ular bilan nima qilish kerak?)
+```
+$ .venv/Scripts/python.exe scripts/diag_attendance.py
+
+2026-05-27 | Nurullo IT (dasturchi) | kel=09:10 ket=13:50 | late=5   erta=249  ishl=280
+2026-05-29 | Nurullo IT (dasturchi) | kel=13:49 ket=—     | late=284 erta=0    ishl=0    ← 2 OY OCHIQ
+2026-05-29 | Kamola     (rop)       | kel=13:56 ket=—     | late=291 erta=0    ishl=0    ← 2 OY OCHIQ
+2026-06-09 | Boss       (boss)      | kel=23:17 ket=23:19 | late=852 erta=0    ishl=2    ← 14 SOAT KECHIKISH
+2026-07-15 | Firuzabonu (employee)  | kel=09:50 ket=09:51 | late=45  erta=489  ishl=0    ← 1 DAQIQA ISHLAB 8 SOAT "ERTA KETDI"
+
+Ish jadvali: 7 kuzatiladigan xodimdan FAQAT 1 tasida sozlangan (qolgani defaultda)
+Ofislar: 3 ta faol — "Uyim", "Sotuv offisi", "Xolamning uyi" (biri uy manzili?)
+```
+⚠️ **Diqqat:** Boshliqning davomat yozuvi bor (`/me/check-in` da rol tekshiruvi yo'q),
+lekin u statistika qamrovidan chiqarilgan — 3.4-bandga qarang.
+
+---
+
 ## 2. TUZATISH BOSQICHLARI
 
 > Har bosqich = alohida commit. Bir commitga hammasini tiqmang.
@@ -284,6 +340,8 @@ def _apply_status(att: Attendance, is_working: bool) -> None:
 `perform_check_out` (check_in majburiy) ichida chaqiriladi. Butun loyihada
 `AttendanceStatus.absent` **faqat shu bitta qatorda** uchraydi (grep bilan tasdiqlangan).
 
+**Jonli isbot:** 1.5-bo'limga qarang — bazada `absent` **0 ta**, API filtri bo'sh.
+
 **Reproduktsiya:**
 ```bash
 # Bugun hech kim check-in qilmagan bo'lsin, keyin:
@@ -314,8 +372,9 @@ Idempotent bo'lsin (ikki marta ishlasa dublikat yaratmasin — `uq_attendance_us
 natijaga umuman tushmaydi. Ya'ni **bir oy ishga kelmagan xodim jadvalda yo'q** —
 rahbar uni "muammosiz" deb o'ylaydi. Eng yomon xodim eng toza ko'rinadi.
 
-**Reproduktsiya:** hech qachon check-in qilmagan xodim yarating → `/attendance/employee-summary`
-da u yo'q.
+**Jonli isbot:** `T-HechKelmagan` yaratildi → `employee-summary` 3 kishi qaytardi, u **yo'q** (1.5-bo'lim).
+
+**Reproduktsiya:** hech qachon check-in qilmagan xodim yarating → `/attendance/employee-summary` da u yo'q.
 
 **Tuzatish yo'nalishi:** `outerjoin` ga o'tkazing. ⚠️ **Tuzoq:** LEFT JOIN'dan keyin
 `WHERE Attendance.date >= since` yozsangiz, u NULL qatorlarni kesib yana INNER'ga
@@ -385,6 +444,9 @@ if att is None or att.check_in_time is None:
     raise CheckError("Avval «Keldim» qilishingiz kerak.")
 ```
 
+**Jonli isbot:** kechagi ochiq yozuvga check-out → **400**, yozuv `check_out=None, ishlangan=0` (1.5-bo'lim).
+Bazada **2 ta kun 2026-05-29 dan beri ochiq** turibdi.
+
 **Reproduktsiya:** xodim 20:00 da check-in qildi, 00:30 da "Ketdim" bosdi →
 "Avval «Keldim» qilishingiz kerak" xatosi. Kechagi yozuv **abadiy**
 `check_out_time=NULL`, `worked_minutes=0` bo'lib qoladi.
@@ -411,6 +473,8 @@ faqat yozuvni **o'chira** oladi.
 ### 2.3 — Check-in poygasi → 500 xato
 
 **Joy:** `api/services/attendance.py` — SELECT-then-INSERT, qulfsiz.
+
+**Jonli isbot:** ikki bir vaqtli so'rov → **`[200, 500]`** (1.5-bo'lim).
 
 **Reproduktsiya:** ikkita parallel so'rov yuboring → ikkalasi ham `att=None` ko'radi,
 ikkalasi INSERT qiladi → `uq_attendance_user_date` ikkinchisini rad etadi →
