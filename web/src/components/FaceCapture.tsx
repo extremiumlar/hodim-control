@@ -42,6 +42,18 @@ export default function FaceCapture({
   const [lastResult, setLastResult] = useState<any>(null);
   const [live, setLive] = useState<LiveStatus>({ detected: false, size: 0, score: 0 });
 
+  // 2.4-band: capture() async davom etayotganda modal bekor qilinsa (yoki komponent
+  // unmount bo'lsa), natija E'TIBORGA OLINMASLIGI kerak. Oldin "showFace" guardi
+  // chaqiruvchi (CheckIn.tsx) tarafida edi, lekin u ESKI closure'ni ko'radi (render
+  // paytidagi qiymat) — bekor qilingandan keyin ham "haqiqiy" bo'lib qolaverardi va
+  // so'rov baribir ketardi. Bu ref esa unmount'da DARHOL yangilanadi.
+  const cancelledRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -120,6 +132,7 @@ export default function FaceCapture({
     try {
       if (mode === "register") {
         const r = await captureForRegister(videoRef.current, 8);
+        if (cancelledRef.current) return; // bekor qilindi — natija e'tiborga olinmaydi
         if ("error" in r) {
           setError(r.error);
           setCapturing(false);
@@ -129,6 +142,7 @@ export default function FaceCapture({
         onResult(r);
       } else {
         const r = await captureLiveFace(videoRef.current, 5);
+        if (cancelledRef.current) return; // bekor qilindi — natija e'tiborga olinmaydi
         if (!r) {
           setError("Yuz aniqlanmadi. Iltimos kameraga to'g'ri tuting.");
           setCapturing(false);
@@ -146,9 +160,10 @@ export default function FaceCapture({
         onResult(r);
       }
     } catch (e: any) {
+      if (cancelledRef.current) return;
       setError("Xato: " + (e.message || e));
     } finally {
-      setCapturing(false);
+      if (!cancelledRef.current) setCapturing(false);
     }
   }
 

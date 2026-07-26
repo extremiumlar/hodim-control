@@ -690,6 +690,195 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("0.7 GPS aniqligi tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- 2.1: yarim tundan keyin kechagi ochiq yozuvni yopish --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444781,'T-Midnight','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            mid_uid = cur.lastrowid
+            wd = date.today().weekday()
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (mid_uid, wd))
+            # "Kecha" check-in qilgan, hali check-out qilmagan — 2 soat oldin (UTC).
+            yesterday = date.today() - timedelta(days=1)
+            checkin_utc = datetime.utcnow() - timedelta(hours=2)
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, ?, ?, 0, 0, 0, 'present', 0, datetime('now'), datetime('now'))",
+                (mid_uid, yesterday.isoformat(), checkin_utc.isoformat(sep=" ")))
+            conn.commit()
+            mid_tok = token_for(mid_uid, "employee")
+
+            r = client.post(f"{API_BASE}/attendance/me/check-out", headers=auth(mid_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9,
+            })
+            check("yarim tundan keyingi check-out -> 200", r.status_code == 200, r.text[:200])
+            row = conn.execute(
+                "select date, check_out_time, worked_minutes from attendance where user_id=?",
+                (mid_uid,)).fetchone()
+            check("yozuv KECHAGI sanada qoldi (bugunga ko'chmadi)",
+                  row is not None and row[0] == yesterday.isoformat(), f"{row}")
+            check("worked_minutes ~2 soat (real vaqt farqi)",
+                  row is not None and 110 <= row[2] <= 130, f"worked={row[2] if row else None}")
+            today_row = conn.execute(
+                "select count(*) from attendance where user_id=? and date=?",
+                (mid_uid, date.today().isoformat())).fetchone()[0]
+            check("bugunga yangi yozuv YARATILMADI", today_row == 0)
+
+            cur.execute("delete from attendance where user_id=?", (mid_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (mid_uid,))
+            cur.execute("delete from users where id=?", (mid_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("2.1 yarim tun tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 2.1b: 6 soatdan uzoq ochiq yozuv YOPILMAYDI (eski oyna) --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444782,'T-OldOpen','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            old_uid = cur.lastrowid
+            yesterday = date.today() - timedelta(days=1)
+            old_checkin_utc = datetime.utcnow() - timedelta(hours=10)  # 6 soatlik oynadan tashqari
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, ?, ?, 0, 0, 0, 'present', 0, datetime('now'), datetime('now'))",
+                (old_uid, yesterday.isoformat(), old_checkin_utc.isoformat(sep=" ")))
+            conn.commit()
+            old_tok = token_for(old_uid, "employee")
+
+            r = client.post(f"{API_BASE}/attendance/me/check-out", headers=auth(old_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9,
+            })
+            check("10 soat oldingi ochiq yozuv -> 400 (oynadan tashqari)", r.status_code == 400, r.text[:150])
+            row = conn.execute(
+                "select check_out_time from attendance where user_id=?", (old_uid,)).fetchone()
+            check("eski yozuv hamon ochiq", row is not None and row[0] is None)
+
+            cur.execute("delete from attendance where user_id=?", (old_uid,))
+            cur.execute("delete from users where id=?", (old_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("2.1b eski oyna tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 2.2: kelib-u \"Ketdim\" bosmagan o'tgan kun avtomatik yopiladi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444783,'T-AutoClose','employee',1,1,datetime('now'))")
+            ac_uid = cur.lastrowid
+            three_days_ago = date.today() - timedelta(days=3)
+            wd = three_days_ago.weekday()
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (ac_uid, wd))
+            checkin_utc = datetime(three_days_ago.year, three_days_ago.month, three_days_ago.day, 4, 0, 0)  # 09:00 Toshkent
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, ?, ?, 0, 0, 0, 'present', 0, datetime('now'), datetime('now'))",
+                (ac_uid, three_days_ago.isoformat(), checkin_utc.isoformat(sep=" ")))
+            conn.commit()
+
+            import asyncio
+            from db.base import async_session
+            from api.services.attendance_digest import auto_close_unclosed_checkouts
+
+            async def _run_close():
+                async with async_session() as s:
+                    return await auto_close_unclosed_checkouts(s, date.today())
+
+            closed = asyncio.run(_run_close())
+            check("auto_close_unclosed_checkouts >=1 yopdi", closed >= 1, f"closed={closed}")
+            row = conn.execute(
+                "select check_out_time, worked_minutes, note from attendance where user_id=?",
+                (ac_uid,)).fetchone()
+            check("3 kun oldingi ochiq yozuv yopildi", row is not None and row[0] is not None, f"{row}")
+            check("worked_minutes ish oynasidan hisoblangan (~480 daq)",
+                  row is not None and 400 <= row[1] <= 480, f"worked={row[1] if row else None}")
+            check("izoh (note) qo'yildi", row is not None and row[2] and "Avtomatik" in row[2], f"note={row[2] if row else None}")
+
+            # Bugungi (hali davom etayotgan) ochiq yozuv TEGILMASLIGI kerak.
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444784,'T-StillOpen','employee',1,1,datetime('now'))")
+            open_uid = cur.lastrowid
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, ?, datetime('now'), 0, 0, 0, 'present', 0, datetime('now'), datetime('now'))",
+                (open_uid, date.today().isoformat()))
+            conn.commit()
+            closed2 = asyncio.run(_run_close())
+            check("ikkinchi chaqiruvda yangi yopish yo'q (bugungi hisobga kirmaydi)", closed2 == 0, f"closed2={closed2}")
+            row2 = conn.execute(
+                "select check_out_time from attendance where user_id=?", (open_uid,)).fetchone()
+            check("bugungi ochiq yozuvga TEGILMADI", row2 is not None and row2[0] is None, f"{row2}")
+
+            cur.execute("delete from attendance where user_id in (?,?)", (ac_uid, open_uid))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (ac_uid,))
+            cur.execute("delete from users where id in (?,?)", (ac_uid, open_uid))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("2.2 avtomatik yopish tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 2.3: check-in poygasi -> 500 EMAS, tushunarli 400 --")
+        try:
+            import concurrent.futures
+
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444785,'T-RaceTest','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            race_uid = cur.lastrowid
+            conn.commit()
+            race_tok = token_for(race_uid, "employee")
+
+            def _do_checkin():
+                with httpx.Client(timeout=20) as c2:
+                    return c2.post(f"{API_BASE}/attendance/me/check-in", headers=auth(race_tok), json={
+                        "latitude": OFFICE[0], "longitude": OFFICE[1],
+                        "face_descriptor": FACE, "liveness": 0.9,
+                    })
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                futs = [ex.submit(_do_checkin) for _ in range(2)]
+                results = [f.result().status_code for f in futs]
+            check("parallel check-in: hech biri 500 EMAS", 500 not in results, f"natijalar={results}")
+            check("parallel check-in: biri 200, ikkinchisi 400", sorted(results) == [200, 400], f"natijalar={results}")
+            n = conn.execute(
+                "select count(*) from attendance where user_id=? and date=?",
+                (race_uid, date.today().isoformat())).fetchone()[0]
+            check("bazada faqat 1 ta yozuv", n == 1, f"yozuvlar={n}")
+
+            cur.execute("delete from attendance where user_id=?", (race_uid,))
+            cur.execute("delete from users where id=?", (race_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("2.3 poyga tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def main() -> None:
     print("=" * 60)

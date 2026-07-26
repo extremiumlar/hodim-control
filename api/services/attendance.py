@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -219,9 +220,24 @@ async def perform_check_in(
         att.late_minutes = 0
 
     _apply_status(att, is_working)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 2.3-band: ikkita bir vaqtli check-in so'rovi ikkalasi ham `att is None`
+        # ko'rishi mumkin (SELECT-then-INSERT, qulfsiz) — ikkalasi ham INSERT qiladi,
+        # `uq_attendance_user_date` ikkinchisini rad etadi. Jonli isbot: parallel
+        # so'rov [200, 500] qaytargan. Endi tushunarli 400 xabar beriladi, 500 EMAS.
+        await db.rollback()
+        raise CheckError("Siz bugun allaqachon «Keldim» qilgansiz.")
     await db.refresh(att)
     return att
+
+
+# 2.1-band: yarim tundan keyin "Ketdim" bosilsa, kechagi ochiq yozuvni izlashda
+# qo'llaniladigan oyna — bundan uzoqroq (masalan bir necha kun oldingi) ochiq
+# yozuvlar avtomatik yopilmaydi, faqat "hozirgina yarim tundan o'tib qolgan"
+# holat qamrab olinadi.
+POST_MIDNIGHT_WINDOW_HOURS = 6
 
 
 async def perform_check_out(
@@ -235,54 +251,111 @@ async def perform_check_out(
 ) -> Attendance:
     """Xodimni «Ketdim» qiladi. GPS + yuz tasdiqlanadi. Erta ketish ish oynasi
     tugashidan, ishlangan vaqt check-in/out orasidan hisoblanadi."""
-    day = today_local()
-    is_working, start, end = await _effective_today(db, user, day)
+    today = today_local()
+    now_local = datetime.now(TASHKENT_TZ)
 
     att = await db.scalar(
-        select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
+        select(Attendance).where(Attendance.user_id == user.id, Attendance.date == today)
     )
+    crossed_midnight = False
     if att is None or att.check_in_time is None:
-        raise CheckError("Avval «Keldim» qilishingiz kerak.")
+        # 2.1-band: bugun ochiq yozuv yo'q — kechagi kundan qolgan ochiq yozuvni
+        # tekshiramiz (masalan 23:00 check-in, 00:30 check-out — kalendar kun
+        # almashgan, lekin bu HALI O'SHA ish smenasi). Jonli isbot: bunday holatda
+        # yozuv abadiy check_out_time=NULL bo'lib qolar edi.
+        yesterday = today - timedelta(days=1)
+        prev = await db.scalar(
+            select(Attendance).where(
+                Attendance.user_id == user.id,
+                Attendance.date == yesterday,
+                Attendance.check_in_time.isnot(None),
+                Attendance.check_out_time.is_(None),
+            )
+        )
+        if prev is not None:
+            checkin_local = prev.check_in_time.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+            hours_since = (now_local - checkin_local).total_seconds() / 3600
+            if 0 <= hours_since <= POST_MIDNIGHT_WINDOW_HOURS:
+                att = prev
+                crossed_midnight = True
+        if att is None or att.check_in_time is None:
+            raise CheckError("Avval «Keldim» qilishingiz kerak.")
     if att.check_out_time is not None:
         raise CheckError("Siz bugun allaqachon «Ketdim» qilgansiz.")
+
+    # Yozuvning O'Z sanasi bo'yicha ish oynasi — kechagi yozuv bo'lsa ham kechagi
+    # jadval ishlatiladi, bugungisi EMAS (masalan dam olish kunidan keyin ishga
+    # chiqqan kun bilan aralashmasin).
+    is_working, start, end = await _effective_today(db, user, att.date)
 
     _validate_face(user, descriptor, liveness)
     await _validate_location(db, lat, lng, accuracy)
 
-    now_local = datetime.now(TASHKENT_TZ)
-    att.check_out_time = datetime.utcnow()
-    att.check_out_lat = lat
-    att.check_out_lng = lng
+    check_out_time_utc = datetime.utcnow()
 
-    if is_working and end:
-        diff = _hm_to_min(end) - _minute_of_day(now_local)
-        early = max(0, diff)
-        # Yuqori chegara — 1.4-band bilan bir xil sabab: check-in darhol keyin
-        # check-out qilinsa (masalan sinov yoki xato bosish), "erta ketish" ish
-        # oynasidan oshib ketmasin.
-        if start:
-            window = work_minutes(_hm_to_min(start), _hm_to_min(end))
-            early = min(early, window)
-        att.early_leave_minutes = early
+    if crossed_midnight:
+        # Kun chegarasidan oshib ketgan — devor-soati (minute-of-day) arifmetikasi
+        # endi ma'nosiz (chiqish vaqti kirish vaqtidan "kichik" ko'rinadi). Shu
+        # sababli haqiqiy o'tgan vaqt (real datetime farqi) olinadi, ish
+        # oynasi/tushlik chegirmasi qo'llanilmaydi — bu holat allaqachon oddiy
+        # ish kuni chegarasidan tashqari.
+        early_leave_minutes = 0
+        elapsed = (check_out_time_utc - att.check_in_time).total_seconds() / 60
+        worked_minutes = max(0, round(elapsed))
     else:
-        att.early_leave_minutes = 0
+        if is_working and end:
+            diff = _hm_to_min(end) - _minute_of_day(now_local)
+            early = max(0, diff)
+            # Yuqori chegara — 1.4-band bilan bir xil sabab: check-in darhol keyin
+            # check-out qilinsa (masalan sinov yoki xato bosish), "erta ketish" ish
+            # oynasidan oshib ketmasin.
+            if start:
+                window = work_minutes(_hm_to_min(start), _hm_to_min(end))
+                early = min(early, window)
+            early_leave_minutes = early
+        else:
+            early_leave_minutes = 0
 
-    # Ishlangan vaqt — soatlik reja bilan BIR XIL ta'rif (timeutil.work_minutes):
-    # tushlik (13:00–14:00) chiqariladi, ish kunida faqat ish oynasi [start, end]
-    # bilan kesishgan qism sanaladi (erta kelib o'tirish yoki kech qolib ketish
-    # ishlangan soatni shishirmaydi). Dam olish kunida oyna yo'q — kelish-ketish
-    # oralig'ining o'zi (tushliksiz) olinadi. work_minutes teskari oraliqda 0
-    # qaytaradi, shuning uchun manfiy chiqmaydi.
-    check_in_local = att.check_in_time.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
-    in_min = _minute_of_day(check_in_local)
-    out_min = _minute_of_day(now_local)
-    if is_working and start and end:
-        worked = work_minutes(max(in_min, _hm_to_min(start)), min(out_min, _hm_to_min(end)))
-    else:
-        worked = work_minutes(in_min, out_min)
-    att.worked_minutes = max(0, worked)
+        # Ishlangan vaqt — soatlik reja bilan BIR XIL ta'rif (timeutil.work_minutes):
+        # tushlik (13:00–14:00) chiqariladi, ish kunida faqat ish oynasi [start, end]
+        # bilan kesishgan qism sanaladi (erta kelib o'tirish yoki kech qolib ketish
+        # ishlangan soatni shishirmaydi). Dam olish kunida oyna yo'q — kelish-ketish
+        # oralig'ining o'zi (tushliksiz) olinadi. work_minutes teskari oraliqda 0
+        # qaytaradi, shuning uchun manfiy chiqmaydi.
+        check_in_local = att.check_in_time.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+        in_min = _minute_of_day(check_in_local)
+        out_min = _minute_of_day(now_local)
+        if is_working and start and end:
+            worked = work_minutes(max(in_min, _hm_to_min(start)), min(out_min, _hm_to_min(end)))
+        else:
+            worked = work_minutes(in_min, out_min)
+        worked_minutes = max(0, worked)
 
-    _apply_status(att, is_working)
+    status = AttendanceStatus.weekend.value if not is_working else (
+        AttendanceStatus.late.value if att.late_minutes > 0 else AttendanceStatus.present.value
+    )
+
+    # 2.3-band bilan bir xil sabab: ikkita bir vaqtli check-out so'rovi ikkalasi
+    # ham `check_out_time is None` ko'rishi mumkin (yuqoridagi SELECT, qulfsiz).
+    # ORM mutate-then-commit o'rniga ATOMIK UPDATE ... WHERE check_out_time IS NULL
+    # ishlatiladi — faqat BITTASI muvaffaqiyatli bo'ladi, ikkinchisi aniq xabar oladi
+    # (avvalgisining ma'lumotini "so'nggi yozuvchi g'olib" tarzida ustidan yozmaydi).
+    result = await db.execute(
+        update(Attendance)
+        .where(Attendance.id == att.id, Attendance.check_out_time.is_(None))
+        .values(
+            check_out_time=check_out_time_utc,
+            check_out_lat=lat,
+            check_out_lng=lng,
+            early_leave_minutes=early_leave_minutes,
+            worked_minutes=worked_minutes,
+            is_weekend=not is_working,
+            status=status,
+        )
+    )
+    if result.rowcount == 0:
+        await db.rollback()
+        raise CheckError("Siz bugun allaqachon «Ketdim» qilgansiz.")
     await db.commit()
     await db.refresh(att)
     return att

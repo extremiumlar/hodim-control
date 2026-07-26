@@ -13,7 +13,7 @@ kunlar. Faqat `role=employee` — rahbarlar davomat ro'yxatida ko'rsatilmaydi
 Dam olish kuni (hech kim ishlamaydi) — digest yuborilmaydi (guruhda shovqin
 bo'lmasligi uchun)."""
 import html
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ from api.routers.hourly_plan import _effective_today
 from api.services.attendance import ATTENDANCE_TRACKED_ROLES
 from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
-from api.timeutil import TASHKENT_TZ, today_local
+from api.timeutil import TASHKENT_TZ, today_local, work_minutes
 from db.models import (
     Attendance,
     AttendanceDigestConfig,
@@ -296,6 +296,63 @@ async def write_absent_records(db: AsyncSession, day=None) -> int:
     return written
 
 
+async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
+    """2.2-band (Savol C javobi: FAQAT avtomatik) — kelib-u «Ketdim» bosmagan
+    xodimlarning O'TGAN kunlari (bugundan oldingi) avtomatik yopiladi. Bosmasa
+    `worked_minutes` abadiy 0 bo'lib qolar, `month_worked_hours` doimo kam
+    ko'rsatardi va Dasturchidan boshqa hech kim (u ham faqat O'CHIRISH orqali)
+    tuzata olmasdi.
+
+    Faqat `date < today` — bugungi ochiq yozuvga tegilmaydi (xodim hali ishda
+    bo'lishi yoki 2.1-band bo'yicha yarim tundan keyin o'zi yopishi mumkin; bu
+    funksiya kuni tugagach — kechki digest vaqtida — chaqiriladi, o'sha payt
+    2.1'ning 6 soatlik oynasi allaqachon yopilgan bo'ladi, ikkalasi to'qnashmaydi).
+    Yopilish vaqti — o'sha kunning ish jadvali TUGASH vaqti; topilmasa (jadval
+    yo'q) standart 9 soatlik ish kuni taxmin qilinadi."""
+    today = today or today_local()
+    rows = list(
+        await db.scalars(
+            select(Attendance).where(
+                Attendance.date < today,
+                Attendance.check_in_time.isnot(None),
+                Attendance.check_out_time.is_(None),
+            )
+        )
+    )
+    closed = 0
+    for att in rows:
+        user = await db.get(User, att.user_id)
+        if user is None:
+            continue
+        is_working, start, end = await _effective_today(db, user, att.date)
+        if end:
+            h, m = map(int, end.split(":"))
+            local_end = datetime(att.date.year, att.date.month, att.date.day, h, m, tzinfo=TASHKENT_TZ)
+            check_out_utc = local_end.astimezone(timezone.utc).replace(tzinfo=None)
+        else:
+            check_out_utc = att.check_in_time + timedelta(hours=9)
+        # Chiqish "kelishdan oldin" chiqib qolmasin (masalan juda kech check-in
+        # qilib, o'sha kunning ish oynasi allaqachon tugagan bo'lsa).
+        if check_out_utc <= att.check_in_time:
+            check_out_utc = att.check_in_time + timedelta(hours=1)
+
+        att.check_out_time = check_out_utc
+        if is_working and start and end:
+            in_local = att.check_in_time.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+            in_min = in_local.hour * 60 + in_local.minute
+            worked = work_minutes(max(in_min, _hm_to_min(start)), _hm_to_min(end))
+        else:
+            worked = 0
+        att.worked_minutes = max(0, worked)
+        att.early_leave_minutes = 0
+        note = "⚠️ Avtomatik yopildi — xodim «Ketdim» bosmagan."
+        att.note = f"{att.note} {note}" if att.note else note
+        closed += 1
+    if closed:
+        await db.commit()
+    return closed
+
+
 async def get_digest_config(db: AsyncSession) -> AttendanceDigestConfig:
     """Sozlama qatorini (id=1) oladi, bo'lmasa defaultlar bilan yaratadi."""
     cfg = await db.get(AttendanceDigestConfig, 1)
@@ -323,10 +380,16 @@ async def digest_tick(db: AsyncSession) -> dict:
     # qo'riqchisi bilan boshqariladi.
     if cfg.absent_marked_date != today and (now.hour, now.minute) >= (cfg.evening_hour, cfg.evening_minute):
         written = await write_absent_records(db, today)
+        # 2.2-band (Savol C: FAQAT avtomatik) — kelib-u "Ketdim" bosmagan o'tgan
+        # kunlar shu bir xil "kun tugadi" nuqtasida yopiladi. absent_marked_date
+        # bilan bir xil qo'riqchi ishlatiladi — ikkalasi ham "kunlik yakun" ishi.
+        closed = await auto_close_unclosed_checkouts(db, today)
         cfg.absent_marked_date = today
         await db.commit()
         if written:
             fired.append({"kind": "absent_marking", "written": written})
+        if closed:
+            fired.append({"kind": "auto_checkout_close", "closed": closed})
 
     for kind, enabled, hour, minute, last in (
         ("morning", cfg.morning_enabled, cfg.morning_hour, cfg.morning_minute, cfg.morning_last_posted),
