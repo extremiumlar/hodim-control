@@ -15,6 +15,7 @@ import type {
   Office,
   OperatorSummary,
   Position,
+  RegisterFaceResult,
   StatsOverview,
   Task,
   TeamNormRow,
@@ -28,12 +29,12 @@ export const api = {
   me: () => apiFetch<User>("/users/me"),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
-  myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number }) =>
+  myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>
     apiFetch<Attendance>("/attendance/me/check-in", { method: "POST", body: JSON.stringify(data) }),
-  myCheckOut: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number }) =>
+  myCheckOut: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>
     apiFetch<Attendance>("/attendance/me/check-out", { method: "POST", body: JSON.stringify(data) }),
   registerMyFace: (faceDescriptor: number[]) =>
-    apiFetch<User>("/attendance/me/register-face", {
+    apiFetch<RegisterFaceResult>("/attendance/me/register-face", {
       method: "POST",
       body: JSON.stringify({ face_descriptor: faceDescriptor }),
     }),

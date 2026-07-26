@@ -162,6 +162,7 @@ export default function CheckIn() {
       longitude: position.coords.longitude,
       face_descriptor: result.descriptor,
       liveness: result.liveness ?? 1.0,
+      accuracy: position.coords.accuracy ?? null,
     };
     const mutation = action === "check-in" ? checkIn : checkOut;
     mutation.mutate(body, {
@@ -176,11 +177,15 @@ export default function CheckIn() {
   function onFaceRegistered(result: any) {
     setStatusMsg("Yuz saqlanmoqda...");
     registerFace.mutate(result.descriptor, {
-      onSuccess: async () => {
+      onSuccess: async (res) => {
         await refreshUser();
         setShowRegister(false);
         setStatusMsg("");
-        toast.success("Yuz muvaffaqiyatli ro'yxatdan o'tkazildi!");
+        if (res.status === "pending_approval") {
+          toast.success("So'rov HR/rahbarga yuborildi — tasdiqlangach yuzingiz yangilanadi.");
+        } else {
+          toast.success("Yuz muvaffaqiyatli ro'yxatdan o'tkazildi!");
+        }
       },
       onError: () => setStatusMsg(""),
     });

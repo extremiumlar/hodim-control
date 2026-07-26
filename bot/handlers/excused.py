@@ -62,3 +62,26 @@ async def on_excused_decide(callback: CallbackQuery) -> None:
         f"{item['user_full_name']} — {item['date']} sababli kuni {verdict}."
     )
     await callback.answer("Qaror saqlandi.")
+
+
+@router.callback_query(F.data.startswith("face_rereg_decide:"))
+async def on_face_rereg_decide(callback: CallbackQuery) -> None:
+    """Savol A (yumshoq choralar): xodim yuzini QAYTA ro'yxatdan o'tkazishga
+    HR/rahbarning tasdig'i — excused_decide bilan bir xil naqsh."""
+    _, item_id_str, decision = callback.data.split(":")
+    try:
+        item = await api_client.decide_face_rereg(int(item_id_str), callback.from_user.id, decision)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 403:
+            await callback.answer("Bu amal uchun ruxsatingiz yo'q.", show_alert=True)
+        elif exc.response.status_code == 400:
+            await callback.answer("Bu so'rov allaqachon hal qilingan.", show_alert=True)
+        else:
+            await callback.answer("Xatolik yuz berdi.", show_alert=True)
+        return
+
+    verdict = "✅ tasdiqlandi" if item["status"] == "approved" else "❌ rad etildi"
+    await callback.message.edit_text(
+        f"{item['user_full_name']} — yuzni qayta ro'yxatdan o'tkazish {verdict}."
+    )
+    await callback.answer("Qaror saqlandi.")

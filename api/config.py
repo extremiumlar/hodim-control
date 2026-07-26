@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # liveness = tiriklik (bir nechta freym harakati). Ikkalasi ham >= bo'lishi shart.
     face_similarity_threshold: float = 0.5
     face_liveness_threshold: float = 0.5
+    # GPS aniqligi (brauzer `position.coords.accuracy`, metrda). Bundan yomonroq
+    # (masalan IP-asosidagi zaxira geolokatsiya, ba'zan 1000+ metr) o'qish rad etiladi —
+    # aks holda ofisdan uzoqdagi kishi "aniqlik yo'q" bahonasida ham check-in qila oladi.
+    attendance_max_gps_accuracy_m: int = 100
 
     # Soatlik reja avtomatik eslatmasi — haqiqiy xodimlarga Telegram xabar yuboradi,
     # shuning uchun default O'CHIQ. Ishga tushirishga tayyor bo'lganda .env'da

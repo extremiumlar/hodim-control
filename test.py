@@ -120,6 +120,10 @@ def cleanup(ctx: dict) -> None:
             ("delete from work_schedule_weekly where user_id in (%s)" % ",".join("?" * len(uids)), uids),
             ("delete from work_schedule_override where user_id in (%s)" % ",".join("?" * len(uids)), uids),
             ("delete from office_locations where name like 'T-%'", []),
+            # T- foydalanuvchilar o'chirilishidan OLDIN — aks holda quyidagi subselect
+            # bo'sh qaytadi (SQLite FK cheklovi yo'q, lekin yetim yozuv qolib ketmasin).
+            ("delete from face_reregistration_requests where user_id in "
+             "(select id from users where full_name like 'T-%')", []),
             ("delete from users where full_name like 'T-%'", []),
         ]:
             try:
@@ -534,7 +538,7 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("0.4 /docs tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
-        print("\n-- 0.5: register-face audit + deactivate'da yuz tozalash --")
+        print("\n-- 0.5: qayta ro'yxatdan o'tish rahbar tasdig'ini kutadi (Savol A) --")
         try:
             conn = db()
             cur = conn.cursor()
@@ -547,30 +551,62 @@ def run_tests(ctx: dict) -> None:
             conn.commit()
 
             audit_tok = token_for(audit_uid, "employee")
-            before_n = conn.execute(
-                "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
-                (audit_uid,)).fetchone()[0]
             r = client.post(f"{API_BASE}/attendance/me/register-face", headers=auth(audit_tok),
                              json={"face_descriptor": WRONG_FACE})
             check("qayta ro'yxatdan o'tish -> 200", r.status_code == 200)
-            after_n = conn.execute(
-                "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
-                (audit_uid,)).fetchone()[0]
-            check("AuditLog yozildi (face_reregistered)", after_n == before_n + 1,
-                  f"before={before_n}, after={after_n}")
+            body = r.json()
+            check("javob status=pending_approval (darhol YOZILMAYDI)",
+                  body.get("status") == "pending_approval", str(body.get("status")))
+
+            still_old = conn.execute(
+                "select face_descriptor from users where id=?", (audit_uid,)).fetchone()[0]
+            check("descriptor DARHOL o'zgarmagan (eski qiymatda qoladi)",
+                  json.loads(still_old) == FACE, "descriptor eskicha qoldimi")
+
+            req_row = conn.execute(
+                "select id, status from face_reregistration_requests where user_id=? order by id desc limit 1",
+                (audit_uid,)).fetchone()
+            check("FaceReregistrationRequest 'pending' holatda yaratildi",
+                  req_row is not None and req_row[1] == "pending", str(req_row))
 
             mgr = find_manager_id()
-            if mgr:
-                mgr_t = token_for(mgr[0], mgr[1])
-                has_before = conn.execute(
-                    "select face_descriptor is not null from users where id=?", (audit_uid,)).fetchone()[0]
-                r = client.post(f"{API_BASE}/users/{audit_uid}/deactivate", headers=auth(mgr_t))
+            req_id = req_row[0] if req_row else None
+            if mgr and req_id:
+                mgr_tok = token_for(mgr[0], mgr[1])
+                mgr_telegram_id = conn.execute(
+                    "select telegram_id from users where id=?", (mgr[0],)).fetchone()[0]
+                # Bot-secret bilan himoyalangan endpoint — JWT emas, bot sekret kerak.
+                secret = ""
+                for line in open(".env", encoding="utf-8"):
+                    if line.startswith("BOT_SHARED_SECRET="):
+                        secret = line.strip().split("=", 1)[1]
+                before_n = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
+                    (audit_uid,)).fetchone()[0]
+                r = client.post(
+                    f"{API_BASE}/attendance/face-reregistration/{req_id}/decide",
+                    headers={"X-Bot-Secret": secret},
+                    json={"decider_telegram_id": mgr_telegram_id, "decision": "approved"})
+                check("rahbar tasdiqlaydi -> 200", r.status_code == 200, r.text[:200])
+                after_n = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='face_reregistered'",
+                    (audit_uid,)).fetchone()[0]
+                check("tasdiqlangach AuditLog yozildi", after_n == before_n + 1,
+                      f"before={before_n}, after={after_n}")
+                new_desc = conn.execute(
+                    "select face_descriptor from users where id=?", (audit_uid,)).fetchone()[0]
+                check("tasdiqlangach descriptor yangilandi",
+                      json.loads(new_desc) == WRONG_FACE, "yangi qiymat WRONG_FACE'gami")
+
+                has_before = 1
+                r = client.post(f"{API_BASE}/users/{audit_uid}/deactivate", headers=auth(mgr_tok))
                 check("deactivate -> 200", r.status_code == 200)
                 has_after = conn.execute(
                     "select face_descriptor is not null from users where id=?", (audit_uid,)).fetchone()[0]
                 check("deactivate'dan keyin yuz tozalandi",
                       has_before == 1 and has_after == 0, f"oldin={has_before}, keyin={has_after}")
 
+            cur.execute("delete from face_reregistration_requests where user_id=?", (audit_uid,))
             cur.execute("delete from audit_logs where target_user_id=?", (audit_uid,))
             cur.execute("delete from attendance where user_id=?", (audit_uid,))
             cur.execute("delete from users where id=?", (audit_uid,))
@@ -578,6 +614,81 @@ def run_tests(ctx: dict) -> None:
             conn.close()
         except Exception:
             check("0.5 register-face audit tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 0.6: bir xil yuz ikki hisobga ro'yxatdan o'ta olmaydi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444778,'T-Dup1','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            dup1_uid = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444779,'T-Dup2','employee',1,1,datetime('now'))")
+            dup2_uid = cur.lastrowid
+            conn.commit()
+
+            dup2_tok = token_for(dup2_uid, "employee")
+            # T-Dup1 bilan BIR XIL descriptor bilan ro'yxatdan o'tishga urinish -> rad etilishi kerak.
+            r = client.post(f"{API_BASE}/attendance/me/register-face", headers=auth(dup2_tok),
+                             json={"face_descriptor": FACE})
+            check("bir xil yuz bilan ro'yxatdan o'tish -> 400", r.status_code == 400, r.text[:150])
+            has_face_after = conn.execute(
+                "select face_descriptor is not null from users where id=?", (dup2_uid,)).fetchone()[0]
+            check("rad etilgach descriptor yozilmagan", has_face_after == 0)
+
+            # Boshqa (uzoq) yuz bilan esa muvaffaqiyatli bo'lishi kerak.
+            r = client.post(f"{API_BASE}/attendance/me/register-face", headers=auth(dup2_tok),
+                             json={"face_descriptor": WRONG_FACE})
+            check("uzoq yuz bilan ro'yxatdan o'tish -> 200", r.status_code == 200)
+            body = r.json()
+            check("birinchi marta darhol 'registered'", body.get("status") == "registered",
+                  str(body.get("status")))
+
+            cur.execute("delete from face_reregistration_requests where user_id in (?,?)", (dup1_uid, dup2_uid))
+            cur.execute("delete from users where id in (?,?)", (dup1_uid, dup2_uid))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("0.6 duplicate-face tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 0.7: GPS aniqligi past bo'lsa check-in rad etiladi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444780,'T-AccuracyTest','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            acc_uid = cur.lastrowid
+            conn.commit()
+            acc_tok = token_for(acc_uid, "employee")
+
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(acc_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9, "accuracy": 5000,
+            })
+            check("aniqlik 5000m -> 400 (rad etiladi)", r.status_code == 400, r.text[:150])
+            row = conn.execute(
+                "select check_in_time from attendance where user_id=?", (acc_uid,)).fetchone()
+            check("bazaga yozuv qo'shilmadi", row is None or row[0] is None)
+
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(acc_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9, "accuracy": 15,
+            })
+            check("aniqlik 15m -> 200 (o'tadi)", r.status_code == 200, r.text[:150])
+
+            cur.execute("delete from attendance where user_id=?", (acc_uid,))
+            cur.execute("delete from users where id=?", (acc_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("0.7 GPS aniqligi tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
 
 def main() -> None:

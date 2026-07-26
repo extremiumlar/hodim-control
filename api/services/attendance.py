@@ -103,7 +103,16 @@ async def _nearest_active_office(
     return best, (int(best_d) if best_d is not None else None)
 
 
-async def _validate_location(db: AsyncSession, lat: float, lng: float) -> int:
+async def _validate_location(
+    db: AsyncSession, lat: float, lng: float, accuracy: float | None = None
+) -> int:
+    # GPS aniqligi — brauzer o'zi hisoblab yuboradi. Juda yomon o'qish (masalan
+    # tarmoq/IP-asosidagi zaxira geolokatsiya, ba'zan 1000+ metr xato) ofis
+    # radiusini ma'nosiz qiladi: xato tasodifan radius ichiga tushib qolishi mumkin.
+    if accuracy is not None and accuracy > settings.attendance_max_gps_accuracy_m:
+        raise CheckError(
+            f"GPS aniqligi yetarli emas (~{accuracy:.0f} m). Ochiq joyga chiqib qayta urinib ko'ring."
+        )
     office, dist = await _nearest_active_office(db, lat, lng)
     if office is None or dist is None:
         raise CheckError("Tizimda faol ofis manzili sozlanmagan. Rahbaringizga murojaat qiling.")
@@ -112,6 +121,33 @@ async def _validate_location(db: AsyncSession, lat: float, lng: float) -> int:
             f"Siz ofis hududidan tashqaridasiz (~{dist} m, «{office.name}»). Avval ofisga keling."
         )
     return dist
+
+
+async def find_similar_face(
+    db: AsyncSession, descriptor: list[float], exclude_user_id: int | None = None
+) -> tuple[User, float] | None:
+    """Berilgan descriptor bazadagi BOSHQA (`exclude_user_id`dan tashqari) ro'yxatdan
+    o'tgan yuzlarning birortasiga chegaradan yaqinmi — tekshiradi. Ro'yxatdan
+    o'tishda (birinchi marta yoki qayta) chaqiriladi: bir kishi ikkinchisining
+    yuzi bilan (yoki tasodifan bir xil ro'yxatdan o'tish orqali) ro'yxatdan
+    o'tib olishining oldini oladi. Eng o'xshash (eng yuqori similarity) juftlikni
+    qaytaradi, hech kim chegaradan o'tmasa `None`."""
+    query = select(User).where(User.face_descriptor.isnot(None))
+    if exclude_user_id is not None:
+        query = query.where(User.id != exclude_user_id)
+    best_user: User | None = None
+    best_sim = -1.0
+    for other in await db.scalars(query):
+        try:
+            other_desc = json.loads(other.face_descriptor) if other.face_descriptor else None
+        except (ValueError, TypeError):
+            continue
+        sim = face_similarity(other_desc, descriptor)
+        if sim > best_sim:
+            best_sim, best_user = sim, other
+    if best_user is not None and best_sim >= settings.face_similarity_threshold:
+        return best_user, best_sim
+    return None
 
 
 def _apply_status(att: Attendance, is_working: bool) -> None:
@@ -134,6 +170,7 @@ async def perform_check_in(
     lng: float,
     descriptor: list[float] | None = None,
     liveness: float = 0.0,
+    accuracy: float | None = None,
 ) -> Attendance:
     """Xodimni bugungi kunga «Keldim» qiladi. Yuz (Face ID) tasdiqlangan va GPS ofis
     radiusida bo'lishi shart. Kechikish o'sha kungi ish oynasi boshlanishidan
@@ -142,7 +179,7 @@ async def perform_check_in(
     is_working, start, end = await _effective_today(db, user, day)
 
     _validate_face(user, descriptor, liveness)
-    dist = await _validate_location(db, lat, lng)
+    dist = await _validate_location(db, lat, lng, accuracy)
 
     att = await db.scalar(
         select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
@@ -194,6 +231,7 @@ async def perform_check_out(
     lng: float,
     descriptor: list[float] | None = None,
     liveness: float = 0.0,
+    accuracy: float | None = None,
 ) -> Attendance:
     """Xodimni «Ketdim» qiladi. GPS + yuz tasdiqlanadi. Erta ketish ish oynasi
     tugashidan, ishlangan vaqt check-in/out orasidan hisoblanadi."""
@@ -209,7 +247,7 @@ async def perform_check_out(
         raise CheckError("Siz bugun allaqachon «Ketdim» qilgansiz.")
 
     _validate_face(user, descriptor, liveness)
-    await _validate_location(db, lat, lng)
+    await _validate_location(db, lat, lng, accuracy)
 
     now_local = datetime.now(TASHKENT_TZ)
     att.check_out_time = datetime.utcnow()

@@ -46,6 +46,12 @@ class MobilografStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class FaceReregStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
 class DailyResultSource(str, enum.Enum):
     crm = "crm"
     manual = "manual"
@@ -202,6 +208,25 @@ class ExcusedDay(Base):
     date: Mapped[date] = mapped_column(Date, index=True)
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default=ExcusedStatus.pending.value)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class FaceReregistrationRequest(Base):
+    """Yuzni QAYTA ro'yxatdan o'tkazish so'rovi (Savol A — yumshoq choralar). Mavjud
+    yuzi bo'lgan xodim yangi descriptorni bevosita almashtira olmaydi: yangi
+    descriptor shu yerda kutib turadi, HR/rahbar tasdiqlagandan keyingina
+    `User.face_descriptor`ga ko'chiriladi (`ExcusedDay` bilan bir xil naqsh).
+    Birinchi marta ro'yxatdan o'tishda (hali `has_face=False`) bu jarayon
+    ishlatilmaydi — darhol yoziladi (`register_face` ichida tekshiriladi)."""
+
+    __tablename__ = "face_reregistration_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    new_descriptor: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default=FaceReregStatus.pending.value)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -135,12 +135,19 @@ export async function captureLiveFace(
   }
   const movement = totalMovement / Math.max(1, comparisons);
 
-  // Tiriklik formulasi (hodim_crm bilan bir xil)
-  let liveness = 0.4;
-  if (captures.length >= 3) liveness += 0.25;
-  if (avgScore >= 0.4) liveness += 0.25;
-  if (movement >= 0.5 && movement <= 25) liveness += 0.2;
-  if (movement > 25) liveness -= 0.2;
+  // Tiriklik formulasi — Savol A (yumshoq choralar): harakat ENDI MAJBURIY.
+  // ILGARI: 0.4 (baza) + 0.25 (freym) + 0.25 (aniqlik) = 0.9 — harakat UMUMAN
+  // bo'lmasa ham (statik ekran/foto) 0.5 chegaradan (settings.face_liveness_threshold)
+  // osongina o'tardi. ENDI: harakat bo'lmasa liveness 0.3 bilan CHEGARALANADI —
+  // hech qanday freym/aniqlik kombinatsiyasi buni qoplay olmaydi, statik rasm
+  // doim rad etiladi.
+  const hasMovement = movement >= 0.5 && movement <= 25;
+  let liveness = 0;
+  if (captures.length >= 3) liveness += 0.2;
+  if (avgScore >= 0.4) liveness += 0.2;
+  if (hasMovement) liveness += 0.6;
+  if (movement > 25) liveness -= 0.3;
+  if (!hasMovement) liveness = Math.min(liveness, 0.3);
   liveness = Math.max(0, Math.min(1, liveness));
 
   const best = captures.reduce((b, c) => (c.score > b.score ? c : b));
@@ -200,14 +207,14 @@ export async function captureForRegister(
     captures.reduce((s, c) => s + Math.min(c.box.w, c.box.h), 0) / captures.length;
   const avgScore = captures.reduce((s, c) => s + c.score, 0) / captures.length;
 
-  // Descriptorlarni o'rtachalash (element-wise mean) — L2 normalizatsiya QILMAYMIZ:
-  // check-in descriptorlari ham normalizatsiyasiz, masshtab bir xil bo'lishi kerak.
-  const dim = captures[0].descriptor.length;
-  const avgDescriptor = new Array(dim).fill(0);
-  for (const c of captures) {
-    for (let i = 0; i < dim; i++) avgDescriptor[i] += c.descriptor[i];
-  }
-  for (let i = 0; i < dim; i++) avgDescriptor[i] /= captures.length;
+  // ENG YAXSHI freymni tanlaymiz (check-in'dagi captureLiveFace bilan bir xil usul) —
+  // ILGARI bu yerda descriptorlar element-wise O'RTACHALANARDI, bu esa shaxsiy
+  // xususiyatlarni yo'qotib barcha ro'yxatdan o'tgan yuzlarni "o'rtacha yuz"ga
+  // siljitardi (jonli isbot: 4 ta ro'yxatdan o'tgan yuzning HAMMASI bir-biriga
+  // 0.5 chegaradan yaqin chiqdi — tizim turli odamlarni bitta odam deb qabul
+  // qilardi). Eng yaxshi (aniqlik balli eng yuqori) freymning haqiqiy descriptori
+  // saqlanadi — o'rtachalash yo'q.
+  const best = captures.reduce((b, c) => (c.score > b.score ? c : b));
 
-  return { descriptor: avgDescriptor, avgScore, faceSize, frames: captures.length };
+  return { descriptor: best.descriptor, avgScore, faceSize, frames: captures.length };
 }

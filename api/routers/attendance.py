@@ -13,18 +13,22 @@ from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     AttendanceOut,
     EmployeeAttendanceSummary,
+    FaceReregDecide,
+    FaceReregOut,
     LateDayEntry,
     LateStatRow,
     MeCheckRequest,
     OfficeCreate,
     OfficeOut,
     OfficeUpdate,
+    RegisterFaceOut,
     RegisterFaceRequest,
     UserOut,
 )
 from api.services.attendance import (
     ATTENDANCE_TRACKED_ROLES,
     CheckError,
+    find_similar_face,
     perform_check_in,
     perform_check_out,
 )
@@ -33,11 +37,14 @@ from api.services.attendance_digest import (
     get_digest_config,
     send_attendance_digest,
 )
+from api.telegram_notify import inline_keyboard, send_message
 from api.timeutil import today_local
 from db.models import (
     Attendance,
     AttendanceStatus,
     AuditLog,
+    FaceReregistrationRequest,
+    FaceReregStatus,
     OfficeLocation,
     Role,
     User,
@@ -98,7 +105,13 @@ async def my_check_in(
 ) -> AttendanceOut:
     try:
         att = await perform_check_in(
-            db, user, payload.latitude, payload.longitude, payload.face_descriptor, payload.liveness
+            db,
+            user,
+            payload.latitude,
+            payload.longitude,
+            payload.face_descriptor,
+            payload.liveness,
+            payload.accuracy,
         )
     except CheckError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
@@ -113,42 +126,172 @@ async def my_check_out(
 ) -> AttendanceOut:
     try:
         att = await perform_check_out(
-            db, user, payload.latitude, payload.longitude, payload.face_descriptor, payload.liveness
+            db,
+            user,
+            payload.latitude,
+            payload.longitude,
+            payload.face_descriptor,
+            payload.liveness,
+            payload.accuracy,
         )
     except CheckError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
     return _att_out(att, user.full_name)
 
 
-@router.post("/me/register-face", response_model=UserOut)
+@router.post("/me/register-face", response_model=RegisterFaceOut)
 async def register_face(
     payload: RegisterFaceRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> User:
+) -> RegisterFaceOut:
     """Kirgan xodim o'z yuzini ro'yxatdan o'tkazadi (128-o'lchamli deskriptor).
 
-    XAVFSIZLIK: bu yagona joy — kimning yuzi qaysi hisobga bog'langanini
-    o'zgartiradi. Deskriptorning o'zi audit yozuviga yozilmaydi (128-o'lchamli
-    biometrik ma'lumot, keraksiz saqlash), lekin QAYTA ro'yxatdan o'tish (allaqachon
-    yuz bor bo'lgan hisobda) `AuditLog`ga qayd etiladi — shu orqali "kimningdir
-    yuzi kimningdir hisobiga qo'yildi" holatini keyinroq tekshirish mumkin."""
-    was_reregistration = user.has_face
-    user.face_descriptor = json.dumps(payload.face_descriptor)
-    user.face_registered_at = datetime.utcnow()
-    if was_reregistration:
+    XAVFSIZLIK (Savol A — yumshoq choralar, 2026-07-26): bu yagona joy — kimning
+    yuzi qaysi hisobga bog'langanini o'zgartiradi.
+    - Birinchi marta (hali yuzi yo'q): darhol yoziladi — lekin avval BOSHQA
+      xodimning yuziga o'xshab ketmasligi tekshiriladi (bir xil yuz ikki hisobga
+      bog'lanmasin).
+    - QAYTA ro'yxatdan o'tish (allaqachon yuzi bor hisobda): darhol YOZILMAYDI —
+      `FaceReregistrationRequest` sifatida kutib turadi, HR/rahbarga bot orqali
+      xabar boradi, faqat ULAR tasdiqlagach descriptor almashadi. Bu — biror kimsa
+      o'z JWT tokeni bilan uydan turib boshqa (yoki hatto o'z, lekin firibgar)
+      descriptor yozdirib olishining oldini oladi."""
+    if not user.has_face:
+        dup = await find_similar_face(db, payload.face_descriptor, exclude_user_id=user.id)
+        if dup is not None:
+            other, sim = dup
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Bu yuz allaqachon boshqa xodimda ro'yxatdan o'tgan ko'rinadi "
+                f"(o'xshashlik {sim:.2f}). Iltimos HR/rahbarga murojaat qiling.",
+            )
+        user.face_descriptor = json.dumps(payload.face_descriptor)
+        user.face_registered_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(user)
+        return RegisterFaceOut(status="registered", user=UserOut.model_validate(user))
+
+    # Qayta ro'yxatdan o'tish — rahbar tasdig'ini kutadi.
+    req = FaceReregistrationRequest(
+        user_id=user.id, new_descriptor=json.dumps(payload.face_descriptor)
+    )
+    db.add(req)
+    await db.commit()
+    await db.refresh(req)
+
+    managers = list(
+        await db.scalars(
+            select(User).where(User.role.in_(MANAGER_ROLES), User.telegram_id.isnot(None))
+        )
+    )
+    text = f"🧑‍💼 <b>Yuzni qayta ro'yxatdan o'tkazish so'rovi</b>\nXodim: {user.full_name}"
+    keyboard = inline_keyboard(
+        [[("✅ Tasdiqlayman", f"face_rereg_decide:{req.id}:approved"), ("❌ Rad etaman", f"face_rereg_decide:{req.id}:rejected")]]
+    )
+    for m in managers:
+        await send_message(m.telegram_id, text, keyboard)
+
+    return RegisterFaceOut(status="pending_approval", user=UserOut.model_validate(user))
+
+
+@router.post("/face-reregistration/{item_id}/decide", response_model=FaceReregOut, dependencies=[Depends(verify_bot_secret)])
+async def decide_face_rereregistration(
+    item_id: int, payload: FaceReregDecide, db: AsyncSession = Depends(get_db)
+) -> FaceReregOut:
+    """Bot orqali HR/rahbar qaytadan ro'yxatdan o'tish so'rovini tasdiqlaydi/rad
+    etadi. Tasdiqlansa — ENDI ham boshqa xodim yuziga o'xshab ketmasligi qayta
+    tekshiriladi (so'rov yaratilgandan keyin boshqa birov shu orada ro'yxatdan
+    o'tgan bo'lishi mumkin)."""
+    item = await db.get(FaceReregistrationRequest, item_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+    if item.status != FaceReregStatus.pending.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
+
+    decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
+    if not decider or decider.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    if payload.decision not in (FaceReregStatus.approved.value, FaceReregStatus.rejected.value):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri qaror")
+
+    target = await db.get(User, item.user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    item.status = payload.decision
+    item.decided_by = decider.id
+    item.decided_at = datetime.utcnow()
+
+    if payload.decision == FaceReregStatus.approved.value:
+        new_descriptor = json.loads(item.new_descriptor)
+        dup = await find_similar_face(db, new_descriptor, exclude_user_id=target.id)
+        if dup is not None:
+            other, sim = dup
+            item.status = FaceReregStatus.rejected.value
+            db.add(
+                AuditLog(
+                    actor_id=decider.id,
+                    action="face_reregistered",
+                    target_user_id=target.id,
+                    before={"had_face": True},
+                    after={"rejected_reason": "duplicate_face", "similar_to": other.id, "similarity": sim},
+                )
+            )
+        else:
+            target.face_descriptor = item.new_descriptor
+            target.face_registered_at = datetime.utcnow()
+            db.add(
+                AuditLog(
+                    actor_id=decider.id,
+                    action="face_reregistered",
+                    target_user_id=target.id,
+                    before={"had_face": True},
+                    after={"approved_by": decider.id, "registered_at": target.face_registered_at.isoformat()},
+                )
+            )
+    else:
         db.add(
             AuditLog(
-                actor_id=user.id,
-                action="face_reregistered",
-                target_user_id=user.id,
+                actor_id=decider.id,
+                action="face_reregistration_rejected",
+                target_user_id=target.id,
                 before={"had_face": True},
-                after={"registered_at": user.face_registered_at.isoformat()},
+                after={"rejected_by": decider.id},
             )
         )
     await db.commit()
-    await db.refresh(user)
-    return user
+    await db.refresh(item)
+
+    if target.telegram_id:
+        verdict = "✅ tasdiqlandi" if item.status == FaceReregStatus.approved.value else "❌ rad etildi"
+        await send_message(target.telegram_id, f"Yuzni qayta ro'yxatdan o'tkazish so'rovingiz {verdict}.")
+
+    return FaceReregOut(
+        id=item.id, user_id=item.user_id, user_full_name=target.full_name,
+        status=item.status, created_at=item.created_at,
+    )
+
+
+@router.get("/face-reregistration", response_model=list[FaceReregOut])
+async def list_face_reregistrations(
+    status_filter: str | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> list[FaceReregOut]:
+    q = select(FaceReregistrationRequest).order_by(FaceReregistrationRequest.created_at.desc())
+    if status_filter:
+        q = q.where(FaceReregistrationRequest.status == status_filter)
+    items = list(await db.scalars(q))
+    user_ids = {i.user_id for i in items}
+    names = {u.id: u.full_name for u in await db.scalars(select(User).where(User.id.in_(user_ids)))}
+    return [
+        FaceReregOut(
+            id=i.id, user_id=i.user_id, user_full_name=names.get(i.user_id, "?"),
+            status=i.status, created_at=i.created_at,
+        )
+        for i in items
+    ]
 
 
 # ─────────────────────────────────────────────

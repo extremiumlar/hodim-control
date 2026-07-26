@@ -109,6 +109,15 @@ async def decide_excused_day(item_id: int, decider_telegram_id: int, decision: s
     return resp.json()
 
 
+async def decide_face_rereg(item_id: int, decider_telegram_id: int, decision: str) -> dict:
+    resp = await _get_client().post(
+        f"/attendance/face-reregistration/{item_id}/decide",
+        json={"decider_telegram_id": decider_telegram_id, "decision": decision},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def norm_targets(telegram_id: int) -> list[dict]:
     """Aktyor norma belgilay oladigan xodimlar (matritsa: ROP — jamoasi, HR —
     o'ziga biriktirilgan lavozimlar, Boshliq/Dasturchi — hamma)."""

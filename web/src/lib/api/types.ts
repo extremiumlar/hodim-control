@@ -29,6 +29,11 @@ export interface User {
   created_at: string;
 }
 
+export interface RegisterFaceResult {
+  status: "registered" | "pending_approval";
+  user: User;
+}
+
 export interface Attendance {
   id: number;
   user_id: number;

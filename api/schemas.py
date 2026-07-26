@@ -637,12 +637,39 @@ class MeCheckRequest(BaseModel):
     longitude: float = Field(ge=-180, le=180)
     face_descriptor: list[float] = Field(min_length=128, max_length=128)
     liveness: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Brauzer `position.coords.accuracy` (metr) — berilmasa (eski frontend) tekshiruv
+    # o'tkazib yuboriladi, lekin berilgan bo'lsa juda yomon (masalan IP-asosidagi
+    # zaxira geolokatsiya) o'qish rad etiladi.
+    accuracy: float | None = Field(default=None, ge=0)
 
 
 class RegisterFaceRequest(BaseModel):
     """Yuzni ro'yxatdan o'tkazish — 128-o'lchamli deskriptor (face-api.js)."""
 
     face_descriptor: list[float] = Field(min_length=128, max_length=128)
+
+
+class RegisterFaceOut(BaseModel):
+    """register-face javobi: birinchi marta darhol yoziladi, QAYTA ro'yxatdan
+    o'tishda esa rahbar tasdig'ini kutadi (Savol A — yumshoq choralar)."""
+
+    status: str  # "registered" | "pending_approval"
+    user: UserOut
+
+
+class FaceReregOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class FaceReregDecide(BaseModel):
+    decider_telegram_id: int
+    decision: str  # approved | rejected
 
 
 class AttendanceOut(BaseModel):
