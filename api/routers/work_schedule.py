@@ -5,6 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, verify_bot_secret
+from api.routers.hourly_plan import DEFAULT_END, DEFAULT_START
 from api.services.attendance import ATTENDANCE_TRACKED_ROLES
 from api.timeutil import today_local
 from api.schemas import (
@@ -119,12 +120,20 @@ async def get_weekly(
         w.weekday: w
         for w in await db.scalars(select(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == user_id))
     }
+    # Saqlanmagan kunlar uchun AMALDAGI defaultni qaytaramiz (Du-Ju 09:00-18:00,
+    # Sha/Yak dam) — `hourly_plan._effective_today` va davomat kechikish hisobi
+    # aynan shundan foydalanadi. Ilgari bu yerda "hamma kun is_working=True,
+    # vaqtsiz" qaytarilardi: rahbar tahrirlash oynasida yakshanbani ham ish kuni
+    # deb ko'rar, saqlasa esa xodimga haqiqatan shanba-yakshanba ish kuni bo'lib
+    # yozilib ketardi (davomat esa boshqacha hisoblardi).
     days = [
         WorkDayEntry(
             weekday=wd,
-            is_working=stored[wd].is_working if wd in stored else True,
-            start_time=stored[wd].start_time if wd in stored else None,
-            end_time=stored[wd].end_time if wd in stored else None,
+            is_working=stored[wd].is_working if wd in stored else wd < 5,
+            start_time=(
+                stored[wd].start_time if wd in stored else (DEFAULT_START if wd < 5 else None)
+            ),
+            end_time=(stored[wd].end_time if wd in stored else (DEFAULT_END if wd < 5 else None)),
         )
         for wd in range(7)
     ]

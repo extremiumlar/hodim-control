@@ -25,6 +25,7 @@ import {
 } from "@/lib/queries";
 
 const WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"];
+const WEEKDAYS_SHORT = ["Du", "Se", "Ch", "Pa", "Ju", "Sha", "Yak"];
 
 function emptyWeek(): WorkDayEntry[] {
   return Array.from({ length: 7 }, (_, wd) => ({
@@ -47,6 +48,12 @@ export default function WorkSchedule() {
   const [ovEnd, setOvEnd] = useState("18:00");
   const [ovNote, setOvNote] = useState("");
 
+  // Tezkor sozlash: bitta ish vaqti + dam kunlari → barcha ish kunlariga qo'llanadi
+  // (avval har bir kunga alohida vaqt kiritish kerak edi — 7 marta).
+  const [quickStart, setQuickStart] = useState("09:00");
+  const [quickEnd, setQuickEnd] = useState("18:00");
+  const [restDays, setRestDays] = useState<number[]>([6]); // default: yakshanba
+
   useEffect(() => {
     if (usersQuery.data?.length && selectedId == null) {
       setSelectedId(usersQuery.data[0].id);
@@ -61,9 +68,59 @@ export default function WorkSchedule() {
 
   useEffect(() => {
     if (weeklyQuery.data) {
-      setWeek([...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday));
+      const days = [...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday);
+      setWeek(days);
+      // Tezkor sozlash maydonlarini xodimning joriy jadvalidan to'ldiramiz —
+      // shunda rahbar "nima o'rnatilgan"ini darhol ko'radi va faqat kerakli
+      // joyini o'zgartiradi.
+      setRestDays(days.filter((d) => !d.is_working).map((d) => d.weekday));
+      const firstWorking = days.find((d) => d.is_working && d.start_time && d.end_time);
+      if (firstWorking) {
+        setQuickStart(firstWorking.start_time!);
+        setQuickEnd(firstWorking.end_time!);
+      }
     }
   }, [weeklyQuery.data]);
+
+  function toggleRestDay(wd: number) {
+    setRestDays((prev) => (prev.includes(wd) ? prev.filter((d) => d !== wd) : [...prev, wd]));
+  }
+
+  /** Tezkor sozlash: bitta vaqtni BARCHA ish kunlariga qo'llaydi, tanlangan
+   *  kunlarni dam kuni qiladi va darhol saqlaydi. */
+  function onApplyQuick() {
+    if (selectedId == null) return;
+    if (quickStart >= quickEnd) {
+      toast.error("Tugash vaqti boshlanishdan kechroq bo'lishi kerak");
+      return;
+    }
+    if (restDays.length === 7) {
+      toast.error("Kamida bitta ish kuni qolishi kerak");
+      return;
+    }
+    const days: WorkDayEntry[] = Array.from({ length: 7 }, (_, wd) => {
+      const isRest = restDays.includes(wd);
+      return {
+        weekday: wd,
+        is_working: !isRest,
+        start_time: isRest ? null : quickStart,
+        end_time: isRest ? null : quickEnd,
+      };
+    });
+    setWeek(days);
+    saveWeekly.mutate(
+      { userId: selectedId, days },
+      {
+        onSuccess: () =>
+          toast.success(
+            `Saqlandi: ${quickStart}–${quickEnd}` +
+              (restDays.length
+                ? `, dam kunlari — ${restDays.map((d) => WEEKDAYS_SHORT[d]).join(", ")}`
+                : ", dam kunisiz")
+          ),
+      }
+    );
+  }
 
   function updateDay(wd: number, patch: Partial<WorkDayEntry>) {
     setWeek((prev) => prev.map((d) => (d.weekday === wd ? { ...d, ...patch } : d)));
@@ -128,6 +185,71 @@ export default function WorkSchedule() {
           </SelectContent>
         </Select>
       </PageHeader>
+
+      {/* Tezkor sozlash — bitta vaqt barcha ish kunlariga + dam kunlari */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Tezkor sozlash</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-x-6 gap-y-4">
+            <div>
+              <div className="mb-1 text-xs font-medium text-slate-500">Ish vaqti (har kuni)</div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="time"
+                  value={quickStart}
+                  onChange={(e) => setQuickStart(e.target.value)}
+                  className="h-9 w-auto"
+                />
+                <span className="text-slate-400">—</span>
+                <Input
+                  type="time"
+                  value={quickEnd}
+                  onChange={(e) => setQuickEnd(e.target.value)}
+                  className="h-9 w-auto"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs font-medium text-slate-500">
+                Dam kunlari (bosib tanlang)
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {WEEKDAYS_SHORT.map((label, wd) => {
+                  const isRest = restDays.includes(wd);
+                  return (
+                    <button
+                      key={wd}
+                      type="button"
+                      onClick={() => toggleRestDay(wd)}
+                      title={WEEKDAYS[wd] + (isRest ? " — dam olish" : " — ish kuni")}
+                      className={
+                        "h-9 min-w-[44px] rounded-md border px-2 text-sm font-medium transition-colors " +
+                        (isRest
+                          ? "border-amber-300 bg-amber-100 text-amber-800"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50")
+                      }
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <Button onClick={onApplyQuick} disabled={saveWeekly.isPending || selectedId == null}>
+              {saveWeekly.isPending ? "Saqlanmoqda..." : "Qo'llash va saqlash"}
+            </Button>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Belgilangan vaqt barcha ish kunlariga qo'llanadi; sariq tanlangan kunlar dam olish
+            bo'ladi. Alohida kunni boshqacha qilish kerak bo'lsa — pastdagi haftalik jadvaldan
+            o'zgartiring.
+          </p>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Haftalik andoza */}
