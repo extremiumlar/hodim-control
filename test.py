@@ -1395,7 +1395,7 @@ def test_payroll_engine() -> None:
         from sqlalchemy import delete, select
         from db.base import async_session
         from db.models import (
-            Attendance, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
+            Attendance, AuditLog, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
             PayrollAdjustment, PayrollPeriod, Payslip, PayslipItem, SalaryRate,
             User, WorkScheduleOverride, WorkScheduleWeekly,
         )
@@ -1427,6 +1427,11 @@ def test_payroll_engine() -> None:
                 await s.execute(delete(Attendance).where(Attendance.user_id.in_(stale_ids)))
                 await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(stale_ids)))
                 await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(stale_ids)))
+                # audit_logs.target_user_id — boshqa test bloklari (masalan
+                # umumiy run_tests) shu id'larga tegishli yozuv qoldirishi
+                # mumkin (SQLite ROWID o'chirilgan id'larni qayta beradi);
+                # FK cheklovi tufayli bu tozalanmasa User o'chirilmay qoladi.
+                await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
             await s.execute(
@@ -1632,6 +1637,7 @@ def test_payroll_engine() -> None:
             await s.execute(delete(FinePolicy).where(FinePolicy.scope == "global",
                                                        FinePolicy.free_late_minutes_per_month == 999_999))
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_([u1.id, u2.id])))
             await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
             await s.commit()
 
@@ -1639,6 +1645,259 @@ def test_payroll_engine() -> None:
         asyncio.run(_run())
     except Exception:
         check("Payroll hisoblash yadrosi (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+
+def test_payroll_api() -> None:
+    """Bosqich 3: `api/routers/payroll.py` — HTTP darajasida (ruxsat
+    matritsasi, validatsiya, to'liq oqim: hisoblash -> ro'yxat -> tafsilot ->
+    tasdiqlash -> qulf -> bot). Izolyatsiyalangan davr "2021-02" ishlatiladi."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("BOSQICH 3: PAYROLL API (api/routers/payroll.py)")
+    print("=" * 60)
+
+    PERIOD = "2021-02"
+    conn = db()
+    cur = conn.cursor()
+
+    # Oldingi (yarim yo'lda qulagan) ishga tushirishdan qolganlarni tozalash.
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-PayAPI%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        pslip_ids = [r[0] for r in cur.execute(
+            f"select id from payslips where user_id in ({qm})", stale).fetchall()]
+        if pslip_ids:
+            qm2 = ",".join("?" * len(pslip_ids))
+            cur.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
+        for tbl in ("payslips", "overtime_entries", "overtime_profiles", "payroll_adjustments",
+                    "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from fine_policies where scope_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from payroll_periods where period=?", (PERIOD,))
+    conn.commit()
+
+    # ── Sozlash: T-PayAPI-HR (rahbar sifatida ishlatilmaydi — mavjud HR
+    # ishlatiladi), T-PayAPI-ROP + uning T-PayAPI-Emp xodimi ──
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600801,'T-PayAPI-Rop','rop',1,1,datetime('now'))")
+    rop_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, manager_id, bot_started, is_active, created_at)"
+        " values (999600802,'T-PayAPI-Emp','employee',?,1,1,datetime('now'))", (rop_uid,))
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600803,'T-PayAPI-Outsider','employee',1,1,datetime('now'))")
+    outsider_uid = cur.lastrowid
+    conn.commit()
+
+    mgr = find_manager_id()
+    mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+    rop_t = token_for(rop_uid, "rop")
+    emp_t = token_for(emp_uid, "employee")
+
+    def cleanup_payapi():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [rop_uid, emp_uid, outsider_uid]
+            qm = ",".join("?" * len(uids))
+            pslip_ids = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", uids).fetchall()]
+            if pslip_ids:
+                qm2 = ",".join("?" * len(pslip_ids))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
+            for tbl in ("payslips", "overtime_entries", "overtime_profiles", "payroll_adjustments",
+                        "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
+            c2.execute(f"delete from fine_policies where scope_id in ({qm})", uids)
+            c2.execute("delete from payroll_periods where period=?", (PERIOD,))
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Payroll API tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            # ── Ruxsat matritsasi ──
+            r = client.get(f"{API_BASE}/payroll/policies", headers=auth(emp_t))
+            check("xodim /payroll/policies -> 403", r.status_code == 403, f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/payroll/policies", headers=auth(rop_t))
+            check("ROP /payroll/policies -> 403 (faqat HR/Boss/Dasturchi)", r.status_code == 403,
+                  f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/payroll/policies", headers=auth(mgr_t))
+            check("HR/Boss /payroll/policies -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            # ── FinePolicy validatsiya ──
+            r = client.put(f"{API_BASE}/payroll/policies", headers=auth(mgr_t), json={
+                "scope": "user", "scope_id": emp_uid, "free_late_minutes_per_month": 20,
+                "fine_mode": "per_day", "fine_per_day": 30000,
+                "absent_mode": "fixed", "absent_fine": 80000,
+                # cap yo'q -> majburiy maydon xatosi kutiladi
+            })
+            check("cap'siz policy -> 422 (majburiy)", r.status_code == 422, f"kod={r.status_code}")
+
+            r = client.put(f"{API_BASE}/payroll/policies", headers=auth(mgr_t), json={
+                "scope": "user", "scope_id": emp_uid, "free_late_minutes_per_month": 20,
+                "fine_mode": "per_day", "fine_per_day": 30000,
+                "absent_mode": "fixed", "absent_fine": 80000,
+                "monthly_cap_amount": 500000, "fine_applies_to": "net_salary",
+            })
+            check("to'g'ri policy -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            policy_id = r.json().get("id") if r.status_code == 200 else None
+            check("policy javobida scope_label (xodim ismi)",
+                  r.status_code == 200 and r.json().get("scope_label") == "T-PayAPI-Emp",
+                  f"={r.json().get('scope_label') if r.status_code == 200 else None}")
+
+            # ── SalaryRate ──
+            r = client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": emp_uid, "amount": 2_500_000, "pay_basis": "monthly",
+                "effective_from": "2020-01-01",
+            })
+            check("stavka yaratildi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            r2 = client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": emp_uid, "amount": 2_600_000, "pay_basis": "monthly",
+                "effective_from": "2020-01-01",
+            })
+            check("bir xil sanaga dublikat stavka -> 400", r2.status_code == 400, f"kod={r2.status_code}")
+
+            # ── OvertimeProfile validatsiya ──
+            r = client.put(f"{API_BASE}/payroll/overtime-profiles/{emp_uid}", headers=auth(mgr_t), json={
+                "enabled": True, "mode": "derived", "norm_hours_source": "schedule",
+                # multiplier yo'q -> xato kutiladi
+            })
+            check("multiplier'siz derived profil -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # ── Ish jadvali va davomat (2021-02 uchun) — BARCHA hafta kunlari
+            # dam olish deb belgilanadi, FAQAT 1-fevral aniq override bilan ish
+            # kuni ochiladi (Bosqich 2'dagi bilan bir xil naqsh). Aks holda oy
+            # davomidagi BOSHQA ish kunlariga Attendance yozuvi yo'qligi
+            # sababli ular "kelmagan" deb hisoblanib (collect_attendance'ning
+            # ataylab qilingan defensiv qoidasi), kutilmagan jarima chiqarardi —
+            # bu HTTP darajasidagi test uchun ortiqcha murakkablik, hisoblash
+            # mantig'ining o'zi Bosqich 2'da alohida tekshirilgan.
+            for wd in range(7):
+                cur.execute(
+                    "insert into work_schedule_weekly (user_id, weekday, is_working, updated_at)"
+                    " values (?,?,0,datetime('now'))", (emp_uid, wd))
+            cur.execute(
+                "insert into work_schedule_override (user_id, date, is_working, start_time, end_time, updated_at)"
+                " values (?, '2021-02-01', 1, '09:00', '18:00', datetime('now'))", (emp_uid,))
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, '2021-02-01', '2021-02-01 04:00:00', 0, 0, 480, 'present', 0,"
+                " datetime('now'), datetime('now'))", (emp_uid,))
+            conn.commit()
+
+            # ── Preflight ──
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/preflight", headers=auth(mgr_t))
+            check("preflight -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            # ── Hisoblash ──
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t),
+                             json={"user_ids": [emp_uid]})
+            check("calculate -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            check("calculate 1 xodimni hisobladi",
+                  r.status_code == 200 and r.json().get("calculated") == 1, f"={r.json() if r.status_code == 200 else None}")
+
+            # ── Davrlar ro'yxati (literal /periods — {period} bilan aralashmasin) ──
+            r = client.get(f"{API_BASE}/payroll/periods", headers=auth(mgr_t))
+            check("GET /payroll/periods -> 200", r.status_code == 200, f"kod={r.status_code}")
+            check("yangi davr ro'yxatda bor",
+                  r.status_code == 200 and any(p["period"] == PERIOD for p in r.json()),
+                  f"davrlar={[p['period'] for p in r.json()] if r.status_code == 200 else None}")
+
+            # ── Ro'yxat va tafsilot — ROP qamrovi ──
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}", headers=auth(rop_t))
+            check("ROP ro'yxatni ko'radi -> 200", r.status_code == 200, f"kod={r.status_code}")
+            names_seen = [row["full_name"] for row in r.json()] if r.status_code == 200 else []
+            check("ROP faqat o'z jamoasini ko'radi (T-PayAPI-Emp bor, Outsider yo'q)",
+                  "T-PayAPI-Emp" in names_seen, f"={names_seen}")
+
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{emp_uid}", headers=auth(rop_t))
+            check("ROP o'z xodimining tafsilotini ko'radi -> 200", r.status_code == 200, f"kod={r.status_code}")
+            detail = r.json() if r.status_code == 200 else {}
+            check("tafsilotda base_amount=2500000", detail.get("base_amount") == 2_500_000.0,
+                  f"={detail.get('base_amount')}")
+            check("tafsilotda fine_amount=0 (kechikish yo'q)", detail.get("fine_amount") == 0.0,
+                  f"={detail.get('fine_amount')}")
+            check("tafsilotda items ro'yxati bor", len(detail.get("items", [])) >= 1,
+                  f"soni={len(detail.get('items', []))}")
+
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{outsider_uid}", headers=auth(rop_t))
+            check("ROP begona xodim tafsilotiga -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{emp_uid}", headers=auth(emp_t))
+            check("xodim /payroll/*/user -> 403 (VIEW_ROLES'da yo'q)", r.status_code == 403,
+                  f"kod={r.status_code}")
+
+            # ── Tasdiqlash va qulf ──
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(rop_t))
+            check("ROP tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+            check("HR/Boss tasdiqlaydi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+            check("tasdiqlangan (qulflangan) davrni qayta hisoblash -> 409", r.status_code == 409,
+                  f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+            check("ikkinchi marta tasdiqlash -> 409", r.status_code == 409, f"kod={r.status_code}")
+
+            # ── Bot: /payroll/my — faqat TASDIQLANGANDAN keyin ko'rinadi ──
+            with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as f:
+                _secret = next(
+                    (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")), ""
+                )
+            BOT_SECRET_HDR = {"X-Bot-Secret": _secret}
+            r = client.get(f"{API_BASE}/payroll/my/999600802", headers=BOT_SECRET_HDR)
+            check("bot /payroll/my -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            bot_out = r.json() if r.status_code == 200 else {}
+            check("bot /payroll/my calculated=True (tasdiqlangan)", bot_out.get("calculated") is True,
+                  f"={bot_out}")
+            check("bot /payroll/my net=2500000", bot_out.get("net") == 2_500_000.0, f"={bot_out.get('net')}")
+
+            r = client.get(f"{API_BASE}/payroll/my/999600802/late-status", headers=BOT_SECRET_HDR)
+            check("bot /payroll/my/late-status -> 200", r.status_code == 200, f"kod={r.status_code}")
+            check("late-status joriy oy (bugungi) qaytadi",
+                  r.status_code == 200 and r.json().get("period") == date.today().strftime("%Y-%m"),
+                  f"={r.json().get('period') if r.status_code == 200 else None}")
+
+            # ── Overtime kirish/tasdiqlash oqimi ──
+            r = client.post(f"{API_BASE}/payroll/overtime", headers=auth(mgr_t), json={
+                "user_id": emp_uid, "date": "2021-02-02", "minutes": 90, "note": "T-sinov",
+            })
+            check("overtime kiritildi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            ot_id = r.json().get("id") if r.status_code == 200 else None
+            r = client.post(f"{API_BASE}/payroll/overtime/{ot_id}/decide", headers=auth(mgr_t),
+                             json={"status": "approved"})
+            check("overtime tasdiqlandi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            # ── Adjustment (avans) ──
+            r = client.post(f"{API_BASE}/payroll/adjustments", headers=auth(mgr_t), json={
+                "user_id": emp_uid, "period": PERIOD, "kind": "minus", "amount": 50000,
+                "reason": "T-sinov avans",
+            })
+            check("adjustment yaratildi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            adj_id = r.json().get("id") if r.status_code == 200 else None
+            if adj_id:
+                r = client.delete(f"{API_BASE}/payroll/adjustments/{adj_id}", headers=auth(mgr_t))
+                check("adjustment o'chirildi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            if policy_id:
+                r = client.delete(f"{API_BASE}/payroll/policies/{policy_id}", headers=auth(mgr_t))
+                check("policy o'chirildi -> 200", r.status_code == 200, f"kod={r.status_code}")
+    except Exception:
+        check("Payroll API (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_payapi()
+        conn.close()
 
 
 def main() -> None:
@@ -1667,6 +1926,11 @@ def main() -> None:
         test_payroll_engine()
     except Exception:
         print("Payroll testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_api()
+    except Exception:
+        print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

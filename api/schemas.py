@@ -2,7 +2,7 @@ import datetime as dt
 import re
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # Lavozim uchun qo'llab-quvvatlanadigan ko'rsatkichlar va bot menyu tugmalari.
@@ -766,3 +766,351 @@ class LateStatRow(BaseModel):
     avg_late_minutes: float  # o'rtacha (kechikkan kunlarga nisbatan)
     max_late_minutes: int  # eng katta kechikish
     days: list[LateDayEntry]  # faqat kechikkan kunlar, sana bo'yicha o'sish tartibida
+
+
+# ─────────────────────────────────────────────
+# Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) — Bosqich 3
+# ─────────────────────────────────────────────
+
+
+class FinePolicyIn(BaseModel):
+    """Jarima qoidasi kiritish/yangilash — faqat HR/Boshliq/Dasturchi.
+    `scope='global'`da `scope_id` bo'lmaydi; `position`/`user`da MAJBURIY.
+    Cap (`monthly_cap_percent`/`monthly_cap_amount`) — 9-bo'lim QARORI
+    bo'yicha ikkalasidan KAMIDA BITTASI majburiy."""
+
+    scope: str
+    scope_id: int | None = None
+    grace_minutes: int | None = Field(default=None, ge=0)
+    free_late_minutes_per_month: int = Field(ge=0)
+    fine_mode: str = "per_day"
+    fine_per_day: float | None = Field(default=None, ge=0)
+    absent_mode: str = "fixed"
+    absent_fine: float | None = Field(default=None, ge=0)
+    early_leave_enabled: bool = False
+    early_leave_per_minute: float | None = Field(default=None, ge=0)
+    monthly_cap_percent: float | None = Field(default=None, ge=0, le=100)
+    monthly_cap_amount: float | None = Field(default=None, ge=0)
+    fine_applies_to: str = "net_salary"
+    is_active: bool = True
+
+    @field_validator("scope")
+    @classmethod
+    def _valid_scope(cls, v: str) -> str:
+        if v not in {"global", "position", "user"}:
+            raise ValueError("scope 'global', 'position' yoki 'user' bo'lishi kerak")
+        return v
+
+    @field_validator("fine_mode")
+    @classmethod
+    def _valid_fine_mode(cls, v: str) -> str:
+        if v not in {"per_day", "per_minute", "tiered", "percent_of_daily"}:
+            raise ValueError("noto'g'ri fine_mode")
+        return v
+
+    @field_validator("absent_mode")
+    @classmethod
+    def _valid_absent_mode(cls, v: str) -> str:
+        if v not in {"none", "fixed", "deduct_daily"}:
+            raise ValueError("noto'g'ri absent_mode")
+        return v
+
+    @field_validator("fine_applies_to")
+    @classmethod
+    def _valid_applies_to(cls, v: str) -> str:
+        if v not in {"bonus_first", "net_salary"}:
+            raise ValueError("noto'g'ri fine_applies_to")
+        return v
+
+    @model_validator(mode="after")
+    def _check_combination(self):
+        if self.scope == "global":
+            self.scope_id = None
+        elif self.scope_id is None:
+            raise ValueError("'position'/'user' scope uchun scope_id majburiy")
+        if self.monthly_cap_percent is None and self.monthly_cap_amount is None:
+            raise ValueError(
+                "Oylik jarima chegarasi (cap) majburiy — foiz yoki qat'iy summa kiriting"
+            )
+        if self.fine_mode == "per_day" and self.fine_per_day is None:
+            raise ValueError("fine_mode='per_day' uchun fine_per_day majburiy")
+        if self.absent_mode == "fixed" and self.absent_fine is None:
+            raise ValueError("absent_mode='fixed' uchun absent_fine majburiy")
+        return self
+
+
+class FinePolicyOut(BaseModel):
+    id: int
+    scope: str
+    scope_id: int | None
+    scope_label: str | None = None
+    grace_minutes: int | None
+    free_late_minutes_per_month: int | None
+    fine_mode: str
+    fine_per_day: float | None
+    absent_mode: str
+    absent_fine: float | None
+    early_leave_enabled: bool
+    early_leave_per_minute: float | None
+    monthly_cap_percent: float | None
+    monthly_cap_amount: float | None
+    fine_applies_to: str
+    is_active: bool
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SalaryRateIn(BaseModel):
+    user_id: int
+    amount: float = Field(gt=0)
+    pay_basis: str = "monthly"
+    effective_from: dt.date
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("pay_basis")
+    @classmethod
+    def _valid_basis(cls, v: str) -> str:
+        if v not in {"monthly", "daily", "hourly"}:
+            raise ValueError("pay_basis 'monthly', 'daily' yoki 'hourly' bo'lishi kerak")
+        return v
+
+
+class SalaryRateOut(BaseModel):
+    id: int
+    user_id: int
+    amount: float
+    pay_basis: str
+    effective_from: dt.date
+    changed_by: int
+    note: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OvertimeProfileIn(BaseModel):
+    enabled: bool = False
+    mode: str = "derived"
+    fixed_rate_per_hour: float | None = Field(default=None, ge=0)
+    multiplier: float | None = Field(default=None, gt=0)
+    norm_hours_source: str = "schedule"
+    fixed_norm_hours_per_month: int | None = Field(default=None, gt=0)
+    min_minutes: int = Field(default=15, ge=0)
+    daily_cap_minutes: int | None = Field(default=None, ge=0)
+    monthly_cap_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("mode")
+    @classmethod
+    def _valid_mode(cls, v: str) -> str:
+        if v not in {"derived", "fixed_rate"}:
+            raise ValueError("mode 'derived' yoki 'fixed_rate' bo'lishi kerak")
+        return v
+
+    @model_validator(mode="after")
+    def _check(self):
+        # 9-bo'lim, savol 6, QAROR: tizimda default YO'Q — `derived' rejim
+        # yoqilsa multiplier MAJBURIY (HR har xodim/lavozim uchun o'zi kiritadi).
+        if self.enabled and self.mode == "derived" and self.multiplier is None:
+            raise ValueError("'derived' rejimda multiplier majburiy (tizim darajasida default yo'q)")
+        if self.enabled and self.mode == "fixed_rate" and self.fixed_rate_per_hour is None:
+            raise ValueError("'fixed_rate' rejimda fixed_rate_per_hour majburiy")
+        return self
+
+
+class OvertimeProfileOut(BaseModel):
+    user_id: int
+    user_full_name: str | None = None
+    enabled: bool
+    mode: str
+    fixed_rate_per_hour: float | None
+    multiplier: float | None
+    norm_hours_source: str
+    fixed_norm_hours_per_month: int | None
+    min_minutes: int
+    daily_cap_minutes: int | None
+    monthly_cap_minutes: int | None
+    updated_at: datetime
+
+
+class OvertimeEntryIn(BaseModel):
+    """HR/rahbar qo'lda qo'shimcha ish kiritishi."""
+
+    user_id: int
+    date: dt.date
+    minutes: int = Field(gt=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OvertimeEntryDecide(BaseModel):
+    status: str  # approved | rejected
+
+    @field_validator("status")
+    @classmethod
+    def _valid(cls, v: str) -> str:
+        if v not in {"approved", "rejected"}:
+            raise ValueError("status 'approved' yoki 'rejected' bo'lishi kerak")
+        return v
+
+
+class OvertimeEntryOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str | None = None
+    date: dt.date
+    minutes: int
+    source: str
+    status: str
+    note: str | None
+    decided_by: int | None
+    decided_at: datetime | None
+    created_at: datetime
+
+
+class PayrollAdjustmentIn(BaseModel):
+    user_id: int
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    kind: str
+    amount: float = Field(gt=0)
+    reason: str = Field(min_length=5, max_length=500)
+
+    @field_validator("kind")
+    @classmethod
+    def _valid_kind(cls, v: str) -> str:
+        if v not in {"plus", "minus"}:
+            raise ValueError("kind 'plus' yoki 'minus' bo'lishi kerak")
+        return v
+
+
+class PayrollAdjustmentOut(BaseModel):
+    id: int
+    user_id: int
+    period: str
+    kind: str
+    amount: float
+    reason: str
+    created_by: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PayslipItemOut(BaseModel):
+    kind: str
+    label: str
+    quantity: float | None
+    rate: float | None
+    amount: float
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+class PayslipRow(BaseModel):
+    """Davr jadvali — bitta xodim, bitta qator (`GET /payroll/{period}`)."""
+
+    user_id: int
+    full_name: str
+    status: str
+    base_amount: float
+    late_days: int
+    fined_late_days: int
+    fine_amount: float
+    absent_days: int
+    absent_deduction: float
+    overtime_minutes: int
+    overtime_amount: float
+    bonus_amount: float
+    gross: float
+    net: float
+
+
+class PayslipDetailOut(BaseModel):
+    """Bitta xodim, bitta oy — to'liq tafsilot (qatorlar + kunma-kun breakdown)."""
+
+    id: int
+    user_id: int
+    full_name: str
+    period: str
+    status: str
+    base_amount: float
+    pay_basis: str
+    rate_snapshot: float | None
+    scheduled_days: int
+    worked_days: int
+    absent_days: int
+    excused_days: int
+    scheduled_minutes: int
+    worked_minutes: int
+    late_days: int
+    late_minutes: int
+    fined_late_days: int
+    fined_late_minutes: int
+    fine_amount: float
+    absent_deduction: float
+    overtime_minutes: int
+    overtime_amount: float
+    overtime_rate_snapshot: float | None
+    bonus_amount: float
+    adjustments_plus: float
+    adjustments_minus: float
+    gross: float
+    net: float
+    currency: str
+    calculated_at: datetime | None
+    approved_at: datetime | None
+    items: list[PayslipItemOut]
+    breakdown: dict | None
+
+
+class PayrollPreflightOut(BaseModel):
+    """Oylik hisobdan OLDINGI tayyorlik: davomat tayyorligi (Bosqich 0) +
+    payrollga xos qo'shimcha tekshiruvlar (stavkasiz xodim, hal qilinmagan
+    qo'shimcha ish so'rovi)."""
+
+    period: str
+    ok: bool
+    attendance: AttendanceReadiness
+    no_salary_rate: list[ReadinessIssue]
+    pending_overtime: list[ReadinessIssue]
+
+
+class PayrollCalculateRequest(BaseModel):
+    user_ids: list[int] | None = None
+
+
+class PayrollPeriodOut(BaseModel):
+    period: str
+    status: str
+    locked: bool
+    calculated_at: datetime | None
+    approved_at: datetime | None
+    employee_count: int
+    total_net: float
+
+
+class BotPayslipOut(BaseModel):
+    """Bot `/payroll/my/{telegram_id}` — faqat oxirgi TASDIQLANGAN varaqa."""
+
+    calculated: bool
+    period: str | None = None
+    base_amount: float | None = None
+    fine_amount: float | None = None
+    absent_deduction: float | None = None
+    overtime_amount: float | None = None
+    bonus_amount: float | None = None
+    net: float | None = None
+    currency: str | None = None
+    approved_at: datetime | None = None
+
+
+class BotLateStatusOut(BaseModel):
+    """Bot uchun: joriy oyda kechikish holati — «2/3 kechikish ishlatildi» kabi
+    oldindan ogohlantirish (1.5-band)."""
+
+    period: str
+    free_limit_minutes: int | None
+    used_minutes: int
+    remaining_minutes: int | None
+    fined_days_so_far: int
+    fine_per_day: float | None

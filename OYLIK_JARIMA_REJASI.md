@@ -446,12 +446,53 @@ qurilmagan — HR shu rejimni tanlasa Bosqich 3/4da qo'shiladi.
 qarshi to'liq `test.py`: **150 OK / 151** (yagona FAIL — oldindan mavjud
 Windows konsol kodlash muammosi, mantiqqa aloqasi yo'q).
 
-### Bosqich 3 — API
-**Fayllar:** `api/routers/payroll.py`, `api/schemas.py`, `api/main.py`,
-`api/deps.py` (`PAYROLL_VIEW_ROLES`, `PAYROLL_MANAGE_ROLES`), `api/services/export.py`
-**DoD:** 4-bo'limdagi barcha endpointlar; ruxsat testlari (ROP o'z jamoasini
-ko'radi, boshqa jamoaga 403; ROP sozlash endpointlariga 403; xodim → faqat
-o'ziniki); qulflangan davrga `calculate` → 409.
+### Bosqich 3 — API ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `api/routers/payroll.py` (yangi), `api/schemas.py` (+~20 sxema),
+`api/main.py` (router ro'yxatga olindi), `test.py` (`test_payroll_api`, 32
+tekshiruv)
+
+**Ish:** 4-bo'limdagi deyarli barcha endpointlar yozildi — sozlamalar
+(`policies`, `rates`, `overtime-profiles`), qo'shimcha ish (`overtime` +
+`decide`), hisob-kitob (`preflight`, `calculate`, `{period}` ro'yxat,
+`{period}/user/{id}` tafsilot, `approve`, `periods`), qo'lda tuzatish
+(`adjustments`), bot (`my`, `my/late-status`, `calculate-cron`).
+
+**Ruxsat — `PAYROLL_VIEW_ROLES` (hr/rop/boss/dasturchi) vs
+`PAYROLL_MANAGE_ROLES` (hr/boss/dasturchi)**, aynan 9-bo'lim savol 8
+QARORIGA muvofiq: ROP payslip'larni ko'radi (`can_view_payroll` — `norms.py::
+can_manage_norms` bilan bir xil qamrov naqshi: bevosita `manager_id` yoki
+lavozimi "ROP boshqaradi"), lekin sozlash/tasdiqlash/hisoblashga huquqi YO'Q.
+
+**Ataylab QILINMAGAN (rejaga muvofiq, keyingi bosqichlarga qoldirilgan):**
+- `POST /payroll/{period}/reopen` — Bosqich 3.5 (Dasturchi rejimi,
+  `admin_override.py`) ga tegishli, bu routerda YO'Q.
+- `GET /payroll/{period}/export` (Excel) — Bosqich 7 (hisobot) ga qoldirildi.
+- `preflight` reja qoralamasida POST deb yozilgan edi — GET qilib
+  amalga oshirildi (ma'lumot o'zgartirmaydi, `/attendance/readiness` bilan
+  bir xil qoida).
+
+**Nozik texnik band:** `GET /payroll/periods` (literal) — bu route
+`GET /payroll/{period}` catch-all'idan OLDIN ro'yxatdan o'tkazilishi SHART
+edi (FastAPI'da bir xil segment sonli ikki route orasida tartib hal
+qiluvchi) — kodda izoh bilan belgilangan.
+
+**Test:** 32 ta HTTP-darajasidagi tekshiruv (`httpx`, real ishlayotgan API'ga
+qarshi) — ruxsat matritsasi (xodim/ROP → sozlamalarga 403), validatsiya
+(cap'siz policy → 422, multiplier'siz derived profil → 422, dublikat stavka
+→ 400), to'liq oqim (hisoblash → ro'yxat → tafsilot → tasdiqlash → qulf →
+qayta hisoblash 409), ROP qamrovi (o'z jamoasini ko'radi, begonaga 403),
+bot endpointlari (tasdiqlanmagan payslip ko'rinmaydi, joriy oy live
+late-status). Real xizmatlarga qarshi to'liq `test.py`: **186 OK / 187**
+(yagona FAIL — oldindan mavjud Windows konsol kodlash muammosi).
+
+**Ishlash jarayonida topilgan va tuzatilgan 2 ta xato:** `PayslipDetailOut`
+sxemasida `base_amount` maydoni butunlay tushib qolgan edi (javobda doim
+`null`); HTTP test sozlashida butun oy uchun Du-Ju jadval berilib, faqat
+1 kunlik `Attendance` yozilgani sabab qolgan ~19 kun "kelmagan" deb
+hisoblanib kutilmagan jarima chiqargan edi — bu aslida DVIZHOK to'g'ri
+ishlagani (`collect_attendance`ning ataylab qilingan defensiv qoidasi),
+test sozlashi Bosqich 2'dagi izolyatsiya naqshiga (faqat kerakli kunlarga
+`WorkScheduleOverride`) moslashtirildi.
 
 ### Bosqich 3.5 — ⭐ Dasturchi rejimi (super-admin qatlami)
 **Fayllar:** `api/deps.py`, `api/routers/admin_override.py` (yangi),

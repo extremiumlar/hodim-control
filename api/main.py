@@ -23,6 +23,7 @@ from api.routers import (
     mobilograf,
     monitored_groups,
     norms,
+    payroll,
     playbook,
     positions,
     reports,
@@ -67,6 +68,7 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
+app.include_router(payroll.router)
 app.include_router(hourly_plan.router)
 app.include_router(auto_plan.router)
 app.include_router(ai_coach.router)
