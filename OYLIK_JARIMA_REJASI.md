@@ -390,15 +390,61 @@ oldin zaxira olindi: `app.db.bak_2026-07-27_bosqich1_migration`); `downgrade
 real xizmatlarga qarshi `test.py` — **100 OK / 101** (o'sha bitta oldindan
 mavjud FAIL, mantiqqa aloqasi yo'q).
 
-### Bosqich 2 — hisoblash yadrosi (kodning yuragi)
-**Fayllar:** `api/services/payroll.py`, `test.py`
-**Ish:** 3-bo'limdagi funksiyalar. **Test birinchi**: T- xodimlar ustida
-sun'iy davomat yaratib, qo'lda hisoblangan kutilgan summa bilan solishtirish.
-Majburiy testlar: limit ichida jarima yo'q; limit tugagach har kun jarima;
-sababli kun limitni yemaydi; dam olish kuni jarimasiz; cap ishlaydi;
-`bonus_first` bonusni yeb, qolganini oylikka o'tkazadi; overtime `derived` va
-`fixed_rate` bir xil kirishda to'g'ri; idempotentlik (2 marta hisoblash = bir xil).
-**DoD:** barcha T- testlar yashil; yadro DB'siz ham sinaladigan.
+### Bosqich 2 — hisoblash yadrosi (kodning yuragi) ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `api/services/payroll.py` (yangi, ~560 qator), `test.py`
+(`test_payroll_engine`, 35 ta tekshiruv)
+
+**Ish:** 3-bo'limdagi barcha funksiyalar yozildi: `resolve_policy` (3 daraja,
+faqat faol qator ishtirok etadi, hech narsa topilmasa `None`), `resolve_rate`
++ `_first_rate` (tarixiy stavka), `month_schedule` (bitta so'rovda batch —
+N+1 emas), `collect_attendance` (reja + `Attendance` + `ExcusedDay` — ikkala
+manbadan `excused` aniqlanadi, chunki jonli check-in oqimi hali har doim
+`status='excused'` yozmaydi), `compute_late_fine`/`compute_absent_fine`/
+`apply_fine_cap`/`compute_base`/`compute_overtime`, orkestrator
+`build_payslip` + `run_payroll` (idempotent upsert, `PayrollLocked`).
+
+**Sinovdan o'tgan (barchasi T- xodimlar bilan, izolyatsiyalangan "2020-01"
+davrida — jonli iyul 2026 ma'lumotiga tegmaydi):**
+- Limit xronologik yeyiladi: chegaradan o'tkazgan kunning o'zi bepul (2 kun,
+  jami 35 daq, limit 30), keyingi kun (10 daq) — jarimali.
+- Sababli kun (`ExcusedDay`, yozuvsiz) to'g'ri aniqlanadi va limitni yemaydi.
+- Kelmagan kun uchun qat'iy summa (Attendance yozuvsiz kun — defensiv
+  "absent" filiali).
+- Asosiy oylik (monthly, to'liq oy — prorata=1.0 holat).
+- To'liq oqim: `run_payroll` → `Payslip` + 3 ta `PayslipItem` (base, fine_late,
+  fine_absent) — summalar mos.
+- **Idempotentlik**: 2 marta chaqirilganda bir xil `Payslip.id`, dublikat
+  `PayslipItem` YO'Q, `net` o'zgarmaydi.
+- **Qulf**: `locked=True` → `PayrollLocked` ko'tariladi.
+- **Cap**: past cap qo'yilganda late+absent jarimasi PROPORSIONAL qisqaradi
+  (ikkalasi ham 0 ga tushib qolmaydi).
+- **Overtime**: `derived` (norma soati jadvaldan, × multiplier) va
+  `fixed_rate` ikkalasi ham qo'lda hisoblangan summa bilan mos.
+- **Avans/adjustment** (`minus`) qayta hisoblashda hisobga olinadi.
+- **`resolve_policy` qamrovi**: xodim-qoida bor bo'lsa o'sha; yo'q va
+  global bor bo'lsa globalga tushadi; umuman yo'q bo'lsa `None` — va
+  `None`da jarima 0 (xavfsiz sukut, ataylab tekshirildi).
+- Dam olish kuni jarimasiz — alohida test shart emas: `collect_attendance`
+  tuzilishi bo'yicha `is_working=False` kunlar UNCONDITIONAL `status='weekend'`
+  oladi (`Attendance.status`dan qat'i nazar), shuning uchun `late_days`
+  ro'yxatiga umuman kirmaydi.
+
+**⭐ Ma'lum cheklov (ataylab, ko'zi ochiq holda qoldirilgan):**
+`fine_applies_to` (`bonus_first` vs `net_salary`) yakuniy `net` summasiga
+TA'SIR QILMAYDI — matematik jihatdan bonusdan yechish yoki to'g'ridan-to'g'ri
+oylikdan yechish bir xil natija beradi (`bonus - jarima` ayirmasi qaysi
+"chelak"dan olinishidan qat'i nazar bir xil). Farq faqat QAYSI `PayslipItem`
+kamayishida ko'rinadi (huquqiy/hisobot nuqtai nazaridan muhim bo'lishi
+mumkin, 8.4-band). Hozircha `items` faqat `net_salary` ko'rinishida yig'iladi
+(HR tanlagan QAROR default — 9-bo'lim); `bonus_first` ham to'g'ri `net`
+beradi, lekin "avval bonusdan yechildi" item-darajasidagi ko'rinishi hali
+qurilmagan — HR shu rejimni tanlasa Bosqich 3/4da qo'shiladi.
+
+**DoD:** barcha T- testlar yashil (35/35); yadro DB'siz qismlari
+(`compute_late_fine`, `compute_absent_fine`, `apply_fine_cap`, `compute_base`,
+`round_money`) sof funksiyalar — DB'siz ham sinaladi; real xizmatlarga
+qarshi to'liq `test.py`: **150 OK / 151** (yagona FAIL — oldindan mavjud
+Windows konsol kodlash muammosi, mantiqqa aloqasi yo'q).
 
 ### Bosqich 3 — API
 **Fayllar:** `api/routers/payroll.py`, `api/schemas.py`, `api/main.py`,

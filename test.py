@@ -1375,6 +1375,272 @@ def run_tests(ctx: dict) -> None:
             check("5.11 audit tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
 
+def test_payroll_engine() -> None:
+    """Bosqich 2: `api/services/payroll.py` hisoblash yadrosi — HTTP orqali
+    emas (router hali yo'q, Bosqich 3), to'g'ridan-to'g'ri servis funksiyalarini
+    chaqirib. Butunlay izolyatsiyalangan davr ("2020-01") ishlatiladi — real
+    joriy oy ma'lumotiga tegilmaydi. Xodimga barcha hafta kunlari
+    `is_working=False` qilib qo'yilib (WorkScheduleWeekly), faqat aniq
+    belgilangan kunlar `WorkScheduleOverride` bilan ish kuni deb ochiladi —
+    shu orqali "rejadagi kunlar soni" testda TO'LIQ nazorat qilinadi (Yanvar
+    2020'ning haftaning qaysi kunlariga to'g'ri kelishiga bog'liq emas)."""
+    import asyncio
+    from decimal import Decimal
+
+    print("\n" + "=" * 60)
+    print("BOSQICH 2: PAYROLL HISOBLASH YADROSI (api/services/payroll.py)")
+    print("=" * 60)
+
+    async def _run():
+        from sqlalchemy import delete, select
+        from db.base import async_session
+        from db.models import (
+            Attendance, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
+            PayrollAdjustment, PayrollPeriod, Payslip, PayslipItem, SalaryRate,
+            User, WorkScheduleOverride, WorkScheduleWeekly,
+        )
+        from api.services import payroll as pr
+
+        PERIOD = "2020-01"
+        WINDOW_MIN = 480  # work_minutes(09:00,18:00) — tushliksiz 8 soat
+
+        async with async_session() as s:
+            # Oldingi (masalan yarim yo'lda qulagan) ishga tushirishdan qolgan
+            # T-Payroll* yozuvlarni tozalaymiz — aks holda UNIQUE(telegram_id)
+            # xatosi bilan bu test hech qachon qayta ishlamay qolardi.
+            stale_ids = list(
+                await s.scalars(select(User.id).where(User.full_name.like("T-Payroll%")))
+            )
+            if stale_ids:
+                stale_payslips = list(
+                    await s.scalars(select(Payslip.id).where(Payslip.user_id.in_(stale_ids)))
+                )
+                if stale_payslips:
+                    await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(stale_payslips)))
+                await s.execute(delete(Payslip).where(Payslip.user_id.in_(stale_ids)))
+                await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id.in_(stale_ids)))
+                await s.execute(delete(OvertimeProfile).where(OvertimeProfile.user_id.in_(stale_ids)))
+                await s.execute(delete(PayrollAdjustment).where(PayrollAdjustment.user_id.in_(stale_ids)))
+                await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(stale_ids)))
+                await s.execute(delete(FinePolicy).where(FinePolicy.scope_id.in_(stale_ids)))
+                await s.execute(delete(ExcusedDay).where(ExcusedDay.user_id.in_(stale_ids)))
+                await s.execute(delete(Attendance).where(Attendance.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(stale_ids)))
+                await s.execute(delete(User).where(User.id.in_(stale_ids)))
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.execute(
+                delete(FinePolicy).where(
+                    FinePolicy.scope == "global", FinePolicy.free_late_minutes_per_month == 999_999
+                )
+            )
+            await s.commit()
+
+            # ── Sozlash: T-Payroll1 (asosiy sinov xodimi) ──
+            u1 = User(telegram_id=999500701, full_name="T-Payroll1", role="employee",
+                      bot_started=True, is_active=True)
+            s.add(u1)
+            await s.flush()
+
+            for wd in range(7):
+                s.add(WorkScheduleWeekly(user_id=u1.id, weekday=wd, is_working=False))
+
+            day1, day2, day3 = date(2020, 1, 6), date(2020, 1, 7), date(2020, 1, 8)
+            day4_absent, day5_present, day6_excused = date(2020, 1, 9), date(2020, 1, 10), date(2020, 1, 13)
+            test_days = [day1, day2, day3, day4_absent, day5_present, day6_excused]
+            for d in test_days:
+                s.add(WorkScheduleOverride(user_id=u1.id, date=d, is_working=True,
+                                            start_time="09:00", end_time="18:00"))
+
+            # Kechikishlar: 20+15 (ikkalasi ham bepul limit ichida, jami 35),
+            # keyingi 10 daq (cumulative_before=35 >= limit(30) -> JARIMALI).
+            s.add(Attendance(user_id=u1.id, date=day1, status="late", late_minutes=20, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=u1.id, date=day2, status="late", late_minutes=15, worked_minutes=WINDOW_MIN))
+            s.add(Attendance(user_id=u1.id, date=day3, status="late", late_minutes=10, worked_minutes=WINDOW_MIN))
+            # day4_absent — yozuv YO'Q (defensiv "absent" filiali sinaladi)
+            s.add(Attendance(user_id=u1.id, date=day5_present, status="present", worked_minutes=WINDOW_MIN))
+            s.add(ExcusedDay(user_id=u1.id, date=day6_excused, reason="T-sinov", status="approved"))
+
+            s.add(SalaryRate(user_id=u1.id, amount=3_000_000, pay_basis="monthly",
+                              effective_from=date(2019, 1, 1), changed_by=u1.id))
+            s.add(FinePolicy(scope="user", scope_id=u1.id, is_active=True,
+                              free_late_minutes_per_month=30, fine_mode="per_day", fine_per_day=50_000,
+                              absent_mode="fixed", absent_fine=100_000,
+                              monthly_cap_amount=1_000_000, fine_applies_to="net_salary"))
+            await s.commit()
+
+            days = await pr.collect_attendance(s, u1, PERIOD)
+            by_date = {d["date"]: d for d in days}
+            check("Payroll: scheduled_days aniq 6", sum(1 for d in days if d["is_working"]) == 6,
+                  f"={sum(1 for d in days if d['is_working'])}")
+            check("Payroll: day4 defensiv 'absent' deb aniqlandi",
+                  by_date[day4_absent]["status"] == "absent")
+            check("Payroll: day6 'excused' deb aniqlandi (ExcusedDay, yozuvsiz)",
+                  by_date[day6_excused]["status"] == "excused" and by_date[day6_excused]["excused"] is True)
+
+            policy = await pr.resolve_policy(s, u1)
+            check("Payroll: resolve_policy user-scope qoidani topdi", policy is not None and policy.scope == "user")
+
+            late = pr.compute_late_fine(days, policy)
+            check("Payroll: late_days=3", late["late_days"] == 3, f"={late['late_days']}")
+            check("Payroll: late_minutes=45", late["late_minutes"] == 45, f"={late['late_minutes']}")
+            check("Payroll: limit ichidagi 2 kun BEPUL (chegaradan o'tkazgan kun ham)",
+                  late["fined_days"] == 1, f"fined_days={late['fined_days']}")
+            check("Payroll: faqat 3-kun (10 daq) jarimali", late["fined_minutes"] == 10,
+                  f"fined_minutes={late['fined_minutes']}")
+            check("Payroll: jarima summasi = 1 x 50000", late["amount"] == Decimal("50000"),
+                  f"amount={late['amount']}")
+
+            absent = pr.compute_absent_fine(days, policy)
+            check("Payroll: absent_days=1", absent["absent_days"] == 1, f"={absent['absent_days']}")
+            check("Payroll: kelmagan kun jarimasi = 100000", absent["amount"] == Decimal("100000"),
+                  f"amount={absent['amount']}")
+
+            rate = await pr.resolve_rate(s, u1.id, date(2020, 1, 1))
+            first_rate = await pr._first_rate(s, u1.id)
+            base_amount, base_item = pr.compute_base(rate, first_rate, days, date(2020, 1, 1))
+            check("Payroll: base_amount to'liq oylik (prorata yo'q, 6/6 kun)",
+                  base_amount == Decimal("3000000"), f"base={base_amount}")
+
+            # ── run_payroll orqali to'liq oqim (Payslip + PayslipItem yoziladi) ──
+            result = await pr.run_payroll(s, PERIOD, user_ids=[u1.id])
+            check("Payroll: run_payroll 1 xodimni hisobladi", result["calculated"] == 1, f"={result}")
+
+            payslip = await s.scalar(select(Payslip).where(Payslip.user_id == u1.id, Payslip.period == PERIOD))
+            check("Payroll: Payslip yaratildi", payslip is not None)
+            if payslip is not None:
+                check("Payroll: Payslip.fine_amount=50000", float(payslip.fine_amount) == 50000.0,
+                      f"={payslip.fine_amount}")
+                check("Payroll: Payslip.absent_deduction=100000", float(payslip.absent_deduction) == 100000.0,
+                      f"={payslip.absent_deduction}")
+                check("Payroll: Payslip.net = 3000000-50000-100000=2850000",
+                      float(payslip.net) == 2_850_000.0, f"net={payslip.net}")
+                check("Payroll: Payslip.excused_days=1", payslip.excused_days == 1, f"={payslip.excused_days}")
+                check("Payroll: Payslip.worked_days=4 (3 late + 1 present)", payslip.worked_days == 4,
+                      f"={payslip.worked_days}")
+
+                items_1 = list(await s.scalars(
+                    select(PayslipItem).where(PayslipItem.payslip_id == payslip.id)))
+                check("Payroll: PayslipItem qatorlari yozildi (base+fine_late+fine_absent)",
+                      len(items_1) == 3, f"soni={len(items_1)}")
+
+                # ── Idempotentlik: qayta chaqirilsa dublikat YO'Q ──
+                result2 = await pr.run_payroll(s, PERIOD, user_ids=[u1.id])
+                payslip2 = await s.scalar(select(Payslip).where(Payslip.user_id == u1.id, Payslip.period == PERIOD))
+                items_2 = list(await s.scalars(
+                    select(PayslipItem).where(PayslipItem.payslip_id == payslip2.id)))
+                check("Payroll: idempotent - bir xil Payslip.id", payslip2.id == payslip.id)
+                check("Payroll: idempotent - PayslipItem dublikat YO'Q (hamon 3 ta)",
+                      len(items_2) == 3, f"soni={len(items_2)}")
+                check("Payroll: idempotent - net o'zgarmadi", float(payslip2.net) == 2_850_000.0,
+                      f"net={payslip2.net}")
+
+            # ── Qulflangan davr qayta hisoblashni rad etadi ──
+            period_row = await s.scalar(select(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            period_row.locked = True
+            await s.commit()
+            locked_raised = False
+            try:
+                await pr.run_payroll(s, PERIOD, user_ids=[u1.id])
+            except pr.PayrollLocked:
+                locked_raised = True
+            check("Payroll: qulflangan davrda run_payroll -> PayrollLocked", locked_raised)
+            period_row.locked = False
+            await s.commit()
+
+            # ── Oylik jarima chegarasi (cap) — pastroq cap bilan qayta sinov ──
+            policy.monthly_cap_amount = 100_000  # raw jami 150000 dan kichik
+            await s.commit()
+            late_c, absent_c, raw_total, cap_applied = pr.apply_fine_cap(
+                late["amount"], absent["amount"], base_amount, policy
+            )
+            check("Payroll: cap ishga tushdi (raw 150000 > cap 100000)", cap_applied is True)
+            check("Payroll: cap qo'llangach jami roppa-rosa 100000",
+                  abs(float(late_c + absent_c) - 100_000.0) < 0.01, f"={late_c + absent_c}")
+            check("Payroll: cap ikkalasini proporsional qisqartiradi (ikkalasi ham >0)",
+                  late_c > 0 and absent_c > 0, f"late={late_c} absent={absent_c}")
+
+            # ── Qo'shimcha ish (derived rejim) ──
+            s.add(OvertimeProfile(user_id=u1.id, enabled=True, mode="derived",
+                                   multiplier=1.5, norm_hours_source="schedule"))
+            s.add(OvertimeEntry(user_id=u1.id, date=day1, minutes=120, source="manual", status="approved"))
+            await s.commit()
+            profile = await s.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == u1.id))
+            ot = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            # norm_hours = scheduled_minutes(6*480=2880)/60=48; hourly=3000000/48*1.5=93750;
+            # amount=93750*(120/60)=187500
+            check("Payroll: overtime_minutes=120", ot["minutes"] == 120, f"={ot['minutes']}")
+            check("Payroll: overtime amount (derived, 1.5x) ~187500",
+                  abs(float(ot["amount"]) - 187_500.0) < 1, f"={ot['amount']}")
+
+            # Fixed-rate rejim (bir xil OvertimeEntry, boshqa profil)
+            profile.mode = "fixed_rate"
+            profile.fixed_rate_per_hour = 20_000
+            await s.commit()
+            ot2 = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            check("Payroll: overtime amount (fixed_rate, 20000/soat x 2 soat) =40000",
+                  abs(float(ot2["amount"]) - 40_000.0) < 1, f"={ot2['amount']}")
+
+            # ── QoolAdjustment (avans) — minus ──
+            s.add(PayrollAdjustment(user_id=u1.id, period=PERIOD, kind="minus", amount=50_000,
+                                     reason="T-sinov avans", created_by=u1.id))
+            await s.commit()
+            result3 = await pr.run_payroll(s, PERIOD, user_ids=[u1.id])
+            check("Payroll: adjustment qo'shilgandan keyin ham hisoblandi", result3["calculated"] == 1)
+            payslip3 = await s.scalar(select(Payslip).where(Payslip.user_id == u1.id, Payslip.period == PERIOD))
+            check("Payroll: adjustments_minus=50000 qaytadan hisoblanganda hisobga olindi",
+                  float(payslip3.adjustments_minus) == 50_000.0, f"={payslip3.adjustments_minus}")
+
+            # ── resolve_policy: xodim > lavozim > global qamrov ──
+            u2 = User(telegram_id=999500702, full_name="T-Payroll2NoPolicy", role="employee",
+                      bot_started=True, is_active=True)
+            s.add(u2)
+            await s.flush()
+            no_policy = await pr.resolve_policy(s, u2)
+            check("Payroll: qoida umuman yo'q bo'lsa None qaytadi", no_policy is None)
+
+            days2 = [{"date": day1, "is_working": True, "start": "09:00", "end": "18:00",
+                      "scheduled_minutes": WINDOW_MIN, "attendance": None, "excused": False,
+                      "status": "late", "late_minutes": 999, "worked_minutes": 0}]
+            late_no_policy = pr.compute_late_fine(days2, no_policy)
+            check("Payroll: qoidasiz kechikish uchun jarima 0 (xavfsiz sukut)",
+                  late_no_policy["amount"] == Decimal("0"), f"={late_no_policy['amount']}")
+
+            s.add(FinePolicy(scope="global", scope_id=None, is_active=True,
+                              free_late_minutes_per_month=999_999, fine_mode="per_day", fine_per_day=1,
+                              absent_mode="none"))
+            await s.commit()
+            global_policy = await pr.resolve_policy(s, u2)
+            check("Payroll: user/lavozim yo'q bo'lsa GLOBAL qoidaga tushadi",
+                  global_policy is not None and global_policy.scope == "global")
+
+            # ── Tozalash ──
+            for uid in (u1.id, u2.id):
+                pslips = list(await s.scalars(select(Payslip).where(Payslip.user_id == uid)))
+                for p in pslips:
+                    await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id == p.id))
+                await s.execute(delete(Payslip).where(Payslip.user_id == uid))
+                await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id == uid))
+                await s.execute(delete(OvertimeProfile).where(OvertimeProfile.user_id == uid))
+                await s.execute(delete(PayrollAdjustment).where(PayrollAdjustment.user_id == uid))
+                await s.execute(delete(SalaryRate).where(SalaryRate.user_id == uid))
+                await s.execute(delete(FinePolicy).where(FinePolicy.scope_id == uid))
+                await s.execute(delete(ExcusedDay).where(ExcusedDay.user_id == uid))
+                await s.execute(delete(Attendance).where(Attendance.user_id == uid))
+                await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id == uid))
+                await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == uid))
+            await s.execute(delete(FinePolicy).where(FinePolicy.scope == "global",
+                                                       FinePolicy.free_late_minutes_per_month == 999_999))
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
+            await s.commit()
+
+    try:
+        asyncio.run(_run())
+    except Exception:
+        check("Payroll hisoblash yadrosi (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -1396,6 +1662,11 @@ def main() -> None:
             cleanup(ctx)
         except Exception:
             print("Tozalashda xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_engine()
+    except Exception:
+        print("Payroll testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")
