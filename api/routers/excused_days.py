@@ -59,7 +59,27 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
 
     # Sana berilmasa bugungi (Toshkent) kun olinadi — kun chegarasi bot yoki
     # serverning mahalliy vaqtiga emas, har doim backend timezone'iga bog'liq.
-    item = ExcusedDay(user_id=user.id, date=payload.date or today_local(), reason=payload.reason)
+    day = payload.date or today_local()
+
+    # 5.7-band: bitta xodim bitta kunga cheksiz so'rov yuborishi mumkin edi —
+    # har biri BARCHA HR'larga alohida xabar (spam) va dublikat yozuv yaratardi.
+    # Faqat allaqachon PENDING yoki APPROVED so'rov bo'lsa rad etiladi — REJECTED
+    # bo'lgandan keyin qayta so'rash (masalan sababni tuzatib) hali ham mumkin.
+    existing = await db.scalar(
+        select(ExcusedDay).where(
+            ExcusedDay.user_id == user.id,
+            ExcusedDay.date == day,
+            ExcusedDay.status.in_((ExcusedStatus.pending.value, ExcusedStatus.approved.value)),
+        )
+    )
+    if existing is not None:
+        status_uz = "tasdiqlangan" if existing.status == ExcusedStatus.approved.value else "ko'rib chiqilmoqda"
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Siz {day.isoformat()} kuni uchun allaqachon so'rov yuborgansiz ({status_uz}).",
+        )
+
+    item = ExcusedDay(user_id=user.id, date=day, reason=payload.reason)
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -98,6 +118,12 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
     item = await db.get(ExcusedDay, item_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+    # 5.7-band: idempotentlik — allaqachon hal qilingan so'rov qayta
+    # o'zgartirilmaydi (masalan eski xabardagi tugma ikkinchi marta bosilsa,
+    # yoki ikki HR bir vaqtda javob bersa — "approved" bo'lgan kun qayta
+    # "rejected" bo'lib qolmasin).
+    if item.status != ExcusedStatus.pending.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
 
     decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
     if not decider or decider.role not in {Role.hr.value, Role.boss.value, Role.dasturchi.value}:

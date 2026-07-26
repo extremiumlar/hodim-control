@@ -17,7 +17,7 @@ from api.schemas import (
     WorkWeeklyOut,
     WorkWeekOut,
 )
-from db.models import Attendance, Role, User, WorkScheduleOverride, WorkScheduleWeekly
+from db.models import AuditLog, Attendance, Role, User, WorkScheduleOverride, WorkScheduleWeekly
 
 router = APIRouter(prefix="/work-schedule", tags=["work-schedule"])
 
@@ -213,6 +213,20 @@ async def set_weekly(
         if entry.start_time and entry.end_time and entry.start_time >= entry.end_time:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tugash vaqti boshlanishdan keyin bo'lishi kerak")
 
+    # 5.11-band: `AuditLog` ilgari IMPORT ham qilinmagan edi — jadval "eski
+    # holatni DELETE qilib qayta yozish" bilan almashtirilardi va ROP/HR
+    # bugungi kunga qulay vaqt qo'yib, kechikishni "yo'qotib yuborsa" ham
+    # HECH QAYERDA iz qolmasdi. Eski holat o'chirishdan OLDIN saqlanadi.
+    before_rows = list(
+        await db.scalars(
+            select(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == user_id).order_by(WorkScheduleWeekly.weekday)
+        )
+    )
+    before = [
+        {"weekday": w.weekday, "is_working": w.is_working, "start_time": w.start_time, "end_time": w.end_time}
+        for w in before_rows
+    ]
+
     await db.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == user_id))
     for entry in payload.days:
         db.add(
@@ -224,6 +238,20 @@ async def set_weekly(
                 end_time=entry.end_time if entry.is_working else None,
             )
         )
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="work_schedule_weekly_changed",
+            target_user_id=user_id,
+            before={"days": before} if before else None,
+            after={
+                "days": [
+                    {"weekday": e.weekday, "is_working": e.is_working, "start_time": e.start_time, "end_time": e.end_time}
+                    for e in payload.days
+                ]
+            },
+        )
+    )
     await db.commit()
     await _recalc_from(db, user, today_local())
     return await get_weekly(user_id, actor, db)
@@ -264,6 +292,19 @@ async def set_override(
             WorkScheduleOverride.user_id == user_id, WorkScheduleOverride.date == payload.date
         )
     )
+    # 5.11-band: ish jadvali kechikish hisobining yagona asosi — ROP/HR o'z
+    # doirasidagi xodimga bugungi sanaga qulay vaqt qo'yib, kechikishni "yo'qotib
+    # yuborishi" mumkin edi va bu HECH QAYERDA (audit) qayd etilmasdi.
+    before = (
+        {
+            "is_working": existing.is_working,
+            "start_time": existing.start_time,
+            "end_time": existing.end_time,
+            "note": existing.note,
+        }
+        if existing is not None
+        else None
+    )
     if existing is None:
         existing = WorkScheduleOverride(user_id=user_id, date=payload.date)
         db.add(existing)
@@ -271,6 +312,21 @@ async def set_override(
     existing.start_time = payload.start_time if payload.is_working else None
     existing.end_time = payload.end_time if payload.is_working else None
     existing.note = payload.note
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="work_schedule_override_changed",
+            target_user_id=user_id,
+            before=before,
+            after={
+                "date": payload.date.isoformat(),
+                "is_working": payload.is_working,
+                "start_time": payload.start_time,
+                "end_time": payload.end_time,
+                "note": payload.note,
+            },
+        )
+    )
     await db.commit()
     await db.refresh(existing)
     # 3.1-band: faqat BUGUNGI yoki KELAJAKDAGI sana uchun qayta hisoblaymiz —
@@ -292,6 +348,27 @@ async def delete_override(
     user_id: int, day: date, actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> dict:
     await _get_manageable_user_or_404(db, user_id, actor)
+    existing = await db.scalar(
+        select(WorkScheduleOverride).where(
+            WorkScheduleOverride.user_id == user_id, WorkScheduleOverride.date == day
+        )
+    )
+    if existing is not None:
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="work_schedule_override_deleted",
+                target_user_id=user_id,
+                before={
+                    "date": day.isoformat(),
+                    "is_working": existing.is_working,
+                    "start_time": existing.start_time,
+                    "end_time": existing.end_time,
+                    "note": existing.note,
+                },
+                after=None,
+            )
+        )
     await db.execute(
         delete(WorkScheduleOverride).where(
             WorkScheduleOverride.user_id == user_id, WorkScheduleOverride.date == day

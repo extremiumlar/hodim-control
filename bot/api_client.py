@@ -89,13 +89,15 @@ async def complete_task(task_id: int, telegram_id: int) -> dict:
     return resp.json()
 
 
-async def create_excused_day(telegram_id: int, reason: str) -> dict:
-    """Sana yuborilmaydi — backend bugungi (Toshkent) sanani o'zi aniqlaydi,
-    shunda bot serverining mahalliy vaqti kun chegarasiga ta'sir qilmaydi."""
-    resp = await _get_client().post(
-        "/excused-days",
-        json={"telegram_id": telegram_id, "reason": reason},
-    )
+async def create_excused_day(telegram_id: int, reason: str, date_str: str | None = None) -> dict:
+    """`date_str` berilmasa — backend bugungi (Toshkent) sanani o'zi aniqlaydi,
+    shunda bot serverining mahalliy vaqti kun chegarasiga ta'sir qilmaydi.
+    5.6-band: endi xodim ERTAGA yoki aniq (kelajakdagi) sana uchun ham so'rov
+    yubora oladi — ilgari faqat "bugun" mumkin edi."""
+    payload: dict = {"telegram_id": telegram_id, "reason": reason}
+    if date_str:
+        payload["date"] = date_str
+    resp = await _get_client().post("/excused-days", json=payload)
     resp.raise_for_status()
     return resp.json()
 

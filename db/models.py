@@ -67,6 +67,11 @@ class AttendanceStatus(str, enum.Enum):
     late = "late"  # kechikdi
     absent = "absent"  # kelmadi (ish kuni bo'lsa-yu, check-in yo'q)
     weekend = "weekend"  # dam olish kuni (ish jadvali bo'yicha ishlanmaydi)
+    # 5.1-band: tasdiqlangan sababli kun — kelib check-in qilgan bo'lsa ham
+    # (masalan shifokordan keyin tushdan keyin ishga kelgan) bu "late" EMAS.
+    # Ilgari sababli kun davomatga UMUMAN ta'sir qilmasdi: check-in bo'lsa
+    # late_minutes to'liq hisoblanardi, ExcusedDay hech qayerda tekshirilmasdi.
+    excused = "excused"
 
 
 class PayBasis(str, enum.Enum):

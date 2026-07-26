@@ -17,7 +17,7 @@ bo'lmasligi uchun)."""
 import html
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import _effective_today
@@ -374,6 +374,20 @@ async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
     return closed
 
 
+async def _lead_digest_fires_at(db: AsyncSession, now: datetime) -> bool:
+    """5.10-band: lid/statistika digesti (`GroupPostConfig`, `daily_digest.py`)
+    davomat digesti bilan BIR XIL guruhlarga yuboriladi (`digest_group_targets`),
+    lekin ikkalasi mutlaqo mustaqil jadvaldan ishlaydi. Vaqtlar yaqinlashsa
+    (masalan rahbar davomat kechki vaqtini 19:10 ga o'zgartirsa) guruhga bir
+    daqiqada ikkita uzun xabar tushib qolishi mumkin edi."""
+    from db.models import GroupPostConfig
+
+    cfg = await db.get(GroupPostConfig, 1)
+    if cfg is None:
+        return False
+    return (now.hour, now.minute) == (cfg.post_hour, cfg.post_minute)
+
+
 async def get_digest_config(db: AsyncSession) -> AttendanceDigestConfig:
     """Sozlama qatorini (id=1) oladi, bo'lmasa defaultlar bilan yaratadi."""
     cfg = await db.get(AttendanceDigestConfig, 1)
@@ -396,21 +410,33 @@ async def digest_tick(db: AsyncSession) -> dict:
     today = now.date()
     fired: list[dict] = []
 
-    # Kelmaganlarni "absent" deb yozish — bildirishnoma sozlamasidan (evening_enabled)
-    # MUSTAQIL, faqat vaqt (kun tugashi = evening_hour/minute) va bir-kunda-bir-marta
-    # qo'riqchisi bilan boshqariladi.
+    # 5.2/5.3-band: qo'riqchi (`*_last_posted`) ilgari faqat yuborish TUGAGANDAN
+    # keyin yozilardi — yuborishning o'zi esa Telegram tarmoq chaqiruvi
+    # (timeout=60s). Cron har daqiqa ishlaydi VA `scripts/cron_tick.py` bilan
+    # `scheduler/main.py` ikkalasi ham shu funksiyani chaqiradi (5.3) — demak
+    # ikkita chaqiruv bir vaqtda ishlab, ikkalasi ham eski qo'riqchini ko'rib,
+    # digest bir kunda IKKI marta yuborilishi mumkin edi. Endi ATOMIK
+    # UPDATE ... WHERE bilan avval "band qilinadi" — faqat BITTASI muvaffaqiyatli
+    # bo'ladi (rowcount>0), yuborish shundan KEYIN boshlanadi.
     if cfg.absent_marked_date != today and (now.hour, now.minute) >= (cfg.evening_hour, cfg.evening_minute):
-        written = await write_absent_records(db, today)
-        # 2.2-band (Savol C: FAQAT avtomatik) — kelib-u "Ketdim" bosmagan o'tgan
-        # kunlar shu bir xil "kun tugadi" nuqtasida yopiladi. absent_marked_date
-        # bilan bir xil qo'riqchi ishlatiladi — ikkalasi ham "kunlik yakun" ishi.
-        closed = await auto_close_unclosed_checkouts(db, today)
-        cfg.absent_marked_date = today
+        absent_claim = await db.execute(
+            update(AttendanceDigestConfig)
+            .where(
+                AttendanceDigestConfig.id == 1,
+                or_(AttendanceDigestConfig.absent_marked_date.is_(None), AttendanceDigestConfig.absent_marked_date != today),
+            )
+            .values(absent_marked_date=today)
+        )
         await db.commit()
-        if written:
-            fired.append({"kind": "absent_marking", "written": written})
-        if closed:
-            fired.append({"kind": "auto_checkout_close", "closed": closed})
+        if absent_claim.rowcount:
+            written = await write_absent_records(db, today)
+            # 2.2-band (Savol C: FAQAT avtomatik) — kelib-u "Ketdim" bosmagan
+            # o'tgan kunlar shu bir xil "kun tugadi" nuqtasida yopiladi.
+            closed = await auto_close_unclosed_checkouts(db, today)
+            if written:
+                fired.append({"kind": "absent_marking", "written": written})
+            if closed:
+                fired.append({"kind": "auto_checkout_close", "closed": closed})
 
     for kind, enabled, hour, minute, last in (
         ("morning", cfg.morning_enabled, cfg.morning_hour, cfg.morning_minute, cfg.morning_last_posted),
@@ -420,17 +446,34 @@ async def digest_tick(db: AsyncSession) -> dict:
             continue
         if (now.hour, now.minute) < (hour, minute):
             continue
+        if await _lead_digest_fires_at(db, now):
+            # 5.10-band: lid/statistika digesti (GroupPostConfig, odatda 19:10)
+            # BIR XIL guruhlarga yuboriladi. Aynan shu daqiqaga to'g'ri kelsa,
+            # guruhga bir vaqtda ikkita uzun xabar tushmasin uchun 1 daqiqaga
+            # kechiktiramiz — `>=` semantikasi tufayli keyingi tick'da xavfsiz
+            # yuboriladi (yo'qolib ketmaydi).
+            continue
+
+        field = f"{kind}_last_posted"
+        claim = await db.execute(
+            update(AttendanceDigestConfig)
+            .where(
+                AttendanceDigestConfig.id == 1,
+                or_(getattr(AttendanceDigestConfig, field).is_(None), getattr(AttendanceDigestConfig, field) != today),
+            )
+            .values(**{field: today})
+        )
+        await db.commit()
+        if claim.rowcount == 0:
+            continue  # boshqa jarayon (yoki tick) allaqachon band qilgan/yuborgan
+
         result = await send_attendance_digest(db, kind=kind)
-        # 3.3-band: faqat HAQIQATAN yuborilganda YOKI "dam olish kuni" kabi
-        # TO'G'RI yakunlangan holatda (`final`) `*_last_posted` belgilanadi.
-        # Ilgari HAR doim belgilanardi — guruh sozlanmagan kabi VAQTINCHA
-        # muvaffaqiyatsizlikda ham "bugun yuborildi" deb yozilib, o'sha kunning
-        # digesti butunlay yo'qolib ketardi.
-        if result.get("sent") or result.get("final"):
-            if kind == "morning":
-                cfg.morning_last_posted = today
-            else:
-                cfg.evening_last_posted = today
+        # 3.3-band bilan bir xil sabab: HAQIQATAN yuborilmasa (masalan guruh
+        # sozlanmagan) — bandni BEKOR qilamiz, keyingi tick qayta urinishi uchun.
+        if not (result.get("sent") or result.get("final")):
+            await db.execute(
+                update(AttendanceDigestConfig).where(AttendanceDigestConfig.id == 1).values(**{field: last})
+            )
             await db.commit()
         fired.append({"kind": kind, **result})
 

@@ -689,10 +689,17 @@ async def set_digest_time(
 
     cfg = await get_digest_config(db)
     if hour is not None and minute is not None:
+        old_hm = (getattr(cfg, f"{kind}_hour"), getattr(cfg, f"{kind}_minute"))
         setattr(cfg, f"{kind}_hour", hour)
         setattr(cfg, f"{kind}_minute", minute)
-        # Vaqt oldinga surilsa bugun qayta yuborilishi uchun qo'riqchini tozalaymiz
-        setattr(cfg, f"{kind}_last_posted", None)
+        # 5.4-band: qo'riqchi FAQAT vaqt OLDINGA (kechroqqa) surilganda tozalanadi.
+        # Ilgari HAR qanday o'zgarishda tozalanardi — masalan bugun 22:00'da
+        # digest allaqachon yuborilgan bo'lsa-yu, Boshliq vaqtni 21:00'ga
+        # (ORQAGA) o'zgartirsa, tozalangan qo'riqchi + "(hozir 22:30) >= (21:00)"
+        # shartini darhol qanoatlantirib, digest o'sha kuni IKKINCHI marta
+        # yuborilib ketardi.
+        if (hour, minute) > old_hm:
+            setattr(cfg, f"{kind}_last_posted", None)
     if enabled is not None:
         setattr(cfg, f"{kind}_enabled", enabled)
     await db.commit()

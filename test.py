@@ -1177,6 +1177,203 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("4.6 kunlar oynasi tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- 5.1: tasdiqlangan sababli kunda kechikish yozilmaydi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444795,'T-ExcusedCheckin','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            ex_uid = cur.lastrowid
+            wd = date.today().weekday()
+            # 00:01 boshlanish — real vaqt qanday bo'lishidan qat'i nazar, oddiy
+            # mantiqda deyarli har doim "kechikkan" bo'lardi.
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'00:01','23:59',datetime('now'))", (ex_uid, wd))
+            cur.execute(
+                "insert into excused_days (user_id, date, reason, status, created_at)"
+                " values (?, ?, 'T-shifokorga bordi', 'approved', datetime('now'))",
+                (ex_uid, date.today().isoformat()))
+            conn.commit()
+            ex_tok = token_for(ex_uid, "employee")
+
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(ex_tok), json={
+                "latitude": OFFICE[0], "longitude": OFFICE[1],
+                "face_descriptor": FACE, "liveness": 0.9,
+            })
+            check("sababli kunda check-in -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            body = r.json() if r.status_code == 200 else {}
+            check("5.1: late_minutes=0 (sababli kun, aks holda kech qolgan bo'lardi)",
+                  body.get("late_minutes") == 0, f"late={body.get('late_minutes')}")
+            check("5.1: status='excused'", body.get("status") == "excused", f"status={body.get('status')}")
+
+            cur.execute("delete from attendance where user_id=?", (ex_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (ex_uid,))
+            cur.execute("delete from excused_days where user_id=?", (ex_uid,))
+            cur.execute("delete from users where id=?", (ex_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("5.1 sababli kun tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 5.4: digest vaqti ORQAGA surilsa qo'riqchi tozalanmaydi --")
+        try:
+            conn = db()
+            secret = ""
+            for line in open(".env", encoding="utf-8"):
+                if line.startswith("BOT_SHARED_SECRET="):
+                    secret = line.strip().split("=", 1)[1]
+            bot_h = {"X-Bot-Secret": secret}
+            boss_row = conn.execute("select telegram_id from users where role='boss' and telegram_id is not null limit 1").fetchone()
+            original = conn.execute(
+                "select evening_hour, evening_minute, evening_last_posted from attendance_digest_config where id=1"
+            ).fetchone()
+            if boss_row and original:
+                boss_tid = boss_row[0]
+                orig_hour, orig_minute, orig_last_posted = original
+                try:
+                    conn.execute(
+                        "update attendance_digest_config set evening_hour=10, evening_minute=0, evening_last_posted=? where id=1",
+                        (date.today().isoformat(),))
+                    conn.commit()
+
+                    # ORQAGA surish (10:00 -> 09:00) — qo'riqchi TOZALANMASLIGI kerak,
+                    # aks holda (hozir >= 09:00) darhol rost bo'lib, digest bugun
+                    # IKKINCHI marta yuborilib ketardi.
+                    r = client.post(
+                        f"{API_BASE}/attendance/digest-time?telegram_id={boss_tid}&kind=evening&hour=9&minute=0",
+                        headers=bot_h)
+                    check("vaqtni orqaga surish -> 200", r.status_code == 200, f"kod={r.status_code}")
+                    row = conn.execute("select evening_last_posted from attendance_digest_config where id=1").fetchone()
+                    check("5.4: orqaga surilganda qo'riqchi SAQLANIB QOLADI",
+                          row is not None and row[0] == date.today().isoformat(), f"evening_last_posted={row[0] if row else None}")
+
+                    # OLDINGA surish (09:00 -> 11:00) — qo'riqchi TOZALANISHI kerak.
+                    r2 = client.post(
+                        f"{API_BASE}/attendance/digest-time?telegram_id={boss_tid}&kind=evening&hour=11&minute=0",
+                        headers=bot_h)
+                    check("vaqtni oldinga surish -> 200", r2.status_code == 200, f"kod={r2.status_code}")
+                    row2 = conn.execute("select evening_last_posted from attendance_digest_config where id=1").fetchone()
+                    check("5.4: oldinga surilganda qo'riqchi TOZALANADI",
+                          row2 is not None and row2[0] is None, f"evening_last_posted={row2[0] if row2 else None}")
+                finally:
+                    # Asl (jonli) sozlamani albatta tiklaymiz.
+                    conn.execute(
+                        "update attendance_digest_config set evening_hour=?, evening_minute=?, evening_last_posted=? where id=1",
+                        (orig_hour, orig_minute, orig_last_posted))
+                    conn.commit()
+            else:
+                check("5.4 Boshliq telegram_id yoki sozlama topilmadi", False)
+            conn.close()
+        except Exception:
+            check("5.4 digest vaqti tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 5.7: sababli kun dublikat va idempotentlik --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444796,'T-ExcusedDup','employee',1,1,datetime('now'))")
+            dup_uid = cur.lastrowid
+            conn.commit()
+
+            secret = ""
+            for line in open(".env", encoding="utf-8"):
+                if line.startswith("BOT_SHARED_SECRET="):
+                    secret = line.strip().split("=", 1)[1]
+            bot_h = {"X-Bot-Secret": secret}
+
+            r1 = client.post(f"{API_BASE}/excused-days", headers=bot_h,
+                              json={"telegram_id": 999444796, "reason": "T-birinchi so'rov"})
+            check("birinchi so'rov -> 200", r1.status_code == 200, f"kod={r1.status_code}")
+            item_id = r1.json().get("id") if r1.status_code == 200 else None
+
+            r2 = client.post(f"{API_BASE}/excused-days", headers=bot_h,
+                              json={"telegram_id": 999444796, "reason": "T-ikkinchi so'rov"})
+            check("5.7: bir kunga ikkinchi (dublikat) so'rov -> 400",
+                  r2.status_code == 400, f"kod={r2.status_code} {r2.text[:150]}")
+
+            if item_id:
+                mgr = find_manager_id()
+                mgr_telegram = (
+                    conn.execute("select telegram_id from users where id=?", (mgr[0],)).fetchone()[0]
+                    if mgr else None
+                )
+                if mgr_telegram:
+                    r3 = client.post(f"{API_BASE}/excused-days/{item_id}/decide", headers=bot_h,
+                                      json={"decider_telegram_id": mgr_telegram, "decision": "approved"})
+                    check("birinchi qaror -> 200", r3.status_code == 200, f"kod={r3.status_code}")
+                    r4 = client.post(f"{API_BASE}/excused-days/{item_id}/decide", headers=bot_h,
+                                      json={"decider_telegram_id": mgr_telegram, "decision": "rejected"})
+                    check("5.7: allaqachon hal qilingan so'rovga qayta qaror -> 400 (idempotent)",
+                          r4.status_code == 400, f"kod={r4.status_code} {r4.text[:150]}")
+                else:
+                    check("5.7 rahbar telegram_id topilmadi", False)
+
+            cur.execute("delete from excused_days where user_id=?", (dup_uid,))
+            cur.execute("delete from users where id=?", (dup_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("5.7 dublikat/idempotentlik tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- 5.11: ish jadvali o'zgarishi audit qilinadi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444797,'T-ScheduleAudit','employee',1,1,datetime('now'))")
+            sa_uid = cur.lastrowid
+            conn.commit()
+
+            mgr = find_manager_id()
+            if mgr:
+                mgr_tok = token_for(mgr[0], mgr[1])
+                before_n = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='work_schedule_weekly_changed'",
+                    (sa_uid,)).fetchone()[0]
+                r = client.put(f"{API_BASE}/work-schedule/{sa_uid}/weekly", headers=auth(mgr_tok),
+                               json={"days": [
+                                   {"weekday": d, "is_working": d < 5, "start_time": "09:00" if d < 5 else None,
+                                    "end_time": "18:00" if d < 5 else None}
+                                   for d in range(7)
+                               ]})
+                check("PUT weekly -> 200", r.status_code == 200, f"kod={r.status_code}")
+                after_n = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='work_schedule_weekly_changed'",
+                    (sa_uid,)).fetchone()[0]
+                check("5.11: haftalik jadval o'zgarishi audit qilindi",
+                      after_n == before_n + 1, f"before={before_n}, after={after_n}")
+
+                before_ov = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='work_schedule_override_changed'",
+                    (sa_uid,)).fetchone()[0]
+                r2 = client.put(f"{API_BASE}/work-schedule/{sa_uid}/override", headers=auth(mgr_tok),
+                                json={"date": date.today().isoformat(), "is_working": True,
+                                      "start_time": "12:00", "end_time": "18:00", "note": "T-sinov"})
+                check("PUT override -> 200", r2.status_code == 200, f"kod={r2.status_code}")
+                after_ov = conn.execute(
+                    "select count(*) from audit_logs where target_user_id=? and action='work_schedule_override_changed'",
+                    (sa_uid,)).fetchone()[0]
+                check("5.11: aniq sana o'zgartirishi audit qilindi",
+                      after_ov == before_ov + 1, f"before={before_ov}, after={after_ov}")
+            else:
+                check("5.11 rahbar topilmadi", False)
+
+            cur.execute("delete from audit_logs where target_user_id=?", (sa_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (sa_uid,))
+            cur.execute("delete from work_schedule_override where user_id=?", (sa_uid,))
+            cur.execute("delete from users where id=?", (sa_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("5.11 audit tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def main() -> None:
     print("=" * 60)

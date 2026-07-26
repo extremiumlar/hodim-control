@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.routers.hourly_plan import _effective_today  # ish oynasi qoidasining yagona manbai
 from api.timeutil import TASHKENT_TZ, today_local, work_minutes
-from db.models import Attendance, AttendanceStatus, OfficeLocation, Role, User
+from db.models import Attendance, AttendanceStatus, ExcusedDay, ExcusedStatus, OfficeLocation, Role, User
 
 
 # Davomat (kelib-ketish) kuzatiladigan rollar — BOSHLIQDAN TASHQARI HAMMA
@@ -148,11 +148,28 @@ async def find_similar_face(
     return None
 
 
-def _apply_status(att: Attendance, is_working: bool) -> None:
+async def is_excused_day(db: AsyncSession, user_id: int, day: date) -> bool:
+    """5.1-band: shu kunga TASDIQLANGAN sababli kun so'rovi bormi. Faqat
+    `approved` — `pending` yoki `rejected` davomatga ta'sir qilmasligi kerak."""
+    row = await db.scalar(
+        select(ExcusedDay).where(
+            ExcusedDay.user_id == user_id,
+            ExcusedDay.date == day,
+            ExcusedDay.status == ExcusedStatus.approved.value,
+        )
+    )
+    return row is not None
+
+
+def _apply_status(att: Attendance, is_working: bool, is_excused: bool = False) -> None:
     """check_in/check_out va is_working asosida is_weekend + status ni belgilaydi."""
     att.is_weekend = not is_working
     if not is_working:
         att.status = AttendanceStatus.weekend.value
+    elif is_excused:
+        # Tasdiqlangan sababli kun — kelgan bo'lsa ham "kech qolgan" emas,
+        # alohida holat (late_minutes chaqiruvchi tomonidan 0 qilinadi).
+        att.status = AttendanceStatus.excused.value
     elif att.check_in_time is None:
         att.status = AttendanceStatus.absent.value
     elif att.late_minutes > 0:
@@ -177,7 +194,7 @@ def local_hm_to_utc(day: date, hm: str) -> datetime:
     return local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) -> None:
+def recompute_fields(att: Attendance, is_working: bool, start: str, end: str, is_excused: bool = False) -> None:
     """Yozuvdagi kelish/ketish vaqtlaridan `late_minutes`, `early_leave_minutes`,
     `worked_minutes` va `status` ni QAYTA hisoblaydi. HR qo'lda tuzatishi
     (`PUT /attendance/manual`) shu funksiyadan foydalanadi.
@@ -188,7 +205,11 @@ def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) ->
     atomik UPDATE bilan poyga himoyasi), shuning uchun ular alohida qolgan.
     Qoidalar — grace bo'sag'asi, ish oynasi bilan chegaralash, tushlik chegirmasi —
     ular bilan AYNAN bir xil bo'lishi shart; birini o'zgartirsangiz, ikkinchisini
-    ham o'zgartiring."""
+    ham o'zgartiring.
+
+    `is_excused` — 5.1-band: tasdiqlangan sababli kun bo'lsa kechikish/erta
+    ketish 0 qilinadi (xodim shifokordan keyin kech kelgan bo'lishi mumkin,
+    bu "kechikish" emas)."""
     in_local = _to_local(att.check_in_time)
     out_local = _to_local(att.check_out_time)
     window = work_minutes(_hm_to_min(start), _hm_to_min(end)) if (start and end) else None
@@ -197,7 +218,7 @@ def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) ->
     # undan oshsa TO'LIQ farq yoziladi (masalan grace=5, kelish 09:06 bo'lsa
     # late=6, "6-5=1" EMAS). Ilgari har kechikkan kun grace daqiqasiga kam
     # ko'rsatilardi — oylik statistikada sezilarli xato edi.
-    if is_working and start and in_local is not None:
+    if is_working and start and in_local is not None and not is_excused:
         diff = _minute_of_day(in_local) - _hm_to_min(start)
         late = diff if diff > settings.attendance_grace_minutes else 0
         # Yuqori chegara: ish oynasi uzunligidan (tushliksiz) oshib ketmasin —
@@ -211,7 +232,7 @@ def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) ->
 
     # Erta ketish — yuqori chegara bir xil sabab bilan (check-in'dan darhol keyin
     # check-out qilinsa, "erta ketish" ish oynasidan oshmasin).
-    if is_working and end and out_local is not None:
+    if is_working and end and out_local is not None and not is_excused:
         early = max(0, _hm_to_min(end) - _minute_of_day(out_local))
         if window is not None:
             early = min(early, window)
@@ -234,14 +255,15 @@ def recompute_fields(att: Attendance, is_working: bool, start: str, end: str) ->
     else:
         att.worked_minutes = 0
 
-    _apply_status(att, is_working)
+    _apply_status(att, is_working, is_excused)
 
 
 async def recompute_attendance(db: AsyncSession, att: Attendance, user: User) -> None:
     """`recompute_fields` ning DB varianti — o'sha kungi amaldagi ish oynasini
     (override > haftalik > default) o'zi topadi."""
     is_working, start, end = await _effective_today(db, user, att.date)
-    recompute_fields(att, is_working, start, end)
+    is_excused = await is_excused_day(db, user.id, att.date)
+    recompute_fields(att, is_working, start, end, is_excused)
 
 
 AUTO_CLOSED_MARK = "Avtomatik yopildi"
@@ -375,6 +397,17 @@ async def perform_check_in(
     _validate_face(user, descriptor, liveness)
     dist = await _validate_location(db, lat, lng, accuracy)
 
+    # 5.1-band: tasdiqlangan sababli kun bo'lsa, kelgan bo'lsa ham kechikish
+    # YOZILMAYDI. Ilgari `ExcusedDay` bu funksiyada IMPORT ham qilinmagan edi —
+    # shifokordan keyin tushdan keyin kelgan xodim `late_minutes=120` bilan
+    # yozilib, late-stats/employee-summary hisobotlariga kirar, digestda esa
+    # "sababli" ro'yxatiga tushmasdi (u yerda faqat check-in YO'Q holat).
+    # DIQQAT: bu so'rov `db.add(att)`dan OLDIN turishi SHART — aks holda
+    # SQLAlchemy avtoflashi pending INSERT'ni try/except IntegrityError
+    # (pastda) TASHQARISIDA flash qilib, 2.3-band tuzatishini buzib qo'yadi
+    # (parallel check-in yana 500 qaytarardi).
+    excused = await is_excused_day(db, user.id, day)
+
     att = await db.scalar(
         select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
     )
@@ -390,7 +423,7 @@ async def perform_check_in(
     att.check_in_lng = lng
     att.check_in_distance_m = dist
 
-    if is_working and start:
+    if is_working and start and not excused:
         diff = _minute_of_day(now_local) - _hm_to_min(start)
         grace = settings.attendance_grace_minutes
         # Grace — BO'SAG'A, chegirma emas: grace ichida kelinsa kechikish 0,
@@ -412,7 +445,7 @@ async def perform_check_in(
     else:
         att.late_minutes = 0
 
-    _apply_status(att, is_working)
+    _apply_status(att, is_working, excused)
     try:
         await db.commit()
     except IntegrityError:
@@ -482,6 +515,8 @@ async def perform_check_out(
     # jadval ishlatiladi, bugungisi EMAS (masalan dam olish kunidan keyin ishga
     # chiqqan kun bilan aralashmasin).
     is_working, start, end = await _effective_today(db, user, att.date)
+    # 5.1-band: yozuvning O'Z sanasi bo'yicha (perform_check_in bilan bir xil).
+    excused = await is_excused_day(db, user.id, att.date)
 
     _validate_face(user, descriptor, liveness)
     await _validate_location(db, lat, lng, accuracy)
@@ -498,7 +533,7 @@ async def perform_check_out(
         elapsed = (check_out_time_utc - att.check_in_time).total_seconds() / 60
         worked_minutes = max(0, round(elapsed))
     else:
-        if is_working and end:
+        if is_working and end and not excused:
             diff = _hm_to_min(end) - _minute_of_day(now_local)
             early = max(0, diff)
             # Yuqori chegara — 1.4-band bilan bir xil sabab: check-in darhol keyin
@@ -526,8 +561,12 @@ async def perform_check_out(
             worked = work_minutes(in_min, out_min)
         worked_minutes = max(0, worked)
 
-    status = AttendanceStatus.weekend.value if not is_working else (
-        AttendanceStatus.late.value if att.late_minutes > 0 else AttendanceStatus.present.value
+    status = (
+        AttendanceStatus.weekend.value
+        if not is_working
+        else AttendanceStatus.excused.value
+        if excused
+        else (AttendanceStatus.late.value if att.late_minutes > 0 else AttendanceStatus.present.value)
     )
 
     # 2.3-band bilan bir xil sabab: ikkita bir vaqtli check-out so'rovi ikkalasi
