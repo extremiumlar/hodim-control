@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,7 @@ from api.schemas import (
     SalaryRateOut,
 )
 from api.services.attendance import collect_readiness
+from api.services.export import build_payroll_xlsx
 from api.services.payroll import (
     PAYROLL_TRACKED_ROLES,
     PayrollLocked,
@@ -597,6 +599,18 @@ async def calculate(
             f"💰 Payroll tayyor ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
             f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
         )
+    # 8-bo'lim (Bosqich 7): barcha pul o'zgarishlari audit qilinadi — hisoblash
+    # o'zi pul figurasini o'zgartiradi (garchi qulflamasa ham).
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="payroll_calculated",
+            target_user_id=None,
+            before=None,
+            after={"period": period, "calculated": result["calculated"], "total_net": total},
+        )
+    )
+    await db.commit()
     return result
 
 
@@ -635,6 +649,24 @@ async def list_payslips(
         )
         for r in sorted(rows, key=lambda r: names.get(r.user_id, ""))
     ]
+
+
+@router.get("/{period}/export")
+async def export_payroll(
+    period: str, actor: User = Depends(_require_view), db: AsyncSession = Depends(get_db)
+) -> StreamingResponse:
+    """Excel ish haqi varag'i — Bosqich 7. ROP faqat o'z jamoasini eksport
+    qiladi (`list_payslips` bilan bir xil qamrov naqshi)."""
+    user_ids = None
+    if actor.role == Role.rop.value:
+        user_ids = [u.id for u in await _visible_users(db, actor)]
+    buffer = await build_payroll_xlsx(db, period, user_ids=user_ids)
+    filename = f"oylik_{period}.xlsx"
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{period}/user/{user_id}", response_model=PayslipDetailOut)
@@ -761,9 +793,20 @@ async def calculate_cron(period: str, db: AsyncSession = Depends(get_db)) -> dic
     9-bo'lim savol 10). Muvaffaqiyatsiz bo'lsa xodimlarga payroll umuman
     hisoblanmaydi — natija har doim ochiq (Bonus jobi bilan bir xil naqsh)."""
     try:
-        return await run_payroll(db, period)
+        result = await run_payroll(db, period)
     except PayrollLocked as e:
         raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    db.add(
+        AuditLog(
+            actor_id=None,  # scheduler/tizim tomonidan avtomatik hisoblanadi
+            action="payroll_calculated",
+            target_user_id=None,
+            before=None,
+            after={"period": period, "calculated": result["calculated"]},
+        )
+    )
+    await db.commit()
+    return result
 
 
 class PayrollCalculateMonthlyRequest(BaseModel):
@@ -799,6 +842,16 @@ async def calculate_monthly_cron(
             f"💰 Payroll avtomatik hisoblandi ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
             f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
         )
+    db.add(
+        AuditLog(
+            actor_id=None,  # scheduler/tizim tomonidan avtomatik hisoblanadi
+            action="payroll_calculated",
+            target_user_id=None,
+            before=None,
+            after={"period": period, "calculated": result["calculated"], "total_net": total},
+        )
+    )
+    await db.commit()
     return result
 
 

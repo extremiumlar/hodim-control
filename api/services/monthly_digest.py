@@ -17,7 +17,7 @@ from api.services.daily_digest import digest_group_targets
 from api.services.weekly_digest import _pct_change, _pct_str, _range_by_operator, _tasks_by_user
 from api.telegram_notify import send_message
 from api.timeutil import today_local
-from db.models import Bonus, HourlyActual, Role, User
+from db.models import Bonus, HourlyActual, Payslip, Role, User
 
 MONTH_NAMES_UZ = {
     1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel", 5: "May", 6: "Iyun",
@@ -75,6 +75,19 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
     active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"]}
     if not active:
         return {"text": None, "operators": 0}
+
+    # Bosqich 7 (OYLIK_JARIMA_REJASI.md): "jami ish haqi fondi" — FAQAT Boshliqqa,
+    # guruh matnida hech qachon ko'rsatilmaydi (moliyaviy maxfiylik). Joriy oy
+    # payroll'i digest chiqqanda hali hisoblanmagan bo'ladi (payroll keyingi oy
+    # 1-kunida, digest esa shu oyning oxirgi kunida chiqadi) — shu sabab
+    # O'TGAN (allaqachon hisoblangan) oy fondi ko'rsatiladi.
+    prev_period_key = prev_start.strftime("%Y-%m")
+    prev_payslips = list(await db.scalars(select(Payslip).where(Payslip.period == prev_period_key)))
+    payroll_fund = (
+        {"period": prev_period_key, "total": sum(float(p.net) for p in prev_payslips)}
+        if prev_payslips
+        else None
+    )
 
     lines: list[str] = []
     changes: list[tuple[str, int]] = []
@@ -140,18 +153,27 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
         "🏠 tashrif · ✅ vazifa · 💰 bonus (hisoblangan bo'lsa)</i>"
     )
 
-    return {"text": "\n".join(parts), "operators": len(active)}
+    return {"text": "\n".join(parts), "operators": len(active), "payroll_fund": payroll_fund}
 
 
 async def send_monthly_digest(db: AsyncSession, chat_id: int | None = None, dry_run: bool = False) -> dict:
     """Oylik digestni quradi va yuboradi. `chat_id` berilmasa — guruh(lar)ga
-    (asosiy + statistika guruhlari, daily_digest bilan bir xil nishonlar)."""
+    (asosiy + statistika guruhlari, daily_digest bilan bir xil nishonlar) —
+    shu STANDART (rejalashtirilgan) chaqiruvda, agar o'tgan oy uchun payroll
+    allaqachon hisoblangan bo'lsa, Boshliqqa (FAQAT Boshliqqa — HRga ham
+    emas) alohida shaxsiy DM bilan "jami ish haqi fondi" yuboriladi — guruh
+    matnida bu raqam HECH QACHON ko'rsatilmaydi (moliyaviy maxfiylik).
+    `chat_id` aniq berilsa (masalan kimdir botdan qo'lda so'ragan) bu DM
+    YUBORILMAYDI — faqat rejalashtirilgan standart yuborishda."""
     digest = await build_monthly_digest(db)
     if digest["text"] is None:
         return {"sent": False, "reason": "Bu oy uchun ma'lumot topilmadi", "operators": 0}
 
     if dry_run:
-        return {"sent": False, "dry_run": True, "operators": digest["operators"], "text": digest["text"]}
+        return {
+            "sent": False, "dry_run": True, "operators": digest["operators"], "text": digest["text"],
+            "payroll_fund": digest.get("payroll_fund"),
+        }
 
     targets = await digest_group_targets(db, chat_id)
     if not targets:
@@ -161,4 +183,19 @@ async def send_monthly_digest(db: AsyncSession, chat_id: int | None = None, dry_
     for chat in targets:
         ok = await send_message(chat, digest["text"])
         sent_any = sent_any or ok is not None
-    return {"sent": sent_any, "operators": digest["operators"], "targets": targets}
+
+    payroll_fund = digest.get("payroll_fund")
+    if chat_id is None and payroll_fund is not None:
+        bosses = list(
+            await db.scalars(select(User).where(User.role == Role.boss.value, User.telegram_id.isnot(None)))
+        )
+        for b in bosses:
+            await send_message(
+                b.telegram_id,
+                f"💼 {payroll_fund['period']} oyi uchun jami ish haqi fondi: "
+                f"{_fmt_money(payroll_fund['total'])} so'm.",
+            )
+
+    return {
+        "sent": sent_any, "operators": digest["operators"], "targets": targets, "payroll_fund": payroll_fund,
+    }

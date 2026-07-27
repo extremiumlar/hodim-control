@@ -403,3 +403,6 @@ export const useApprovePayrollPeriod = () =>
 
 export const useMyLateStatus = () =>
   useQuery({ queryKey: qk.myLateStatus, queryFn: api.myLateStatus });
+
+export const useDownloadPayrollExport = () =>
+  useApiMutation((period: string) => api.downloadPayrollExport(period), []);

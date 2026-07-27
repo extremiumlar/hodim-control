@@ -2384,6 +2384,255 @@ def test_payroll_automation() -> None:
         check("Bosqich6: tozalash (umumiy)", False, traceback.format_exc(limit=2).strip())
 
 
+def test_payroll_reporting() -> None:
+    """Bosqich 7: hisobot va maxfiylik — Excel eksport
+    (`api/services/export.py::build_payroll_xlsx`, `GET /payroll/{period}/export`),
+    barcha pul o'zgarishlari uchun AuditLog (`payroll_calculated`), oylik
+    digestga Boshliq-ONLY "jami ish haqi fondi" (`api/services/monthly_digest.py`).
+    Izolyatsiyalangan davr "2020-04"."""
+    import asyncio
+    from io import BytesIO
+
+    import httpx
+    from openpyxl import load_workbook
+
+    print("\n" + "=" * 60)
+    print("BOSQICH 7: HISOBOT VA MAXFIYLIK (export + audit + digest)")
+    print("=" * 60)
+
+    PERIOD = "2020-04"
+    WINDOW_MIN = 480
+
+    async def _setup() -> dict:
+        from sqlalchemy import delete, select
+
+        from api.services.payroll import run_payroll
+        from db.base import async_session
+        from db.models import (
+            Attendance,
+            AuditLog,
+            LeadStageDaily,
+            PayrollPeriod,
+            Payslip,
+            PayslipItem,
+            SalaryRate,
+            User,
+            WorkScheduleOverride,
+            WorkScheduleWeekly,
+        )
+
+        async with async_session() as s:
+            stale_ids = list(await s.scalars(select(User.id).where(User.full_name.like("T-Payroll7%"))))
+            if stale_ids:
+                stale_payslips = list(await s.scalars(select(Payslip.id).where(Payslip.user_id.in_(stale_ids))))
+                if stale_payslips:
+                    await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(stale_payslips)))
+                await s.execute(delete(Payslip).where(Payslip.user_id.in_(stale_ids)))
+                await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(stale_ids)))
+                await s.execute(delete(Attendance).where(Attendance.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(stale_ids)))
+                await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(stale_ids)))
+                await s.execute(
+                    delete(AuditLog).where(
+                        AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
+                    )
+                )
+                await s.execute(delete(User).where(User.id.in_(stale_ids)))
+            await s.execute(
+                delete(Attendance).where(Attendance.date >= date(2020, 4, 1), Attendance.date < date(2020, 5, 1))
+            )
+            await s.execute(
+                delete(WorkScheduleOverride).where(
+                    WorkScheduleOverride.date >= date(2020, 4, 1), WorkScheduleOverride.date < date(2020, 5, 1)
+                )
+            )
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.commit()
+
+            rop = User(telegram_id=999700701, full_name="T-Payroll7Rop", role="rop",
+                       bot_started=True, is_active=True)
+            emp = User(telegram_id=999700702, full_name="T-Payroll7Emp", role="employee",
+                       bot_started=True, is_active=True)
+            outsider = User(telegram_id=999700703, full_name="T-Payroll7Outsider", role="employee",
+                             bot_started=True, is_active=True)
+            s.add_all([rop, emp, outsider])
+            await s.flush()
+            emp.manager_id = rop.id
+            await s.commit()
+
+            d = date(2020, 4, 6)
+            for u in (emp, outsider):
+                for wd in range(7):
+                    s.add(WorkScheduleWeekly(user_id=u.id, weekday=wd, is_working=False))
+                s.add(WorkScheduleOverride(user_id=u.id, date=d, is_working=True,
+                                            start_time="09:00", end_time="18:00"))
+                s.add(Attendance(user_id=u.id, date=d, status="present", worked_minutes=WINDOW_MIN))
+                s.add(SalaryRate(user_id=u.id, amount=2_000_000, pay_basis="monthly",
+                                  effective_from=date(2019, 1, 1), changed_by=u.id))
+            await s.commit()
+
+            await run_payroll(s, PERIOD, user_ids=[emp.id, outsider.id])
+
+            # Oylik digest "faol operator" darvozasidan o'tishi uchun bitta
+            # yengil CRM snapshot yozuvi — real xodim/tashkilotga bog'liq emas
+            # (rid haqiqiy foydalanuvchiga bog'lanmagan, faqat "active" gate).
+            s.add(LeadStageDaily(date=date(2020, 5, 10), responsible_id=999700799,
+                                  responsible_name="T-Payroll7-CRM", pipe_status_id=1,
+                                  stage_name="T-sinov bosqichi", leads_count=3))
+            await s.commit()
+
+            return {"rop_id": rop.id, "emp_id": emp.id, "outsider_id": outsider.id}
+
+    async def _cleanup() -> None:
+        from sqlalchemy import delete, select
+
+        from db.base import async_session
+        from db.models import (
+            Attendance,
+            AuditLog,
+            LeadStageDaily,
+            PayrollPeriod,
+            Payslip,
+            PayslipItem,
+            SalaryRate,
+            User,
+            WorkScheduleOverride,
+            WorkScheduleWeekly,
+        )
+
+        async with async_session() as s:
+            ids = list(await s.scalars(select(User.id).where(User.full_name.like("T-Payroll7%"))))
+            if ids:
+                pslips = list(await s.scalars(select(Payslip.id).where(Payslip.user_id.in_(ids))))
+                if pslips:
+                    await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(pslips)))
+                await s.execute(delete(Payslip).where(Payslip.user_id.in_(ids)))
+                await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(ids)))
+                await s.execute(delete(Attendance).where(Attendance.user_id.in_(ids)))
+                await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(ids)))
+                await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(ids)))
+                await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(ids) | AuditLog.actor_id.in_(ids)))
+                await s.execute(delete(User).where(User.id.in_(ids)))
+            await s.execute(
+                delete(LeadStageDaily).where(
+                    LeadStageDaily.responsible_id == 999700799, LeadStageDaily.date == date(2020, 5, 10)
+                )
+            )
+            await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
+            await s.commit()
+
+    async def _direct_checks(ctx: dict) -> None:
+        from api.services.export import build_payroll_xlsx
+        from api.services.monthly_digest import build_monthly_digest, send_monthly_digest
+        from db.base import async_session
+
+        async with async_session() as s:
+            buf_all = await build_payroll_xlsx(s, PERIOD)
+            wb_all = load_workbook(BytesIO(buf_all.read()))
+            check("Bosqich7: 'Xulosa' varag'i bor", "Xulosa" in wb_all.sheetnames, f"={wb_all.sheetnames}")
+            emp_sheet = f"T-Payroll7Emp #{ctx['emp_id']}"
+            out_sheet = f"T-Payroll7Outsider #{ctx['outsider_id']}"
+            check("Bosqich7: user_ids'siz eksportda IKKALA xodim varag'i bor",
+                  emp_sheet in wb_all.sheetnames and out_sheet in wb_all.sheetnames,
+                  f"={wb_all.sheetnames}")
+
+            buf_scoped = await build_payroll_xlsx(s, PERIOD, user_ids=[ctx["emp_id"]])
+            wb_scoped = load_workbook(BytesIO(buf_scoped.read()))
+            check("Bosqich7: user_ids bilan FAQAT shu xodim varag'i bor",
+                  emp_sheet in wb_scoped.sheetnames and out_sheet not in wb_scoped.sheetnames,
+                  f"={wb_scoped.sheetnames}")
+
+            digest = await build_monthly_digest(s, ref_day=date(2020, 5, 15))
+            digest_text = digest.get("text") or ""
+            # Windows konsoli (cp1251) digest matnidagi emojilarni (masalan
+            # U+1F5D3) chop etishda qulaydi — check() xabarlarida faqat ASCII-
+            # xavfsiz uzunlik/qidiruv natijasi ishlatiladi, xom matn EMAS.
+            check("Bosqich7: digest matni yaratildi (CRM snapshot gate o'tildi)",
+                  digest.get("text") is not None, f"uzunlik={len(digest_text)}")
+            pf = digest.get("payroll_fund")
+            check("Bosqich7: payroll_fund davri = o'tgan oy (2020-04)",
+                  pf is not None and pf["period"] == PERIOD, f"={pf}")
+            if pf:
+                check("Bosqich7: payroll_fund jami = 2 xodim netto yig'indisi",
+                      abs(pf["total"] - 4_000_000.0) < 1, f"={pf}")
+            check("Bosqich7: digest MATNIDA 'fond' so'zi YO'Q (guruhga sizib chiqmaydi)",
+                  "fond" not in digest_text.lower(), f"uzunlik={len(digest_text)}")
+
+            # E'TIBOR: `send_monthly_digest` `ref_day` qabul qilmaydi (har doim
+            # HAQIQIY "bugun"dan hisoblaydi, real joriy oy CRM faolligiga
+            # bog'liq) — shu sabab bu yerda faqat "hech qachon yubormaydi"
+            # (dry_run) tekshiriladi, "2020-04"ga tegishli QIYMAT EMAS.
+            dry = await send_monthly_digest(s, dry_run=True)
+            # `dry`ning "text" kaliti xom (emoji bilan) digest matni bo'lishi
+            # mumkin — check() xabarida shu kalitsiz qisqa xulosa ishlatiladi
+            # (Windows konsoli cp1251 emojilarda qulaydi).
+            dry_summary = {k: v for k, v in dry.items() if k != "text"}
+            check("Bosqich7: dry_run hech qachon yubormaydi", dry.get("sent") is False, f"={dry_summary}")
+
+    ctx: dict = {}
+    try:
+        ctx = asyncio.run(_setup())
+    except Exception:
+        check("Bosqich7: sozlash (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+    if ctx:
+        try:
+            asyncio.run(_direct_checks(ctx))
+        except Exception:
+            check("Bosqich7: servis funksiyalari (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+        try:
+            mgr = find_manager_id()
+            mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+            rop_t = token_for(ctx["rop_id"], "rop")
+            emp_t = token_for(ctx["emp_id"], "employee")
+
+            with httpx.Client(timeout=15) as client:
+                r = client.get(f"{API_BASE}/payroll/{PERIOD}/export", headers=auth(emp_t))
+                check("xodim /payroll/*/export -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+                r = client.get(f"{API_BASE}/payroll/{PERIOD}/export", headers=auth(mgr_t))
+                check("HR/Boss /payroll/*/export -> 200", r.status_code == 200, f"kod={r.status_code}")
+                check("export content-type xlsx",
+                      "spreadsheetml" in r.headers.get("content-type", ""),
+                      f"={r.headers.get('content-type')}")
+                if r.status_code == 200:
+                    wb_http = load_workbook(BytesIO(r.content))
+                    check("HR eksportida ikkala xodim ham bor",
+                          f"T-Payroll7Emp #{ctx['emp_id']}" in wb_http.sheetnames
+                          and f"T-Payroll7Outsider #{ctx['outsider_id']}" in wb_http.sheetnames,
+                          f"={wb_http.sheetnames}")
+
+                r = client.get(f"{API_BASE}/payroll/{PERIOD}/export", headers=auth(rop_t))
+                check("ROP /payroll/*/export -> 200", r.status_code == 200, f"kod={r.status_code}")
+                if r.status_code == 200:
+                    wb_rop = load_workbook(BytesIO(r.content))
+                    check("ROP eksportida FAQAT o'z jamoasi (Emp bor, Outsider yo'q)",
+                          f"T-Payroll7Emp #{ctx['emp_id']}" in wb_rop.sheetnames
+                          and f"T-Payroll7Outsider #{ctx['outsider_id']}" not in wb_rop.sheetnames,
+                          f"={wb_rop.sheetnames}")
+
+                # ── "payroll_calculated" AuditLog — barcha pul o'zgarishi audit qilinadi ──
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+                check("qayta hisoblash -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            conn = db()
+            cur = conn.cursor()
+            row = cur.execute(
+                "select count(*) from audit_logs where action='payroll_calculated' "
+                "and json_extract(after, '$.period')=?", (PERIOD,)
+            ).fetchone()
+            check("AuditLog 'payroll_calculated' yozildi", row is not None and row[0] >= 1, f"={row}")
+            conn.close()
+        except Exception:
+            check("Bosqich7: HTTP export/audit (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+    try:
+        asyncio.run(_cleanup())
+    except Exception:
+        check("Bosqich7: tozalash (umumiy)", False, traceback.format_exc(limit=2).strip())
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -2425,6 +2674,11 @@ def main() -> None:
         test_payroll_automation()
     except Exception:
         print("Payroll avtomatika testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_reporting()
+    except Exception:
+        print("Payroll hisobot testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

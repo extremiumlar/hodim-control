@@ -737,11 +737,97 @@ qoladi, ongli qaror); xodim limitga yaqinlashganda va limit tugaganda botdan
 avtomatik xabar oladi; overtime-yoqilgan xodimlarning kechki qolishlari
 HR/rahbar ko'rib chiqishi uchun avtomatik navbatga tushadi.
 
-### Bosqich 7 — hisobot, maxfiylik, hujjat
-**Fayllar:** `api/services/export.py`, `api/services/monthly_digest.py`,
-`README.md`, `BOT_BUYRUQLARI.md`
-**Ish:** Excel payslip (xodim uchun bitta varaq), oylik digestga "jami ish haqi
-fondi" satri (faqat boss), barcha pul o'zgarishlari uchun `AuditLog`.
+### Bosqich 7 — hisobot, maxfiylik, hujjat ✅ BAJARILDI (2026-07-27)
+**Fayllar:** `api/services/export.py` (`build_payroll_xlsx`, mavjud fayl —
+YANGI EMAS, `build_report_xlsx` bilan bir xil openpyxl naqshi kengaytirildi),
+`api/routers/payroll.py` (`GET /payroll/{period}/export` + `payroll_calculated`
+AuditLog 3 ta `run_payroll` chaqiruv nuqtasida), `api/services/monthly_digest.py`
+(mavjud fayl — "jami ish haqi fondi"), `web/src/pages/Payroll.tsx` +
+`lib/api/endpoints.ts` + `lib/queries.ts` (Excel yuklab olish tugmasi),
+`README.md` (bitta izohli satr), `test.py` (`test_payroll_reporting`,
+20 tekshiruv). `BOT_BUYRUQLARI.md` YANGILANMADI (Bosqich 5'dagi bilan bir
+xil sabab — eksport faqat web'da, yangi bot buyruq/tugma yo'q).
+
+**Ish:**
+- Excel ish haqi varag'i (`GET /payroll/{period}/export`, ROP faqat o'z
+  jamoasi bilan cheklangan — `list_payslips` bilan bir xil qamrov):
+  bitta kitobda **"Xulosa"** varag'i (barcha xodim, bir qator, jami satr
+  bilan) + **HAR BIR XODIM UCHUN ALOHIDA VARAQ** (to'liq `PayslipItem`
+  tafsiloti — reja qoralamasidagi "xodim uchun bitta varaq" so'zma-so'z
+  amalga oshirildi). Varaq nomi ism+`#user_id` (Excel 31-belgi va
+  `\/:*?[]` cheklovi bilan xavfsiz, `_safe_sheet_name`). Web'da `Payroll.tsx`
+  sahifasiga "Excel" tugmasi qo'shildi (VIEW_ROLES'ga ko'rinadi, faqat
+  MANAGE'ga emas — ROP ham o'z jamoasi hisobotini yuklay oladi).
+- **Barcha pul o'zgarishlari uchun `AuditLog`** — audit qoplamasi
+  tekshirilganda `calculate`/`calculate_cron`/`calculate_monthly_cron`
+  (3 ta `run_payroll` chaqiruv nuqtasi) `payroll_calculated` audit
+  YOZMASLIGI aniqlandi (qolgan barcha pul-tegishli amallar — stavka,
+  qoida, adjustment, overtime tasdiq, tasdiqlash — allaqachon Bosqich
+  3/3.5'dan buyon audit qilingan edi). Endi hisoblash O'ZI ham
+  auditlanadi (`actor_id=None` — scheduler/tizim, mavjud bonus naqshi).
+- Oylik digestga "jami ish haqi fondi" — ⭐ **Muhim dizayn qarori**:
+  bu son GURUH matnida HECH QACHON ko'rsatilmaydi (moliyaviy maxfiylik,
+  guruhda oddiy xodimlar ham bor). Buning o'rniga `send_monthly_digest`
+  standart (rejalashtirilgan, `chat_id=None`) chaqiruvda alohida shaxsiy
+  DM bilan FAQAT Boshliqqa (HRga HAM EMAS) yuboradi. Vaqt muvofiqligi:
+  digest oyning OXIRGI kunida chiqadi, payroll esa KEYINGI oy 1-kunida
+  hisoblanadi — shu sabab digest hali hisoblanmagan JORIY oy emas,
+  ALLAQACHON hisoblangan O'TGAN oy fondini ko'rsatadi.
+
+**Test:** `test_payroll_reporting` — izolyatsiyalangan davr "2020-04".
+To'g'ridan-to'g'ri: `build_payroll_xlsx` (user_ids'siz — ikkala xodim
+varag'i; user_ids bilan — faqat bittasi), `build_monthly_digest`
+(payroll_fund to'g'ri davr+summa, guruh matnida sizmasligi). HTTP:
+export ruxsat matritsasi (xodim 403, HR/Boss 200 to'liq, ROP 200 faqat
+o'z jamoasi), content-type, `payroll_calculated` AuditLog yozilishi.
+Real serverga qarshi ishga tushirilib brauzerda ham tasdiqlandi
+(`VITE_NO_SSL=1` vaqtinchalik port — Boshliq sifatida "Excel" tugmasi
+bosilib, `GET /payroll/2020-04/export` 200 qaytardi, konsolda xato yo'q).
+Natija: **248 OK / 249** (yagona FAIL — oldindan mavjud "2.2 avtomatik
+yopish tekshiruvi", Windows konsol kodlash xatosi, mantiqqa aloqasi yo'q).
+
+⚠️ **Test infratuzilmasida topilma (yangi emas, kengroq muammo)**:
+`/payroll/{period}/calculate`ni `user_ids`siz chaqirish (test.py'da
+Bosqich 3/3.5/6/7'da barchasi shunday) BARCHA real faol xodimlar uchun
+ham Payslip yozadi — T-* tozalash bloklari faqat T- prefiksli
+foydalanuvchilarni tozalaydi, REAL xodimlarning fake davr ("2021-02",
+"2022-03", "2020-03", "2020-04") ostidagi Payslip qatorlari qoladi
+(zararsiz — `PayrollPeriod` qatori tozalanadi, shuning uchun UI davr
+tanlagichida ko'rinmaydi — lekin baza ichida DB clutter). Bu sessiyada
+o'zim yaratgan "2020-03"/"2020-04" qoldig'ini qo'lda tozaladim; "2021-02"/
+"2022-03" (oldingi sessiyalardan) TEGILMADI — kelajakda umumiy yechim
+(masalan test'lar `user_ids` bilan cheklansin) alohida ko'rib chiqilishi
+kerak.
+
+**Bajarilgan deb hisoblanadi:** HR/ROP oylik ish haqini Excel'da xodim
+kesimida yuklab oladi; hisoblash amalining o'zi ham audit tarixida
+ko'rinadi; Boshliq oylik fondni shaxsiy xabarda ko'radi, guruh esa hech
+qachon bu raqamni ko'rmaydi.
+
+---
+
+## Yakuniy holat (2026-07-27)
+
+**Barcha 8 bosqich (0-7) BAJARILDI.** Oylik ish haqi + kechikish jarimasi +
+qo'shimcha ish tizimi to'liq: ma'lumot modeli, hisoblash yadrosi, HTTP API,
+Dasturchi super-admin, web panel, bot integratsiyasi, avtomatika (scheduler)
+va hisobot/maxfiylik. To'liq `test.py` suite: 248 OK / 249 (yagona FAIL —
+loyihaga aloqasi yo'q, oldindan mavjud Windows konsol kodlash xatosi).
+
+Ataylab qoldirilgan/keyingi ish sifatida belgilangan narsalar (kelajak
+sessiyalar uchun eslatma):
+- `AdminOverride.tsx` (web sahifa) va bot admin-override buyruqlari
+  (`/norm_set`, `/att_fix`, `/unlock` va h.k.) — Bosqich 3.5/4/5'da
+  "keyingi bosqichga qoldirilgan" deb belgilangan edi, lekin hech birida
+  qurilmadi. Backend (`api/routers/admin_override.py`) to'liq ishlaydi —
+  faqat maxsus UI/bot buyrug'i yo'q, Dasturchi hozircha faqat to'g'ridan-
+  to'g'ri API orqali (yoki umumiy web sahifalar + bypass orqali) foydalanadi.
+- Tungi (yarim tundan oshgan) smenalar uchun overtime avtomatik aniqlash
+  ishlamaydi (`detect_overtime_candidates`, Bosqich 6).
+- `fine_applies_to='bonus_first'` rejimi uchun item-darajasidagi
+  breakdown hali qurilmagan (faqat `net_salary` — HR tanlagan default).
+- Test infratuzilmasidagi "real xodimlarga fake davr Payslip qoldig'i"
+  muammosi (yuqorida, Bosqich 7 bo'limida).
 
 ---
 

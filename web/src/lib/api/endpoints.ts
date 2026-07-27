@@ -278,6 +278,27 @@ export const api = {
   approvePayrollPeriod: (period: string) =>
     apiFetch<{ period: string; approved: number }>(`/payroll/${period}/approve`, { method: "POST" }),
   myLateStatus: () => apiFetch<PayrollLateStatus>("/payroll/me/late-status"),
+  downloadPayrollExport: async (period: string): Promise<void> => {
+    const token = getToken();
+    const resp = await fetch(`${API_BASE_URL}/payroll/${period}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!resp.ok) {
+      if (resp.status === 401) {
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      }
+      throw new ApiError(resp.status, "Ish haqi varag'ini yuklashda xatolik");
+    }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `oylik_${period}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  },
   downloadReportExport: async (dateFrom: string, dateTo: string): Promise<void> => {
     const token = getToken();
     const resp = await fetch(`${API_BASE_URL}/reports/export?date_from=${dateFrom}&date_to=${dateTo}`, {

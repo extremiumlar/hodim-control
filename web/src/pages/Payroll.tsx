@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Banknote,
   CheckCircle2,
+  Download,
   Lock,
   RefreshCw,
   Users,
@@ -30,6 +31,7 @@ import { useAuth } from "@/lib/auth";
 import {
   useApprovePayrollPeriod,
   useCalculatePayroll,
+  useDownloadPayrollExport,
   usePayrollPeriods,
   usePayrollPreflight,
   usePayslipDetail,
@@ -210,6 +212,7 @@ export default function Payroll() {
   const payslipsQuery = usePayslips(period);
   const calculate = useCalculatePayroll();
   const approve = useApprovePayrollPeriod();
+  const downloadExport = useDownloadPayrollExport();
 
   const periodInfo = periodsQuery.data?.find((p) => p.period === period);
   const isLocked = periodInfo?.locked ?? false;
@@ -285,6 +288,19 @@ export default function Payroll() {
         description="Oylik ish haqi, kechikish jarimasi va qo'shimcha ish hisob-kitobi."
       >
         <MonthPicker value={period} onChange={setPeriod} />
+        {rows.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={downloadExport.isPending}
+            onClick={() =>
+              downloadExport.mutate(period, { onSuccess: () => toast.success("Excel fayl yuklab olindi") })
+            }
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {downloadExport.isPending ? "Tayyorlanmoqda..." : "Excel"}
+          </Button>
+        )}
         {canManage && (
           <>
             <Button

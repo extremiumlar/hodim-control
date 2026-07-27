@@ -17,6 +17,8 @@ from db.models import (
     HourlyActual,
     LeadStageDaily,
     OperatorCallsDaily,
+    Payslip,
+    PayslipItem,
     Role,
     TaskModel,
     TaskStatus,
@@ -260,6 +262,136 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
             cell.value is not None for cell in column_cells
         ) else 10
         ws.column_dimensions[column_cells[0].column_letter].width = min(max(length + 2, 12), 40)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _autosize_columns(ws) -> None:
+    for column_cells in ws.columns:
+        length = max(
+            (len(str(cell.value)) for cell in column_cells if cell.value is not None), default=10
+        )
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(length + 2, 12), 40)
+
+
+_SHEET_NAME_INVALID = set(r"\/:*?[]")
+
+
+def _safe_sheet_name(full_name: str, user_id: int) -> str:
+    """Excel varaq nomi <=31 belgi va `\\/:*?[]` belgilarisiz bo'lishi shart;
+    ism qisqartirilgach ikki xodim to'qnashmasligi uchun `#user_id` doim
+    qo'shiladi (ism o'zgarishi/takrorlanishidan qat'i nazar barqaror)."""
+    cleaned = "".join(c for c in full_name if c not in _SHEET_NAME_INVALID).strip() or f"Xodim {user_id}"
+    suffix = f" #{user_id}"
+    return cleaned[: 31 - len(suffix)] + suffix
+
+
+async def build_payroll_xlsx(db: AsyncSession, period: str, user_ids: list[int] | None = None) -> BytesIO:
+    """Oylik ish haqi varag'i — Bosqich 7 (OYLIK_JARIMA_REJASI.md). Bitta
+    kitobda: "Xulosa" (barcha xodim, bir qator) + har bir xodim uchun
+    ALOHIDA varaq (to'liq `PayslipItem` tafsiloti — "nega bu summa" savoliga
+    bir qarashda javob, 1-bo'lim ⭐ band bilan bir xil printsip). `user_ids`
+    berilsa faqat o'sha xodimlar (ROP faqat o'z jamoasini ko'rishi uchun,
+    `payroll.py::_visible_users` bilan bir xil qamrov)."""
+    q = select(Payslip).join(User, Payslip.user_id == User.id).where(Payslip.period == period)
+    if user_ids is not None:
+        q = q.where(Payslip.user_id.in_(user_ids))
+    payslips = list(await db.scalars(q))
+
+    names = {}
+    if payslips:
+        result = await db.execute(
+            select(User.id, User.full_name).where(User.id.in_([p.user_id for p in payslips]))
+        )
+        names = dict(result.all())
+    payslips.sort(key=lambda p: names.get(p.user_id, ""))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Xulosa"
+    ws.append([f"Oylik ish haqi — {period}"])
+    ws.append(
+        [
+            "Xodim", "Holat", "Asosiy oylik", "Qo'shimcha ish", "Bonus", "Qo'shimchalar (+)",
+            "Kechikish jarimasi", "Kelmagan kun ushlanmasi", "Qo'shimchalar (-)", "Jami (gross)", "Netto",
+        ]
+    )
+    for cell in ws[2]:
+        cell.font = Font(bold=True)
+
+    for p in payslips:
+        ws.append(
+            [
+                names.get(p.user_id, f"#{p.user_id}"),
+                p.status,
+                float(p.base_amount),
+                float(p.overtime_amount),
+                float(p.bonus_amount),
+                float(p.adjustments_plus),
+                -float(p.fine_amount),
+                -float(p.absent_deduction),
+                -float(p.adjustments_minus),
+                float(p.gross),
+                float(p.net),
+            ]
+        )
+    if payslips:
+        ws.append(
+            [
+                "JAMI", "",
+                sum(float(p.base_amount) for p in payslips),
+                sum(float(p.overtime_amount) for p in payslips),
+                sum(float(p.bonus_amount) for p in payslips),
+                sum(float(p.adjustments_plus) for p in payslips),
+                -sum(float(p.fine_amount) for p in payslips),
+                -sum(float(p.absent_deduction) for p in payslips),
+                -sum(float(p.adjustments_minus) for p in payslips),
+                sum(float(p.gross) for p in payslips),
+                sum(float(p.net) for p in payslips),
+            ]
+        )
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+    _autosize_columns(ws)
+
+    if payslips:
+        items_by_payslip: dict[int, list[PayslipItem]] = {}
+        item_rows = list(
+            await db.scalars(
+                select(PayslipItem)
+                .where(PayslipItem.payslip_id.in_([p.id for p in payslips]))
+                .order_by(PayslipItem.sort_order)
+            )
+        )
+        for it in item_rows:
+            items_by_payslip.setdefault(it.payslip_id, []).append(it)
+
+        for p in payslips:
+            ws_emp = wb.create_sheet(_safe_sheet_name(names.get(p.user_id, f"Xodim {p.user_id}"), p.user_id))
+            ws_emp.append([f"{names.get(p.user_id, f'#{p.user_id}')} — {period} oyi uchun oylik varaqasi"])
+            ws_emp.append(["Holat", p.status])
+            if p.approved_at is not None:
+                ws_emp.append(["Tasdiqlangan", p.approved_at.isoformat()])
+            ws_emp.append([])
+            ws_emp.append(["Tavsif", "Miqdor", "Stavka", "Summa"])
+            for cell in ws_emp[ws_emp.max_row]:
+                cell.font = Font(bold=True)
+            for it in items_by_payslip.get(p.id, []):
+                ws_emp.append(
+                    [
+                        it.label,
+                        float(it.quantity) if it.quantity is not None else "",
+                        float(it.rate) if it.rate is not None else "",
+                        float(it.amount),
+                    ]
+                )
+            ws_emp.append(["", "", "Netto", float(p.net)])
+            for cell in ws_emp[ws_emp.max_row]:
+                cell.font = Font(bold=True)
+            _autosize_columns(ws_emp)
 
     buffer = BytesIO()
     wb.save(buffer)

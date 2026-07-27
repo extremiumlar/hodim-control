@@ -4,6 +4,8 @@ Telegram bot + FastAPI backend + React sayt orqali ishlaydigan xodimlar nazorati
 
 **Joriy holat: barcha 4 bosqich tayyor** — DB sxemasi, bot onboarding/vazifa/sababli-kun oqimlari, norma boshqaruvi (bot + sayt), mobilograf video+reaksiya tasdig'i, kunlik eslatma/xulosa scheduler, CRM-agnostik adapter (amoCRM to'liq, 1C stub) + qo'lda kiritish, oylik bonus hisob-kitobi (placeholder formula) + botga push-xabar, xodim profili sahifasi (tendensiya grafigi + kunlik natijalar + bonus tarixi), .xlsx hisobot eksporti, to'liq audit jurnali sahifasi va bosh sahifaning 20 soniyalik avtomatik yangilanishi ishlaydi. Spetsifikatsiyaning barcha 4 bosqichi (12-bo'lim) amalga oshirildi.
 
+> Bu spetsifikatsiya (12-bo'lim) loyihaning DASTLABKI ko'lami — keyinchalik davomat/ish jadvali, operator AI, bilim bazasi va to'liq **oylik ish haqi + kechikish jarimasi + qo'shimcha ish** tizimi (kechikish limiti, avtomatik oylik hisob, Excel payslip eksporti) qo'shildi. Batafsil — `OYLIK_JARIMA_REJASI.md`.
+
 ## Repo tuzilishi
 
 ```
