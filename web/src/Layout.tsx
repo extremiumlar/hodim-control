@@ -54,7 +54,7 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   end?: boolean;
-  onlyPositionsManager?: boolean; // faqat boss/dasturchi
+  onlyPositionsManager?: boolean; // faqat hr/boss/dasturchi
   onlyPayrollManager?: boolean; // faqat hr/boss/dasturchi (ROP'da yo'q)
   onlyDasturchi?: boolean; // faqat dasturchi (super-admin)
 }
@@ -240,7 +240,7 @@ export default function Layout() {
   const { user } = useAuth();
   const location = useLocation();
   const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
-  const canManagePositions = user?.role === "boss" || user?.role === "dasturchi";
+  const canManagePositions = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
   const isDasturchi = user?.role === "dasturchi";
 

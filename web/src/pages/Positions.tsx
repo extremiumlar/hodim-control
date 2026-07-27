@@ -51,7 +51,7 @@ const emptyDraft = (): Draft => ({
 
 export default function Positions() {
   const { user: currentUser } = useAuth();
-  const canManage = currentUser?.role === "boss" || currentUser?.role === "dasturchi";
+  const canManage = ["hr", "boss", "dasturchi"].includes(currentUser?.role ?? "");
 
   const query = usePositions(true);
   const createPosition = useCreatePosition();
@@ -194,7 +194,7 @@ export default function Positions() {
       <Card>
         <CardContent className="pt-6">
           <p className="text-sm text-slate-500">
-            Lavozimlarni faqat Boshliq yoki Dasturchi boshqara oladi.
+            Lavozimlarni faqat HR, Boshliq yoki Dasturchi boshqara oladi.
           </p>
         </CardContent>
       </Card>

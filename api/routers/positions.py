@@ -8,9 +8,9 @@ from db.models import AuditLog, Position, Role, User
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 
-# Lavozimlarni faqat Boshliq/Dasturchi yaratadi va o'zgartiradi; qolgan sayt
-# rollari (HR/ROP) ro'yxatni o'qiy oladi (masalan xodimga lavozim biriktirishda).
-MANAGE_ROLES = (Role.boss.value, Role.dasturchi.value)
+# Lavozimlarni HR/Boshliq/Dasturchi yaratadi va o'zgartiradi; ROP ro'yxatni
+# faqat o'qiy oladi (masalan xodimga lavozim biriktirishda).
+MANAGE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 READ_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
 
 

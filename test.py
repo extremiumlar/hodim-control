@@ -2743,6 +2743,81 @@ def test_dasturchi_bot_bridge() -> None:
         conn.close()
 
 
+def test_positions_permissions() -> None:
+    """HRga lavozim yaratish/tahrirlash huquqi berildi (ilgari faqat Boshliq/
+    Dasturchi) — `api/routers/positions.py::MANAGE_ROLES`. ROP hamon faqat
+    o'qiy oladi (READ_ROLES)."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("LAVOZIM RUXSATLARI (HR endi boshqara oladi)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-PosPerm%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where actor_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from positions where name = 'T-Sinov lavozimi'")
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999900901,'T-PosPerm-Hr','hr',1,1,datetime('now'))")
+    hr_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999900902,'T-PosPerm-Rop','rop',1,1,datetime('now'))")
+    rop_uid = cur.lastrowid
+    conn.commit()
+
+    def cleanup_pos():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [hr_uid, rop_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where actor_id in ({qm})", uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            c2.execute("delete from positions where name = 'T-Sinov lavozimi'")
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Lavozim ruxsati tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        hr_t = token_for(hr_uid, "hr")
+        rop_t = token_for(rop_uid, "rop")
+
+        with httpx.Client(timeout=15) as client:
+            r = client.post(f"{API_BASE}/positions", headers=auth(rop_t), json={
+                "name": "T-Sinov lavozimi", "menu_flags": {}, "metrics": ["suhbat"], "managed_by_roles": [],
+            })
+            check("ROP lavozim yarata OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/positions", headers=auth(hr_t), json={
+                "name": "T-Sinov lavozimi", "menu_flags": {}, "metrics": ["suhbat"], "managed_by_roles": [],
+            })
+            check("HR lavozim yarata oladi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            pos_id = r.json().get("id") if r.status_code == 200 else None
+
+            if pos_id:
+                r = client.patch(f"{API_BASE}/positions/{pos_id}", headers=auth(hr_t), json={
+                    "metrics": ["suhbat", "tashrif"],
+                })
+                check("HR lavozimni tahrirlay oladi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                check("metrics yangilandi", r.status_code == 200 and r.json().get("metrics") == ["suhbat", "tashrif"],
+                      f"={r.json() if r.status_code == 200 else None}")
+    except Exception:
+        check("Lavozim ruxsatlari (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_pos()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -2794,6 +2869,11 @@ def main() -> None:
         test_dasturchi_bot_bridge()
     except Exception:
         print("Dasturchi bot ko'prigi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_positions_permissions()
+    except Exception:
+        print("Lavozim ruxsatlari testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")
