@@ -222,6 +222,30 @@ class User(Base):
         return bool(self.face_descriptor)
 
 
+class AppLoginStatus(str, enum.Enum):
+    pending = "pending"
+    confirmed = "confirmed"
+    used = "used"
+
+
+class AppLoginToken(Base):
+    """Mobil ilova kirishi — deep-link + bir martalik token. Ilova `/auth/app-login/start`
+    bilan token yaratadi, foydalanuvchi botga o'tib tasdiqlaydi (`telegram_id` shu yerda
+    bog'lanadi), ilova esa `/auth/app-login/poll` bilan natijani kutib oladi. Token bir
+    marta ishlatilgach (`status=used`) yoki `expires_at`dan o'tgach qayta ishlatilmaydi."""
+
+    __tablename__ = "app_login_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    telegram_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=AppLoginStatus.pending.value)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class TaskModel(Base):
     __tablename__ = "tasks"
 

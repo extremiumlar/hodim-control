@@ -13,3 +13,4 @@ web/*.tsbuildinfo
 .mypy_cache/
 .claude/
 .idea/
+*.apk

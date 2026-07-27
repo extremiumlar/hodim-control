@@ -16,9 +16,35 @@ ROLE_NAMES = {
 }
 
 
+APP_LOGIN_PREFIX = "applogin_"
+
+
+async def _handle_app_login(message: Message, login_token: str) -> None:
+    """Mobil ilova "Kirish" tugmasi bilan ochilgan deep-link
+    (MOBIL_ILOVA_REJASI.md 4.1-band) — oddiy taklif-havola oqimidan alohida,
+    chunki bu yerda yangi hisob yaratilmaydi, faqat allaqachon mavjud
+    foydalanuvchi ilova sessiyasini tasdiqlaydi."""
+    result = await api_client.confirm_app_login(login_token, message.from_user.id)
+
+    if result["status"] == "ok":
+        await message.answer("✅ Mobil ilovaga kirish tasdiqlandi. Ilovaga qayting.")
+    elif result["status"] == "no_account":
+        await message.answer(
+            "Sizning hisobingiz topilmadi yoki ilovaga kirish ruxsatingiz yo'q. "
+            "Administratorga murojaat qiling."
+        )
+    else:
+        await message.answer("Havola yaroqsiz yoki muddati o'tgan. Ilovada qaytadan urinib ko'ring.")
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject) -> None:
     invite_token = command.args or None
+
+    if invite_token and invite_token.startswith(APP_LOGIN_PREFIX):
+        await _handle_app_login(message, invite_token[len(APP_LOGIN_PREFIX):])
+        return
+
     result = await api_client.telegram_start(message.from_user.id, invite_token)
 
     if result["status"] == "invalid_token":

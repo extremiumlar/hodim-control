@@ -51,6 +51,15 @@ async def telegram_start(telegram_id: int, invite_token: str | None) -> dict:
     return resp.json()
 
 
+async def confirm_app_login(login_token: str, telegram_id: int) -> dict:
+    resp = await _get_client().post(
+        "/auth/app-login/confirm",
+        json={"login_token": login_token, "telegram_id": telegram_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_user_by_telegram(telegram_id: int) -> dict | None:
     resp = await _get_client().get(f"/users/by-telegram/{telegram_id}")
     if resp.status_code == 404:

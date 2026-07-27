@@ -164,6 +164,30 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class AppLoginStartOut(BaseModel):
+    login_token: str
+    deep_link: str
+    expires_at: datetime
+
+
+class AppLoginConfirmRequest(BaseModel):
+    login_token: str
+    telegram_id: int
+
+
+class AppLoginConfirmOut(BaseModel):
+    status: str  # ok | invalid | no_account
+
+
+class AppLoginPollRequest(BaseModel):
+    login_token: str
+
+
+class AppLoginPollOut(BaseModel):
+    status: str  # pending | confirmed | expired
+    token: TokenOut | None = None
+
+
 class TelegramStartRequest(BaseModel):
     telegram_id: int
     invite_token: str | None = None
