@@ -63,13 +63,30 @@ def _due(now: datetime) -> list:
     def add(path: str, **kw) -> None:
         jobs.append((path, kw))
 
-    # ── Har daqiqa (yengil, o'zini vaqt/bayroq bo'yicha tekshiradi) ──
-    add("/daily-results/sync")                       # CRM sync (ilgari 30s)
+    # ── Har daqiqa — FAQAT aniq vaqtga bog'liqlari ────────────────────────────
+    # Bu ikkisi foydalanuvchi sozlagan ANIQ daqiqada ishlashi kerak (vaqt bazadan
+    # o'qiladi, ">=" semantikasi + kuniga-bir-marta qo'riqchisi bilan), shuning
+    # uchun siyraklashtirilmaydi.
     add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
-    add("/anketa/tick", timeout=120)                 # rejalashtirilgan anketani boshlash
-    add("/knowledge/tick", timeout=120)              # bilim bazasi AI ishlovi (draft yo'q — no-op)
-    add("/playbook/tick", timeout=120)               # playbook qurish bosqichlari (build yo'q — no-op)
     add("/attendance/digest-tick", timeout=60)       # davomat digesti (API vaqtni bazadan tekshiradi)
+
+    # ── Siyraklashtirilgan (2026-07-27) ───────────────────────────────────────
+    # SABAB: bu hostda Passenger'da ATIGI 1 ta ishchi jarayon bor. Har daqiqada
+    # 6 ta ketma-ket HTTP chaqiruv (eng sekini /daily-results/sync — jonli
+    # o'lchovda 1-4.4s) yagona ishchini to'ldirib qo'yardi va shu paytda kelgan
+    # sayt/bot so'rovlari navbatda qotib, 25s+ timeout berardi. Quyidagilarning
+    # hech biri aniq daqiqaga bog'liq emas (kechikish zararsiz), shuning uchun
+    # siyraklashtirildi — egasi ongli qarori: "sekinroq bo'lsa ham ishlasin".
+    # DIQQAT: toq/siljitilgan qoldiq ATAYIN — mavjud job'lar (m%15, m%5, m%2,
+    # m==0) hammasi JUFT daqiqalarda, ayniqsa :00 da to'planadi (o'lchandi: bitta
+    # daqiqada 11 ta chaqiruv). Bu guruhlar toq daqiqalarga surildi — cho'qqi
+    # tekislanadi, yagona ishchi bir zumda to'lib qolmaydi.
+    if m % 2 == 1:
+        add("/daily-results/sync")                   # CRM sync (8 kishilik jamoaga yetarli)
+        add("/anketa/tick", timeout=120)             # anketa max 2 daq kechikib boshlanadi
+    if m % 5 == 3:
+        add("/knowledge/tick", timeout=120)          # bilim bazasi AI ishlovi (draft yo'q — no-op)
+        add("/playbook/tick", timeout=120)           # playbook qurish bosqichlari (build yo'q — no-op)
 
     # ── Interval ──
     if m % 15 == 0:

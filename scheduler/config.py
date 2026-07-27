@@ -39,7 +39,14 @@ CRM_SYNC_INTERVAL_SECONDS = 30
 # edi. 15 daqiqaga tushirildi (~8.75 daqiqa zaxira bilan xavfsiz) — kechikish
 # ikki barobar kamaydi. TO'LIQ yechim (LeadEvent/CrmLeadState'ga o'tkazish)
 # alohida, kattaroq loyiha — bu faqat oraliq, arzon yaxshilash.
-LEAD_SNAPSHOT_INTERVAL_MINUTES = 15
+#
+# 2026-07-27 QAYTA KO'RIB CHIQILDI (30 daqiqaga qaytarildi): jonli cPanel'da 15
+# daqiqalik interval + ~6.25 daqiqalik skan = vaqtning ~40%ida CPU band. Shared
+# hostingda (LVE CPU limiti, Passenger'da ATIGI 1 ta ishchi) bu butun akkauntni
+# sekinlashtirib, sayt/bot vaqti-vaqti bilan 25s+ timeout berardi. Egasi ongli
+# qaror qildi: "sekinroq bo'lsa ham ishlasin" — statistikaning 30 daqiqagacha
+# eskirishi, saytning umuman ochilmasligidan afzal.
+LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
 LEAD_SNAPSHOT_FREEZE_HOUR = 23  # kun yakunida oxirgi holatni "muzlatish"
 LEAD_SNAPSHOT_FREEZE_MINUTE = 57
 
