@@ -24,6 +24,7 @@ const CheckIn = lazy(() => import("./pages/CheckIn"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
 const Overtime = lazy(() => import("./pages/Overtime"));
+const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -61,6 +62,18 @@ function ManagerRoute({ children }: { children: JSX.Element }) {
 function PayrollManageRoute({ children }: { children: JSX.Element }) {
   const { user } = useAuth();
   if (!PAYROLL_MANAGE_ROLES.includes(user?.role ?? "")) return <Navigate to="/payroll" replace />;
+  return children;
+}
+
+// Dasturchi rejimi (super-admin, OYLIK_JARIMA_REJASI.md 11-bo'lim) — FAQAT
+// dasturchi, Boshliq HAM kirmaydi (u override tarixini /audit-logs orqali
+// emas, hozircha faqat backenddan ko'radi — 11.6-band).
+// E'TIBOR: yo'l ataylab "/dasturchi" — "/admin" band (vite.config.ts'dagi
+// eski verifix/Django admin redirekti "/admin"ni "/attendance"ga
+// yo'naltiradi, server darajasida, React Router ko'rishidan OLDIN).
+function DasturchiRoute({ children }: { children: JSX.Element }) {
+  const { user } = useAuth();
+  if (user?.role !== "dasturchi") return <Navigate to="/" replace />;
   return children;
 }
 
@@ -103,6 +116,7 @@ export default function App() {
             element={<PayrollManageRoute><PayrollSettings /></PayrollManageRoute>}
           />
           <Route path="overtime" element={<PayrollManageRoute><Overtime /></PayrollManageRoute>} />
+          <Route path="dasturchi" element={<DasturchiRoute><AdminOverride /></DasturchiRoute>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

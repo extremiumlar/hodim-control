@@ -894,3 +894,77 @@ async def set_attendance_digest_time(
         return None
     resp.raise_for_status()
     return resp.json()
+
+
+# ─── Dasturchi rejimi (super-admin, OYLIK_JARIMA_REJASI.md 11-bo'lim) ───
+# `/admin/*` va `/attendance/manual` JWT (Bearer) kutadi — bot bevosita
+# X-Bot-Secret bilan ularga kira olmaydi. `bot_admin_token` shu ko'prikni
+# ta'minlaydi (faqat dasturchi role uchun beriladi).
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def bot_admin_token(telegram_id: int) -> str | None:
+    resp = await _get_client().post("/auth/bot-token", json={"telegram_id": telegram_id})
+    if resp.status_code != 200:
+        return None
+    return resp.json()["access_token"]
+
+
+async def admin_search_users(token: str, query: str) -> list[dict]:
+    resp = await _get_client().get("/users", params={"include_inactive": "true"}, headers=_bearer(token))
+    resp.raise_for_status()
+    users = resp.json()
+    q = query.strip().lower()
+    if not q:
+        return users
+    return [u for u in users if q in u["full_name"].lower()]
+
+
+async def admin_set_norm(token: str, user_id: int, metric: str, value: int, reason: str) -> dict:
+    resp = await _get_client().put(
+        f"/admin/norms/{user_id}/{metric}",
+        json={"value": value, "override_reason": reason},
+        headers=_bearer(token),
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def admin_clear_metric(token: str, user_id: int, metric: str, reason: str) -> dict:
+    resp = await _get_client().request(
+        "DELETE", f"/admin/norms/{user_id}/{metric}",
+        json={"override_reason": reason}, headers=_bearer(token),
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def admin_fix_attendance(token: str, user_id: int, date_str: str, check_in: str, reason: str) -> dict:
+    resp = await _get_client().put(
+        "/attendance/manual",
+        json={"user_id": user_id, "date": date_str, "check_in": check_in, "reason": reason},
+        headers=_bearer(token),
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def admin_unlock_payroll(token: str, period: str, reason: str) -> dict:
+    resp = await _get_client().post(
+        f"/admin/payroll/{period}/unlock",
+        json={"override_reason": reason}, headers=_bearer(token),
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def admin_restore_record(token: str, entity: str, record_id: int, reason: str) -> dict:
+    resp = await _get_client().post(
+        f"/admin/records/{entity}/{record_id}/restore",
+        json={"override_reason": reason}, headers=_bearer(token),
+    )
+    resp.raise_for_status()
+    return resp.json()

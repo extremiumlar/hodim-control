@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db
+from api.deps import get_db, verify_bot_secret
 from api.schemas import DevLoginRequest, TokenOut, UserOut
 from api.security import create_access_token, verify_telegram_login
 from db.models import Role, User
@@ -46,4 +46,20 @@ async def dev_login(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)
     if not user or not user.is_active or user.role not in SITE_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Saytga kirish uchun ruxsatingiz yo'q")
 
+    return await _issue_token(user)
+
+
+@router.post("/bot-token", response_model=TokenOut, dependencies=[Depends(verify_bot_secret)])
+async def bot_token(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)) -> TokenOut:
+    """Bot orqali Dasturchi buyruqlari (`/norm_set`, `/unlock` va h.k.,
+    OYLIK_JARIMA_REJASI.md 11.5-band) uchun ko'prik: bot X-Bot-Secret bilan
+    himoyalangan (tashqi hech kim chaqira olmaydi), lekin `/admin/*` va
+    boshqa web-darajasidagi endpointlar JWT kutadi — bot uchun bevosita
+    kirish yo'q. Shu endpoint TELEGRAM_ID orqali haqiqiy foydalanuvchini
+    aniqlab, xuddi shu foydalanuvchi web'dan kirgandagi kabi JWT beradi —
+    LEKIN faqat `dasturchi` roli uchun (boshqa rollarga bot orqali to'liq
+    web huquqi berilmasin)."""
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if not user or not user.is_active or user.role != Role.dasturchi.value:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat Dasturchi uchun")
     return await _issue_token(user)

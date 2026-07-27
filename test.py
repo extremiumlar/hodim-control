@@ -2633,6 +2633,116 @@ def test_payroll_reporting() -> None:
         check("Bosqich7: tozalash (umumiy)", False, traceback.format_exc(limit=2).strip())
 
 
+def test_dasturchi_bot_bridge() -> None:
+    """Dasturchi web/bot interfeysi: web tomoni (`AdminOverride.tsx`) mavjud
+    `admin_override.py` backendining ustiga qurilgan (yangi backend YO'Q),
+    lekin bot tomoni uchun BITTA yangi ko'prik qo'shildi — `POST /auth/
+    bot-token` (bot-secret bilan himoyalangan, FAQAT dasturchi uchun JWT
+    beradi). Shu test faqat SHU yangi endpointni va uning JWT'si haqiqatan
+    `/admin/*` va `/attendance/manual`ga kira olishini tekshiradi — chuqurroq
+    admin_override.py mantiqi allaqachon `test_admin_override` (Bosqich 3.5)
+    da to'liq qoplangan, bu yerda takrorlanmaydi."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("DASTURCHI BOT KO'PRIGI (POST /auth/bot-token)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-Bridge%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from norms where user_id in ({qm})", stale)
+        cur.execute(f"delete from attendance where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from work_schedule_override where date = '2020-05-05'")
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999800801,'T-Bridge-Dev','dasturchi',1,1,datetime('now'))")
+    dev_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999800802,'T-Bridge-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into work_schedule_override (user_id, date, is_working, start_time, end_time, updated_at)"
+        " values (?, '2020-05-05', 1, '09:00', '18:00', datetime('now'))", (emp_uid,))
+    conn.commit()
+
+    def cleanup_bridge():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [dev_uid, emp_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from norms where user_id in ({qm})", uids)
+            c2.execute(f"delete from attendance where user_id in ({qm})", uids)
+            c2.execute("delete from work_schedule_override where date = '2020-05-05'")
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Dasturchi bot ko'prigi tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as f:
+            secret = next(
+                (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")), ""
+            )
+        BOT_SECRET_HDR = {"X-Bot-Secret": secret}
+
+        with httpx.Client(timeout=15) as client:
+            r = client.post(f"{API_BASE}/auth/bot-token", json={"telegram_id": 999800801})
+            check("bot-secretsiz -> 401", r.status_code == 401, f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/auth/bot-token", headers=BOT_SECRET_HDR, json={"telegram_id": 1})
+            check("mavjud bo'lmagan telegram_id -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/auth/bot-token", headers=BOT_SECRET_HDR, json={"telegram_id": 999800802})
+            check("xodim (dasturchi EMAS) -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(f"{API_BASE}/auth/bot-token", headers=BOT_SECRET_HDR, json={"telegram_id": 999800801})
+            check("dasturchi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            token = r.json().get("access_token") if r.status_code == 200 else None
+            check("javobda access_token bor", bool(token), f"={r.json() if r.status_code == 200 else None}")
+
+            if token:
+                jwt_hdr = {"Authorization": f"Bearer {token}"}
+
+                r = client.put(
+                    f"{API_BASE}/admin/norms/{emp_uid}/suhbat", headers=jwt_hdr,
+                    json={"value": 33, "override_reason": "T-sinov: bot ko'prigi orqali"},
+                )
+                check("mint qilingan JWT bilan /admin/norms ishlaydi -> 200", r.status_code == 200,
+                      f"kod={r.status_code} {r.text[:150]}")
+                check("norma qiymati 33", r.status_code == 200 and r.json().get("value") == 33,
+                      f"={r.json() if r.status_code == 200 else None}")
+
+                r = client.put(
+                    f"{API_BASE}/attendance/manual", headers=jwt_hdr,
+                    json={
+                        "user_id": emp_uid, "date": "2020-05-05", "check_in": "09:20",
+                        "reason": "T-sinov: /att_fix ko'prigi",
+                    },
+                )
+                check("mint qilingan JWT bilan /attendance/manual ishlaydi -> 200", r.status_code == 200,
+                      f"kod={r.status_code} {r.text[:150]}")
+                check("late_minutes hisoblandi (09:20 kelish, 09:00 boshlanish)",
+                      r.status_code == 200 and r.json().get("late_minutes") == 20,
+                      f"={r.json() if r.status_code == 200 else None}")
+    except Exception:
+        check("Dasturchi bot ko'prigi (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_bridge()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -2679,6 +2789,11 @@ def main() -> None:
         test_payroll_reporting()
     except Exception:
         print("Payroll hisobot testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_dasturchi_bot_bridge()
+    except Exception:
+        print("Dasturchi bot ko'prigi testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

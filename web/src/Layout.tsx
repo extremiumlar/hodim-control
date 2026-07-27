@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
   ScrollText,
   Settings,
+  ShieldAlert,
   Target,
   TimerReset,
   TrendingUp,
@@ -55,6 +56,7 @@ interface NavItem {
   end?: boolean;
   onlyPositionsManager?: boolean; // faqat boss/dasturchi
   onlyPayrollManager?: boolean; // faqat hr/boss/dasturchi (ROP'da yo'q)
+  onlyDasturchi?: boolean; // faqat dasturchi (super-admin)
 }
 
 interface NavGroup {
@@ -101,6 +103,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/users", label: "Foydalanuvchilar", icon: Users },
       { to: "/positions", label: "Lavozimlar", icon: Briefcase, onlyPositionsManager: true },
       { to: "/audit-logs", label: "Audit", icon: ScrollText },
+      { to: "/dasturchi", label: "Dasturchi rejimi", icon: ShieldAlert, onlyDasturchi: true },
     ],
   },
 ];
@@ -161,11 +164,13 @@ function SidebarNav({
   collapsed,
   canManagePositions,
   canManagePayroll,
+  isDasturchi,
   onNavigate,
 }: {
   collapsed: boolean;
   canManagePositions: boolean;
   canManagePayroll: boolean;
+  isDasturchi: boolean;
   onNavigate?: () => void;
 }) {
   return (
@@ -175,7 +180,8 @@ function SidebarNav({
           const items = group.items.filter(
             (i) =>
               (!i.onlyPositionsManager || canManagePositions) &&
-              (!i.onlyPayrollManager || canManagePayroll)
+              (!i.onlyPayrollManager || canManagePayroll) &&
+              (!i.onlyDasturchi || isDasturchi)
           );
           if (!items.length) return null;
           return (
@@ -236,6 +242,7 @@ export default function Layout() {
   const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePositions = user?.role === "boss" || user?.role === "dasturchi";
   const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
+  const isDasturchi = user?.role === "dasturchi";
 
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -292,6 +299,7 @@ export default function Layout() {
             collapsed={collapsed}
             canManagePositions={canManagePositions}
             canManagePayroll={canManagePayroll}
+            isDasturchi={isDasturchi}
           />
         </aside>
 
@@ -314,6 +322,7 @@ export default function Layout() {
                     collapsed={false}
                     canManagePositions={canManagePositions}
                     canManagePayroll={canManagePayroll}
+                    isDasturchi={isDasturchi}
                     onNavigate={() => setMobileOpen(false)}
                   />
                 </div>

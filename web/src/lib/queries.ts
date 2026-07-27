@@ -56,6 +56,8 @@ export const qk = {
   payslips: (period: string) => ["payroll", "payslips", period] as const,
   payslipDetail: (period: string, userId: number) => ["payroll", "payslip", period, userId] as const,
   myLateStatus: ["payroll", "me", "late-status"] as const,
+  adminRecords: (entity: string) => ["admin", "records", entity] as const,
+  adminAudit: ["admin", "audit"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -406,3 +408,99 @@ export const useMyLateStatus = () =>
 
 export const useDownloadPayrollExport = () =>
   useApiMutation((period: string) => api.downloadPayrollExport(period), []);
+
+// ─── Dasturchi rejimi (super-admin) ───
+export const useAdminRecords = (entity: string, enabled = true) =>
+  useQuery({ queryKey: qk.adminRecords(entity), queryFn: () => api.listAdminRecords(entity), enabled });
+
+export const usePatchAdminRecord = (entity: string) =>
+  useApiMutation(
+    ({ id, fields, reason }: { id: number; fields: Record<string, unknown>; reason: string }) =>
+      api.patchAdminRecord(entity, id, fields, reason),
+    [qk.adminRecords(entity), qk.adminAudit]
+  );
+
+export const useDeleteAdminRecord = (entity: string) =>
+  useApiMutation(
+    ({ id, reason, hard }: { id: number; reason: string; hard?: boolean }) =>
+      api.deleteAdminRecord(entity, id, reason, hard),
+    [qk.adminRecords(entity), qk.adminAudit]
+  );
+
+export const useRestoreAdminRecord = (entity: string) =>
+  useApiMutation(
+    ({ id, reason }: { id: number; reason: string }) => api.restoreAdminRecord(entity, id, reason),
+    [qk.adminRecords(entity), qk.adminAudit]
+  );
+
+export const useAdminSetNorm = () =>
+  useApiMutation(
+    ({ userId, metric, value, reason }: { userId: number; metric: string; value: number; reason: string }) =>
+      api.adminSetNorm(userId, metric, value, reason),
+    [qk.teamNorms, qk.adminAudit]
+  );
+
+export const useAdminDeleteNorm = () =>
+  useApiMutation(
+    ({ normId, reason, hard }: { normId: number; reason: string; hard?: boolean }) =>
+      api.adminDeleteNorm(normId, reason, hard),
+    [qk.teamNorms, qk.adminAudit, qk.adminRecords("norm")]
+  );
+
+export const useAdminClearMetric = () =>
+  useApiMutation(
+    ({ userId, metric, reason }: { userId: number; metric: string; reason: string }) =>
+      api.adminClearMetric(userId, metric, reason),
+    [qk.teamNorms, qk.adminAudit, qk.adminRecords("norm")]
+  );
+
+export const useAdminRevertNorm = () =>
+  useApiMutation(
+    ({ userId, metric, reason }: { userId: number; metric: string; reason: string }) =>
+      api.adminRevertNorm(userId, metric, reason),
+    [qk.teamNorms, qk.adminAudit, qk.adminRecords("norm")]
+  );
+
+export const useUnlockPayrollPeriodAdmin = () =>
+  useApiMutation(
+    ({ period, reason }: { period: string; reason: string }) => api.unlockPayrollPeriodAdmin(period, reason),
+    [["payroll", "payslips"], qk.payrollPeriods, qk.adminAudit]
+  );
+
+export const useForceRecalculatePayrollAdmin = () =>
+  useApiMutation(
+    ({ period, reason }: { period: string; reason: string }) =>
+      api.forceRecalculatePayrollAdmin(period, reason),
+    [["payroll", "payslips"], ["payroll", "payslip"], qk.payrollPeriods, qk.adminAudit]
+  );
+
+export const usePatchPayslipAdmin = () =>
+  useApiMutation(
+    ({ period, userId, fields, reason }: {
+      period: string; userId: number; fields: Record<string, unknown>; reason: string;
+    }) => api.patchPayslipAdmin(period, userId, fields, reason),
+    [["payroll", "payslips"], ["payroll", "payslip"], qk.adminAudit]
+  );
+
+export const useDeletePayrollPeriodAdmin = () =>
+  useApiMutation(
+    ({ period, reason }: { period: string; reason: string }) => api.deletePayrollPeriodAdmin(period, reason),
+    [["payroll", "payslips"], ["payroll", "payslip"], qk.payrollPeriods, qk.adminAudit]
+  );
+
+export const useRecalculateAttendanceAdmin = () =>
+  useApiMutation(
+    ({ dateFrom, dateTo, reason }: { dateFrom: string; dateTo: string; reason: string }) =>
+      api.recalculateAttendanceAdmin(dateFrom, dateTo, reason),
+    [["attendance"], qk.adminAudit]
+  );
+
+export const useForceRoleAdmin = () =>
+  useApiMutation(
+    ({ userId, role, reason }: { userId: number; role: string; reason: string }) =>
+      api.forceRoleAdmin(userId, role, reason),
+    [["users"], qk.adminAudit]
+  );
+
+export const useOverrideAudit = () =>
+  useQuery({ queryKey: qk.adminAudit, queryFn: api.listOverrideAudit });

@@ -808,26 +808,32 @@ qachon bu raqamni ko'rmaydi.
 
 ## Yakuniy holat (2026-07-27)
 
-**Barcha 8 bosqich (0-7) BAJARILDI.** Oylik ish haqi + kechikish jarimasi +
-qo'shimcha ish tizimi to'liq: ma'lumot modeli, hisoblash yadrosi, HTTP API,
-Dasturchi super-admin, web panel, bot integratsiyasi, avtomatika (scheduler)
-va hisobot/maxfiylik. To'liq `test.py` suite: 248 OK / 249 (yagona FAIL —
-loyihaga aloqasi yo'q, oldindan mavjud Windows konsol kodlash xatosi).
+**Barcha 8 bosqich (0-7) BAJARILDI**, shu jumladan Bosqich 3.5/4/5'da
+"keyingi bosqichga qoldirilgan" deb qayd etilgan, lekin o'shanda qurilmagan
+Dasturchi web/bot interfeysi ham — 2026-07-27 kuni alohida so'rov bilan
+qo'shildi (11.5-band, quyida "11.5 Interfeys" bo'limida batafsil). Oylik
+ish haqi + kechikish jarimasi + qo'shimcha ish tizimi to'liq: ma'lumot
+modeli, hisoblash yadrosi, HTTP API, Dasturchi super-admin (backend +
+to'liq web/bot interfeys), web panel, bot integratsiyasi, avtomatika
+(scheduler) va hisobot/maxfiylik. To'liq `test.py` suite: 257 OK / 258
+(yagona FAIL — loyihaga aloqasi yo'q, oldindan mavjud Windows konsol
+kodlash xatosi).
 
-Ataylab qoldirilgan/keyingi ish sifatida belgilangan narsalar (kelajak
+Ataylab qoldirilgan/kelajak ish sifatida belgilangan narsalar (kelajak
 sessiyalar uchun eslatma):
-- `AdminOverride.tsx` (web sahifa) va bot admin-override buyruqlari
-  (`/norm_set`, `/att_fix`, `/unlock` va h.k.) — Bosqich 3.5/4/5'da
-  "keyingi bosqichga qoldirilgan" deb belgilangan edi, lekin hech birida
-  qurilmadi. Backend (`api/routers/admin_override.py`) to'liq ishlaydi —
-  faqat maxsus UI/bot buyrug'i yo'q, Dasturchi hozircha faqat to'g'ridan-
-  to'g'ri API orqali (yoki umumiy web sahifalar + bypass orqali) foydalanadi.
 - Tungi (yarim tundan oshgan) smenalar uchun overtime avtomatik aniqlash
   ishlamaydi (`detect_overtime_candidates`, Bosqich 6).
 - `fine_applies_to='bonus_first'` rejimi uchun item-darajasidagi
   breakdown hali qurilmagan (faqat `net_salary` — HR tanlagan default).
 - Test infratuzilmasidagi "real xodimlarga fake davr Payslip qoldig'i"
-  muammosi (yuqorida, Bosqich 7 bo'limida).
+  muammosi (Bosqich 7 bo'limida) — har test.py ishga tushirilganda yana
+  paydo bo'ladi, qo'lda tozalanadi (`test.py`dagi `/calculate`
+  chaqiruvlarini `user_ids` bilan cheklash — kelajak tuzatish).
+- Boshqa sahifalarda (Norms, Attendance, Payroll) qo'shimcha "Dasturchi"
+  qator menyusi (11.5-band ixtiyoriy qismi — "O'chirish"/"Majburan
+  tahrirlash" tugmalari mavjud sahifalarga) QURILMADI — buning o'rniga
+  markaziy `/dasturchi` sahifasidagi «Yozuvlar» tabi barcha 11 jadvalni
+  bitta joyda qamraydi (ekvivalent funksionallik, boshqa joylashuv).
 
 ---
 
@@ -996,30 +1002,77 @@ qo'yish mumkin — bu "kuch" emas, xato.
 | `api/deps.py` | `require_dasturchi`, `is_superadmin` |
 | `db/models.py` | 11.2/4-banddagi soft-delete ustunlari + migratsiya |
 
-### 11.5 Interfeys
+### 11.5 Interfeys ✅ BAJARILDI (2026-07-27)
 
-**Web** — `web/src/pages/AdminOverride.tsx` (`/admin`, faqat dasturchi):
-- Yuqorida qizil banner: «⚠️ Dasturchi rejimi — bu yerdagi amallar cheklovsiz».
-- Tumbler: **o'chiq holatda faqat ko'rish**, yoqilganda tahrir/o'chirish tugmalari.
-- Jadval tanlash → yozuvlar ro'yxati (o'chirilganlari kulrang) → qator ustida
-  [Tahrirlash] [O'chirish] [Tiklash].
-- Har bir amalda **sabab so'raydigan dialog** (mavjud `ConfirmDialog` kengaytiriladi).
-- Alohida tab: «Normalar» — xodim × metrika matritsasi, istalgan katakni
-  bevosita tahrirlash yoki tozalash.
-- Alohida tab: «Override tarixi» — kim, qachon, nimani, nima sababdan.
+**Web** — `web/src/pages/AdminOverride.tsx`. **E'TIBOR: yo'l `/admin` EMAS,
+`/dasturchi`** — `/admin` allaqachon band (vite.config.ts'dagi eski
+verifix/Django admin redirekti "/admin"ni "/attendance"ga server darajasida
+yo'naltiradi, React Router ko'rishidan OLDIN; brauzerda sinab ko'rilganda
+topildi, reja yozilganda bu eski redirekt hisobga olinmagan edi):
+- Qizil banner + tumbler: **o'chiq holatda faqat ko'rish**, yoqilganda
+  tahrir/o'chirish tugmalari (rejadagidek).
+- **«Yozuvlar»** tab: barcha 11 `ENTITY_REGISTRY` jadvali (tanlov ro'yxati) →
+  yozuvlar (o'chirilganlari "O'chirilgan" nishoni bilan) → [Tahrirlash]
+  [O'chirish]/[Tiklash]. Tahrirlash — bitta dialogda (server oq ro'yxatidagi
+  maydonlar + sabab, `ConfirmDialog`ning yangi opageri `ReasonDialog.tsx`
+  orqali, alohida "field-edit dialogi" + "sabab dialogi" ikki bosqich EMAS).
+- **«Normalar»** tab — rejadagi "matritsa" o'rniga ixcham AMAL paneli
+  (xodim+metrika+qiymat → Belgilash/Qaytarish/Tozalash): to'liq
+  ko'rish/tahrirlash/tiklash allaqachon «Yozuvlar» tabida (entity=norm) bor,
+  bu tab faqat CHEKLOVSIZ (metrika/rol) amallarga xos qo'shimcha.
+- **«Payroll»** tab — qulfni ochish/majburan qayta hisoblash/butun davrni
+  bekor qilish (oxirgisi — davr nomini QAYTA TERIB tasdiqlash,
+  `requireTypedConfirmation`, 11.6-band) + payslip qo'lda tuzatish.
+- **«Tizim»** tab — davomat ommaviy qayta hisoblash, rolni matritsasiz
+  o'zgartirish.
+- **«Override tarixi»** tab — audit ro'yxati (kim/kimga ism bilan, `useUsers`
+  orqali id→ism xaritalanadi, chunki backend faqat raw id qaytaradi).
+- ⭐ Boshqa sahifalarga (Norms/Attendance/Payroll) qo'shimcha "Dasturchi"
+  qator menyusi (rejaning IXTIYORIY qismi) QURILMADI — markaziy «Yozuvlar»
+  tabi funksional ekvivalent (yuqorida qayd etilgan).
 
-Boshqa sahifalarda (Norms, Attendance, Payroll) dasturchiga qo'shimcha qator
-menyusi chiqadi: «O'chirish», «Majburan tahrirlash», «Qulfni ochish».
-
-**Bot** — dasturchi uchun buyruqlar (`bot/handlers/admin_override.py`):
+**Bot** — `bot/handlers/admin_override.py`, rejadagi 5 buyruq so'zma-so'z:
 ```
 /norm_set <xodim> <metrika> <qiymat>   — cheklovsiz
 /norm_del <xodim> <metrika>
 /att_fix  <xodim> <sana> <kelgan_vaqt> — davomatni tuzatish
 /unlock   <YYYY-MM>                    — payroll qulfini ochish
-/undo     <id>                         — oxirgi o'chirilganni tiklash
+/undo     <id>                         — FAQAT norma (aniqlashtirildi — pastga qarang)
 ```
-Har biri sababni so'raydi (FSM, mavjud `fsm_storage` naqshi).
+Har biri argumentlarni matndan o'qiydi (button-wizard EMAS — Dasturchi
+buyruqlari ataylab tez-tez terish uchun), so'ng FSM orqali sabab so'raydi
+(kamida 5 belgi).
+
+⭐ **Muhim arxitektura topilmasi**: `admin_override.py`ning barcha
+endpointlari `require_dasturchi` orqali **JWT** talab qiladi (`get_current_user`) —
+bot esa faqat `X-Bot-Secret` bilan ishlaydi, JWT'ga ega EMAS. Reja bu
+tafovutni oldindan hisobga olmagan edi. Yechim — **YANGI, kichik ko'prik**:
+`POST /auth/bot-token` (`api/routers/auth.py`, bot-secret bilan
+himoyalangan, lekin FAQAT `role='dasturchi'` uchun JWT beradi — mavjud
+`_issue_token`/`create_access_token`dan foydalanadi, `DevLoginRequest`
+sxemasi qayta ishlatiladi). Bot shu orqali vaqtinchalik JWT oladi, so'ng
+xuddi web foydalanuvchisi kabi mavjud `/admin/*` VA `/attendance/manual`
+(bu ham JWT, admin_override.py'da EMAS) endpointlarini chaqiradi — HECH
+QANDAY backend mantiq TAKRORLANMAGAN, faqat autentifikatsiya ko'prigi
+qo'shildi. `<xodim>` ism bo'yicha qisman moslik bilan topiladi (`GET /users`
+— mint qilingan JWT bilan); bir nechta moslik bo'lsa `#ID` bilan
+aniqlashtirish so'raladi.
+
+⭐ `/undo <id>` **FAQAT norma yozuvlarini** tiklaydi — rejadagi "oxirgi
+o'chirilganni tiklash" ta'rifi bitta ID bilan QAYSI JADVAL ekanini
+aniqlamaydi (11 jadval bor); "asosiy talab" normalar ekanini hisobga olib
+(11.3-band), shu bitta entity'ga qat'iy belgilandi. Boshqa jadvallarni
+tiklash — `/dasturchi` saytidagi «Yozuvlar» tabidan.
+
+**Test:** `test_dasturchi_bot_bridge` (test.py) — FAQAT yangi ko'prikni
+(`/auth/bot-token`) tekshiradi (bot-secret/rol matritsasi + mint qilingan
+JWT haqiqatan `/admin/norms` VA `/attendance/manual`ga kira olishini) — 9
+tekshiruv. Chuqurroq `admin_override.py` mantiqi (32 tekshiruv) allaqachon
+`test_admin_override` (Bosqich 3.5) da qoplangan, bu yerda TAKRORLANMAGAN.
+Web sahifa brauzerda jonli serverga qarshi qo'lda tasdiqlandi (real
+Dasturchi — Nurullo IT — JWT bilan): barcha 5 tab, 11 entity almashtirish,
+tahrirlash dialogi ochilishi (real yozuv O'ZGARTIRILMADI — faqat UI
+render tekshirildi, xavfsizlik uchun).
 
 ### 11.6 Xavfsizlik to'siqlari (kuchni yo'qotmasdan)
 

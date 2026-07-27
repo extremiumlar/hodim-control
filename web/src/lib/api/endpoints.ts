@@ -1,5 +1,6 @@
 import { apiFetch, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
 import type {
+  AdminRecord,
   Attendance,
   AttendanceDashboard,
   AttendanceReadiness,
@@ -18,6 +19,7 @@ import type {
   LeadStageMonth,
   Office,
   OperatorSummary,
+  OverrideAuditRow,
   OvertimeEntry,
   OvertimeProfile,
   OvertimeProfileInput,
@@ -320,4 +322,73 @@ export const api = {
     link.remove();
     URL.revokeObjectURL(url);
   },
+
+  // --- Dasturchi rejimi (super-admin, OYLIK_JARIMA_REJASI.md 11-bo'lim) ---
+  listAdminRecords: (entity: string) => apiFetch<AdminRecord[]>(`/admin/records/${entity}`),
+  patchAdminRecord: (entity: string, id: number, fields: Record<string, unknown>, reason: string) =>
+    apiFetch<AdminRecord>(`/admin/records/${entity}/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fields, override_reason: reason }),
+    }),
+  deleteAdminRecord: (entity: string, id: number, reason: string, hard = false) =>
+    apiFetch<{ deleted: boolean; hard: boolean }>(`/admin/records/${entity}/${id}?hard=${hard}`, {
+      method: "DELETE",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  restoreAdminRecord: (entity: string, id: number, reason: string) =>
+    apiFetch<{ restored: boolean }>(`/admin/records/${entity}/${id}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  adminSetNorm: (userId: number, metric: string, value: number, reason: string) =>
+    apiFetch<AdminRecord>(`/admin/norms/${userId}/${metric}`, {
+      method: "PUT",
+      body: JSON.stringify({ value, override_reason: reason }),
+    }),
+  adminDeleteNorm: (normId: number, reason: string, hard = false) =>
+    apiFetch<{ deleted: boolean; hard: boolean }>(`/admin/norms/${normId}?hard=${hard}`, {
+      method: "DELETE",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  adminClearMetric: (userId: number, metric: string, reason: string) =>
+    apiFetch<{ cleared: number }>(`/admin/norms/${userId}/${metric}`, {
+      method: "DELETE",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  adminRevertNorm: (userId: number, metric: string, reason: string) =>
+    apiFetch<{ reverted: boolean; current_value: number | null }>(
+      `/admin/norms/${userId}/revert?metric=${encodeURIComponent(metric)}`,
+      { method: "POST", body: JSON.stringify({ override_reason: reason }) }
+    ),
+  unlockPayrollPeriodAdmin: (period: string, reason: string) =>
+    apiFetch<{ period: string; locked: boolean }>(`/admin/payroll/${period}/unlock`, {
+      method: "POST",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  forceRecalculatePayrollAdmin: (period: string, reason: string) =>
+    apiFetch<{ period: string; calculated: number }>(`/admin/payroll/${period}/force-recalculate`, {
+      method: "POST",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  patchPayslipAdmin: (period: string, userId: number, fields: Record<string, unknown>, reason: string) =>
+    apiFetch<AdminRecord>(`/admin/payroll/${period}/user/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fields, override_reason: reason }),
+    }),
+  deletePayrollPeriodAdmin: (period: string, reason: string) =>
+    apiFetch<{ deleted_payslips: number }>(`/admin/payroll/${period}`, {
+      method: "DELETE",
+      body: JSON.stringify({ override_reason: reason }),
+    }),
+  recalculateAttendanceAdmin: (dateFrom: string, dateTo: string, reason: string) =>
+    apiFetch<{ recalculated: number }>(
+      `/admin/attendance/recalculate?date_from=${dateFrom}&date_to=${dateTo}`,
+      { method: "POST", body: JSON.stringify({ override_reason: reason }) }
+    ),
+  forceRoleAdmin: (userId: number, role: string, reason: string) =>
+    apiFetch<{ user_id: number; role: string }>(`/admin/users/${userId}/force-role`, {
+      method: "POST",
+      body: JSON.stringify({ role, override_reason: reason }),
+    }),
+  listOverrideAudit: () => apiFetch<OverrideAuditRow[]>("/admin/audit/overrides"),
 };

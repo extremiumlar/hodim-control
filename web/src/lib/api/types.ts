@@ -541,3 +541,20 @@ export interface AuditLog {
   after: Record<string, unknown> | null;
   created_at: string;
 }
+
+// ─── Dasturchi rejimi (super-admin, OYLIK_JARIMA_REJASI.md 11-bo'lim) ───
+// `/admin/records/{entity}` universal ustki qatlamdir — server tomonida har
+// entity o'zining ustunlariga ega (SQLAlchemy jadval ustunlari to'g'ridan-
+// to'g'ri JSON'ga aylantiriladi), shuning uchun bitta qat'iy interfeys
+// o'rniga umumiy record turi ishlatiladi.
+export type AdminRecord = Record<string, unknown>;
+
+export interface OverrideAuditRow {
+  id: number;
+  actor_id: number | null;
+  action: string;
+  target_user_id: number | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  created_at: string;
+}
