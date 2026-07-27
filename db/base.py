@@ -26,9 +26,19 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 if DATABASE_URL.startswith("sqlite"):
 
     @event.listens_for(engine.sync_engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL: standart "delete" jurnalida BITTA yozuvchi BARCHA o'quvchilarni
+        # bloklaydi. cPanel'da bu jonli nosozlikka olib keldi: cron_tick ichidagi
+        # og'ir lid skaneri (daqiqalab yozadi) paytida Passenger'ning YAGONA
+        # ishchisi o'qish uchun qulf kutib qotib qolar, natijada sayt/bot/health
+        # butunlay javob bermay qolardi. WAL'da o'quvchi va yozuvchi bir-birini
+        # bloklamaydi. Bu baza faylining doimiy xossasi — bir marta o'rnatiladi.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # Qisqa yozuvlar to'qnashganda "database is locked" bermasin (connect_args
+        # timeout=30 bilan bir xil — ba'zi drayverlarda faqat PRAGMA hisobga olinadi).
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
 
