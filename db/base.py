@@ -29,13 +29,14 @@ if DATABASE_URL.startswith("sqlite"):
     def _sqlite_pragmas(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
-        # WAL: standart "delete" jurnalida BITTA yozuvchi BARCHA o'quvchilarni
-        # bloklaydi. cPanel'da bu jonli nosozlikka olib keldi: cron_tick ichidagi
-        # og'ir lid skaneri (daqiqalab yozadi) paytida Passenger'ning YAGONA
-        # ishchisi o'qish uchun qulf kutib qotib qolar, natijada sayt/bot/health
-        # butunlay javob bermay qolardi. WAL'da o'quvchi va yozuvchi bir-birini
-        # bloklamaydi. Bu baza faylining doimiy xossasi — bir marta o'rnatiladi.
-        cursor.execute("PRAGMA journal_mode=WAL")
+        # DIQQAT — WAL BU YERDA ISHLATILMAYDI (2026-07-27 jonli sinov):
+        # journal_mode=WAL o'quvchi/yozuvchi to'qnashuvini yo'qotardi, LEKIN
+        # cPanel'da Passenger ostida bazaga tegadigan HAR BIR so'rov 500 bera
+        # boshladi (CLI'dan o'sha baza WAL'da muammosiz ochilardi — ya'ni web
+        # jarayonining kontekstida WAL uchun zarur -wal/-shm yordamchi fayllari
+        # yaratilmadi). Sayt butunlay ishlamay qolgani uchun qaytarib olindi.
+        # Qulf to'qnashuvi o'rniga cron yukini kamaytirish yo'li tanlandi
+        # (9e4adc8: lid skaneri 30 daq, tick'lar siyraklashtirildi).
         # Qisqa yozuvlar to'qnashganda "database is locked" bermasin (connect_args
         # timeout=30 bilan bir xil — ba'zi drayverlarda faqat PRAGMA hisobga olinadi).
         cursor.execute("PRAGMA busy_timeout=30000")
