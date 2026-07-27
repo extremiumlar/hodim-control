@@ -98,6 +98,12 @@ def _due(now: datetime) -> list:
         add("/auto-plan/build-targets", timeout=120)
     if h == 9 and m == 35:
         add("/knowledge/stale-tick", timeout=60)     # eskirgan sana-sezgir yozuvlar eslatmasi
+    # Payroll (OYLIK_JARIMA_REJASI.md, Bosqich 6) — scheduler/main.py'dagi
+    # payroll_late_warnings / payroll_overtime_auto_detect job'lari bilan bir xil
+    if h == cfg.LATE_WARNING_HOUR and m == cfg.LATE_WARNING_MINUTE:
+        add("/payroll/late-warnings-tick", json={}, timeout=60)   # kechikish limiti ogohlantirishi (1.5-band)
+    if h == cfg.OVERTIME_AUTO_DETECT_HOUR and m == cfg.OVERTIME_AUTO_DETECT_MINUTE:
+        add("/payroll/overtime/auto-detect", json={}, timeout=60)  # qo'shimcha ish nomzodlari (1.3-band)
     # DIQQAT: davomat digesti bu yerda EMAS — vaqti bazadan (botdan /davomat_vaqt
     # bilan) sozlanadi, shuning uchun har daqiqa chaqiriladigan
     # /attendance/digest-tick o'zi tekshiradi (yuqorida).
@@ -115,6 +121,14 @@ def _due(now: datetime) -> list:
         add("/reports/monthly-digest", timeout=120)
     if last_day and h == cfg.MONTHLY_BONUS_HOUR and m == cfg.MONTHLY_BONUS_MINUTE:
         add("/bonuses/calculate-monthly", json={}, timeout=60)
+
+    # ── Oylik (KEYINGI oyning 1-kuni) ──
+    # Payroll bonus (oxirgi kun 23:30) va davomat yopilishidan (22:00) KEYIN
+    # ishlaydi — shuning uchun oxirgi kun emas, keyingi oyning 1-kuni ertalab
+    # (9-bo'lim savol 10 QAROR; scheduler/main.py monthly_payroll bilan bir xil).
+    if (now.day == cfg.MONTHLY_PAYROLL_DAY and h == cfg.MONTHLY_PAYROLL_HOUR
+            and m == cfg.MONTHLY_PAYROLL_MINUTE):
+        add("/payroll/calculate-monthly", json={}, timeout=120)
 
     return jobs
 
