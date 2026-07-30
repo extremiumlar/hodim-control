@@ -122,6 +122,14 @@ android {
             storePassword HODIMLAR_RELEASE_STORE_PASSWORD
             keyAlias HODIMLAR_RELEASE_KEY_ALIAS
             keyPassword HODIMLAR_RELEASE_KEY_PASSWORD
+
+            // APK'ni telefonga qo'lda (Telegram/brauzer orqali) o'rnatamiz —
+            // Play Store'ga qo'ymaymiz. Ba'zi ROM'lar (MIUI, One UI) yon
+            // o'rnatishda v1 (JAR) imzoni tekshiradi, faqat v2 bo'lsa
+            // "ilova o'rnatilmadi" beradi. Uchtasini ham yozamiz.
+            enableV1Signing true
+            enableV2Signing true
+            enableV3Signing true
         }
     }
     buildTypes {

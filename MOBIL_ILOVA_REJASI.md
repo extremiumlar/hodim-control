@@ -222,7 +222,7 @@ qamrovli (rop/hr — o'z jamoasi, boss/dasturchi — hammasi):
 | Bosqich | Mazmun | Chiqish mezoni |
 |---|---|---|
 | 0 | ✅ Arxitektura qarorlari — auth (deep-link+token) va face-matching (server-side) tasdiqlandi | Bajarildi 2026-07-27 |
-| 1 | 🔄 Expo loyiha skeleton + auth (deep-link login) + API klient — **backend va skeleton tayyor**, jonli telefon sinovi qoldi | Login qilib, JWT bilan `/users/me` chaqirish ishlaydi |
+| 1 | ✅ Expo loyiha skeleton + auth (deep-link login) + API klient — jonli telefonda (Samsung) APK o'rnatildi va login ishladi | Bajarildi 2026-07-30 |
 | 2 | Face ID+GPS check-in/out (server-side matching) | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
 | 3 | Ish jadvali, oylik, vazifalar, bilim bazasi (faqat o'qish) | Xodim MVP tayyor — ichki beta (TestFlight/Play internal) |
 | 4 | Push-bildirishnoma infratuzilmasi | Digest/hot-lead push orqali ham keladi |
@@ -246,6 +246,109 @@ qamrovli (rop/hr — o'z jamoasi, boss/dasturchi — hammasi):
 6. **Push toifalari standart to'plami** (4.4) — har rol uchun qaysi
    toifalar boshlang'ich holatda YOQIQ bo'lishi kerak (haddan tashqari
    ko'p push — o'chirib qo'yishga olib kelishi mumkin)?
+
+## 8.5 APK yasash va telefonga o'rnatish (Bosqich 1 amaliyoti)
+
+Store'ga chiqmagunimizcha (Bosqich 6) APK'ni qo'lda tarqatamiz. Shu bosqichda
+uchragan real muammolar va ularning yechimi:
+
+### Build
+
+```
+cd mobile/android
+./gradlew assembleRelease
+```
+
+Natija: `mobile/android/app/build/outputs/apk/release/app-release.apk`
+
+- Release kaliti: `D:/Android/keystores/hodimlar-release.keystore`
+  (yo'l va parollar `mobile/android/gradle.properties` da). **Bu fayl
+  yo'qolsa, eski ilova ustiga yangi APK o'rnatilmaydi** — zaxirasi shart.
+- APK **v1+v2+v3** imzo bilan imzolanadi (`app/build.gradle` →
+  `signingConfigs.release`). v1 ataylab yoqilgan: MIUI va One UI'ning ba'zi
+  versiyalari yon o'rnatishda (sideload) hali ham JAR imzoni tekshiradi va
+  faqat-v2 APK'ni "ilova o'rnatilmadi" deb rad etadi.
+
+### ⚠️ Samsung «Auto Blocker» — eng ko'p uchraydigan to'siq
+
+Samsung One UI 6.1+ da **Auto Blocker** (Avtomatik bloklovchi) funksiyasi bor.
+Yoqilgan bo'lsa, do'kondan tashqari **har qanday** APK o'rnatilishini to'sadi —
+«noma'lum manbalar» ruxsati berilgan bo'lsa ham. Telefonda
+«avtomatik bloklovchi tomonidan bloklandi» xabari chiqadi.
+
+Yechimi:
+
+1. Sozlamalar → **Xavfsizlik va maxfiylik** → **Avtomatik bloklovchi**
+2. Asosiy tugmani o'chiring (yoki *«Ruxsatsiz manbalardan o'rnatishni
+   bloklash»* bandini)
+3. APK'ni o'rnatib bo'lgach, Auto Blocker'ni qayta yoqish mumkin —
+   o'rnatilgan ilova o'chib ketmaydi
+
+Diqqat: Auto Blocker **USB orqali o'rnatishni ham** to'sadi
+(«USB kabel orqali zararli buyruqlarni bloklash»), ya'ni `adb install` ham
+shu tugma o'chirilmaguncha ishlamaydi. Sabab topilmaganda birinchi navbatda
+shuni tekshirish kerak.
+
+Xodimlarga tarqatishda: Samsung telefonli xodimlar uchun bu qadam
+ko'rsatmaga majburiy kiritilishi kerak.
+
+### Fayl nomi — nuqta qo'ymang
+
+APK nomida **faqat bitta nuqta** (kengaytma oldidagi) bo'lsin:
+
+- ✅ `hodimlar-tizimi.apk`
+- ❌ `hodimlar-tizimi-v1.0.0.apk`
+
+Sabab: Telegram (va bir qancha fayl menejeri) MIME turini kengaytmadan
+`MimeTypeMap.getFileExtensionFromUrl()` bilan aniqlaydi. Nomda bir nechta
+nuqta bo'lsa kengaytma noto'g'ri o'qilishi va MIME `null` qaytishi mumkin —
+u holda Android faylni Package Installer'ga bermay, umumiy `ACTION_VIEW`
+bilan boshqa ilovaga uzatadi.
+
+Versiyani nomga yozish kerak bo'lsa, nuqta o'rniga chiziqcha:
+`hodimlar-tizimi-v1-0-1.apk`.
+
+Tarix: 2026-07-30 da telefonda avval «AR uchun Google Play xizmatlari talab
+qilinadi», keyin «avtomatik bloklovchi tomonidan bloklandi» xatolari chiqqan.
+Haqiqiy sabab — Samsung Auto Blocker. Nom qoidasi va v1 imzo profilaktika
+sifatida qoldirilgan (MIUI uchun v1 baribir kerak), lekin AR xatosining
+sababi ekani isbotlanmagan.
+
+### Telefonga o'rnatish
+
+0. Samsung bo'lsa — yuqoridagi **Auto Blocker**ni o'chiring.
+1. APK'ni Telegram orqali yuboring (Saved Messages ham bo'ladi).
+2. Telefonda faylni bosib **Yuklab olish**, keyin **Ulashish → Fayllarga
+   saqlash** bilan `Download` papkasiga tushiring.
+3. Telefondagi **Files / Fayllar** ilovasi → `Download` → APK ustiga bosing.
+4. "Open with" so'ralsa — **Package Installer / Paket o'rnatuvchi** tanlang.
+5. "Noma'lum manbalar" so'ralsa — Files ilovasiga ruxsat bering.
+6. Play Protect ogohlantirsa — **"Baribir o'rnatish"** (imzo bizniki,
+   `CN=Hodimlar Tizimi, O=Nuriddin Building`).
+
+Xato aniq bo'lmasa, USB orqali sababni ko'rish eng tez yo'l:
+
+```
+adb install -r hodimlar-tizimi.apk
+```
+
+### Tekshiruv (build'dan keyin)
+
+```
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs hodimlar-tizimi.apk
+"$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging hodimlar-tizimi.apk
+```
+
+v1/v2/v3 uchtasi ham `true` bo'lishi va `minSdkVersion:'24'`,
+`native-code: 'arm64-v8a' 'armeabi-v7a'` chiqishi kerak.
+
+### Bosqich 6 uchun eslatma
+
+Bu qo'lda tarqatish faqat ichki sinov uchun. Xodimlar soni ko'payganda
+APK'ni loyiha veb-serveridan to'g'ri MIME turi
+(`application/vnd.android.package-archive`) bilan berish kerak — u holda
+Chrome to'g'ridan-to'g'ri o'rnatuvchini ochadi va yuqoridagi 6 qadam
+kerak bo'lmaydi.
 
 ## 9. Keyingi qadam
 
