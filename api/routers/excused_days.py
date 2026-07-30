@@ -1,12 +1,12 @@
 import html
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles, verify_bot_secret
-from api.schemas import ExcusedDayCreate, ExcusedDayDecide, ExcusedDayOut
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.schemas import ExcusedDayCreate, ExcusedDayDecide, ExcusedDayMeCreate, ExcusedDayOut
 from api.timeutil import today_local
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, ExcusedDay, ExcusedStatus, Role, User
@@ -51,15 +51,17 @@ async def _to_out_many(items: list[ExcusedDay], db: AsyncSession) -> list[Excuse
     ]
 
 
-@router.post("", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
-async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depends(get_db)) -> ExcusedDayOut:
-    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+async def _request_excused_day_for_user(
+    db: AsyncSession, user: User, reason: str, day_in: date | None
+) -> ExcusedDayOut:
+    """Sababli kun so'rovini yaratadi va HR'ga (yo'q bo'lsa Boshliqqa) yuboradi.
 
+    Bot ham, web ham shu yordamchidan o'tadi — dublikat nazorati va HR'ga
+    xabar bir joyda qoladi, aks holda web orqali yuborilgan so'rov HR'ga
+    bormay qolishi mumkin edi."""
     # Sana berilmasa bugungi (Toshkent) kun olinadi — kun chegarasi bot yoki
     # serverning mahalliy vaqtiga emas, har doim backend timezone'iga bog'liq.
-    day = payload.date or today_local()
+    day = day_in or today_local()
 
     # 5.7-band: bitta xodim bitta kunga cheksiz so'rov yuborishi mumkin edi —
     # har biri BARCHA HR'larga alohida xabar (spam) va dublikat yozuv yaratardi.
@@ -79,7 +81,7 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
             f"Siz {day.isoformat()} kuni uchun allaqachon so'rov yuborgansiz ({status_uz}).",
         )
 
-    item = ExcusedDay(user_id=user.id, date=day, reason=payload.reason)
+    item = ExcusedDay(user_id=user.id, date=day, reason=reason)
     db.add(item)
     await db.commit()
     await db.refresh(item)
@@ -98,6 +100,41 @@ async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depe
         await send_message(hr.telegram_id, text, keyboard)
 
     return await _to_out(item, db)
+
+
+@router.post("", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
+async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depends(get_db)) -> ExcusedDayOut:
+    """Bot uchun — shaxsni tanadagi `telegram_id`dan yechadi."""
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _request_excused_day_for_user(db, user, payload.reason, payload.date)
+
+
+@router.post("/me", response_model=ExcusedDayOut)
+async def request_my_excused_day(
+    payload: ExcusedDayMeCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ExcusedDayOut:
+    """Web (JWT) versiyasi — xodim kabineti uchun. Sxema ATAYLAB boshqa
+    (`ExcusedDayMeCreate`): unda `telegram_id` YO'Q, shaxs tokendan olinadi,
+    ya'ni mijoz boshqa birov nomidan so'rov yubora olmaydi."""
+    return await _request_excused_day_for_user(db, user, payload.reason, payload.date)
+
+
+@router.get("/me", response_model=list[ExcusedDayOut])
+async def list_my_excused_days(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[ExcusedDayOut]:
+    """Xodimning O'Z so'rovlari (yangi birinchi). Rahbar varianti
+    `GET /excused-days` — u HAMMANING so'rovlarini beradi va rol talab qiladi."""
+    items = list(
+        await db.scalars(
+            select(ExcusedDay).where(ExcusedDay.user_id == user.id).order_by(ExcusedDay.created_at.desc()).limit(20)
+        )
+    )
+    return await _to_out_many(items, db)
 
 
 @router.get("", response_model=list[ExcusedDayOut])

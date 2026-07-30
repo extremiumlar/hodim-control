@@ -66,6 +66,7 @@ export const qk = {
   myHourlyPlan: ["hourly-plan", "me"] as const,
   myStats: ["stats", "me"] as const,
   myBonuses: ["bonuses", "me"] as const,
+  myExcusedDays: ["excused-days", "me"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -443,6 +444,17 @@ export const useMyHourlyPlan = () =>
 export const useMyStats = () => useQuery({ queryKey: qk.myStats, queryFn: api.myStats });
 
 export const useMyBonuses = () => useQuery({ queryKey: qk.myBonuses, queryFn: api.myBonuses });
+
+export const useMyExcusedDays = () =>
+  useQuery({ queryKey: qk.myExcusedDays, queryFn: api.myExcusedDays });
+
+// ["excused-days"] invalidatsiya qilinadi — o'z ro'yxatim ham, rahbar
+// sahifasidagi ro'yxat ham yangilanadi (holat haqiqatan o'zgardi).
+export const useRequestMyExcusedDay = () =>
+  useApiMutation(
+    (data: { reason: string; date?: string }) => api.requestMyExcusedDay(data),
+    [["excused-days"]]
+  );
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
 // kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham

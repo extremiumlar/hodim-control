@@ -39,6 +39,7 @@ const MeTasks = lazy(() => import("./pages/me/Tasks"));
 const MeHourlyPlan = lazy(() => import("./pages/me/HourlyPlan"));
 const MeStats = lazy(() => import("./pages/me/Stats"));
 const MeKpi = lazy(() => import("./pages/me/Kpi"));
+const MeExcused = lazy(() => import("./pages/me/Excused"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -147,7 +148,7 @@ export default function App() {
               (`_can_view_lead_stats` sotuv xodimlariga ruxsat beradi). Ya'ni
               bu yerda yangi sahifa emas — faqat xodimga yo'l ochiladi. */}
           <Route path="me/lead-stats" element={<LeadStats />} />
-          <Route path="me/excused" element={<MePlaceholder />} />
+          <Route path="me/excused" element={<MeExcused />} />
           <Route path="attendance" element={<ManagerRoute><Attendance /></ManagerRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

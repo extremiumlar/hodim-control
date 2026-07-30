@@ -310,6 +310,10 @@ export const api = {
   myHourlyPlan: () => apiFetch<HourlyPlan>("/hourly-plan/me"),
   myStats: () => apiFetch<MyStats>("/stats/me"),
   myBonuses: () => apiFetch<Bonus[]>("/bonuses/me"),
+  myExcusedDays: () => apiFetch<ExcusedDay[]>("/excused-days/me"),
+  // Tanada `telegram_id` YO'Q — shaxs tokendan olinadi (ExcusedDayMeCreate).
+  requestMyExcusedDay: (data: { reason: string; date?: string }) =>
+    apiFetch<ExcusedDay>("/excused-days/me", { method: "POST", body: JSON.stringify(data) }),
   // Tanasi YO'Q: shaxs tokendan olinadi, ya'ni mijoz boshqa birovning
   // vazifasini yopa olmaydi (backend `assigned_to`ni tekshiradi).
   completeMyTask: (taskId: number) =>

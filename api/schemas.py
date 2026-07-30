@@ -267,6 +267,15 @@ class ExcusedDayCreate(BaseModel):
     reason: str
 
 
+class ExcusedDayMeCreate(BaseModel):
+    """Web/mobil (JWT) uchun — `telegram_id` YO'Q. Shaxs tokendan olinadi,
+    ya'ni mijoz boshqa birov nomidan so'rov yubora olmaydi. `ExcusedDayCreate`
+    ni qayta ishlatib bo'lmaydi, chunki unda `telegram_id` majburiy."""
+
+    date: dt.date | None = None
+    reason: str
+
+
 class ExcusedDayOut(BaseModel):
     id: int
     user_id: int
