@@ -1,3 +1,9 @@
 # Shell skriptlar konteynerda ishlaydi — CRLF bilan buziladi ("bad interpreter").
 # Windows'da checkout qilinganda ham LF bo'lib qolsin.
 *.sh text eol=lf
+
+# face-api.js model vaznlari (Face ID) — binar bloblar, kengaytmasi YO'Q.
+# Git avtomatik aniqlashga tayanmasin: bitta CRLF konvertatsiyasi modelni
+# buzadi va serverda BARCHA xodim uchun keldim/ketdim ishlamay qoladi.
+*-shard[0-9] binary
+models/*-shard[0-9] binary

@@ -88,6 +88,20 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        {/* Mobil ilova (WebView) — davomat sahifasi Layout'SIZ: ilovaning o'z
+            navigatsiyasi bor, sidebar/header ikki marta ko'rinmasligi kerak.
+            JWT'ni ilova WebView'ga localStorage["access_token"] sifatida
+            inject qiladi (mobile/app/checkin.tsx). Face ID kodi web bilan
+            aynan bir xil qoladi — descriptorlar mos, xodimlar yuzini
+            qaytadan ro'yxatdan o'tkazmaydi (MOBIL_ILOVA_REJASI.md 4.2). */}
+        <Route
+          path="/embed/check-in"
+          element={
+            <ProtectedRoute>
+              <CheckIn />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/"
           element={

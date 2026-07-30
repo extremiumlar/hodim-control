@@ -55,9 +55,9 @@ export default function FaceCapture({
   const [live, setLive] = useState<LiveStatus>({ detected: false, size: 0, score: 0 });
   // Tiriklik sinovi (ko'z pirpiratish / og'iz ochish) real-vaqtli holati
   const [challenge, setChallenge] = useState<LivenessProgress | null>(null);
-  // 4.2-band: model CDN'dan (uchinchi tomon, justadudewhohacks.github.io)
-  // yuklanadi — u ishlamay qolsa ilgari ekran abadiy "yuklanmoqda..." bo'lib
-  // qolar, qayta urinish uchun butun sahifani yangilash kerak edi.
+  // 4.2-band: model o'z serverimizdan (/models) yuklanadi — u ishlamay qolsa
+  // ilgari ekran abadiy "yuklanmoqda..." bo'lib qolar, qayta urinish uchun
+  // butun sahifani yangilash kerak edi. (Ilgari uchinchi tomon CDN'i edi.)
   const [modelLoadError, setModelLoadError] = useState("");
 
   // 2.4-band: capture() async davom etayotganda modal bekor qilinsa (yoki komponent

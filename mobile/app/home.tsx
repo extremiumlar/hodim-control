@@ -27,10 +27,12 @@ interface Tile {
   title: string;
   emoji: string;
   flagKey?: string;
+  /** Ekran yozilgan bo'lsa — expo-router yo'li. Bo'lmasa tayl "tez orada". */
+  route?: string;
 }
 
 const TILES: Tile[] = [
-  { key: "attendance", title: "Davomat (Keldim/Ketdim)", emoji: "🕐" },
+  { key: "attendance", title: "Davomat (Keldim/Ketdim)", emoji: "🕐", route: "/checkin" },
   { key: "schedule", title: "Ish jadvali", emoji: "🗓" },
   { key: "tasks", title: "Vazifalarim", emoji: "📋", flagKey: "tasks" },
   { key: "norm", title: "Bugungi normam", emoji: "📊", flagKey: "norm" },
@@ -61,9 +63,15 @@ export default function Home() {
 
       <View style={styles.grid}>
         {tiles.map((tile) => (
-          <Pressable key={tile.key} style={styles.tile}>
+          <Pressable
+            key={tile.key}
+            disabled={!tile.route}
+            onPress={tile.route ? () => router.push(tile.route as never) : undefined}
+            style={[styles.tile, !tile.route && styles.tileSoon]}
+          >
             <Text style={styles.tileEmoji}>{tile.emoji}</Text>
             <Text style={styles.tileTitle}>{tile.title}</Text>
+            {!tile.route && <Text style={styles.tileSoonText}>Tez orada</Text>}
           </Pressable>
         ))}
       </View>
@@ -94,8 +102,10 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
+  tileSoon: { opacity: 0.55 },
   tileEmoji: { fontSize: 28 },
   tileTitle: { fontSize: 14, fontWeight: "600" },
+  tileSoonText: { fontSize: 11, color: "#64748b" },
   logout: { alignSelf: "center", padding: 12 },
   logoutText: { color: "#dc2626", fontSize: 15 },
 });

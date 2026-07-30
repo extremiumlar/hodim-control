@@ -3,7 +3,11 @@
  * birlashtirilgan).
  *
  * Detector: TinyFaceDetector (telefonda tez va ishonchli, ~190KB).
- * Modellar CDN'dan yuklanadi (lokal fayl kerak emas).
+ * Modellar O'Z serverimizdan yuklanadi — `web/public/models/` (build'da
+ * `dist/models/`, prod'da `webdist/models/`). Avval uchinchi tomon CDN'i
+ * (justadudewhohacks.github.io) ishlatilardi: davomat kritik funksiya
+ * bo'lgani uchun begona hostga bog'lash xatarli edi — host o'chsa yoki
+ * xodim internetida bloklansa, hech kim keldim/ketdim qila olmaydi.
  *
  * Funksiyalar:
  *  - loadModels()            : barcha modellarni yuklaydi (faqat 1 marta)
@@ -13,7 +17,9 @@
  */
 import * as faceapi from "@vladmandic/face-api";
 
-const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
+// Nisbiy yo'l — dev'da vite public/ dan, prod'da Passenger webdist/ dan beradi.
+// Mobil ilova ham shu sahifani WebView'da ochadi, ya'ni u ham shu yerdan oladi.
+const MODEL_URL = "/models";
 
 // Yuz uchun minimum o'lcham (px)
 export const MIN_FACE_SIZE = 60;

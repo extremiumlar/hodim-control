@@ -121,9 +121,33 @@ bilan ishlaydi. Native ilovada ikkita yo'l bor:
   faqat natijani yuborish — tezroq, lekin ikkita alohida ML pipeline
   saqlash og'irlik qo'shadi.
 
-**Qaror kerak:** (A) tavsiya qilinadi (soddaroq, yagona haqiqat manbai),
-lekin bu amaliy ta'sir — xodimlar birinchi marta ilova ochganda yuzni
-qayta ro'yxatdan o'tkazishi kerak bo'ladi.
+- **(C) WebView — mavjud sahifani qayta ishlatish:** ilova
+  `/embed/check-in` sahifasini WebView'da ochadi, kamera/GPS ruxsatini
+  esa NATIV so'raydi.
+
+**QAROR (2026-07-30): (C) WebView.** Kod tekshirilgandan keyin (A) va (B)
+ning narxi rejadagidan qimmat chiqdi:
+
+- `/me/check-in` rasm QABUL QILMAYDI — `payload.face_descriptor` kutadi
+  (`api/routers/attendance.py`). Ya'ni "server-side matching" allaqachon
+  mavjud, lekin **embedding** brauzerda hisoblanadi. (A) ni qilish uchun
+  yangi endpoint + serverga og'ir ML kutubxona (dlib/insightface) kerak;
+  cPanel/Passenger ostida ishlashi shubhali.
+- (A) ham, (B) ham modelni o'zgartiradi → saqlangan barcha
+  `User.face_descriptor` yaroqsiz bo'ladi va HAMMA xodim yuzini qaytadan
+  ro'yxatdan o'tkazadi. Web ham yangi modelga ko'chirilishi kerak
+  (ikki xil model = ikki xil haqiqat).
+- (C) da descriptorlar mos qoladi (qayta ro'yxatdan o'tish YO'Q), backend
+  umuman o'zgarmaydi, va web'dagi tiriklik yaxshilanishlari ilovaga
+  avtomatik tegadi.
+
+Brauzerdagi asl muammo — kamera/GPS ruxsati va HTTPS sertifikati — WebView
+da yo'q: ruxsat ilovaga nativ beriladi (`AndroidManifest.xml`da CAMERA +
+ACCESS_FINE_LOCATION, `app/checkin.tsx`da `PermissionsAndroid`), sayt esa
+haqiqiy HTTPS domenda.
+
+(A) uzoq muddatli variant sifatida qoladi — WebView yetarli bo'lmasa
+(masalan offline rejim kerak bo'lganda) qayta ko'rib chiqiladi.
 
 ### 4.3 Push-token ro'yxatdan o'tkazish
 Yangi jadval `push_tokens` (user_id, expo_push_token, platform, created_at)
@@ -223,7 +247,7 @@ qamrovli (rop/hr — o'z jamoasi, boss/dasturchi — hammasi):
 |---|---|---|
 | 0 | ✅ Arxitektura qarorlari — auth (deep-link+token) va face-matching (server-side) tasdiqlandi | Bajarildi 2026-07-27 |
 | 1 | ✅ Expo loyiha skeleton + auth (deep-link login) + API klient — jonli telefonda (Samsung) APK o'rnatildi va login ishladi | Bajarildi 2026-07-30 |
-| 2 | Face ID+GPS check-in/out (server-side matching) | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
+| 2 | 🔄 Face ID+GPS check-in/out — **WebView orqali** (4.2-band C qarori). Kod tayyor: `app/checkin.tsx`, `/embed/check-in` marshruti, kamera/GPS ruxsatlari, modellar o'z serverimizda. Deploy va jonli sinov qoldi | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
 | 3 | Ish jadvali, oylik, vazifalar, bilim bazasi (faqat o'qish) | Xodim MVP tayyor — ichki beta (TestFlight/Play internal) |
 | 4 | Push-bildirishnoma infratuzilmasi | Digest/hot-lead push orqali ham keladi |
 | 5 | Rahbar ekranlari (dashboard, tasdiqlashlar) | Rahbar ham ilovadan asosiy ishni qila oladi |
