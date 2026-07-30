@@ -52,16 +52,43 @@ VITE_NO_SSL=1 npx vite --port 5174       # HTTPS'siz — brauzer bilan avtomatik
 cd web && npx tsc -b                     # web tiplari
 cd mobile && npx tsc --noEmit            # mobil tiplari
 ```
-`.env`da `DEBUG=false` — dev-login o'chiq.
 
-### 2.3 Deploy oqimi (E'TIBOR BERING)
-Web o'zgarishi **ikki qadamda** jonli bo'ladi:
-1. `cd web && npm run build` → `web/dist/`
-2. `robocopy "web\dist" "webdist" /MIR` → commit → push
-3. Serverda: `git pull` + `touch tmp/restart.txt`
+**Brauzerda xodim sifatida kirish** (`.env`da `DEBUG=false`, ya'ni dev-login
+o'chiq — `.env` ni O'ZGARTIRMANG). Tokenni o'zingiz yasab, localStorage'ga
+qo'ying:
+```
+# 1. Bazadan xodim toping
+python -c "import sqlite3; c=sqlite3.connect('file:app.db?mode=ro',uri=True); \
+print([tuple(r) for r in c.execute(\"select id,full_name,role from users where role='employee' and is_active=1 limit 5\")])"
 
-`webdist` ni yangilashni unutsangiz sayt **eski JS'ni** beradi va o'zgarish
-ko'rinmaydi. Deploy'ni **faqat foydalanuvchi so'raganda** qiling.
+# 2. Token yasang (jwt_secret .env dan olinadi)
+.venv/Scripts/python.exe -c "from api.security import create_access_token; print(create_access_token(8,'employee'))"
+
+# 3. Brauzerda (5174 originida):
+#    localStorage.setItem('access_token','<token>')
+#    keyin sahifani yangilang
+```
+API'ni ko'tarish: `.venv/Scripts/python.exe -m uvicorn api.main:app --port 8000`.
+8000 band bo'lsa — parallel sessiyada allaqachon ishlab turgan bo'lishi
+mumkin, **o'ldirmang**, shundan foydalanavering.
+
+### 2.3 Deploy oqimi
+
+**`webdist/` AVTOMATIK yangilanadi** — `.githooks/pre-commit`
+(`core.hooksPath=.githooks`): `web/src/` staged bo'lsa, hook `npm run build`
+qilib `webdist/` ni qayta yozadi va commitga qo'shadi. Build yiqilsa commit
+to'xtaydi. Ya'ni qo'lda nusxalash **kerak emas**.
+
+DIQQAT — hook faqat `web/src/` ga qaraydi. Agar SIZ faqat `web/public/`
+yoki `web/index.html` ni o'zgartirsangiz hook ISHLAMAYDI va `webdist`
+eskirib qoladi. Bunday holda qo'lda:
+```
+cd web && npm run build
+robocopy "web\dist" "webdist" /MIR      # yoki cp -r web/dist/. webdist/
+```
+
+Serverga chiqarish: commit → push → serverda `git pull` +
+`touch tmp/restart.txt`. Deploy'ni **faqat foydalanuvchi so'raganda** qiling.
 
 SSH: `ssh -i ~/.ssh/id_ed25519_hodimlar_cpanel -p 30151 nuriddi5@167.235.222.200`
 (domen DNS orqali topilmaydi — **IP** ishlatiladi), papka `~/hodimlar-tizimi`.
@@ -105,7 +132,11 @@ async def my_late_status_web(user: User = Depends(get_current_user), db=Depends(
 3. **`/me` endpointlar mijozdan shaxsni QABUL QILMAYDI.** Path'da,
    query'da, tanada `user_id`/`telegram_id` bo'lmasin — faqat
    `Depends(get_current_user)`. Bu 1-bo'lim zaifligini yomonlashtirmaslik
-   uchun majburiy.
+   uchun majburiy. E'tibor bering: `POST /excused-days` hozir `telegram_id`ni
+   TANADA oladi (`ExcusedDayCreate`) — JWT varianti uchun alohida sxema
+   kerak, mavjudini qayta ishlatib bo'lmaydi.
+   Rate-limit kerak bo'lsa tayyor vosita bor: `rate_limit(nom, urinish,
+   soniya)` — `api/deps.py:68`, namuna `api/routers/auth.py:45,74`.
 4. **Yozish amallari uchun ruxsat qayta tekshiriladi.** Masalan "sababli
    kun so'rash" — xodim faqat O'ZI uchun so'rov yubora oladi.
 5. **Bot xatti-harakati o'zgarmaydi.** Bot — ilova o'rnatmagan xodimlar
@@ -356,7 +387,9 @@ scrollsiz o'qiladi; desktop ko'rinishi buzilmagan.
   `User.face_descriptor` yaroqsiz bo'lib, hamma xodim yuzini qaytadan
   ro'yxatdan o'tkazadi
 - Deploy'ni o'zboshimchalik bilan qilmang
-- `webdist` ni yangilashni unutmang, aks holda sayt eski JS beradi
+- `webdist` — odatda pre-commit hook AVTOMATIK yangilaydi (2.3-band). Faqat
+  `web/src` tegilmagan (masalan faqat `web/public` yoki `index.html`)
+  o'zgarishda qo'lda yangilash kerak, aks holda sayt eski JS beradi
 - 1-bo'lim (soxtalashtirish) zaifligini bu ishda tuzatmang, lekin
   **yomonlashtirmang** ham
 
