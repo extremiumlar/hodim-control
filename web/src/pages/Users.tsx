@@ -28,13 +28,17 @@ export default function Users() {
         </div>
       )}
 
+      {/* min-w-0 SHART: grid bolalarining sukut `min-width: auto` qiymati
+          ularni kontentdan (masalan uzun <select> variantidan) tor bo'lishga
+          qo'ymaydi va 360px ekranda ustun 403px gacha cho'zilib, butun sahifa
+          gorizontal scroll bo'lardi. */}
       <div className={canCreateUser ? "grid gap-6 md:grid-cols-3" : ""}>
         {canCreateUser && (
-          <div className="md:col-span-1">
+          <div className="min-w-0 md:col-span-1">
             <UserCreateForm hasFullControl={hasFullControl} onInviteLink={setLastInviteLink} />
           </div>
         )}
-        <div className={canCreateUser ? "md:col-span-2" : ""}>
+        <div className={canCreateUser ? "min-w-0 md:col-span-2" : "min-w-0"}>
           <UsersTable
             hasFullControl={hasFullControl}
             isDasturchi={isDasturchi}

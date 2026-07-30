@@ -100,6 +100,32 @@ export default function DataTable<TData>({
   const showPagination = totalFiltered > pageSize;
   const EmptyIcon = empty?.icon ?? Inbox;
 
+  // Ustun sarlavhalari — mobil kartada har bir qiymatning yorlig'i sifatida
+  // kerak. Katak (cell) kontekstida sarlavhani render qilib bo'lmaydi,
+  // shuning uchun header kontekstlaridan bir marta xarita quriladi.
+  const headerLabels = new Map(
+    table
+      .getFlatHeaders()
+      .map((h) => [
+        h.column.id,
+        h.isPlaceholder ? null : flexRender(h.column.columnDef.header, h.getContext()),
+      ])
+  );
+
+  // Bo'sh holat va skelet ikkala ko'rinishda ham ishlatiladi — bir marta
+  // e'lon qilinadi, aks holda matn ikki joyda ayri-ayri o'zgarib ketardi.
+  const emptyContent = (
+    <div className="flex flex-col items-center gap-2 py-10 text-center">
+      <EmptyIcon className="h-8 w-8 text-slate-300" />
+      <p className="text-sm text-slate-500">
+        {globalFilter
+          ? "Qidiruv bo'yicha hech narsa topilmadi."
+          : (empty?.text ?? "Ma'lumot yo'q.")}
+      </p>
+      {!globalFilter && empty?.action}
+    </div>
+  );
+
   return (
     <div className="space-y-2">
       {searchPlaceholder && (
@@ -114,7 +140,55 @@ export default function DataTable<TData>({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      {/* ── Mobil (md dan kichik): KARTA ko'rinishi ──
+          Ilgari faqat `overflow-x-auto` bor edi, ya'ni telefonda 7-8 ustunli
+          jadvalni doimiy chapga-o'ngga surish kerak edi. Endi har bir qator
+          alohida karta: "ustun nomi — qiymat" juftliklari, gorizontal scroll
+          yo'q. Qiymatlar AYNAN o'sha `cell` render'idan keladi, ya'ni
+          jadval bilan bir xil (badge, tugma va h.k. ham ishlaydi). */}
+      <div className="space-y-2 md:hidden">
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-xl" />
+          ))
+        ) : rows.length === 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-white">{emptyContent}</div>
+        ) : (
+          rows.map((row) => (
+            <div
+              key={row.id}
+              className={cn(
+                "rounded-xl border border-slate-200 bg-white px-4 py-2",
+                onRowClick && "cursor-pointer active:bg-slate-50"
+              )}
+              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+            >
+              {row.getVisibleCells().map((cell) => {
+                const label = headerLabels.get(cell.column.id);
+                return (
+                  <div
+                    key={cell.id}
+                    className="flex items-baseline justify-between gap-3 border-b border-slate-50 py-2 last:border-0"
+                  >
+                    {/* Sarlavhasiz ustun (masalan amallar tugmasi) — yorliqsiz,
+                        qiymat butun kenglikni oladi */}
+                    {label ? (
+                      <span className="shrink-0 text-xs text-slate-500">{label}</span>
+                    ) : null}
+                    <span className={cn("min-w-0 text-sm", label ? "text-right" : "flex-1")}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ))
+        )}
+        {footer}
+      </div>
+
+      {/* ── Desktop (md va yuqori): jadval ── */}
+      <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white md:block">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (
@@ -160,17 +234,7 @@ export default function DataTable<TData>({
               ))
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={columns.length}>
-                  <div className="flex flex-col items-center gap-2 py-10 text-center">
-                    <EmptyIcon className="h-8 w-8 text-slate-300" />
-                    <p className="text-sm text-slate-500">
-                      {globalFilter
-                        ? "Qidiruv bo'yicha hech narsa topilmadi."
-                        : (empty?.text ?? "Ma'lumot yo'q.")}
-                    </p>
-                    {!globalFilter && empty?.action}
-                  </div>
-                </TableCell>
+                <TableCell colSpan={columns.length}>{emptyContent}</TableCell>
               </TableRow>
             ) : (
               rows.map((row) => (
