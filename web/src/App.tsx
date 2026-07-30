@@ -26,11 +26,10 @@ const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
 const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 
-// Xodim kabineti (Bosqich 1 skeletoni). Bo'limlar marshrutga birdaniga
-// qo'shiladi, mazmuni Bosqich 4 da bittalab to'ldiriladi — o'shanda shu
-// yerdagi <MePlaceholder /> haqiqiy sahifaga almashtiriladi.
-// Ko'rinish shartlari lib/employeeNav.ts da (bot menyusi bilan bir xil).
-const MePlaceholder = lazy(() => import("./pages/me/Placeholder"));
+// Xodim kabineti. Bo'limlarning KO'RINISH shartlari lib/employeeNav.ts da —
+// bot menyusi (bot/keyboards.py: main_menu) bilan aynan bir xil.
+// Bosqich 4 tugadi: barcha bo'limlar haqiqiy sahifaga ulangan, vaqtinchalik
+// "Tez orada" placeholder'i endi kerak emas va olib tashlandi.
 const MeMore = lazy(() => import("./pages/me/More"));
 const MeSchedule = lazy(() => import("./pages/me/Schedule"));
 const MePayroll = lazy(() => import("./pages/me/Payroll"));
