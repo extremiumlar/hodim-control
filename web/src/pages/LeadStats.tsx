@@ -93,7 +93,12 @@ export default function LeadStats() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title={`🧲 Lidlar statistikasi — ${monthTitle(monthData.month)}`}>
+      {/* Xodim kabinetida qobiq sarlavhasi allaqachon "Lidlar statistikasi"
+          deydi (Layout.tsx) — sarlavhani takrorlamay, faqat oyni ko'rsatamiz.
+          Rahbar sahifasida (sidebar bilan) to'liq sarlavha qoladi. */}
+      <PageHeader
+        title={isManager ? `🧲 Lidlar statistikasi — ${monthTitle(monthData.month)}` : monthTitle(monthData.month)}
+      >
         <MonthPicker value={month} onChange={setMonth} />
       </PageHeader>
 

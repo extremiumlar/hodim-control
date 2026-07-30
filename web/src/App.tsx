@@ -141,7 +141,12 @@ export default function App() {
           <Route path="me/norm" element={<MeNorm />} />
           <Route path="me/hourly-plan" element={<MeHourlyPlan />} />
           <Route path="me/kpi" element={<MeKpi />} />
-          <Route path="me/lead-stats" element={<MePlaceholder />} />
+          {/* LeadStats sahifasi ALLAQACHON ikkala holatni biladi: `isManager`
+              bayrog'i bo'yicha tashkilot yoki shaxsiy ko'rinishni chizadi va
+              hooklar `/stats/web/lead-stages/me` ga boradi. Backend ham tayyor
+              (`_can_view_lead_stats` sotuv xodimlariga ruxsat beradi). Ya'ni
+              bu yerda yangi sahifa emas — faqat xodimga yo'l ochiladi. */}
+          <Route path="me/lead-stats" element={<LeadStats />} />
           <Route path="me/excused" element={<MePlaceholder />} />
           <Route path="attendance" element={<ManagerRoute><Attendance /></ManagerRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
