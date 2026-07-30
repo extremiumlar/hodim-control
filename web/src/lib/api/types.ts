@@ -370,6 +370,35 @@ export interface DailyResultToday {
   metrics: MetricProgressRow[];
 }
 
+/** Soatlik reja — bitta ko'rsatkich holati (api/schemas.py:
+ *  HourlyMetricStatus). `delta` = actual - cumulative_target: + oldinda,
+ *  - orqada. `tracked=false` bo'lsa actual/delta ma'nosiz. */
+export interface HourlyMetricStatus {
+  key: string;
+  label: string;
+  norm: number; // kunlik nominal norma
+  effective_norm: number; // bugungi ish soatiga moslashtirilgan
+  per_hour: number;
+  this_hour_target: number;
+  cumulative_target: number; // shu paytgacha bo'lishi kerak
+  actual: number;
+  delta: number;
+  tracked: boolean;
+}
+
+/** api/schemas.py: HourlyPlanOut. `text` — botga tayyor HTML; web uni
+ *  ISHLATMAYDI, strukturali maydonlardan o'zi chizadi. */
+export interface HourlyPlan {
+  date: string;
+  is_working: boolean;
+  in_lunch: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  now: string | null; // "HH:MM"
+  metrics: HourlyMetricStatus[];
+  text: string;
+}
+
 export interface MyPayslip {
   calculated: boolean;
   period: string | null;

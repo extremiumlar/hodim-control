@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, verify_bot_secret
+from api.deps import get_current_user, get_db, verify_bot_secret
 from api.schemas import HourlyMetricStatus, HourlyPlanOut
 from api.telegram_notify import send_message
 # Tushlik chegaralari va ish-daqiqa hisobi timeutil'da — davomat worked_minutes
@@ -296,6 +296,22 @@ async def my_hourly_plan(telegram_id: int, db: AsyncSession = Depends(get_db)) -
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await build_plan(db, user, datetime.now(TASHKENT_TZ))
+
+
+@router.get("/me", response_model=HourlyPlanOut)
+async def my_hourly_plan_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> HourlyPlanOut:
+    """Web (JWT) versiyasi — xodim kabineti uchun. Yuqoridagi bot endpointi
+    bilan AYNAN bir xil mantiqni (`build_plan`) chaqiradi, shaxs esa TOKENDAN
+    olinadi. Naqsh: payroll.py `/me/late-status`.
+
+    `hourly_plan_enabled` bilan TO'SILMAYDI — u faqat avtomatik push
+    eslatmasini boshqaradi (api/config.py), xodimning o'zi ochishi botda ham
+    flagdan qat'i nazar ishlaydi.
+
+    Marshrut to'qnashuvi yo'q: bir segmentli boshqa yo'l `/send` (POST)."""
     return await build_plan(db, user, datetime.now(TASHKENT_TZ))
 
 

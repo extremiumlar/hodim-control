@@ -63,6 +63,7 @@ export const qk = {
   myPayslip: ["payroll", "me", "payslip"] as const,
   myTodayResult: ["daily-results", "me", "today"] as const,
   myTasks: ["tasks", "me"] as const,
+  myHourlyPlan: ["hourly-plan", "me"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -431,6 +432,11 @@ export const useMyTodayResult = () =>
   useQuery({ queryKey: qk.myTodayResult, queryFn: api.myTodayResult });
 
 export const useMyTasks = () => useQuery({ queryKey: qk.myTasks, queryFn: api.myTasks });
+
+// Reja soat sayin o'zgaradi (this_hour_target, cumulative_target) — 30s
+// staleTime yetarli, lekin sahifa ochiq turganda ham yangilanib tursin.
+export const useMyHourlyPlan = () =>
+  useQuery({ queryKey: qk.myHourlyPlan, queryFn: api.myHourlyPlan, refetchInterval: 120_000 });
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
 // kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham

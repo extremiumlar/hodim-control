@@ -39,6 +39,7 @@ import type {
   WorkDayEntry,
   WorkOverride,
   DailyResultToday,
+  HourlyPlan,
   MyPayslip,
   WorkWeek,
   WorkWeekly,
@@ -305,6 +306,7 @@ export const api = {
   myPayslip: () => apiFetch<MyPayslip>("/payroll/me/payslip"),
   myTodayResult: () => apiFetch<DailyResultToday>("/daily-results/me/today"),
   myTasks: () => apiFetch<Task[]>("/tasks/me"),
+  myHourlyPlan: () => apiFetch<HourlyPlan>("/hourly-plan/me"),
   // Tanasi YO'Q: shaxs tokendan olinadi, ya'ni mijoz boshqa birovning
   // vazifasini yopa olmaydi (backend `assigned_to`ni tekshiradi).
   completeMyTask: (taskId: number) =>
