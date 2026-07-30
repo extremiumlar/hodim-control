@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash ekrani. Logoni to'g'ridan-to'g'ri windowBackground qilib qo'ysa
+     bo'lmaydi: BitmapDrawable oyna bo'yiga CHO'ZILADI va kvadrat logo
+     portret ekranda buziladi. Shuning uchun: bir tekis fon + markazga
+     joylashtirilgan bitmap. Fon rangi logoning o'z foni bilan aynan bir xil
+     (#002B29), shuning uchun chok ko'rinmaydi. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+  <item android:drawable="@color/splashscreen_background" />
+  <item>
+    <bitmap android:gravity="center" android:src="@drawable/splashscreen_logo" />
+  </item>
+</layer-list>

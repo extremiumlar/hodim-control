@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "Hodimlar Tizimi",
+    "name": "N.B hodimlar",
     "slug": "mobile",
     "scheme": "hodimlarapp",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -12,7 +12,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#002B29",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

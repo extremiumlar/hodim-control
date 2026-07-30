@@ -1,5 +1,8 @@
 <resources>
-  <color name="splashscreen_background">#FFFFFF</color>
-  <color name="iconBackground">#E6F4FE</color>
-  <color name="colorPrimary">#023c69</color>
+  <!-- Brend ranglari "logo 1.png" dan (scripts/make_icons.py) — splash foni
+       logoning o'z foni bilan aynan bir xil bo'lishi SHART, aks holda
+       ekran o'rtasida boshqa rangdagi kvadrat ko'rinadi. -->
+  <color name="splashscreen_background">#002B29</color>
+  <color name="iconBackground">#002B29</color>
+  <color name="colorPrimary">#002B29</color>
 </resources>

@@ -104,8 +104,8 @@ android {
         // Bosqich 2 — davomat (Face ID + GPS) ekrani qo'shildi.
         // versionCode HAR BIR tarqatilgan APK'da oshirilishi kerak: ba'zi
         // o'rnatuvchilar bir xil versionCode ustiga o'rnatishni rad etadi.
-        versionCode 2
-        versionName "1.1.0"
+        versionCode 3
+        versionName "1.2.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

@@ -4,6 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Xodimlar KPI/Bonus tizimi</title>
+
+    <!-- PWA: iPhone'da App Store'siz "ilova" qilib o'rnatish uchun
+         (Safari → Ulashish → Bosh ekranga qo'shish). Android uchun alohida
+         APK bor, lekin manifest unga ham zarar qilmaydi.
+         Ikonkalar scripts/make_icons.py bilan "logo 1.png" dan yasaladi. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#002B29" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+
+    <!-- iOS manifest'dagi "icons" ni O'QIMAYDI — apple-touch-icon bo'lmasa
+         bosh ekranga sahifa skrinshoti qo'yiladi. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="N.B hodimlar" />
+    <!-- "default" ataylab: "black-translucent" kontentni status-bar ostiga
+         chiqaradi va sahifa sarlavhasi ustiga tushib ketadi (safe-area CSS
+         qo'shilmaguncha). -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="mobile-web-app-capable" content="yes" />
   </head>
   <body>
     <div id="root"></div>
