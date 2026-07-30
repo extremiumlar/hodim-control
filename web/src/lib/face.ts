@@ -9,7 +9,7 @@
  *  - loadModels()            : barcha modellarni yuklaydi (faqat 1 marta)
  *  - captureFace(video)      : bitta freym → {descriptor, score, box}
  *  - captureLiveFace(...)    : check-in uchun: liveness + descriptor
- *  - captureForRegister(...) : ro'yxatdan o'tish uchun: bir nechta freym o'rtachasi
+ *  - captureForRegister(...) : ro'yxatdan o'tish uchun: eng yaxshi freym descriptori
  */
 import * as faceapi from "@vladmandic/face-api";
 
@@ -19,6 +19,19 @@ const MODEL_URL = "https://justadudewhohacks.github.io/face-api.js/models";
 export const MIN_FACE_SIZE = 60;
 // Minimum freym soni ro'yxatdan o'tish uchun
 export const MIN_REGISTER_FRAMES = 3;
+
+/** Tiriklik uchun MINIMAL harakat — yuz o'lchamiga NISBATAN (0.002 = 0.2%).
+ *
+ * Faqat "umuman harakatsiz" (mahkam o'rnatilgan foto/ekran) holatni rad etish
+ * uchun. Tirik odam nafas olishi, ko'z qisishi va beixtiyor tebranishi bilan
+ * 150ms oralig'ida bundan osongina o'tadi; qo'lda ushlangan telefonda esa
+ * bu qiymatdan o'n barobar yuqori chiqadi.
+ *
+ * Xom pikselda EMAS (ilgari `movement >= 0.5 && <= 25` shunday edi) — xom
+ * piksel kamera ruxsati va masofaga bog'liq, shu sabab qurilmalar orasida
+ * ko'chmaydi. YUQORI chegara ataylab YO'Q: ko'p harakat tiriklikni
+ * INKOR etmaydi, balki tasdiqlaydi. */
+export const MIN_MOVEMENT_RATIO = 0.002;
 
 let loadingPromise: Promise<void> | null = null;
 
@@ -69,6 +82,10 @@ export type LiveResult = {
   liveness: number;
   avgScore: number;
   movement: number;
+  /** Harakat yuz o'lchamiga nisbatan (skala-invariant) — tiriklik qarori shunga
+   * asoslanadi, xom `movement` faqat diagnostika uchun qoldirilgan. */
+  movementRatio: number;
+  faceSize: number;
   frames: number;
 };
 
@@ -135,18 +152,32 @@ export async function captureLiveFace(
   }
   const movement = totalMovement / Math.max(1, comparisons);
 
-  // Tiriklik formulasi — Savol A (yumshoq choralar): harakat ENDI MAJBURIY.
-  // ILGARI: 0.4 (baza) + 0.25 (freym) + 0.25 (aniqlik) = 0.9 — harakat UMUMAN
-  // bo'lmasa ham (statik ekran/foto) 0.5 chegaradan (settings.face_liveness_threshold)
-  // osongina o'tardi. ENDI: harakat bo'lmasa liveness 0.3 bilan CHEGARALANADI —
-  // hech qanday freym/aniqlik kombinatsiyasi buni qoplay olmaydi, statik rasm
-  // doim rad etiladi.
-  const hasMovement = movement >= 0.5 && movement <= 25;
+  // Harakat YUZ O'LCHAMIGA nisbatan o'lchanadi (skala-invariant).
+  // NEGA: `movement` xom video pikselida — u kameraning ruxsatiga va odamning
+  // kameraga qanchalik yaqinligiga bog'liq. Telefonning old kamerasi (yuz 400px)
+  // bilan noutbukning kamerasi (yuz 180px) bir xil real harakatda 2 barobar
+  // farqli piksel beradi. Shu sabab xom pikselga qo'yilgan qat'iy chegara
+  // qurilmalar orasida umuman ko'chmaydi.
+  const faceSize =
+    captures.reduce((s, c) => s + Math.min(c.box.w, c.box.h), 0) / captures.length;
+  const movementRatio = faceSize > 0 ? movement / faceSize : 0;
+
+  // Tiriklik: harakat MAJBURIY (statik foto/ekran rad etilishi kerak — bu
+  // 71b9561 da to'g'ri aniqlangan: ilgari harakatsiz rasm 0.9 ball olardi).
+  //
+  // ⚠️ LEKIN yuqori chegara OLIB TASHLANDI (2026-07-27): ilgari
+  // `movement >= 0.5 && movement <= 25` oynasi bor edi va undan CHIQIB
+  // KETGAN harakat "tirik emas" deb baholanardi (-0.3 VA 0.3 bilan
+  // cheklash — ikki marta jazo). Natijada REAL xodimlar o'ta olmadi:
+  // telefonni qo'lda ushlab turgan odam 150ms oralig'ida 25 pikseldan
+  // ko'p siljiydi, ayniqsa ekranda interfeys "biroz harakat qiling" deb
+  // aytgani uchun. Ko'p harakat — tiriklikning KUCHLI dalili, uni rad
+  // etish mantiqan ham teskari edi. Endi faqat PASTKI chegara bor.
+  const hasMovement = movementRatio >= MIN_MOVEMENT_RATIO;
   let liveness = 0;
   if (captures.length >= 3) liveness += 0.2;
   if (avgScore >= 0.4) liveness += 0.2;
   if (hasMovement) liveness += 0.6;
-  if (movement > 25) liveness -= 0.3;
   if (!hasMovement) liveness = Math.min(liveness, 0.3);
   liveness = Math.max(0, Math.min(1, liveness));
 
@@ -157,11 +188,15 @@ export async function captureLiveFace(
     liveness,
     avgScore,
     movement,
+    movementRatio,
+    faceSize,
     frames: captures.length,
   };
 }
 
-/** Ro'yxatdan o'tish uchun: bir nechta freym ushlaydi va descriptorlarni O'RTACHALAYDI. */
+/** Ro'yxatdan o'tish uchun: bir nechta freym ushlaydi va ENG YAXSHISINI tanlaydi
+ * (o'rtachalash 71b9561 da olib tashlangan — u barcha yuzlarni bir-biriga
+ * o'xshab qolishiga olib kelgan edi). */
 export async function captureForRegister(
   video: HTMLVideoElement,
   frames: number = 8

@@ -173,9 +173,15 @@ export default function FaceCapture({
         }
         setLastResult(r);
         if (r.liveness < livenessThreshold) {
+          // Diagnostika raqamlari xabarga ATAYLAB kiritilgan: chegara jonli
+          // qurilmalarda noto'g'ri ishlab qolsa (2026-07-27 da shunday bo'ldi —
+          // real xodimlar o'ta olmadi), xodim aynan shu sonlarni aytib bera
+          // oladi va sozlamani taxminga emas, faktga qarab tuzatish mumkin.
           setError(
             `Tiriklik tekshiruvi muvaffaqiyatsiz (${r.liveness.toFixed(2)} < ${livenessThreshold}).\n` +
-              `Qaytadan urinib ko'ring — yorug'roq joyda, biroz harakat qiling.`
+              `Qaytadan urinib ko'ring — yorug'roq joyda, boshingizni biroz burang.\n` +
+              `Tafsilot: harakat ${(r.movementRatio * 100).toFixed(2)}% ` +
+              `(${r.movement.toFixed(1)}px / yuz ${r.faceSize.toFixed(0)}px), freym ${r.frames}.`
           );
           setCapturing(false);
           return;
