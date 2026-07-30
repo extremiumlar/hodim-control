@@ -103,6 +103,11 @@ def _due(now: datetime) -> list:
     # ── Soatlik ──
     if m == 0:
         add("/hourly-plan/send", timeout=60)         # soatlik reja (API ish oynasini tekshiradi)
+        # Telegram login xavfsizligi: replay-himoya hash'lari + rate-limit
+        # urinish yozuvlarini tozalash (scheduler/main.py'dagi
+        # login_security_cleanup bilan bir xil — cron_tick shared hostingda
+        # o'sha APScheduler job'ining o'rnini bosadi).
+        add("/auth/login-security-cleanup", json={}, timeout=30)
     if m == cfg.AI_WATCH_MINUTE:
         add("/ai-watch/tick", timeout=180)           # AI kuzatuv (o'chiqda no-op)
 
