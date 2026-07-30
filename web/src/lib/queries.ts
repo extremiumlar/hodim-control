@@ -65,6 +65,7 @@ export const qk = {
   myTasks: ["tasks", "me"] as const,
   myHourlyPlan: ["hourly-plan", "me"] as const,
   myStats: ["stats", "me"] as const,
+  myBonuses: ["bonuses", "me"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -440,6 +441,8 @@ export const useMyHourlyPlan = () =>
   useQuery({ queryKey: qk.myHourlyPlan, queryFn: api.myHourlyPlan, refetchInterval: 120_000 });
 
 export const useMyStats = () => useQuery({ queryKey: qk.myStats, queryFn: api.myStats });
+
+export const useMyBonuses = () => useQuery({ queryKey: qk.myBonuses, queryFn: api.myBonuses });
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
 // kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham

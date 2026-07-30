@@ -395,6 +395,33 @@ scrollsiz o'qiladi; desktop ko'rinishi buzilmagan.
 
 ---
 
+## 6.5 ⚠️ KPI/bonus stavkalari HALI PLACEHOLDER
+
+Bosqich 4.7 da aniqlandi. `api/services/bonus.py`:
+
+```python
+PLACEHOLDER_RATE_PER_CONVERSATION = 2000
+PLACEHOLDER_RATE_PER_VISIT = 5000
+PLACEHOLDER_RATE_PER_VIDEO = 0
+```
+
+`breakdown` ichida so'zma-so'z: `"formula": "placeholder: lavozim
+metrikalari * stavka (real formula keyinroq belgilanadi)"`.
+
+Bazadagi summalar real ko'rinadi (masalan 577 000 so'm) va **ikki joyda
+xodimga ko'rinadi**:
+1. «Oylik KPI'm» sahifasi — summa to'liq ko'rsatiladi (2026-07-30 dagi qaror)
+2. **Oylik varaqasi** — `payslip.bonus_amount` aynan shu jadvaldan keladi
+   (`api/services/payroll.py:589`) va «Jami» summasiga qo'shiladi
+
+Hozircha hech kim ko'rmagan, chunki birorta payslip `approved` emas.
+
+**HR birinchi oylik varaqasini TASDIQLASHDAN OLDIN haqiqiy stavkalar
+belgilanishi kerak** — aks holda xodim placeholder asosidagi summani
+oladi va keyin u o'zgarsa ishonch yo'qoladi. Stavka o'zgarganda faqat
+`api/services/bonus.py` dagi uchta konstanta o'zgaradi, qolgan hech narsa
+(API/bot/sayt) tegilmaydi — fayl izohida shunday yozilgan.
+
 ## 7. Ochiq savollar — boshlashdan oldin foydalanuvchiga bering
 
 1. **Sessiya (Bosqich 3):** har kunlik loginni qanday yechamiz —

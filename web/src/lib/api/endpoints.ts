@@ -309,6 +309,7 @@ export const api = {
   myTasks: () => apiFetch<Task[]>("/tasks/me"),
   myHourlyPlan: () => apiFetch<HourlyPlan>("/hourly-plan/me"),
   myStats: () => apiFetch<MyStats>("/stats/me"),
+  myBonuses: () => apiFetch<Bonus[]>("/bonuses/me"),
   // Tanasi YO'Q: shaxs tokendan olinadi, ya'ni mijoz boshqa birovning
   // vazifasini yopa olmaydi (backend `assigned_to`ni tekshiradi).
   completeMyTask: (taskId: number) =>
