@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { CheckCircle2, LogIn, LogOut, MapPin, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import FaceCapture from "@/components/FaceCapture";
 import LateStatusCard from "@/components/LateStatusCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,6 +15,27 @@ import {
 } from "@/lib/queries";
 import { type LiveResult } from "@/lib/face";
 import { fmtLocalTime as fmtTime, translateGeoError } from "@/lib/utils";
+
+// FaceCapture ATAYLAB lazy: u @vladmandic/face-api ni tortadi (~340 KB
+// siqilgan holda). Tab-bar qo'shilgach /check-in xodimning KIRISH sahifasi
+// bo'lib qoldi (HomeIndex shu yerga yo'naltiradi, PWA start_url ham shu) —
+// ya'ni faqat jadvalini ko'rmoqchi bo'lgan xodim ham yuz kutubxonasini
+// yuklardi. Endi u faqat kamera oqimi boshlanganda keladi, o'sha paytda
+// baribir modellar (~4.4 MB) yuklanadi va spinner ko'rsatiladi.
+// `LiveResult` — TIP importi, u kompilyatsiyada yo'qoladi va chunk tortmaydi.
+const FaceCapture = lazy(() => import("@/components/FaceCapture"));
+
+/** Lazy FaceCapture yuklanguncha — video idishi bilan bir xil o'lchamda. */
+function FaceCaptureFallback() {
+  return (
+    <div className="flex aspect-[4/3] w-full max-w-md mx-auto items-center justify-center rounded-xl bg-black/90 text-sm text-white">
+      <div className="text-center">
+        <div className="mx-auto mb-2 h-8 w-8 animate-spin rounded-full border-2 border-white border-t-transparent" />
+        Kamera tayyorlanmoqda...
+      </div>
+    </div>
+  );
+}
 
 type Action = "check-in" | "check-out";
 
@@ -327,13 +347,15 @@ export default function CheckIn() {
                 Yopish
               </button>
             </div>
-            <FaceCapture
-              mode="register"
-              onResult={onFaceRegistered}
-              onCancel={() => setShowRegister(false)}
-              buttonLabel={registerFace.isPending ? "Saqlanmoqda..." : "Yuzimni saqlash"}
-              disabled={registerFace.isPending}
-            />
+            <Suspense fallback={<FaceCaptureFallback />}>
+              <FaceCapture
+                mode="register"
+                onResult={onFaceRegistered}
+                onCancel={() => setShowRegister(false)}
+                buttonLabel={registerFace.isPending ? "Saqlanmoqda..." : "Yuzimni saqlash"}
+                disabled={registerFace.isPending}
+              />
+            </Suspense>
           </CardContent>
         </Card>
       )}
@@ -365,17 +387,19 @@ export default function CheckIn() {
                 {checkError}
               </div>
             )}
-            <FaceCapture
-              mode="verify"
-              onResult={onFaceCaptured}
-              onCancel={() => {
-                setShowFace(null);
-                setStatusMsg("");
-                setCheckError(null);
-              }}
-              buttonLabel={showFace === "check-in" ? "Keldim" : "Ketdim"}
-              disabled={busy}
-            />
+            <Suspense fallback={<FaceCaptureFallback />}>
+              <FaceCapture
+                mode="verify"
+                onResult={onFaceCaptured}
+                onCancel={() => {
+                  setShowFace(null);
+                  setStatusMsg("");
+                  setCheckError(null);
+                }}
+                buttonLabel={showFace === "check-in" ? "Keldim" : "Ketdim"}
+                disabled={busy}
+              />
+            </Suspense>
           </div>
         </div>
       )}
