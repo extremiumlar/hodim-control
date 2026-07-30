@@ -61,6 +61,7 @@ export const qk = {
   // bosilganda react-query eski haftani keshdan qaytarardi.
   myWorkWeek: (start?: string) => ["work-schedule", "me", "week", start ?? "current"] as const,
   myPayslip: ["payroll", "me", "payslip"] as const,
+  myTodayResult: ["daily-results", "me", "today"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -424,6 +425,9 @@ export const useMyWorkWeek = (start?: string) =>
 
 export const useMyPayslip = () =>
   useQuery({ queryKey: qk.myPayslip, queryFn: api.myPayslip });
+
+export const useMyTodayResult = () =>
+  useQuery({ queryKey: qk.myTodayResult, queryFn: api.myTodayResult });
 
 export const useDownloadPayrollExport = () =>
   useApiMutation((period: string) => api.downloadPayrollExport(period), []);

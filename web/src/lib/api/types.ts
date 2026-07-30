@@ -362,6 +362,14 @@ export interface WorkWeek {
 /** Xodimning oxirgi TASDIQLANGAN oylik varaqasi (api/schemas.py:
  *  BotPayslipOut). `calculated=false` — hali tasdiqlangani yo'q; qolgan
  *  maydonlar shunda null bo'ladi. Bot ham shu shaklni oladi. */
+/** Bugungi natija + lavozimga moslashgan ko'rsatkichlar (api/schemas.py:
+ *  DailyResultTodayOut). Bot «📊 Bugungi normam» ham shu shaklni oladi. */
+export interface DailyResultToday {
+  conversations_count: number;
+  visits_count: number;
+  metrics: MetricProgressRow[];
+}
+
 export interface MyPayslip {
   calculated: boolean;
   period: string | null;

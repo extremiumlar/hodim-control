@@ -38,6 +38,7 @@ import type {
   User,
   WorkDayEntry,
   WorkOverride,
+  DailyResultToday,
   MyPayslip,
   WorkWeek,
   WorkWeekly,
@@ -302,6 +303,7 @@ export const api = {
   myWorkWeek: (start?: string) =>
     apiFetch<WorkWeek>(`/work-schedule/me/week${start ? `?start=${start}` : ""}`),
   myPayslip: () => apiFetch<MyPayslip>("/payroll/me/payslip"),
+  myTodayResult: () => apiFetch<DailyResultToday>("/daily-results/me/today"),
   downloadPayrollExport: async (period: string): Promise<void> => {
     const token = getToken();
     const resp = await fetch(`${API_BASE_URL}/payroll/${period}/export`, {

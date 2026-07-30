@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
 from api.timeutil import today_local
 from api.schemas import (
@@ -129,17 +129,12 @@ async def list_daily_results(
     return list(await db.scalars(query))
 
 
-@router.get(
-    "/daily-results/today/{telegram_id}",
-    response_model=DailyResultTodayOut,
-    dependencies=[Depends(verify_bot_secret)],
-)
-async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db)) -> DailyResultTodayOut:
-    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+async def _today_result_for_user(db: AsyncSession, user: User) -> DailyResultTodayOut:
+    """Xodimning bugungi natijasi + lavozimiga moslashgan ko'rsatkichlar.
 
-    from api.routers.stats import today_metric_rows
+    Bot ham, web ham shu yordamchini chaqiradi (`_late_status_for_user` bilan
+    bir xil naqsh) — mantiq ikki joyda takrorlanmasligi uchun."""
+    from api.routers.stats import today_metric_rows  # circular importdan qochish
 
     today = today_local()
     result = await db.scalar(select(DailyResult).where(DailyResult.user_id == user.id, DailyResult.date == today))
@@ -150,6 +145,29 @@ async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db
         # Lavozimga moslashgan ro'yxat — bot shu ro'yxatni ko'rsatadi
         metrics=await today_metric_rows(db, user),
     )
+
+
+@router.get(
+    "/daily-results/today/{telegram_id}",
+    response_model=DailyResultTodayOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db)) -> DailyResultTodayOut:
+    """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _today_result_for_user(db, user)
+
+
+@router.get("/daily-results/me/today", response_model=DailyResultTodayOut)
+async def my_today_result_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> DailyResultTodayOut:
+    """Web (JWT) versiyasi — xodim kabineti «Bugungi normam» uchun. Shaxs
+    TOKENDAN olinadi. Bot yo'li `/today/{telegram_id}` — ikkinchi segmenti
+    boshqa ("today" vs "me"), to'qnashuv yo'q."""
+    return await _today_result_for_user(db, user)
 
 
 @router.post("/daily-results/sync", dependencies=[Depends(verify_bot_secret)])
