@@ -42,17 +42,40 @@ def _build_target():
         from fastapi.staticfiles import StaticFiles
         from starlette.exceptions import HTTPException as StarletteHTTPException
 
+        # Face ID modellari (~4.4 MB siqilgan holda) uchun kesh muddati.
+        # /assets/*.js ga LiteSpeed KENGAYTMA bo'yicha max-age qo'yadi, model
+        # shard fayllarida esa kengaytma YO'Q (face_recognition_model-shard1)
+        # — shuning uchun ularga hech qanday Cache-Control tushmaydi va kesh
+        # brauzer evristikasiga qolib ketadi (deploydan keyin oyna juda qisqa).
+        #
+        # DIQQAT: fayl nomlarida hash YO'Q. Model fayllari o'zgarsa xodimda
+        # 30 kungacha eski model qolishi mumkin — bu Face ID'ni buzadi
+        # (descriptorlar boshqa modelniki bo'ladi). Modelni almashtirish
+        # baribir hamma xodimni qayta ro'yxatdan o'tkazishni talab qiladi
+        # (MOBIL_ILOVA_REJASI.md 4.2), ya'ni rejalashtirilgan migratsiya —
+        # o'shanda YO'L ham o'zgartirilsin (masalan /models/v2/), aks holda
+        # eski kesh yangi model bilan aralashadi.
+        MODEL_CACHE = "public, max-age=2592000"  # 30 kun, /assets bilan bir xil
+
         class SPAStaticFiles(StaticFiles):
             """React Router uchun: mavjud bo'lmagan yo'lda 404 o'rniga index.html
-            qaytaradi (masalan /attendance to'g'ridan-to'g'ri ochilganda)."""
+            qaytaradi (masalan /attendance to'g'ridan-to'g'ri ochilganda).
+            Yuz modellariga esa uzoq kesh sarlavhasini qo'yadi."""
 
             async def get_response(self, path, scope):
                 try:
-                    return await super().get_response(path, scope)
+                    response = await super().get_response(path, scope)
                 except StarletteHTTPException as exc:
                     if exc.status_code == 404:
                         return await super().get_response("index.html", scope)
                     raise
+                # Starlette `path`ni os.path.normpath bilan quradi — Windows'da
+                # u "models\\..." bo'ladi, Linux'da "models/...". Serverda
+                # Linux, lekin OS'ga bog'liq tekshiruv yozmaymiz (lokal sinov
+                # ham ishlasin).
+                if path.replace("\\", "/").startswith("models/"):
+                    response.headers["Cache-Control"] = MODEL_CACHE
+                return response
 
         root_app = FastAPI()
         root_app.mount("/api", api_app)  # /api oldin tekshiriladi
