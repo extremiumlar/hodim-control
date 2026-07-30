@@ -29,7 +29,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
     jwt_secret: str = _PLACEHOLDER_JWT_SECRET
-    jwt_expire_minutes: int = 1440
+    # 30 kun. Ilgari 1440 (24 soat) edi — kuniga 2 marta ishlatiladigan
+    # davomat ilovasi uchun xodim HAR KUNI qaytadan login qilardi.
+    # Refresh-token yo'q, lekin bekor qilish yo'li BOR: get_current_user
+    # har so'rovda `is_active`ni tekshiradi (api/deps.py), ya'ni xodimni
+    # o'chirish (ishdan ketsa, telefoni yo'qolsa) tokenni darhol kesadi.
+    jwt_expire_minutes: int = 43200
 
     frontend_url: str = "http://localhost:5173"
     telegram_login_bot_username: str = ""

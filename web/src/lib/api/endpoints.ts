@@ -180,6 +180,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  // Bot orqali kirish (deep-link) — Telegram Login Widget'ga ZAXIRA.
+  // Widget telegram.org'dan skript yuklaydi; u bloklansa yoki sekinlashsa
+  // saytga HECH KIM kira olmasdi. Bu yo'lda faqat BOT kerak: xodim botda
+  // tasdiqlaydi, sayt poll qilib tokenni oladi. Mexanizm mobil ilovada
+  // allaqachon ishlaydi (mobile/app/login.tsx) — endpointlar bir xil.
+  appLoginStart: () =>
+    apiFetch<{ login_token: string; deep_link: string; expires_at: string }>(
+      "/auth/app-login/start",
+      { method: "POST" }
+    ),
+  appLoginPoll: (loginToken: string) =>
+    apiFetch<{ status: "pending" | "confirmed" | "expired"; token: { access_token: string; user: User } | null }>(
+      "/auth/app-login/poll",
+      { method: "POST", body: JSON.stringify({ login_token: loginToken }) }
+    ),
   listDailyResults: (userId: number) => apiFetch<DailyResult[]>(`/daily-results?user_id=${userId}`),
   createManualDailyResult: (data: {
     user_id: number;

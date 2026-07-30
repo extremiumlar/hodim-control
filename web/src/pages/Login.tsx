@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,11 +18,16 @@ declare global {
 const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_LOGIN_BOT_USERNAME;
 const DEV_MODE = import.meta.env.VITE_DEBUG === "true";
 
+const POLL_INTERVAL_MS = 2500;
+
 export default function Login() {
   const { user, loginWithToken } = useAuth();
   const widgetRef = useRef<HTMLDivElement>(null);
   const [devTelegramId, setDevTelegramId] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+  const [botLogin, setBotLogin] = useState<{ token: string; deepLink: string } | null>(null);
+  const [botStarting, setBotStarting] = useState(false);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!BOT_USERNAME || !widgetRef.current) return;
@@ -45,6 +50,66 @@ export default function Login() {
     script.setAttribute("data-request-access", "write");
     widgetRef.current.appendChild(script);
   }, [loginWithToken]);
+
+  // ── Bot orqali kirish (deep-link) — telegram.org skriptiga ZAXIRA ──
+  // Widget telegram.org'dan skript yuklaydi; u bloklansa yoki sekinlashsa
+  // saytga hech kim kira olmasdi. Bu yo'lda faqat bot kerak.
+  const stopPolling = useCallback(() => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
+  const checkOnce = useCallback(
+    async (loginToken: string) => {
+      try {
+        const res = await api.appLoginPoll(loginToken);
+        if (res.status === "confirmed" && res.token) {
+          stopPolling();
+          loginWithToken(res.token.access_token, res.token.user);
+        } else if (res.status === "expired") {
+          stopPolling();
+          setBotLogin(null);
+          toast.error("Havola muddati o'tdi (5 daqiqa). Qaytadan urinib ko'ring.");
+        }
+      } catch {
+        stopPolling();
+        setBotLogin(null);
+        toast.error("Server bilan aloqa uzildi.");
+      }
+    },
+    [loginWithToken, stopPolling]
+  );
+
+  const startBotLogin = async () => {
+    stopPolling();
+    setBotStarting(true);
+    try {
+      const { login_token, deep_link } = await api.appLoginStart();
+      setBotLogin({ token: login_token, deepLink: deep_link });
+      pollTimer.current = setInterval(() => void checkOnce(login_token), POLL_INTERVAL_MS);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Kirishni boshlab bo'lmadi");
+    } finally {
+      setBotStarting(false);
+    }
+  };
+
+  // Telefonda xodim Telegram'ga o'tib qaytganda darhol tekshiramiz — interval
+  // kutib turishi (2.5s) o'rniga qaytish bilan login yakunlanadi. Mobil
+  // brauzerlar fon tab'dagi taymerlarni sekinlashtiradi, shuning uchun ham
+  // kerak.
+  useEffect(() => {
+    if (!botLogin) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void checkOnce(botLogin.token);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [botLogin, checkOnce]);
 
   if (user) return <Navigate to="/" replace />;
 
@@ -73,6 +138,56 @@ export default function Login() {
             <p className="mb-4 text-sm text-slate-500">
               TELEGRAM_LOGIN_BOT_USERNAME sozlanmagan — Telegram Login Widget ko'rsatilmayapti.
             </p>
+          )}
+
+          {/* Bot orqali kirish — widget ishlamasa ham (telegram.org bloklansa,
+              sekinlashsa yoki skript yuklanmasa) ishlaydigan yo'l. */}
+          {botLogin ? (
+            <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-left">
+              <p className="text-sm text-slate-700">
+                <span className="font-semibold">1.</span> Pastdagi tugmani bosib botga o'ting
+                <br />
+                <span className="font-semibold">2.</span> Botda «Tasdiqlash»ni bosing
+                <br />
+                <span className="font-semibold">3.</span> Shu sahifaga qaytsangiz — kirgan bo'lasiz
+              </p>
+              {/* Oddiy havola, window.open EMAS: (1) popup-blokerga tushmaydi,
+                  (2) target=_blank bilan sayt TIRIK qoladi va poll davom etadi.
+                  O'sha oynada ochilsa, sahifa Telegram'ga o'tib ketib poll
+                  halqasi o'lardi va qaytganda login yakunlanmasdi. */}
+              <a
+                href={botLogin.deepLink}
+                target="_blank"
+                rel="noreferrer"
+                className="block w-full rounded-md bg-blue-600 px-4 py-3 text-center text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Botni ochish
+              </a>
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+                  Tasdiqlash kutilmoqda…
+                </span>
+                <button
+                  onClick={() => {
+                    setBotLogin(null);
+                    void startBotLogin();
+                  }}
+                  className="underline hover:text-slate-700"
+                >
+                  Qaytadan
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant={BOT_USERNAME ? "outline" : "default"}
+              className="w-full"
+              disabled={botStarting}
+              onClick={startBotLogin}
+            >
+              {botStarting ? "Havola olinmoqda…" : "Bot orqali kirish"}
+            </Button>
           )}
 
           {DEV_MODE && (
