@@ -300,7 +300,28 @@ Har biri uchun tartib:
 
 ---
 
-### Bosqich 5 — Tezlik
+### Bosqich 5 — Tezlik ✅ BAJARILDI (2026-07-30)
+
+O'LCHANDI (jonli sayt, siqilgan holda) va auditdagi xulosa TUZATILDI:
+«birinchi ochishda ~8.3 MB» noto'g'ri edi — u siqilmagan hajmlarga va
+«modellar sahifa ochilishida yuklanadi» degan taxminga asoslangan.
+
+| | Oldin | Keyin |
+|---|---|---|
+| `/check-in` ochilishida JS | 345 KB | **3.4 KB** |
+| Modellar sahifa ochilishida | 0 (allaqachon to'g'ri) | 0 |
+| Kamera oqimida | 4 499 KB | 4 499 KB + 343 KB chunk |
+| `/models` `Cache-Control` | **yo'q** | `public, max-age=2592000` |
+
+Ikki o'zgarish: (1) `FaceCapture` lazy — tab-bar qo'shilgach `/check-in`
+xodimning kirish sahifasi bo'lib qolgan edi, ya'ni jadvalini ko'rmoqchi
+bo'lgan xodim ham yuz kutubxonasini yuklardi; (2) `SPAStaticFiles` endi
+`/models/` ga uzoq kesh sarlavhasi qo'yadi (`.htaccess` EMAS — bu hostda
+u ilovani 500 ga tushirgan).
+
+Quyidagi asl matn tarix uchun qoldirildi.
+
+### Bosqich 5 — Tezlik (asl reja)
 
 1. **Birinchi ochishda ~8.3 MB** — `CheckIn` chunk 1.34 MB + yuz modellari
    7 MB. Tekshiring: modellar sahifa ochilganda yuklanadimi yoki kamera
