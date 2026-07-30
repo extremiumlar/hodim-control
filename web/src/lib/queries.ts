@@ -62,6 +62,7 @@ export const qk = {
   myWorkWeek: (start?: string) => ["work-schedule", "me", "week", start ?? "current"] as const,
   myPayslip: ["payroll", "me", "payslip"] as const,
   myTodayResult: ["daily-results", "me", "today"] as const,
+  myTasks: ["tasks", "me"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -428,6 +429,14 @@ export const useMyPayslip = () =>
 
 export const useMyTodayResult = () =>
   useQuery({ queryKey: qk.myTodayResult, queryFn: api.myTodayResult });
+
+export const useMyTasks = () => useQuery({ queryKey: qk.myTasks, queryFn: api.myTasks });
+
+// Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
+// kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham
+// yangilanadi (bir xil prefiks) — bu to'g'ri, holat haqiqatan o'zgardi.
+export const useCompleteMyTask = () =>
+  useApiMutation((taskId: number) => api.completeMyTask(taskId), [["tasks"]]);
 
 export const useDownloadPayrollExport = () =>
   useApiMutation((period: string) => api.downloadPayrollExport(period), []);

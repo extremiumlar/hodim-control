@@ -35,6 +35,7 @@ const MeMore = lazy(() => import("./pages/me/More"));
 const MeSchedule = lazy(() => import("./pages/me/Schedule"));
 const MePayroll = lazy(() => import("./pages/me/Payroll"));
 const MeNorm = lazy(() => import("./pages/me/Norm"));
+const MeTasks = lazy(() => import("./pages/me/Tasks"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -133,7 +134,7 @@ export default function App() {
           <Route path="me/schedule" element={<MeSchedule />} />
           <Route path="me/payroll" element={<MePayroll />} />
           <Route path="me/stats" element={<MePlaceholder />} />
-          <Route path="me/tasks" element={<MePlaceholder />} />
+          <Route path="me/tasks" element={<MeTasks />} />
           <Route path="me/norm" element={<MeNorm />} />
           <Route path="me/hourly-plan" element={<MePlaceholder />} />
           <Route path="me/kpi" element={<MePlaceholder />} />

@@ -304,6 +304,11 @@ export const api = {
     apiFetch<WorkWeek>(`/work-schedule/me/week${start ? `?start=${start}` : ""}`),
   myPayslip: () => apiFetch<MyPayslip>("/payroll/me/payslip"),
   myTodayResult: () => apiFetch<DailyResultToday>("/daily-results/me/today"),
+  myTasks: () => apiFetch<Task[]>("/tasks/me"),
+  // Tanasi YO'Q: shaxs tokendan olinadi, ya'ni mijoz boshqa birovning
+  // vazifasini yopa olmaydi (backend `assigned_to`ni tekshiradi).
+  completeMyTask: (taskId: number) =>
+    apiFetch<Task>(`/tasks/me/${taskId}/complete`, { method: "POST" }),
   downloadPayrollExport: async (period: string): Promise<void> => {
     const token = getToken();
     const resp = await fetch(`${API_BASE_URL}/payroll/${period}/export`, {

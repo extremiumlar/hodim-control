@@ -321,12 +321,11 @@ async def bot_tasks_overview(telegram_id: int, db: AsyncSession = Depends(get_db
     return await _to_out_many(tasks, db)
 
 
-@router.get("/my/{telegram_id}", response_model=list[TaskOut], dependencies=[Depends(verify_bot_secret)])
-async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[TaskOut]:
-    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+async def _my_tasks_for_user(db: AsyncSession, user: User) -> list[TaskOut]:
+    """Xodimga biriktirilgan oxirgi 20 vazifa (yangi birinchi).
 
+    Bot ham, web ham shu yordamchini chaqiradi — mantiq ikki joyda
+    takrorlanmasligi uchun."""
     query = (
         select(TaskModel)
         .where(TaskModel.assigned_to == user.id)
@@ -335,6 +334,25 @@ async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) ->
     )
     tasks = list(await db.scalars(query))
     return await _to_out_many(tasks, db)
+
+
+@router.get("/my/{telegram_id}", response_model=list[TaskOut], dependencies=[Depends(verify_bot_secret)])
+async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[TaskOut]:
+    """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _my_tasks_for_user(db, user)
+
+
+@router.get("/me", response_model=list[TaskOut])
+async def list_my_tasks_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[TaskOut]:
+    """Web (JWT) versiyasi — xodim kabineti uchun. Shaxs TOKENDAN olinadi.
+    `GET /tasks/{task_id}` marshruti yo'q, ya'ni "/tasks/me" bilan to'qnashuv
+    yo'q (faqat POST/DELETE `/{task_id}` bor)."""
+    return await _my_tasks_for_user(db, user)
 
 
 @router.post("/mark-overdue", dependencies=[Depends(verify_bot_secret)])
@@ -385,13 +403,25 @@ async def send_reminders(db: AsyncSession = Depends(get_db)) -> dict:
     return {"pending_count": len(pending_tasks), "reminders_sent": sent}
 
 
-@router.post("/{task_id}/complete", response_model=TaskOut, dependencies=[Depends(verify_bot_secret)])
-async def complete_task(task_id: int, payload: TaskCompleteRequest, db: AsyncSession = Depends(get_db)) -> TaskOut:
+async def _complete_task_for_user(db: AsyncSession, task_id: int, user: User | None) -> TaskOut:
+    """Vazifani «bajarildi» qiladi.
+
+    RUXSAT: faqat vazifa BIRIKTIRILGAN xodim yopa oladi (`assigned_to`).
+    Bu tekshiruv yozish amalining yagona himoyasi — bot ham, web ham shu
+    yordamchidan o'tadi, shuning uchun ikki joyda takrorlanmaydi va bir
+    joyda unutilib qolmaydi.
+
+    `user` ATAYLAB nullable: bot yo'lida `telegram_id` bazada topilmasligi
+    mumkin, va asl kodda xato TARTIBI shunday edi — avval vazifa 404, keyin
+    ruxsat 403. Tartibni saqlash uchun tekshiruv shu yerda, chaqiruvchida
+    emas.
+
+    Idempotent: allaqachon `done` bo'lsa `completed_at` qayta yozilmaydi va
+    takroriy audit yozuvi yaratilmaydi."""
     task = await db.get(TaskModel, task_id)
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vazifa topilmadi")
 
-    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
     if not user or user.id != task.assigned_to:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu vazifa sizga tegishli emas")
 
@@ -415,6 +445,30 @@ async def complete_task(task_id: int, payload: TaskCompleteRequest, db: AsyncSes
     await db.commit()
     await db.refresh(task)
     return await _to_out(task, db)
+
+
+@router.post("/{task_id}/complete", response_model=TaskOut, dependencies=[Depends(verify_bot_secret)])
+async def complete_task(task_id: int, payload: TaskCompleteRequest, db: AsyncSession = Depends(get_db)) -> TaskOut:
+    """Bot uchun — shaxsni tanadagi `telegram_id`dan yechadi. Ruxsat tekshiruvi
+    yordamchi ichida (`assigned_to`), shu bilan xato tartibi ham asl kod bilan
+    bir xil qoladi (avval vazifa 404, keyin ruxsat 403)."""
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    return await _complete_task_for_user(db, task_id, user)
+
+
+@router.post("/me/{task_id}/complete", response_model=TaskOut)
+async def complete_my_task_web(
+    task_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    """Web (JWT) versiyasi — xodim kabineti uchun. TANA YO'Q: shaxs tokendan
+    olinadi, ya'ni mijoz `telegram_id` yubora olmaydi va boshqa birovning
+    vazifasini yopa olmaydi. Ruxsat tekshiruvi yordamchi ichida.
+
+    Yo'l 3 segmentli (`/me/{task_id}/complete`), bot varianti 2 segmentli
+    (`/{task_id}/complete`) — to'qnashmaydi."""
+    return await _complete_task_for_user(db, task_id, user)
 
 
 @router.post("/{task_id}/cancel", response_model=TaskOut)
