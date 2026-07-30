@@ -359,6 +359,22 @@ export interface WorkWeek {
   days: EffectiveDay[];
 }
 
+/** Xodimning oxirgi TASDIQLANGAN oylik varaqasi (api/schemas.py:
+ *  BotPayslipOut). `calculated=false` — hali tasdiqlangani yo'q; qolgan
+ *  maydonlar shunda null bo'ladi. Bot ham shu shaklni oladi. */
+export interface MyPayslip {
+  calculated: boolean;
+  period: string | null;
+  base_amount: number | null;
+  fine_amount: number | null;
+  absent_deduction: number | null;
+  overtime_amount: number | null;
+  bonus_amount: number | null;
+  net: number | null;
+  currency: string | null;
+  approved_at: string | null;
+}
+
 // ─── Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) ───
 
 export interface FinePolicy {

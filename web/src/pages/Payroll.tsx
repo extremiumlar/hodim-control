@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
+import { fmtMoney } from "@/lib/utils";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
@@ -38,7 +39,9 @@ import {
   usePayslips,
 } from "@/lib/queries";
 
-const fmtMoney = (n: number) => `${Math.round(n).toLocaleString("uz-UZ").replace(/,/g, " ")} so'm`;
+// fmtMoney lib/utils.ts ga ko'chirildi — xodim kabineti (me/Payroll.tsx) ham
+// AYNAN shu formatni ishlatishi kerak, aks holda bir xil summa ikki sahifada
+// boshqacha ko'rinardi.
 
 // Oylik hisobdan OLDINGI tayyorlik ogohlantirishi — Attendance.tsx'dagi
 // ReadinessSection bilan bir xil ruh, lekin payrollga xos guruhlar bilan.

@@ -19,6 +19,16 @@ export function fmtLocalTime(iso: string | null | undefined): string {
 // 4.4-band: brauzer Geolocation xatolari ("User denied Geolocation" va h.k.)
 // ilgari xom inglizcha holida ko'rsatilardi. `GeolocationPositionError.code`:
 // 1=PERMISSION_DENIED, 2=POSITION_UNAVAILABLE, 3=TIMEOUT (brauzerlararo bir xil).
+/**
+ * Pul summasi — botdagi `_fmt_money` (bot/handlers/payroll.py) bilan AYNAN
+ * bir xil: butunga yaxlitlanadi, mingliklar PROBEL bilan ajratiladi, oxirida
+ * "so'm". Xodim botda va web'da bir xil raqamni ko'rishi kerak, shuning uchun
+ * bu yerda — Payroll.tsx ichida emas (ilgari faqat rahbar sahifasida edi).
+ */
+export function fmtMoney(n: number): string {
+  return `${Math.round(n).toLocaleString("uz-UZ").replace(/,/g, " ")} so'm`;
+}
+
 export function translateGeoError(e: unknown): string {
   const err = e as { code?: number; message?: string } | null | undefined;
   switch (err?.code) {

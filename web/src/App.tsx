@@ -33,6 +33,7 @@ const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 const MePlaceholder = lazy(() => import("./pages/me/Placeholder"));
 const MeMore = lazy(() => import("./pages/me/More"));
 const MeSchedule = lazy(() => import("./pages/me/Schedule"));
+const MePayroll = lazy(() => import("./pages/me/Payroll"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -129,7 +130,7 @@ export default function App() {
               kirsa o'zining ma'lumotini ko'radi. */}
           <Route path="me/more" element={<MeMore />} />
           <Route path="me/schedule" element={<MeSchedule />} />
-          <Route path="me/payroll" element={<MePlaceholder />} />
+          <Route path="me/payroll" element={<MePayroll />} />
           <Route path="me/stats" element={<MePlaceholder />} />
           <Route path="me/tasks" element={<MePlaceholder />} />
           <Route path="me/norm" element={<MePlaceholder />} />

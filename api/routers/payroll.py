@@ -918,13 +918,12 @@ async def overtime_auto_detect(
     return {"date": target_date.isoformat(), "created": len(created)}
 
 
-@router.get("/my/{telegram_id}", response_model=BotPayslipOut, dependencies=[Depends(verify_bot_secret)])
-async def my_payslip(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotPayslipOut:
+async def _latest_payslip_for_user(db: AsyncSession, user: User) -> BotPayslipOut:
     """Xodimning oxirgi TASDIQLANGAN varaqasi — `draft`/`calculated` (hali
-    tasdiqlanmagan, o'zgarishi mumkin) xodimga ko'rsatilmaydi."""
-    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    tasdiqlanmagan, o'zgarishi mumkin) xodimga ko'rsatilmaydi.
+
+    Bot ham, web ham shu yordamchini chaqiradi (`_late_status_for_user` bilan
+    bir xil naqsh) — mantiq ikki joyda takrorlanmasligi uchun."""
     payslip = await db.scalar(
         select(Payslip)
         .where(Payslip.user_id == user.id, Payslip.status == "approved")
@@ -968,6 +967,26 @@ async def _late_status_for_user(db: AsyncSession, user: User) -> BotLateStatusOu
         fined_days_so_far=late["fined_days"],
         fine_per_day=float(policy.fine_per_day) if policy and policy.fine_per_day is not None else None,
     )
+
+
+@router.get("/my/{telegram_id}", response_model=BotPayslipOut, dependencies=[Depends(verify_bot_secret)])
+async def my_payslip(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotPayslipOut:
+    """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _latest_payslip_for_user(db, user)
+
+
+@router.get("/me/payslip", response_model=BotPayslipOut)
+async def my_payslip_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> BotPayslipOut:
+    """Web (JWT) versiyasi — xodim kabineti uchun. Shaxs TOKENDAN olinadi
+    (path'da user_id yo'q — xodim boshqa birovning oyligini so'ray olmasligi
+    uchun). Yo'l ataylab `/me/payslip`: bot varianti `/my/{telegram_id}` —
+    ikkisi turli segment sonida, to'qnashmaydi."""
+    return await _latest_payslip_for_user(db, user)
 
 
 @router.get(
