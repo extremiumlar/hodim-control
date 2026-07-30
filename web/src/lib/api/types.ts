@@ -339,6 +339,26 @@ export interface WorkOverride {
   note: string | null;
 }
 
+/** Aniq sana uchun AMALDAGI jadval: override > haftalik andoza > unset
+ *  (api/schemas.py: EffectiveDay). `source` nima qayerdan kelganini aytadi —
+ *  xodimga "bu kun alohida o'zgartirilgan" deb ko'rsatish uchun kerak. */
+export interface EffectiveDay {
+  date: string;
+  weekday: number; // 0=Dush ... 6=Yak
+  is_working: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  source: "override" | "weekly" | "unset";
+  note: string | null;
+}
+
+/** Dushanbadan boshlab 7 kun (api/schemas.py: WorkWeekOut). */
+export interface WorkWeek {
+  user_id: number;
+  user_full_name: string;
+  days: EffectiveDay[];
+}
+
 // ─── Payroll (oylik ish haqi + kechikish jarimasi + qo'shimcha ish) ───
 
 export interface FinePolicy {

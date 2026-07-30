@@ -393,6 +393,23 @@ async def my_week(
     return await _effective_week(db, user, start or today_local())
 
 
+@router.get("/me/week", response_model=WorkWeekOut)
+async def my_week_web(
+    start: date | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorkWeekOut:
+    """Web/mobil (JWT) versiyasi — xodim kabineti uchun. Yuqoridagi bot
+    endpointi bilan AYNAN bir xil mantiqni (`_effective_week`) chaqiradi, farqi
+    faqat shaxsni aniqlashda: bot `telegram_id`dan yechadi, bu esa TOKENDAN
+    oladi (path'da user_id yo'q — xodim boshqa birovning jadvalini so'ray
+    olmasligi uchun). Naqsh: payroll.py `/me/late-status`.
+
+    Marshrut to'qnashuvi yo'q: qolgan 2-segmentli yo'llarning ikkinchi qismi
+    boshqa (`weekly`, `overrides`, `override`)."""
+    return await _effective_week(db, user, start or today_local())
+
+
 @router.get("/{telegram_id}/all/week", response_model=list[WorkWeekOut], dependencies=[Depends(verify_bot_secret)])
 async def all_week(
     telegram_id: int, start: date | None = None, db: AsyncSession = Depends(get_db)

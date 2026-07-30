@@ -4,6 +4,7 @@
  * xatoda toast.error ko'rsatadi (chaqiruvchi o'z onSuccess'ini qo'shishi mumkin).
  */
 import {
+  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -56,6 +57,9 @@ export const qk = {
   payslips: (period: string) => ["payroll", "payslips", period] as const,
   payslipDetail: (period: string, userId: number) => ["payroll", "payslip", period, userId] as const,
   myLateStatus: ["payroll", "me", "late-status"] as const,
+  // Xodim kabineti — hafta boshiga bog'langan kalit, aks holda "keyingi hafta"
+  // bosilganda react-query eski haftani keshdan qaytarardi.
+  myWorkWeek: (start?: string) => ["work-schedule", "me", "week", start ?? "current"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
 };
@@ -405,6 +409,17 @@ export const useApprovePayrollPeriod = () =>
 
 export const useMyLateStatus = () =>
   useQuery({ queryKey: qk.myLateStatus, queryFn: api.myLateStatus });
+
+// ─── Xodim kabineti ───
+export const useMyWorkWeek = (start?: string) =>
+  useQuery({
+    queryKey: qk.myWorkWeek(start),
+    queryFn: () => api.myWorkWeek(start),
+    // Hafta almashtirilganda yangi kalit bo'sh keladi va sahifa butunlay
+    // skeletonga aylanardi — navigatsiya tugmalari YO'QOLIB, keyin qaytadi.
+    // Sekin internetda bu bezovta qiladi. Oldingi haftani ko'rsatib turamiz.
+    placeholderData: keepPreviousData,
+  });
 
 export const useDownloadPayrollExport = () =>
   useApiMutation((period: string) => api.downloadPayrollExport(period), []);

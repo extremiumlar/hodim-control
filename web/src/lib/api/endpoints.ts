@@ -38,6 +38,7 @@ import type {
   User,
   WorkDayEntry,
   WorkOverride,
+  WorkWeek,
   WorkWeekly,
 } from "./types";
 
@@ -295,6 +296,10 @@ export const api = {
   approvePayrollPeriod: (period: string) =>
     apiFetch<{ period: string; approved: number }>(`/payroll/${period}/approve`, { method: "POST" }),
   myLateStatus: () => apiFetch<PayrollLateStatus>("/payroll/me/late-status"),
+  // Xodim kabineti — o'z ish jadvali. `start` hafta ichidagi ISTALGAN sana
+  // bo'lishi mumkin, backend dushanbaga tekislaydi (_week_start).
+  myWorkWeek: (start?: string) =>
+    apiFetch<WorkWeek>(`/work-schedule/me/week${start ? `?start=${start}` : ""}`),
   downloadPayrollExport: async (period: string): Promise<void> => {
     const token = getToken();
     const resp = await fetch(`${API_BASE_URL}/payroll/${period}/export`, {
