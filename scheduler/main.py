@@ -128,6 +128,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_BONUS_DAY, hour=cfg.MONTHLY_BONUS_HOUR, minute=cfg.MONTHLY_BONUS_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ───────────
+        # Eskirgan hash/urinish yozuvlarini tozalash — vaqtinchalik jadvallar
+        JobSpec(
+            "login_security_cleanup", jobs.login_security_cleanup_tick,
+            IntervalTrigger(minutes=cfg.LOGIN_SECURITY_CLEANUP_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
         # ─── Payroll avtomatikasi (OYLIK_JARIMA_REJASI.md, Bosqich 6) ────────────
         # Oylik ish haqi — keyingi oyning 1-kuni ertalab (bonus va davomat
         # yopilishidan keyin, 9-bo'lim savol 10 QAROR)

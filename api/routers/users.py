@@ -1,5 +1,6 @@
 import re
 import secrets
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, select, update
@@ -46,6 +47,10 @@ router = APIRouter(prefix="/users", tags=["users"])
 def _invite_link(token: str) -> str:
     username = settings.telegram_login_bot_username or "your_bot"
     return f"https://t.me/{username}?start={token}"
+
+
+def _invite_expiry() -> datetime:
+    return datetime.utcnow() + timedelta(days=settings.invite_token_ttl_days)
 
 
 @router.get("/me", response_model=UserOut)
@@ -241,6 +246,7 @@ async def create_user(
         team_id=payload.team_id,
         manager_id=payload.manager_id,
         invite_token=token,
+        invite_expires_at=_invite_expiry(),
         # CRM ID faqat Boshliq tomonidan belgilanishi mumkin — boshqa rol yuborsa jim
         # e'tiborsiz qoldiriladi (frontendda ham hr uchun bu maydon ko'rsatilmaydi).
         crm_external_id=new_crm_id,
@@ -289,6 +295,7 @@ async def get_invite_link(
     # almashtirish mumkin (eski token endi yaroqsiz).
     if user.is_seat:
         user.invite_token = secrets.token_urlsafe(16)
+        user.invite_expires_at = _invite_expiry()
         await db.commit()
         return {"invite_link": _invite_link(user.invite_token), "already_started": False}
 
@@ -297,6 +304,7 @@ async def get_invite_link(
 
     if not user.invite_token:
         user.invite_token = secrets.token_urlsafe(16)
+        user.invite_expires_at = _invite_expiry()
         await db.commit()
 
     return {"invite_link": _invite_link(user.invite_token), "already_started": False}
@@ -308,6 +316,11 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         user = await db.scalar(select(User).where(User.invite_token == payload.invite_token))
         if not user:
             return TelegramStartResponse(status="invalid_token")
+
+        # Taklif havolasi muddati (Layer 3) — NULL bo'lsa (migratsiyadan oldingi
+        # eski qator) muddatsiz, orqaga moslik uchun.
+        if user.invite_expires_at and user.invite_expires_at < datetime.utcnow():
+            return TelegramStartResponse(status="token_expired")
 
         # Bitta Telegram akkaunt bir vaqtda faqat bitta foydalanuvchiga tegishli bo'lishi
         # mumkin. Agar bu akkaunt ilgari boshqa foydalanuvchiga bog'langan bo'lsa — yangi

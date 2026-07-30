@@ -2818,6 +2818,139 @@ def test_positions_permissions() -> None:
         conn.close()
 
 
+def test_telegram_login_security() -> None:
+    """Telegram login xavfsizlik arxitekturasi (3 qatlam):
+    1. Replay himoyasi — bir xil `hash` ikkinchi marta rad etiladi.
+    2. Rate-limit — belgilangan chegaradan oshgan urinish 429 qaytaradi.
+    3. Taklif havolasi (invite) muddati — muddati o'tgan token 'token_expired'.
+
+    Haqiqiy Telegram'ga hech qanday so'rov yubormaydi — imzoni loyihaning o'z
+    HMAC algoritmi bilan (.env'dagi BOT_TOKEN) lokal hisoblaydi, xuddi
+    Telegram Login Widget qilganidek."""
+    import hashlib
+    import hmac as hmac_lib
+    import time
+
+    import httpx
+
+    from api.config import settings
+
+    print("\n" + "=" * 60)
+    print("TELEGRAM LOGIN XAVFSIZLIGI (replay / rate-limit / invite muddati)")
+    print("=" * 60)
+
+    def sign(data: dict) -> dict:
+        pairs = [f"{k}={v}" for k, v in sorted(data.items())]
+        check_string = "\n".join(pairs)
+        secret_key = hashlib.sha256(settings.bot_token.encode()).digest()
+        data = dict(data)
+        data["hash"] = hmac_lib.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+        return data
+
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-LoginSec%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999900951,'T-LoginSec-Replay','employee',1,1,datetime('now'))")
+    replay_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (full_name, role, bot_started, is_active, invite_token, invite_expires_at, created_at)"
+        " values ('T-LoginSec-Expired','employee',0,1,'T-invtok-expired-999901',"
+        " datetime('now','-1 hour'), datetime('now'))")
+    expired_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (full_name, role, bot_started, is_active, invite_token, invite_expires_at, created_at)"
+        " values ('T-LoginSec-Valid','employee',0,1,'T-invtok-valid-999902',"
+        " datetime('now','+1 day'), datetime('now'))")
+    valid_uid = cur.lastrowid
+    conn.commit()
+
+    def cleanup_sec():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [replay_uid, expired_uid, valid_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            c2.execute("delete from used_telegram_login_hashes where hash in (?,?)", (replay_hash_1, replay_hash_2))
+            c2.execute(
+                "delete from login_attempts where endpoint in ('dev-login','telegram-login')"
+                " and identifier = '127.0.0.1' and created_at >= ?", (test_start,)
+            )
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Login xavfsizlik tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    replay_hash_1 = ""
+    replay_hash_2 = ""
+    test_start = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            # ── 1. Replay himoyasi ──────────────────────────────────────
+            payload = sign({"id": 999900951, "auth_date": int(time.time()), "first_name": "T-Test"})
+            replay_hash_1 = payload["hash"]
+
+            r = client.post(f"{API_BASE}/auth/telegram-login", json=payload)
+            check("Telegram login (birinchi, to'g'ri imzo) -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.post(f"{API_BASE}/auth/telegram-login", json=payload)
+            check("Xuddi shu hash ikkinchi marta -> 401 (replay)", r.status_code == 401,
+                  f"kod={r.status_code} {r.text[:150]}")
+
+            # Boshqa (yangi) hash — xuddi shu foydalanuvchi bilan qayta kirish
+            # hamon ISHLASHI kerak (hash o'zi bloklanadi, foydalanuvchi emas).
+            # auth_date ataylab 5s orqaga suriladi — bir xil sekundda ikkala
+            # payload aynan bir xil hash hosil qilib qolmasligi uchun.
+            payload2 = sign({"id": 999900951, "auth_date": int(time.time()) - 5, "first_name": "T-Test"})
+            replay_hash_2 = payload2["hash"]
+            r = client.post(f"{API_BASE}/auth/telegram-login", json=payload2)
+            check("Yangi hash bilan qayta login -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
+
+            # ── 2. Rate-limit (dev-login, 20/soat) ──────────────────────
+            last_code = None
+            for _ in range(21):
+                r = client.post(f"{API_BASE}/auth/dev-login", json={"telegram_id": 999900951})
+                last_code = r.status_code
+                if last_code == 429:
+                    break
+            check("21-chi urinishda 429 (rate-limit ishladi)", last_code == 429, f"oxirgi kod={last_code}")
+
+            # ── 3. Invite havolasi muddati ───────────────────────────────
+            r = client.post(
+                f"{API_BASE}/users/telegram-start",
+                headers={"X-Bot-Secret": settings.bot_shared_secret},
+                json={"telegram_id": 999900952, "invite_token": "T-invtok-expired-999901"},
+            )
+            check("Muddati o'tgan invite -> token_expired", r.status_code == 200 and r.json().get("status") == "token_expired",
+                  f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.post(
+                f"{API_BASE}/users/telegram-start",
+                headers={"X-Bot-Secret": settings.bot_shared_secret},
+                json={"telegram_id": 999900953, "invite_token": "T-invtok-valid-999902"},
+            )
+            check("Muddati o'tmagan invite -> ok", r.status_code == 200 and r.json().get("status") == "ok",
+                  f"kod={r.status_code} {r.text[:150]}")
+    except Exception:
+        check("Telegram login xavfsizligi (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_sec()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -2874,6 +3007,11 @@ def main() -> None:
         test_positions_permissions()
     except Exception:
         print("Lavozim ruxsatlari testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_telegram_login_security()
+    except Exception:
+        print("Telegram login xavfsizligi testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

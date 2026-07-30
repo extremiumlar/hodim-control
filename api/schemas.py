@@ -194,7 +194,7 @@ class TelegramStartRequest(BaseModel):
 
 
 class TelegramStartResponse(BaseModel):
-    status: str  # ok | invalid_token | already_linked | no_account
+    status: str  # ok | invalid_token | token_expired | already_linked | no_account
     user: UserOut | None = None
 
 

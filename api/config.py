@@ -33,6 +33,11 @@ class Settings(BaseSettings):
 
     frontend_url: str = "http://localhost:5173"
     telegram_login_bot_username: str = ""
+    # Taklif havolasi (invite_token) muddati — shu kundan keyin token yaroqsiz
+    # bo'ladi (Telegram login xavfsizlik arxitekturasi, Layer 3). Eski (bu
+    # sozlama qo'shilishidan oldingi) qatorlarda invite_expires_at NULL qoladi —
+    # ular orqaga moslik uchun muddatsiz.
+    invite_token_ttl_days: int = 7
     # Asosiy guruh — mobilograf videolari va issiq lid xabarlari shu yerga tushadi.
     telegram_group_chat_id: int = 0
     # Statistika uchun QO'SHIMCHA guruh(lar). Kunlik/haftalik digest doim asosiy

@@ -51,6 +51,10 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         await message.answer("Havola yaroqsiz yoki muddati o'tgan. Administratorga murojaat qiling.")
         return
 
+    if result["status"] == "token_expired":
+        await message.answer("Taklif havolasi muddati o'tgan — HR/Boshliqdan yangisini so'rang.")
+        return
+
     if result["status"] == "no_account":
         await message.answer("Ma'lumotlaringiz hali tizimga kiritilmagan, administratorga murojaat qiling.")
         return

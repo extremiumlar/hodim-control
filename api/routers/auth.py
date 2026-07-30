@@ -3,11 +3,12 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, verify_bot_secret
+from api.deps import get_db, rate_limit, verify_bot_secret
 from api.schemas import (
     AppLoginConfirmOut,
     AppLoginConfirmRequest,
@@ -19,7 +20,7 @@ from api.schemas import (
     UserOut,
 )
 from api.security import create_access_token, verify_telegram_login
-from db.models import AppLoginStatus, AppLoginToken, Role, User
+from db.models import AppLoginStatus, AppLoginToken, LoginAttempt, Role, User, UsedTelegramLoginHash
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -39,10 +40,26 @@ async def _issue_token(user: User) -> TokenOut:
     return TokenOut(access_token=token, user=UserOut.model_validate(user))
 
 
-@router.post("/telegram-login", response_model=TokenOut)
+@router.post(
+    "/telegram-login", response_model=TokenOut,
+    dependencies=[Depends(rate_limit("telegram-login", 15, 900))],
+)
 async def telegram_login(data: dict[str, Any], db: AsyncSession = Depends(get_db)) -> TokenOut:
     if not verify_telegram_login(data):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Telegram tekshiruvi muvaffaqiyatsiz")
+
+    # Replay himoyasi: imzoning o'zi 24 soatlik `auth_date` oynasida amal qiladi
+    # (verify_telegram_login) — demak shu oyna ichida ushlab olingan hash bilan
+    # qayta so'rov yuborish mumkin edi (masalan brauzer tarixidan eski Login
+    # Widget URL'i qayta ochilsa). Har bir hash faqat BIR MARTA qabul qilinadi.
+    db.add(UsedTelegramLoginHash(hash=data["hash"]))
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Poyga holati: ikkita so'rov bir xil hash bilan deyarli bir vaqtda
+        # kelsa — UNIQUE cheklovi ikkinchisini shu yerda ushlaydi.
+        await db.rollback()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bu login havolasi allaqachon ishlatilgan")
 
     telegram_id = int(data["id"])
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
@@ -52,7 +69,10 @@ async def telegram_login(data: dict[str, Any], db: AsyncSession = Depends(get_db
     return await _issue_token(user)
 
 
-@router.post("/dev-login", response_model=TokenOut)
+@router.post(
+    "/dev-login", response_model=TokenOut,
+    dependencies=[Depends(rate_limit("dev-login", 20, 3600))],
+)
 async def dev_login(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)) -> TokenOut:
     if not settings.debug:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topilmadi")
@@ -141,3 +161,23 @@ async def app_login_poll(
     row.used_at = datetime.utcnow()
     await db.commit()
     return AppLoginPollOut(status="confirmed", token=await _issue_token(user))
+
+
+@router.post("/login-security-cleanup", dependencies=[Depends(verify_bot_secret)])
+async def login_security_cleanup(db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler tick (Telegram login xavfsizlik arxitekturasi): replay-himoya
+    hash'lari va rate-limit urinish yozuvlarini tozalaydi — ikkalasi ham vaqt
+    o'tgach umuman kerak bo'lmaydi, jadval cheksiz o'sib ketmasin.
+
+    Hash'lar 25 soatdan (24 soatlik `auth_date` oynasidan xavfsizlik zahirasi
+    bilan) oshganda o'chiriladi — imzo o'zi shu vaqtda allaqachon yaroqsiz
+    bo'lib qoladi. Urinish yozuvlari 1 soatdan oshganda — eng uzun oyna
+    (dev-login, 3600s) shundan qisqa."""
+    hash_cutoff = datetime.utcnow() - timedelta(hours=25)
+    attempt_cutoff = datetime.utcnow() - timedelta(hours=1)
+
+    hash_result = await db.execute(delete(UsedTelegramLoginHash).where(UsedTelegramLoginHash.consumed_at < hash_cutoff))
+    attempt_result = await db.execute(delete(LoginAttempt).where(LoginAttempt.created_at < attempt_cutoff))
+    await db.commit()
+
+    return {"deleted_hashes": hash_result.rowcount, "deleted_attempts": attempt_result.rowcount}

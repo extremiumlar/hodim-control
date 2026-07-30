@@ -103,6 +103,10 @@ HOT_LEAD_POLL_MINUTES = 2
 # chegarani o'z vaqtida ilg'ash uchun soatlikdan (ai_watch) ancha tezroq.
 IDLE_WATCH_INTERVAL_MINUTES = 5
 
+# Telegram login xavfsizligi: replay-himoya hash'lari va rate-limit urinish
+# yozuvlarini tozalash chastotasi — vaqtinchalik jadvallar, shoshilinch emas.
+LOGIN_SECURITY_CLEANUP_INTERVAL_MINUTES = 60
+
 # misfire_grace_time: scheduler band/o'chiq bo'lgani sabab job o'z vaqtida ishlamasa,
 # butunlay o'tkazib yubormasdan grace davri ichida bitta marta ishga tushiradi.
 MISFIRE_GRACE_DEFAULT = 3600

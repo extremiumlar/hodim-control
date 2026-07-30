@@ -122,6 +122,16 @@ async def calculate_monthly_bonus() -> None:
         logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", body)
 
 
+# ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ─────────────────
+async def login_security_cleanup_tick() -> None:
+    """Replay-himoya hash'lari (UsedTelegramLoginHash) va rate-limit urinish
+    yozuvlarini (LoginAttempt) eskirganini tozalaydi — jadvallar cheksiz o'sib
+    ketmasin."""
+    body = await call_api("/auth/login-security-cleanup", json={}, timeout=30, label="Login xavfsizlik tozalash")
+    if body is not None:
+        logger.info("Login xavfsizlik tozalash: %s", body)
+
+
 # ─── Payroll (oylik ish haqi + jarima) — OYLIK_JARIMA_REJASI.md, Bosqich 6 ──────
 async def calculate_monthly_payroll() -> None:
     """Oylik ish haqi — keyingi oyning 1-kuni ertalab (9-bo'lim, savol 10, QAROR).

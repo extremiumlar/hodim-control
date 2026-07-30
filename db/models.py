@@ -201,6 +201,10 @@ class User(Base):
     # va uni boshqa odam bosib /start qilsa, o'sha avtomatik joriy egasi bo'lib qoladi.
     is_seat: Mapped[bool] = mapped_column(Boolean, default=False)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    # Taklif havolasi muddati (Telegram login xavfsizlik arxitekturasi, Layer 3) —
+    # `invite_token_ttl_days` (api/config.py) asosida beriladi. NULL — migratsiyadan
+    # oldingi eski qatorlar, muddatsiz qoladi (orqaga moslik).
+    invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     crm_external_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # Uysot'da tashriflar suhbatlardan (crm_external_id/employeeNum) boshqa ID tizimida
     # ("responsibleById", lid pipeline'idagi mas'ul xodim) hisoblanadi — shuning uchun
@@ -244,6 +248,35 @@ class AppLoginToken(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UsedTelegramLoginHash(Base):
+    """Telegram Login Widget'ning `hash`ini bir marta ishlatilgach eslab qoladi —
+    aynan shu hash bilan qayta so'rov (replay, masalan brauzer tarixidan eski
+    Login Widget URL'i qayta ochilsa) rad etiladi. Imzoning o'zi 24 soatlik
+    `auth_date` oynasida amal qiladi (`verify_telegram_login`) — shu oyna ichida
+    hash sizib chiqsa ham qayta ishlatib bo'lmasligi uchun kerak."""
+
+    __tablename__ = "used_telegram_login_hashes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    consumed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class LoginAttempt(Base):
+    """Parol so'ramaydigan kirish endpointlariga (Telegram imzosi yoki tasodifiy
+    token) DoS/resurs himoyasi uchun sliding-window hisoblagich — bu yerda
+    taxmin qilinadigan qisqa maxfiy narsa yo'q, shuning uchun BRUTE-FORCE
+    HIMOYASI EMAS, faqat ko'p sonli so'rovlar bazani/CPU'ni band qilishining
+    oldini oladi."""
+
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    endpoint: Mapped[str] = mapped_column(String(40), index=True)
+    identifier: Mapped[str] = mapped_column(String(80), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class TaskModel(Base):
