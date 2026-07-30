@@ -38,10 +38,9 @@ export default function Login() {
 
     try {
       const { login_token, deep_link } = await appLoginStart();
-      const opened = await Linking.canOpenURL(deep_link);
-      if (opened) {
+      try {
         await Linking.openURL(deep_link);
-      } else {
+      } catch {
         setPhase("error");
         setErrorText("Telegram ilovasi topilmadi. Telegram o'rnatilganini tekshiring.");
         return;
