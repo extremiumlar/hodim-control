@@ -5,8 +5,11 @@ import {
   captureLiveFace,
   captureForRegister,
   LiveResult,
+  LivenessProgress,
   RegisterResult,
   MIN_FACE_SIZE,
+  MIN_VERIFY_FACE_SIZE,
+  CHALLENGE_MAX_MS,
 } from "../lib/face";
 
 type Mode = "register" | "verify";
@@ -49,6 +52,8 @@ export default function FaceCapture({
   const [error, setError] = useState("");
   const [lastResult, setLastResult] = useState<any>(null);
   const [live, setLive] = useState<LiveStatus>({ detected: false, size: 0, score: 0 });
+  // Tiriklik sinovi (ko'z pirpiratish / og'iz ochish) real-vaqtli holati
+  const [challenge, setChallenge] = useState<LivenessProgress | null>(null);
   // 4.2-band: model CDN'dan (uchinchi tomon, justadudewhohacks.github.io)
   // yuklanadi — u ishlamay qolsa ilgari ekran abadiy "yuklanmoqda..." bo'lib
   // qolar, qayta urinish uchun butun sahifani yangilash kerak edi.
@@ -164,24 +169,34 @@ export default function FaceCapture({
         setLastResult(r);
         onResult(r);
       } else {
-        const r = await captureLiveFace(videoRef.current, 5);
+        setChallenge(null);
+        const r = await captureLiveFace(videoRef.current, {
+          onProgress: (p) => {
+            if (!cancelledRef.current) setChallenge(p);
+          },
+          shouldCancel: () => cancelledRef.current,
+        });
         if (cancelledRef.current) return; // bekor qilindi — natija e'tiborga olinmaydi
         if (!r) {
-          setError("Yuz aniqlanmadi. Iltimos kameraga to'g'ri tuting.");
+          setError("Yuz aniqlanmadi. Iltimos kameraga to'g'ri tuting va yorug'roq joyda turing.");
           setCapturing(false);
           return;
         }
         setLastResult(r);
         if (r.liveness < livenessThreshold) {
           // Diagnostika raqamlari xabarga ATAYLAB kiritilgan: chegara jonli
-          // qurilmalarda noto'g'ri ishlab qolsa (2026-07-27 da shunday bo'ldi —
-          // real xodimlar o'ta olmadi), xodim aynan shu sonlarni aytib bera
-          // oladi va sozlamani taxminga emas, faktga qarab tuzatish mumkin.
+          // qurilmalarda noto'g'ri ishlab qolsa, xodim aynan shu sonlarni
+          // aytib bera oladi va sozlamani taxminga emas, faktga qarab
+          // tuzatish mumkin (2026-07-27/30 da ikki marta shu kerak bo'ldi).
           setError(
-            `Tiriklik tekshiruvi muvaffaqiyatsiz (${r.liveness.toFixed(2)} < ${livenessThreshold}).\n` +
-              `Qaytadan urinib ko'ring — yorug'roq joyda, boshingizni biroz burang.\n` +
-              `Tafsilot: harakat ${(r.movementRatio * 100).toFixed(2)}% ` +
-              `(${r.movement.toFixed(1)}px / yuz ${r.faceSize.toFixed(0)}px), freym ${r.frames}.`
+            (r.unstablePose
+              ? `Poza juda beqaror — telefonni barqaror ushlab, kameraga to'g'ri qarab turing.\n`
+              : `Tiriklik tasdiqlanmadi — ko'zingizni pirpiratmadingiz yoki og'zingizni ochmadingiz.\n`) +
+              `Qayta urinib ko'ring: kameraga qarab BIR MARTA ko'zingizni pirpiratib qo'ying ` +
+              `(yoki og'zingizni ochib yoping).\n` +
+              `Tafsilot: ko'z ${(r.earDip * 100).toFixed(0)}% (pirpiratish uchun 60% dan past kerak), ` +
+              `og'iz ${r.mouthDelta.toFixed(2)} (0.35 kerak), freym ${r.frames}, ` +
+              `yuz ${r.faceSize.toFixed(0)}px.`
           );
           setCapturing(false);
           return;
@@ -199,15 +214,20 @@ export default function FaceCapture({
   const defaultLabel = mode === "register" ? "Yuzimni ro'yxatdan o'tkazish" : "Yuzni tasdiqlash";
   const defaultHint =
     mode === "register"
-      ? "8 freym ushlanadi va o'rtachalanadi. Kameraga 40-60 sm masofada turing."
-      : "Yuzingizni kameraga to'g'rilang va biroz harakat qiling.";
+      ? "8 freym ushlanadi, eng aniqi tanlanadi. Kameraga 40-60 sm masofada turing."
+      : "Tugmani bosgach kameraga qarab BIR MARTA ko'zingizni pirpiratib qo'ying — tirikligingiz shu orqali tasdiqlanadi (rasm buni qila olmaydi).";
 
-  const sizeGood = live.size >= MIN_FACE_SIZE;
+  // Tasdiqlash (check-in) uchun yuz KATTAROQ bo'lishi kerak — tiriklik
+  // sinovida landmark shovqinining nisbiy zarari yuz o'lchamiga bog'liq
+  // (`MIN_VERIFY_FACE_SIZE` izohiga qarang). Ro'yxatdan o'tishda esa
+  // eski chegara (yuz bor/yo'q) yetarli — u yerda mimika o'lchanmaydi.
+  const requiredSize = mode === "verify" ? MIN_VERIFY_FACE_SIZE : MIN_FACE_SIZE;
+  const sizeGood = live.size >= requiredSize;
   const statusColor = !live.detected ? "bg-rose-500" : !sizeGood ? "bg-amber-500" : "bg-emerald-500";
   const statusText = !live.detected
     ? "❌ Yuz aniqlanmadi"
     : !sizeGood
-      ? `⚠️ Yuz juda kichik (${live.size.toFixed(0)}px) — yaqinroq turing`
+      ? `⚠️ Yaqinroq turing (${live.size.toFixed(0)}px → ${requiredSize}px kerak)`
       : `✅ Yuz aniq (${live.size.toFixed(0)}px, ${(live.score * 100).toFixed(0)}%)`;
 
   // Telefonda ishlatiladi — tugmalar kamida 48px balandlikda
@@ -250,11 +270,53 @@ export default function FaceCapture({
           </div>
         )}
         {capturing && modelsReady && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm">
-            <div className="text-center">
-              <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-              Yuz tahlil qilinmoqda...
-            </div>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-white p-4">
+            {mode === "verify" && challenge ? (
+              // Tiriklik sinovi — xodim NIMA qilishi kerakligini va tizim uni
+              // ko'rayotganini real vaqtda ko'rsatadi. Ilgari faqat "tahlil
+              // qilinmoqda..." yozilardi: xodim nima qilish kerakligini
+              // bilmasdi va sinov jimgina muvaffaqiyatsiz tugardi.
+              <div className="w-full max-w-[260px] text-center">
+                {challenge.blinkDetected || challenge.mouthDetected ? (
+                  <div className="text-emerald-300">
+                    <div className="text-3xl">✅</div>
+                    <div className="mt-1 text-base font-semibold">Tiriklik tasdiqlandi</div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-3xl animate-pulse">👁</div>
+                    <div className="mt-1 text-base font-semibold">
+                      Ko'zingizni pirpiratib qo'ying
+                    </div>
+                    <div className="mt-0.5 text-xs text-white/70">
+                      (yoki og'zingizni ochib yoping)
+                    </div>
+                    {!challenge.faceDetected ? (
+                      <div className="mt-2 text-xs text-amber-300">
+                        Yuz ko'rinmayapti — kameraga to'g'ri qarang
+                      </div>
+                    ) : challenge.unstablePose ? (
+                      <div className="mt-2 text-xs text-amber-300">
+                        Telefonni barqaror ushlang — bir joyda turing
+                      </div>
+                    ) : null}
+                    <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/20">
+                      <div
+                        className="h-full rounded-full bg-white/80 transition-all"
+                        style={{
+                          width: `${Math.min(100, (challenge.elapsedMs / CHALLENGE_MAX_MS) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="text-center text-sm">
+                <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                Yuz tahlil qilinmoqda...
+              </div>
+            )}
           </div>
         )}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -282,7 +344,7 @@ export default function FaceCapture({
       <p className="text-xs text-slate-500 text-center whitespace-pre-line">{hint || defaultHint}</p>
 
       {lastResult && mode === "verify" && (
-        <div className="grid grid-cols-2 gap-2 text-xs">
+        <div className="grid grid-cols-3 gap-2 text-xs">
           <div className="bg-slate-50 rounded-lg p-2 text-center">
             <div className="text-slate-500">Tiriklik</div>
             <div
@@ -291,6 +353,12 @@ export default function FaceCapture({
               }`}
             >
               {(lastResult.liveness * 100).toFixed(0)}%
+            </div>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-2 text-center">
+            <div className="text-slate-500">Mimika</div>
+            <div className="text-lg font-bold text-slate-700">
+              {lastResult.blinkDetected ? "👁" : lastResult.mouthDetected ? "👄" : "—"}
             </div>
           </div>
           <div className="bg-slate-50 rounded-lg p-2 text-center">
