@@ -103,9 +103,21 @@ export const MIN_VERIFY_FACE_SIZE = 160;
  * shakli, ko'zoynak, yoritish odamlar orasida juda farq qiladi. */
 export const MIN_CHALLENGE_FRAMES = 6;
 
-/** Tiriklik sinovi uchun maksimal vaqt (ms). Real odam buyruqni o'qib
- * 1-3 soniyada o'tadi; 12s — sekin/tushunmagan holat uchun zaxira. */
-export const CHALLENGE_MAX_MS = 12000;
+/** Tiriklik sinovi uchun maksimal vaqt (ms).
+ *
+ * Xodimga "pirpirating" deb BUYURILMAYDI — shunchaki "kameraga qarab
+ * turing" deyiladi va TABIIY beixtiyor pirpiratish kutiladi. Odam
+ * o'rtacha 15-20 marta/daqiqa (har 3-4s) pirpiratadi, LEKIN ekranga
+ * diqqat bilan tikilganda bu tezlik pasayishi mumkin (ba'zan har 10-15s
+ * gacha). Shu sabab 12s dan KENGROQ — 18s, deyarli har doim kamida bitta
+ * tabiiy pirpiratishni ushlab qoladi. UI `NUDGE_AFTER_MS`dan keyin
+ * yumshoq eslatma ko'rsatadi (fallback, majburiy emas). */
+export const CHALLENGE_MAX_MS = 18000;
+
+/** Shuncha vaqt (ms) tabiiy pirpiratish aniqlanmasa, UI yumshoq eslatma
+ * ko'rsatadi ("ko'zingizni pirpiratib qo'ying") — passiv kutishning
+ * fallback'i, boshlang'ich ko'rsatma EMAS. */
+export const NUDGE_AFTER_MS = 7000;
 
 let loadingPromise: Promise<void> | null = null;
 

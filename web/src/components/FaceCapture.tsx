@@ -10,6 +10,7 @@ import {
   MIN_FACE_SIZE,
   MIN_VERIFY_FACE_SIZE,
   CHALLENGE_MAX_MS,
+  NUDGE_AFTER_MS,
 } from "../lib/face";
 
 type Mode = "register" | "verify";
@@ -191,9 +192,9 @@ export default function FaceCapture({
           setError(
             (r.unstablePose
               ? `Poza juda beqaror — telefonni barqaror ushlab, kameraga to'g'ri qarab turing.\n`
-              : `Tiriklik tasdiqlanmadi — ko'zingizni pirpiratmadingiz yoki og'zingizni ochmadingiz.\n`) +
-              `Qayta urinib ko'ring: kameraga qarab BIR MARTA ko'zingizni pirpiratib qo'ying ` +
-              `(yoki og'zingizni ochib yoping).\n` +
+              : `Tiriklik tasdiqlanmadi — shu vaqt ichida pirpiratganingiz aniqlanmadi.\n`) +
+              `Qayta urinib ko'ring: kameraga tik qarab bir necha soniya turing — ` +
+              `o'tmasa, ko'zingizni ataylab bir marta pirpiratib qo'ying (yoki og'zingizni ochib yoping).\n` +
               `Tafsilot: ko'z ${(r.earDip * 100).toFixed(0)}% (pirpiratish uchun 60% dan past kerak), ` +
               `og'iz ${r.mouthDelta.toFixed(2)} (0.35 kerak), freym ${r.frames}, ` +
               `yuz ${r.faceSize.toFixed(0)}px.`
@@ -215,7 +216,7 @@ export default function FaceCapture({
   const defaultHint =
     mode === "register"
       ? "8 freym ushlanadi, eng aniqi tanlanadi. Kameraga 40-60 sm masofada turing."
-      : "Tugmani bosgach kameraga qarab BIR MARTA ko'zingizni pirpiratib qo'ying — tirikligingiz shu orqali tasdiqlanadi (rasm buni qila olmaydi).";
+      : "Tugmani bosgach kameraga tik qarab, bir necha soniya shunchaki turing — tirikligingiz o'zingiz beixtiyor pirpiratganingizda avtomatik tasdiqlanadi (rasm buni qila olmaydi).";
 
   // Tasdiqlash (check-in) uchun yuz KATTAROQ bo'lishi kerak — tiriklik
   // sinovida landmark shovqinining nisbiy zarari yuz o'lchamiga bog'liq
@@ -284,13 +285,19 @@ export default function FaceCapture({
                   </div>
                 ) : (
                   <>
-                    <div className="text-3xl animate-pulse">👁</div>
-                    <div className="mt-1 text-base font-semibold">
-                      Ko'zingizni pirpiratib qo'ying
-                    </div>
-                    <div className="mt-0.5 text-xs text-white/70">
-                      (yoki og'zingizni ochib yoping)
-                    </div>
+                    {/* Passiv-birinchi: xodimga "pirpirating" deb BUYURILMAYDI —
+                        u kameraga qarab tursa, o'zi beixtiyor pirpiratadi va
+                        sinov shu zahoti (avtomatik) tasdiqlanadi. Faqat kutish
+                        NUDGE_AFTER_MS dan uzoqqa cho'zilsa (masalan diqqat
+                        bilan tikilib kam pirpiratayotgan bo'lsa), yumshoq
+                        eslatma ko'rsatiladi — fallback, boshlang'ich talab EMAS. */}
+                    <div className="text-3xl animate-pulse">📷</div>
+                    <div className="mt-1 text-base font-semibold">Kameraga qarab turing</div>
+                    {challenge.elapsedMs >= NUDGE_AFTER_MS && (
+                      <div className="mt-1 text-xs text-white/80">
+                        Ko'zingizni pirpiratib qo'ysangiz tezroq o'tadi
+                      </div>
+                    )}
                     {!challenge.faceDetected ? (
                       <div className="mt-2 text-xs text-amber-300">
                         Yuz ko'rinmayapti — kameraga to'g'ri qarang
