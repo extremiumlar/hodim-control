@@ -247,7 +247,7 @@ qamrovli (rop/hr — o'z jamoasi, boss/dasturchi — hammasi):
 |---|---|---|
 | 0 | ✅ Arxitektura qarorlari — auth (deep-link+token) va face-matching (server-side) tasdiqlandi | Bajarildi 2026-07-27 |
 | 1 | ✅ Expo loyiha skeleton + auth (deep-link login) + API klient — jonli telefonda (Samsung) APK o'rnatildi va login ishladi | Bajarildi 2026-07-30 |
-| 2 | 🔄 Face ID+GPS check-in/out — **WebView orqali** (4.2-band C qarori). Kod tayyor: `app/checkin.tsx`, `/embed/check-in` marshruti, kamera/GPS ruxsatlari, modellar o'z serverimizda. Deploy va jonli sinov qoldi | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
+| 2 | 🔄 Face ID+GPS check-in/out — **WebView orqali** (4.2-band C qarori). Kod tayyor va DEPLOY QILINGAN (6732038, 2026-07-30): `/embed/check-in` va `/models/*` jonli saytda tekshirildi (modellar bayt-ma-bayt butun). APK v1.1.0 tayyor — jonli telefon sinovi qoldi | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
 | 3 | Ish jadvali, oylik, vazifalar, bilim bazasi (faqat o'qish) | Xodim MVP tayyor — ichki beta (TestFlight/Play internal) |
 | 4 | Push-bildirishnoma infratuzilmasi | Digest/hot-lead push orqali ham keladi |
 | 5 | Rahbar ekranlari (dashboard, tasdiqlashlar) | Rahbar ham ilovadan asosiy ishni qila oladi |
