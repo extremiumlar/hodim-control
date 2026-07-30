@@ -370,6 +370,19 @@ export interface DailyResultToday {
   metrics: MetricProgressRow[];
 }
 
+/** Xodimning shaxsiy statistikasi (api/schemas.py: MyStatsOut).
+ *  `week_totals`/`month_totals` kalitlari — metrika kalitlari
+ *  (suhbat/tashrif/oddiy_video/dumaloq_video), lavozimga qarab. */
+export interface MyStats {
+  period: string; // "YYYY-MM"
+  today: MetricProgressRow[];
+  week_totals: Record<string, number>;
+  month_totals: Record<string, number>;
+  tasks_done: number;
+  tasks_total: number;
+  excused_days: number;
+}
+
 /** Soatlik reja — bitta ko'rsatkich holati (api/schemas.py:
  *  HourlyMetricStatus). `delta` = actual - cumulative_target: + oldinda,
  *  - orqada. `tracked=false` bo'lsa actual/delta ma'nosiz. */

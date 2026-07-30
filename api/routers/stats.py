@@ -114,14 +114,12 @@ async def today_metric_rows(db: AsyncSession, user: User) -> list[MetricProgress
     return rows
 
 
-@router.get("/my/{telegram_id}", response_model=MyStatsOut, dependencies=[Depends(verify_bot_secret)])
-async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MyStatsOut:
-    """Har bir xodim botdagi "📈 Statistikam" tugmasi orqali o'z statistikasini oladi:
-    bugungi holat, joriy oy jami, vazifalar bajarilishi va sababli kunlar."""
-    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+async def _my_stats_for_user(db: AsyncSession, user: User) -> MyStatsOut:
+    """Xodimning shaxsiy statistikasi: bugungi holat, hafta/oy jami, vazifalar
+    bajarilishi va sababli kunlar.
 
+    Bot ham, web ham shu yordamchini chaqiradi (`_late_status_for_user` bilan
+    bir xil naqsh) — mantiq ikki joyda takrorlanmasligi uchun."""
     today = today_local()
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())  # shu hafta dushanbasi
@@ -196,6 +194,26 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
         tasks_total=tasks_total,
         excused_days=excused_days,
     )
+
+
+@router.get("/my/{telegram_id}", response_model=MyStatsOut, dependencies=[Depends(verify_bot_secret)])
+async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MyStatsOut:
+    """Bot uchun ("📈 Statistikam") — shaxsni `telegram_id`dan yechadi, mantiq
+    yordamchida."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _my_stats_for_user(db, user)
+
+
+@router.get("/me", response_model=MyStatsOut)
+async def my_stats_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> MyStatsOut:
+    """Web (JWT) versiyasi — xodim kabineti uchun. Shaxs TOKENDAN olinadi
+    (path'da user_id yo'q — xodim boshqa birovning statistikasini so'ray
+    olmasligi uchun)."""
+    return await _my_stats_for_user(db, user)
 
 
 # --- Lidlar statistikasi (CRM bosqichlar kesimida, kunlik snapshot) ---

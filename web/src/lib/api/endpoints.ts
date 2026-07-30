@@ -41,6 +41,7 @@ import type {
   DailyResultToday,
   HourlyPlan,
   MyPayslip,
+  MyStats,
   WorkWeek,
   WorkWeekly,
 } from "./types";
@@ -307,6 +308,7 @@ export const api = {
   myTodayResult: () => apiFetch<DailyResultToday>("/daily-results/me/today"),
   myTasks: () => apiFetch<Task[]>("/tasks/me"),
   myHourlyPlan: () => apiFetch<HourlyPlan>("/hourly-plan/me"),
+  myStats: () => apiFetch<MyStats>("/stats/me"),
   // Tanasi YO'Q: shaxs tokendan olinadi, ya'ni mijoz boshqa birovning
   // vazifasini yopa olmaydi (backend `assigned_to`ni tekshiradi).
   completeMyTask: (taskId: number) =>
