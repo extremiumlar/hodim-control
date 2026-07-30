@@ -327,8 +327,14 @@ export default function FaceCapture({
           </div>
         )}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          {/* Kontur o'lchami videoga NISBATAN. Ilgari qat'iy `w-48 h-60`
+              (192x240 px) edi, video esa `aspect-[4/3] w-full` — kichik
+              ekranda kontur videodan chiqib ketardi: 320px ekranda 54px,
+              360px da 24px (360px eng keng tarqalgan Android o'lchami).
+              85% balandlik + aspect-[4/5] asl 192:240=0.8 nisbatini saqlaydi
+              va har qanday ekranda video ichida qoladi. */}
           <div
-            className={`w-48 h-60 border-4 rounded-full transition-colors ${
+            className={`h-[85%] aspect-[4/5] border-4 rounded-full transition-colors ${
               !modelsReady
                 ? "border-white/30"
                 : !live.detected

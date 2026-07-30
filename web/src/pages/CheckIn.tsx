@@ -90,8 +90,10 @@ function SuccessScreen({
   onClose: () => void;
 }) {
   const isIn = action === "check-in";
+  // overflow-y-auto — landscape'da (masalan 640x360) ikonka+sarlavha+3 qator+
+  // tugma 312px ga sig'masligi mumkin; «Yopish» tugmasiga yetish shart.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-emerald-600 p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-600 p-6">
       <div className="w-full max-w-sm text-center text-white">
         <CheckCircle2 className="mx-auto mb-4 h-20 w-20" />
         <h2 className="text-2xl font-bold">{isIn ? "Keldingiz!" : "Ketdingiz!"}</h2>
@@ -372,7 +374,11 @@ export default function CheckIn() {
 
       {showFace && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl">
+          {/* max-h + overflow: past ekranda (yoki landscape'da) video + matn +
+              tugma modaldan chiqib ketardi va scroll qilib bo'lmasdi — xodim
+              «Keldim» tugmasiga yeta olmasdi. 100dvh (100vh emas): mobil
+              brauzerda manzil satri paydo bo'lganda vh o'zgarmay qoladi. */}
+          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold">
                 Yuz tasdiqlash ({showFace === "check-in" ? "Keldim" : "Ketdim"})
