@@ -27,6 +27,9 @@ import {
 } from "lucide-react";
 import { useAuth } from "./lib/auth";
 import { cn } from "./lib/utils";
+import { BRAND_NAME } from "./lib/brand";
+import { sectionTitle, splitSections } from "./lib/employeeNav";
+import EmployeeTabBar from "@/components/EmployeeTabBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -119,7 +122,7 @@ function pageTitle(pathname: string): string {
     .filter((i) => i.to !== "/")
     .sort((a, b) => b.to.length - a.to.length)
     .find((i) => pathname === i.to || pathname.startsWith(i.to + "/"));
-  return found?.label ?? "Xodimlar KPI/Bonus";
+  return found?.label ?? BRAND_NAME;
 }
 
 function SidebarLink({
@@ -251,19 +254,27 @@ export default function Layout() {
     localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");
   }, [collapsed]);
 
-  // employee — sidebar shart emas: faqat oddiy header (u faqat check-in ko'radi)
+  // ── Xodim qobig'i: pastdagi tab-bar ──
+  // Ilgari bu yerda navigatsiya UMUMAN yo'q edi (faqat sarlavha + "Chiqish"),
+  // chunki xodim bitta sahifani — /check-in — ko'rardi. Endi kabinet bor,
+  // shuning uchun tab-bar kerak. Sidebar EMAS: telefonni bir qo'lda ushlab
+  // turganda barmoq ekran pastiga yetadi, yuqorisiga yetmaydi.
   if (!isManager) {
+    const { tabs, more } = splitSections(user);
+    const title = sectionTitle(location.pathname) ?? BRAND_NAME;
     return (
-      <div className="min-h-screen">
-        <header className="border-b border-slate-200 bg-white">
+      <div className="min-h-screen bg-slate-50">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
           <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
-            <span className="text-lg font-semibold">Xodimlar KPI/Bonus</span>
+            <span className="truncate text-lg font-semibold">{title}</span>
             <UserMenu />
           </div>
         </header>
-        <main className="mx-auto max-w-2xl px-4 py-6">
+        {/* pb-24 — kontent tab-bar ostiga kirib ketmasligi uchun */}
+        <main className="mx-auto max-w-2xl px-4 py-5 pb-24">
           <Outlet />
         </main>
+        <EmployeeTabBar tabs={tabs} hasMore={more.length > 0} />
       </div>
     );
   }
@@ -284,7 +295,7 @@ export default function Layout() {
               collapsed && "justify-center px-2"
             )}
           >
-            {!collapsed && <span className="truncate font-semibold">Xodimlar KPI/Bonus</span>}
+            {!collapsed && <span className="truncate font-semibold">{BRAND_NAME}</span>}
             <Button
               variant="ghost"
               size="icon"
@@ -315,7 +326,7 @@ export default function Layout() {
               </SheetTrigger>
               <SheetContent side="left" className="w-64 p-0">
                 <SheetTitle className="flex h-14 items-center border-b border-slate-200 px-4 text-base font-semibold">
-                  Xodimlar KPI/Bonus
+                  {BRAND_NAME}
                 </SheetTitle>
                 <div className="h-[calc(100vh-3.5rem)]">
                   <SidebarNav

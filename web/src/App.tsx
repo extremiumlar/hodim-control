@@ -26,6 +26,13 @@ const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
 const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 
+// Xodim kabineti (Bosqich 1 skeletoni). Bo'limlar marshrutga birdaniga
+// qo'shiladi, mazmuni Bosqich 4 da bittalab to'ldiriladi — o'shanda shu
+// yerdagi <MePlaceholder /> haqiqiy sahifaga almashtiriladi.
+// Ko'rinish shartlari lib/employeeNav.ts da (bot menyusi bilan bir xil).
+const MePlaceholder = lazy(() => import("./pages/me/Placeholder"));
+const MeMore = lazy(() => import("./pages/me/More"));
+
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
 // maosh sozlamalari/hisob-kitobi faqat HR/Boshliq/Dasturchi qo'lida.
@@ -112,6 +119,23 @@ export default function App() {
         >
           <Route index element={<HomeIndex />} />
           <Route path="check-in" element={<CheckIn />} />
+
+          {/* ── Xodim kabineti ──
+              ManagerRoute'ga O'RALMAYDI: bu sahifalar xodim uchun. Rahbar ham
+              kira oladi (u ham o'z jadvalini/oyligini ko'radi — bot ham
+              shunday: BTN_SCHEDULE va BTN_PAYROLL rahbarlarda ham bor).
+              Har bir endpoint tokendan `current_user` oladi, ya'ni kim
+              kirsa o'zining ma'lumotini ko'radi. */}
+          <Route path="me/more" element={<MeMore />} />
+          <Route path="me/schedule" element={<MePlaceholder />} />
+          <Route path="me/payroll" element={<MePlaceholder />} />
+          <Route path="me/stats" element={<MePlaceholder />} />
+          <Route path="me/tasks" element={<MePlaceholder />} />
+          <Route path="me/norm" element={<MePlaceholder />} />
+          <Route path="me/hourly-plan" element={<MePlaceholder />} />
+          <Route path="me/kpi" element={<MePlaceholder />} />
+          <Route path="me/lead-stats" element={<MePlaceholder />} />
+          <Route path="me/excused" element={<MePlaceholder />} />
           <Route path="attendance" element={<ManagerRoute><Attendance /></ManagerRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

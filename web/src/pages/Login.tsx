@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { BRAND_NAME } from "@/lib/brand";
 
 declare global {
   interface Window {
@@ -63,7 +64,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-xl">Xodimlar KPI/Bonus tizimi</CardTitle>
+          <CardTitle className="text-xl">{BRAND_NAME}</CardTitle>
         </CardHeader>
         <CardContent className="text-center">
           {BOT_USERNAME ? (
