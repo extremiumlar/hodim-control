@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:nossl": "set VITE_NO_SSL=1&& vite --port 5174",
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },

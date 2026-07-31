@@ -248,10 +248,22 @@ qamrovli (rop/hr — o'z jamoasi, boss/dasturchi — hammasi):
 | 0 | ✅ Arxitektura qarorlari — auth (deep-link+token) va face-matching (server-side) tasdiqlandi | Bajarildi 2026-07-27 |
 | 1 | ✅ Expo loyiha skeleton + auth (deep-link login) + API klient — jonli telefonda (Samsung) APK o'rnatildi va login ishladi | Bajarildi 2026-07-30 |
 | 2 | 🔄 Face ID+GPS check-in/out — **WebView orqali** (4.2-band C qarori). Kod tayyor va DEPLOY QILINGAN (6732038, 2026-07-30): `/embed/check-in` va `/models/*` jonli saytda tekshirildi (modellar bayt-ma-bayt butun). APK v1.1.0 tayyor — jonli telefon sinovi qoldi | Jonli xodim bilan sinov — check-in muvaffaqiyatli |
-| 3 | Ish jadvali, oylik, vazifalar, bilim bazasi (faqat o'qish) | Xodim MVP tayyor — ichki beta (TestFlight/Play internal) |
+| 3 | Ish jadvali, oylik, vazifalar va boshqa 6 funksiya | Xodim MVP tayyor — ichki beta (TestFlight/Play internal) |
 | 4 | Push-bildirishnoma infratuzilmasi | Digest/hot-lead push orqali ham keladi |
 | 5 | Rahbar ekranlari (dashboard, tasdiqlashlar) | Rahbar ham ilovadan asosiy ishni qila oladi |
 | 6 | Store'ga chiqarish (Google Play + App Store) | Public/ichki tarqatish |
+
+**3-bosqich holati (2026-07-31):** web tomoni (`web/src`) tayyor va tekshirilgan
+— [XODIM_KABINETI_PROMPT.md](XODIM_KABINETI_PROMPT.md) Bosqich 0-7 to'liq
+BAJARILDI: pastdagi tab-bar, 9 funksiyaning 8 tasi (Sotuv AI'siz) `/me/*`
+sahifalarida ishlaydi, bot bilan raqamlar bir xil, 320-412 px'da toza. Bu
+brauzerda (PWA) darhol ishlaydi. **Lekin native Expo APK'da (`mobile/`)
+`home.tsx`dagi taylar hali ulanmagan** — faqat `attendance` tayli
+`/checkin` WebView'ga yo'naltiradi (Bosqich 2 ishi), qolgan 6 tasi
+(`schedule`, `tasks`, `norm`, `payroll`, `kpi`, `knowledge`) hamon
+`route`siz, "Tez orada" ko'rsatadi ([mobile/app/home.tsx:35-41](mobile/app/home.tsx:35)).
+Ularni ulash — check-in bilan bir xil naqsh: har biriga mos `/me/*`
+WebView marshruti ochish. Alohida ish sifatida qoladi.
 
 ## 8. Ochiq savollar (boshlashdan oldin hal qilinishi kerak)
 

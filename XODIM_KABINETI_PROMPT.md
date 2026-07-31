@@ -341,30 +341,51 @@ Quyidagi asl matn tarix uchun qoldirildi.
 
 ---
 
-### Bosqich 6 — Rahbar uchun mobil
+### Bosqich 6 — Rahbar uchun mobil ✅ BAJARILDI (2026-07-30, commit `0f51940`)
 
 [DataTable.tsx:117](web/src/components/DataTable.tsx:117) — faqat
-`overflow-x-auto` + `whitespace-nowrap`. Telefonda doimiy gorizontal
-scroll. Mobil uchun karta ko'rinishi kerak (yoki ustunlarni
-muhimlik bo'yicha yashirish).
+`overflow-x-auto` + `whitespace-nowrap` edi. Endi `md`dan kichik ekranda
+har bir qator alohida KARTA ("ustun nomi — qiymat" juftliklari), qiymatlar
+aynan `cell` render'idan keladi (badge/tugma/select — hammasi ishlaydi).
+Bo'sh holat va skelet bitta joyda e'lon qilinadi, ikkala ko'rinishda ham
+ishlatiladi. Yo'l-yo'lakay: `Users.tsx` grid bolalariga `min-w-0`
+(DataTable'ga aloqasi yo'q, oldindan mavjud nuqson — o'lchash paytida
+chiqdi).
 
-`DataTable` umumiy komponent — o'zgartirish **barcha** rahbar sahifalariga
-tegadi, shuning uchun eng ko'p ishlatiladigan 2-3 sahifada tekshiring
-(Davomat, Xodimlar, Oylik).
+Tekshirildi (360 px, dasturchi roli): `/attendance` 22 karta overflow 0,
+`/users` 8 karta overflow 59→0, `/payroll` 7 karta overflow 0. Desktop
+(1280 px): jadval joyida, mobil blok `display:none`, sidebar o'zgarmagan.
 
 **Chiqish mezoni:** 360 px da asosiy rahbar sahifalari gorizontal
-scrollsiz o'qiladi; desktop ko'rinishi buzilmagan.
+scrollsiz o'qiladi; desktop ko'rinishi buzilmagan. ✅
 
 ---
 
-### Bosqich 7 — Yakuniy tekshiruv
+### Bosqich 7 — Yakuniy tekshiruv ✅ BAJARILDI (2026-07-31)
 
-- Barcha rollar bilan o'tib ko'rish: employee, rop, hr, boss, dasturchi
-- 320 / 360 / 412 px + desktop
-- Bot to'liq ishlayapti (9 funksiya)
-- `npx tsc -b` va `npx tsc --noEmit` toza
-- `MOBIL_ILOVA_REJASI.md` yangilangan
-- Deploy — **faqat foydalanuvchi so'raganda**, va `webdist` yangilangan holda
+- ✅ Barcha rollar bilan o'tib ko'rish: employee, rop, hr, boss, dasturchi
+  — har biriga JWT yasab (`create_access_token`), `localStorage`ga qo'yib
+  brauzerda tekshirildi (SSL'siz yordamchi instans, 5174-port —
+  `web/package.json`da `dev:nossl`, `.claude/launch.json`da `web-nossl`).
+- ✅ 320 / 360 / 412 px + desktop (1280 px) — barcha rolларда
+  `scrollWidth - clientWidth === 0`, konsolda xato yo'q.
+- ✅ Bot to'liq ishlayapti (9 funksiya) — `bot/` papkasi Bosqich 1-6
+  davomida BUTUNLAY tegilmagan (`git diff --stat 2b5afd2~1 0f51940 --
+  bot/` bo'sh). Xodim (Firuzabonu, `telegram_id=1286546988`) uchun bot
+  (`X-Bot-Secret`) va web (`Depends(get_current_user)`) javoblari
+  yonma-yon solishtirildi — ish jadvali va bugungi normam bayt-ma-bayt
+  bir xil chiqdi.
+- ✅ `npx tsc -b` (web) va `npx tsc --noEmit` (mobile) — ikkalasi ham toza.
+- ✅ `MOBIL_ILOVA_REJASI.md` yangilangan.
+- Deploy — **qilinmadi**, foydalanuvchi so'ramagan. Bosqich 5/6 commitlari
+  hozircha faqat lokalda, `origin/master`ga push qilinmagan.
+
+Sinovda ishlatilgan foydalanuvchi: xodim Firuzabonu (`id=8`,
+`telegram_id=1286546988`) — barcha 9 funksiyaning sahifasi (jadval,
+normam, rejam, oyligim, KPI'm, lidlar, vazifalarim, statistikam, sababli
+kun formasi) 320-412 px'da ochilib tekshirildi; yozish amali (sababli
+kun so'rovi) real Telegram xabar yubormaslik uchun submit qilinmadi —
+forma ko'rinishi va validatsiyasi tekshirilgani yetarli deb topildi.
 
 ---
 
