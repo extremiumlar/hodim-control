@@ -1,4 +1,4 @@
-"""Push bildirishnomalar — Expo Push API orqali.
+"""Push bildirishnomalar — Firebase Cloud Messaging (HTTP v1) orqali.
 
 QAROR (2026-07-31, foydalanuvchi bilan kelishilgan):
 
@@ -23,16 +23,20 @@ QAROR (2026-07-31, foydalanuvchi bilan kelishilgan):
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.timeutil import TASHKENT_TZ
 from db.models import PushSetting, PushToken, User
 
-EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
+FCM_SEND_URL = "https://fcm.googleapis.com/v1/projects/{project}/messages:send"
+FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Ilova "faol" hisoblanadigan muddat. 7 kun — dam olish kunlari va bir-ikki
 # kunlik ta'til push'ni jimgina o'chirib qo'ymasligi uchun yetarlicha uzun.
@@ -126,18 +130,21 @@ async def active_tokens(db: AsyncSession, user_id: int) -> list[PushToken]:
     )
 
 
-async def should_skip_telegram(db: AsyncSession, user: User, category: str) -> bool:
+async def should_skip_telegram(db: AsyncSession, user: User, category: str, sent_push: int) -> bool:
     """Telegram xabarini o'tkazib yuborish kerakmi.
 
-    Faqat SHAXSIY toifalar uchun va faqat xodimda yaqinda ishlatilgan qurilma
-    bo'lsa. Bu yerda ataylab `effective_categories` TEKSHIRILMAYDI: xodim
-    push toifasini o'chirib qo'ygan bo'lsa, Telegram yagona kanal bo'lib
-    qolishi kerak — aks holda xabar umuman yetib bormaydi.
+    ENG MUHIM shart — `sent_push > 0`, ya'ni push HAQIQATAN yuborilgan
+    bo'lishi. Ilgari bu yerda faqat "qurilma bor va toifa yoqiq" tekshirilardi
+    va shunda FCM sozlanmagan (yoki kaliti buzilgan) holatda push ham
+    ketmasdi, Telegram ham — xabar BUTUNLAY yo'qolardi.
+
+    Qolgan shartlar: faqat SHAXSIY toifalar (jamoaviy signallar guruh
+    chatida tarix sifatida qolishi kerak) va qurilma yaqinda ishlatilgan
+    bo'lishi (eskirgan token FCM'da hali "ok" qaytarishi mumkin).
     """
-    if category not in PERSONAL_CATEGORIES:
+    if sent_push <= 0:
         return False
-    cats = await effective_categories(db, user)
-    if not cats.get(category, False):
+    if category not in PERSONAL_CATEGORIES:
         return False
     cutoff = datetime.utcnow() - timedelta(days=ACTIVE_DEVICE_DAYS)
     token = await db.scalar(
@@ -169,55 +176,136 @@ async def send_push(
         return 0
 
     quiet = _is_quiet_now()
-    messages = [
-        {
-            "to": t.token,
-            "title": title,
-            "body": body,
-            "data": {"category": category, **(data or {})},
-            # Tinch soatlarda ovoz/priority pasaytiriladi — xabar yetadi,
-            # lekin telefon chalinmaydi.
-            "sound": None if quiet else "default",
-            "priority": "normal" if quiet else "high",
-            "channelId": category,
-        }
-        for t in tokens
-    ]
-
-    responses = await _post_expo(messages)
-    if responses is None:
-        return 0
-
-    # Expo har xabar uchun alohida status qaytaradi. "DeviceNotRegistered" —
-    # ilova o'chirilgan yoki token eskirgan; uni faolsizlantiramiz, aks holda
-    # har safar behuda so'rov ketadi.
     sent = 0
-    for token_row, item in zip(tokens, responses):
-        if item.get("status") == "ok":
+    for row in tokens:
+        status = await _send_one(row.token, category, title, body, data, quiet)
+        if status == "ok":
             sent += 1
-            continue
-        if (item.get("details") or {}).get("error") == "DeviceNotRegistered":
-            token_row.is_active = False
+        elif status == "unregistered":
+            # Ilova o'chirilgan yoki token eskirgan — faolsizlantiramiz, aks
+            # holda har safar behuda so'rov ketaveradi.
+            row.is_active = False
     await db.commit()
     return sent
 
 
-async def _post_expo(messages: list[dict]) -> list[dict] | None:
-    """Expo push xizmatiga yuborish. Xatolik bo'lsa None — chaqiruvchi oqim
-    (masalan vazifa yaratish) push tufayli YIQILMASLIGI kerak."""
+def _fcm_message(
+    token: str, category: str, title: str, body: str, data: dict | None, quiet: bool
+) -> dict:
+    """FCM HTTP v1 xabari.
+
+    `data` qiymatlari FCM'da FAQAT satr bo'lishi mumkin — son yuborilsa
+    so'rov 400 bilan rad etiladi.
+
+    Tinch soatlarda `priority: normal` va kanal ovozsiz: xabar yetkaziladi,
+    lekin telefon chalinmaydi.
+    """
+    payload = {"category": category, **(data or {})}
+    return {
+        "message": {
+            "token": token,
+            "notification": {"title": title, "body": body},
+            "data": {k: str(v) for k, v in payload.items()},
+            "android": {
+                "priority": "NORMAL" if quiet else "HIGH",
+                "notification": {
+                    # Kanal toifa nomi bilan — foydalanuvchi Android
+                    # sozlamalarida toifalarni alohida boshqara oladi.
+                    "channel_id": f"{category}_quiet" if quiet else category,
+                    "default_sound": not quiet,
+                },
+            },
+        }
+    }
+
+
+async def _send_one(
+    token: str, category: str, title: str, body: str, data: dict | None, quiet: bool
+) -> str:
+    """Bitta qurilmaga yuboradi. Qaytaradi: "ok" | "unregistered" | "error".
+
+    Xatolik chaqiruvchi oqimni (masalan vazifa yaratish) YIQITMAYDI — push
+    qo'shimcha kanal, u tufayli asosiy amal buzilmasligi kerak.
+    """
+    access_token = await _access_token()
+    if access_token is None:
+        return "error"
+
+    url = FCM_SEND_URL.format(project=settings.fcm_project_id)
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
-                EXPO_PUSH_URL,
-                json=messages,
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                url,
+                json=_fcm_message(token, category, title, body, data, quiet),
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+    except httpx.HTTPError:
+        return "error"
+
+    if resp.status_code == 200:
+        return "ok"
+    # 404 UNREGISTERED / 400 INVALID_ARGUMENT (buzilgan token) — qurilma yo'q.
+    if resp.status_code in (403, 404):
+        return "unregistered"
+    return "error"
+
+
+# Access token qisqa muddatli (1 soat) — har push uchun qayta olinmasin.
+_token_cache: dict[str, float | str] = {"value": "", "expires_at": 0.0}
+
+
+async def _access_token() -> str | None:
+    """FCM uchun OAuth2 access token (service account JWT almashuvi).
+
+    `google.auth`ning tayyor transporti ATAYLAB ishlatilmaydi — u `requests`
+    kutubxonasini talab qiladi, bizda esa hamma joyda `httpx` (async). Faqat
+    imzolash qismi google-auth'dan olinadi.
+    """
+    if not settings.fcm_project_id or not settings.fcm_service_account_file:
+        return None
+
+    now = time.time()
+    cached = _token_cache.get("value")
+    if cached and float(_token_cache.get("expires_at", 0)) > now + 60:
+        return str(cached)
+
+    try:
+        from google.auth import crypt
+        from google.auth import jwt as google_jwt
+
+        signer = crypt.RSASigner.from_service_account_file(settings.fcm_service_account_file)
+        import json
+
+        with open(settings.fcm_service_account_file, encoding="utf-8") as f:
+            client_email = json.load(f)["client_email"]
+
+        assertion = google_jwt.encode(
+            signer,
+            {
+                "iss": client_email,
+                "scope": FCM_SCOPE,
+                "aud": OAUTH_TOKEN_URL,
+                "iat": int(now),
+                "exp": int(now) + 3600,
+            },
+        )
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                OAUTH_TOKEN_URL,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                    "assertion": assertion,
+                },
             )
             resp.raise_for_status()
             payload = resp.json()
-    except (httpx.HTTPError, ValueError):
+    except Exception:
+        # Sozlanmagan/noto'g'ri kalit push'ni jim o'chiradi — Telegram ishlayveradi.
         return None
 
-    data = payload.get("data")
-    if not isinstance(data, list) or len(data) != len(messages):
+    token = payload.get("access_token")
+    if not token:
         return None
-    return data
+    _token_cache["value"] = token
+    _token_cache["expires_at"] = now + float(payload.get("expires_in", 3600))
+    return token

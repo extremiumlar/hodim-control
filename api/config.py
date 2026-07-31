@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # O'CHIQ — Docker/VPS'da bot alohida polling qiladi, ikki marta ishlanmasin.
     bot_webhook_enabled: bool = False
 
+    # ── Push bildirishnomalar (Firebase Cloud Messaging) ──
+    # To'g'ridan-to'g'ri FCM, Expo relay'i EMAS: (1) `getExpoPushTokenAsync`
+    # EAS `projectId` talab qiladi, bizda esa build butunlay lokal
+    # (MOBIL_ILOVA_REJASI 8.5); (2) bildirishnoma matnida oylik/bonus summasi
+    # bo'ladi — uni ortiqcha uchinchi tomon relay'idan o'tkazmaymiz.
+    # Ikkalasi ham bo'sh bo'lsa push JIM o'chiq turadi (Telegram ishlayveradi).
+    fcm_project_id: str = ""
+    fcm_service_account_file: str = ""
+
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
     jwt_secret: str = _PLACEHOLDER_JWT_SECRET

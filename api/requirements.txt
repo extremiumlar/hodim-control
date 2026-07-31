@@ -12,3 +12,6 @@ python-multipart==0.0.20
 openpyxl==3.1.5
 anthropic==0.116.0
 tzdata==2024.2
+# Push (FCM HTTP v1) — faqat service-account JWT imzolash uchun; tarmoq
+# qismi httpx bilan, shuning uchun `requests` transporti kerak emas.
+google-auth==2.38.0

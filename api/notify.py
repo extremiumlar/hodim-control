@@ -78,8 +78,11 @@ async def notify_user(
         db, user, category, push_title, push_body, data=data
     )
 
+    # Telegram faqat push HAQIQATAN ketgan bo'lsa o'tkazib yuboriladi —
+    # `sent_push` shuning uchun uzatiladi (FCM sozlanmagan/kalit buzilgan
+    # bo'lsa xabar yo'qolib qolmasin).
     skip_telegram = not force_telegram and await push_service.should_skip_telegram(
-        db, user, category
+        db, user, category, sent_push
     )
     sent_telegram = False
     if user.telegram_id and not skip_telegram:
