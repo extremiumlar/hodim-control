@@ -356,8 +356,46 @@ Tekshirildi (360 px, dasturchi roli): `/attendance` 22 karta overflow 0,
 `/users` 8 karta overflow 59→0, `/payroll` 7 karta overflow 0. Desktop
 (1280 px): jadval joyida, mobil blok `display:none`, sidebar o'zgarmagan.
 
+#### Yakunlandi (2026-07-31) — `DataTable`ni chetlab o'tgan jadvallar
+
+`0f51940` tugallanmagan qolgan edi: **`DataTable`ni ISHLATMAYDIGAN** ikki
+xom jadval e'tibordan chetda qolgan — `components/statistics/OperatorTable.tsx`
+(«Operator kesimi», 6 ustun) va `components/users/CrmMappingSection.tsx`
+(CRM/Tashrif bog'lash, 4 ustun × 2 ta).
+
+**Nega o'lchov ularni ko'rsatmagan** (kelgusi tekshiruvlar uchun muhim):
+`0f51940` sahifa darajasidagi overflow'ni o'lchagan
+(`documentElement.scrollWidth - clientWidth`), u esa bu nuqsonni **ushlamaydi** —
+shadcn `Table` o'zining `overflow-auto` wrapper'i bilan keladi, ya'ni jadval
+sahifani kengaytirmaydi, o'z ichida jimgina scroll bo'ladi. To'g'ri o'lchov:
+`table.parentElement.scrollWidth - table.parentElement.clientWidth`.
+Ustiga, ikkalasi ham standart holatda ekranda YO'Q edi — «Operator kesimi»
+«Bugun» tabida bo'sh (bugungi CRM ma'lumoti hali yo'q), CRM bog'lash esa
+faqat `operators.length > 0` bo'lganda render bo'ladi.
+
+O'lchandi (360 px): Operator kesimi **255 px**, CRM bog'lash **466 px**
+yashirin gorizontal scroll → ikkalasi ham endi **0**.
+
+Karta uslubi `components/MobileCard.tsx` ga chiqarildi (`MobileCard` /
+`MobileCardRow`) va `DataTable` ham shunga o'tkazildi — uch joyda takrorlansa
+chekka/ajratuvchi bir joyda o'zgarib ikkinchisida eskirib qolardi.
+Ikki tuzoq o'lchov paytida ushlandi: (1) `MobileCardRow` qiymatiga
+`break-words` kerak — Uysot identifikatori EMAIL, bo'sh joysiz uzun satr
+kartadan chiqib 8 px sahifa overflow berdi; (2) `UserSelect`ka `min-w-0`
+(flex bolasining `min-width: auto` — `0f51940` buni `Users.tsx` grid'ida
+tuzatgan edi, bu yerda qaytadan chiqdi).
+
+⚠️ Bu ish **`3a6f71b`** commit'iga tushib qolgan («CRM sync: … N+1») —
+parallel sessiya bir vaqtda `git commit` qilib, staged fayllarimni o'z
+commit'iga qo'shib yuborgan. Commit sarlavhasi bu frontend ishini
+ta'riflamaydi; kod to'g'ri va push qilingan, tarix qayta yozilmadi.
+
 **Chiqish mezoni:** 360 px da asosiy rahbar sahifalari gorizontal
 scrollsiz o'qiladi; desktop ko'rinishi buzilmagan. ✅
+O'lchandi: 320/360 px `/statistics` va `/users` — sahifa overflow 0, jadval
+ichki scroll 0; 1280 px — `/statistics` jadval 9 qator (8 operator + Jami),
+`/users` 2 jadval (8 xodim + 4 CRM operator), mobil bloklar yashirin.
+Regressiya yo'q: `/attendance` 29 karta, `/payroll` bo'sh holat — overflow 0.
 
 ---
 
