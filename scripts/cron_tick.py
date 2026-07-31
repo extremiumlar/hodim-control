@@ -48,6 +48,16 @@ LEAD_DIFF_LOCK_STALE_MINUTES = 8
 LEAD_DIFF_RECONCILE_LOCK = ROOT / "logs" / "lead_diff_reconcile.lock"
 LEAD_DIFF_RECONCILE_LOCK_STALE_MINUTES = 25
 
+# Issiq lid va harakatsizlik nazorati — jonli o'lchovda (2026-07-31) HTTP orqali
+# 4.7s va 2.0s chiqdi. cPanel'da Passenger'ning YAGONA ishchisi bor — bu ikkovi
+# HTTP orqali chaqirilsa ishchi shu vaqt band bo'lib, sayt so'rovlari navbatda
+# kutadi. Shuning uchun lid skaneri bilan bir xil in-process+lock naqshiga
+# ko'chirildi (HTTP endpointlar Docker/scheduler rejimi uchun saqlanadi).
+HOT_LEAD_LOCK = ROOT / "logs" / "hot_lead.lock"
+HOT_LEAD_LOCK_STALE_MINUTES = 8
+IDLE_WATCH_LOCK = ROOT / "logs" / "idle_watch.lock"
+IDLE_WATCH_LOCK_STALE_MINUTES = 8
+
 
 def _is_last_day(d: datetime) -> bool:
     return (d + timedelta(days=1)).month != d.month
@@ -95,10 +105,9 @@ def _due(now: datetime) -> list:
     # DIQQAT: lid snapshoti (/stats/lead-stages/sync) bu ro'yxatda YO'Q — u og'ir
     # (~5-7 daqiqa) va gateway HTTP limitiga sig'maydi; _lead_sync_due + in-process
     # yo'l bilan bajariladi (pastda).
-    if m % 2 == 0:
-        add("/hot-lead/tick", timeout=120)           # issiq lid (o'chiqda no-op)
-    if m % cfg.IDLE_WATCH_INTERVAL_MINUTES == 0:
-        add("/idle-watch/tick", timeout=60)          # harakatsizlik nazorati (o'chiqda no-op)
+    # DIQQAT: /hot-lead/tick va /idle-watch/tick bu ro'yxatda YO'Q — jonli
+    # o'lchovda 4.7s va 2.0s chiqqani uchun lid skaneri kabi in-process
+    # bajariladi (main() pastda) — Passenger'ning yagona ishchisi band bo'lmasin.
 
     # ── Soatlik ──
     if m == 0:
@@ -235,6 +244,46 @@ async def _run_lead_diff_inprocess(now: datetime, full: bool) -> None:
             pass
 
 
+async def _run_service_inprocess(now: datetime, label: str, lock: Path, stale_min: int, runner) -> None:
+    """Umumiy in-process yurituvchi: lock oladi, servisni shu jarayonda bajaradi,
+    natija/xatoni log'ga yozadi (lead sync/diff bilan bir xil naqsh)."""
+    if _lock_fresh(lock, stale_min, now):
+        print(f"{now:%Y-%m-%d %H:%M} {label}: oldingisi hali tugamagan — o'tkazib yuborildi")
+        return
+
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(now.isoformat())
+    try:
+        from db.base import async_session
+
+        async with async_session() as db:
+            result = await runner(db)
+        print(f"{now:%Y-%m-%d %H:%M} {label} (in-process): {result}")
+    except Exception as exc:  # noqa: BLE001 — cron jim o'lmasin, log qoldirsin
+        print(f"{now:%Y-%m-%d %H:%M} {label} XATO: {type(exc).__name__}: {exc}")
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+async def _run_hot_lead_inprocess(now: datetime) -> None:
+    async def runner(db):
+        from api.services.hot_lead import tick
+        return await tick(db)
+
+    await _run_service_inprocess(now, "issiq lid", HOT_LEAD_LOCK, HOT_LEAD_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_idle_watch_inprocess(now: datetime) -> None:
+    async def runner(db):
+        from api.services.idle_watch import evaluate_and_alert
+        return await evaluate_and_alert(db)
+
+    await _run_service_inprocess(now, "harakatsizlik", IDLE_WATCH_LOCK, IDLE_WATCH_LOCK_STALE_MINUTES, runner)
+
+
 def _lead_diff_due(now: datetime) -> bool:
     return now.minute % cfg.LEAD_DIFF_INTERVAL_MINUTES == 0
 
@@ -268,6 +317,13 @@ async def main() -> None:
         fired = [p for (p, _), r in zip(jobs, results) if r is not None and not isinstance(r, Exception)]
         if fired:
             print(f"{now:%Y-%m-%d %H:%M} tik: {', '.join(fired)}")
+
+    # Issiq lid va harakatsizlik nazorati — in-process (4.7s/2.0s HTTP o'rniga),
+    # avvalgi bilan bir xil chastota: har 2 daqiqa / IDLE_WATCH_INTERVAL_MINUTES
+    if now.minute % 2 == 0:
+        await _run_hot_lead_inprocess(now)
+    if now.minute % cfg.IDLE_WATCH_INTERVAL_MINUTES == 0:
+        await _run_idle_watch_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):
