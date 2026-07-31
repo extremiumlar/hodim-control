@@ -239,9 +239,28 @@ function UserMenu() {
   );
 }
 
+/**
+ * Mobil ilova sahifani WebView'da ochganda URL'ga `?embed=1` qo'shadi —
+ * ilovada O'Z yuqori paneli va tayl navigatsiyasi bor, sayt qobig'i (header,
+ * tab-bar yoki sidebar) ikkinchi marta ko'rinmasligi kerak.
+ *
+ * NEGA query parametr, alohida `/embed/...` marshrutlari emas: aks holda
+ * `App.tsx`dagi butun marshrut ro'yxatini ikki marta e'lon qilish kerak
+ * bo'lardi va yangi sahifa qo'shilganda biri unutilib qolardi.
+ *
+ * `sessionStorage` — sahifa ichida navigatsiya bo'lsa (masalan «Yana»
+ * ro'yxatidagi havola) parametr yo'qolib qobiq qaytib chiqmasin.
+ */
+function useEmbedded(search: string): boolean {
+  const fromQuery = new URLSearchParams(search).get("embed") === "1";
+  if (fromQuery) sessionStorage.setItem("embed_mode", "1");
+  return fromQuery || sessionStorage.getItem("embed_mode") === "1";
+}
+
 export default function Layout() {
   const { user } = useAuth();
   const location = useLocation();
+  const embedded = useEmbedded(location.search);
   const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePositions = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
@@ -253,6 +272,19 @@ export default function Layout() {
   useEffect(() => {
     localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");
   }, [collapsed]);
+
+  // ── Mobil ilova (WebView): qobiqsiz ──
+  // Roldan QAT'I NAZAR: ilova sahifani o'z paneli ichida ko'rsatadi, ya'ni
+  // rahbar ham ilovadan ochsa sidebar kerak emas.
+  if (embedded) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <main className="mx-auto max-w-2xl px-4 py-5">
+          <Outlet />
+        </main>
+      </div>
+    );
+  }
 
   // ── Xodim qobig'i: pastdagi tab-bar ──
   // Ilgari bu yerda navigatsiya UMUMAN yo'q edi (faqat sarlavha + "Chiqish"),

@@ -2,6 +2,7 @@ import { Redirect, router } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { useAuth } from "../lib/auth";
+import { visibleSections } from "../lib/sections";
 
 const ROLE_NAMES: Record<string, string> = {
   employee: "Xodim",
@@ -19,35 +20,13 @@ function greeting(): string {
   return "Xayrli kech";
 }
 
-// Bosh ekran taylari — Position.menu_flags asosida filtrlash MOBIL_ILOVA_REJASI.md
-// 4.4-band: flag false bo'lsa tayl umuman ko'rinmaydi. Davomat va bilim bazasi
-// flagga bog'liq emas (hammada bor).
-interface Tile {
-  key: string;
-  title: string;
-  emoji: string;
-  flagKey?: string;
-  /** Ekran yozilgan bo'lsa — expo-router yo'li. Bo'lmasa tayl "tez orada". */
-  route?: string;
-}
-
-const TILES: Tile[] = [
-  { key: "attendance", title: "Davomat (Keldim/Ketdim)", emoji: "🕐", route: "/checkin" },
-  { key: "schedule", title: "Ish jadvali", emoji: "🗓" },
-  { key: "tasks", title: "Vazifalarim", emoji: "📋", flagKey: "tasks" },
-  { key: "norm", title: "Bugungi normam", emoji: "📊", flagKey: "norm" },
-  { key: "payroll", title: "Mening oyligim", emoji: "💵", flagKey: "payroll" },
-  { key: "kpi", title: "Oylik KPI'm", emoji: "💰", flagKey: "kpi" },
-  { key: "knowledge", title: "Bilim bazasi", emoji: "📚" },
-];
-
 export default function Home() {
   const { user, signOut } = useAuth();
 
   if (!user) return <Redirect href="/login" />;
 
-  const flags = user.position?.menu_flags ?? {};
-  const tiles = TILES.filter((t) => !t.flagKey || flags[t.flagKey] !== false);
+  // Ko'rinish shartlari `lib/sections.ts` da — bot va sayt bilan bir xil.
+  const tiles = visibleSections(user);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -65,13 +44,19 @@ export default function Home() {
         {tiles.map((tile) => (
           <Pressable
             key={tile.key}
-            disabled={!tile.route}
-            onPress={tile.route ? () => router.push(tile.route as never) : undefined}
-            style={[styles.tile, !tile.route && styles.tileSoon]}
+            onPress={() =>
+              tile.nativeRoute
+                ? router.push(tile.nativeRoute as never)
+                : // Kabinet bo'limi — saytning sahifasi WebView'da
+                  router.push({
+                    pathname: "/view",
+                    params: { path: tile.webPath, title: tile.title },
+                  } as never)
+            }
+            style={styles.tile}
           >
             <Text style={styles.tileEmoji}>{tile.emoji}</Text>
             <Text style={styles.tileTitle}>{tile.title}</Text>
-            {!tile.route && <Text style={styles.tileSoonText}>Tez orada</Text>}
           </Pressable>
         ))}
       </View>
@@ -102,10 +87,8 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
-  tileSoon: { opacity: 0.55 },
   tileEmoji: { fontSize: 28 },
   tileTitle: { fontSize: 14, fontWeight: "600" },
-  tileSoonText: { fontSize: 11, color: "#64748b" },
   logout: { alignSelf: "center", padding: 12 },
   logoutText: { color: "#dc2626", fontSize: 15 },
 });
