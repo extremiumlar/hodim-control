@@ -9,6 +9,7 @@ from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     ExcusedDayCreate,
     ExcusedDayDecide,
+    ExcusedDayDecideMe,
     ExcusedDayForUserBotCreate,
     ExcusedDayForUserCreate,
     ExcusedDayMeCreate,
@@ -278,16 +279,16 @@ async def list_excused_days(
     return await _to_out_many(items, db)
 
 
-@router.post("/{item_id}/decide", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
-async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncSession = Depends(get_db)) -> ExcusedDayOut:
-    item = await db.get(ExcusedDay, item_id)
-    if not item:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+DECIDE_ROLES = {Role.hr.value, Role.boss.value, Role.dasturchi.value}
 
-    decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
-    if not decider or decider.role not in {Role.hr.value, Role.boss.value, Role.dasturchi.value}:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
+async def _decide_excused_day(
+    db: AsyncSession, item: ExcusedDay, decider: User, decision: str, override_reason: str | None
+) -> ExcusedDayOut:
+    """Qaror chiqarish mantig'i — bot va web adapterlari SHU yordamchiga
+    boradi (naqsh: `payroll.py: _late_status_for_user`). Ikki nusxa qolsa,
+    biri tuzatilib ikkinchisi eskirardi — masalan Dasturchi override qoidasi
+    faqat bir kanalda ishlab qolardi."""
     # 5.7-band: idempotentlik — allaqachon hal qilingan so'rov ODDIY yo'l bilan
     # qayta o'zgartirilmaydi (masalan eski xabardagi tugma ikkinchi marta
     # bosilsa, yoki ikki HR bir vaqtda javob bersa — "approved" bo'lgan kun
@@ -297,17 +298,17 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
     if is_override:
         if decider.role != Role.dasturchi.value:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
-        if not payload.override_reason or len(payload.override_reason.strip()) < 5:
+        if not override_reason or len(override_reason.strip()) < 5:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Allaqachon hal qilingan so'rovni qayta hal qilish uchun sabab kerak (kamida 5 belgi)",
             )
 
-    if payload.decision not in {ExcusedStatus.approved.value, ExcusedStatus.rejected.value}:
+    if decision not in {ExcusedStatus.approved.value, ExcusedStatus.rejected.value}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri qaror")
 
     before_status = item.status
-    item.status = payload.decision
+    item.status = decision
     item.decided_by = decider.id
     item.decided_at = datetime.utcnow()
 
@@ -317,7 +318,7 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
             action="excused_day_override_decided" if is_override else "excused_day_decided",
             target_user_id=item.user_id,
             before={"status": before_status},
-            after={"status": item.status, "override_reason": payload.override_reason if is_override else None},
+            after={"status": item.status, "override_reason": override_reason if is_override else None},
         )
     )
     await db.commit()
@@ -333,3 +334,33 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
         )
 
     return await _to_out(item, db)
+
+
+@router.post("/{item_id}/decide", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
+async def decide_excused_day(
+    item_id: int, payload: ExcusedDayDecide, db: AsyncSession = Depends(get_db)
+) -> ExcusedDayOut:
+    """Bot uchun — qaror chiqaruvchi `decider_telegram_id`dan yechiladi."""
+    item = await db.get(ExcusedDay, item_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+    decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
+    if not decider or decider.role not in DECIDE_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    return await _decide_excused_day(db, item, decider, payload.decision, payload.override_reason)
+
+
+@router.post("/{item_id}/decide/me", response_model=ExcusedDayOut)
+async def decide_excused_day_web(
+    item_id: int,
+    payload: ExcusedDayDecideMe,
+    decider: User = Depends(require_roles(*DECIDE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> ExcusedDayOut:
+    """Web/ilova uchun — shaxs FAQAT tokendan olinadi (mijozdan qabul
+    qilinmaydi). Ilgari qaror faqat botda chiqarilardi va push bosilganda
+    oqim uzilib qolardi (2026-07-31 qarori)."""
+    item = await db.get(ExcusedDay, item_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+    return await _decide_excused_day(db, item, decider, payload.decision, payload.override_reason)

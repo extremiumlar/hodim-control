@@ -18,26 +18,73 @@ import {
 } from "@/components/ui/select";
 import { type ExcusedDay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useExcusedDays, useRecordExcusedDayForUser, useUsers } from "@/lib/queries";
+import {
+  useDecideExcusedDay,
+  useExcusedDays,
+  useRecordExcusedDayForUser,
+  useUsers,
+} from "@/lib/queries";
 
 // decide_excused_day bilan bir xil qamrov — ROP xodim nomidan sababli kun
 // belgilay olmaydi (faqat hr/boss/dasturchi).
 const MARK_EXCUSED_ROLES = ["hr", "boss", "dasturchi"];
 
-const columns: ColumnDef<ExcusedDay>[] = [
-  { accessorKey: "user_full_name", header: "Xodim" },
-  {
-    accessorKey: "date",
-    header: "Sana",
-    cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
-  },
-  { accessorKey: "reason", header: "Sabab", enableSorting: false },
-  {
-    accessorKey: "status",
-    header: "Holat",
-    cell: ({ row }) => <StatusBadge kind="request" status={row.original.status} />,
-  },
-];
+/** Ustunlar funksiyadan quriladi: qaror tugmalari mutatsiyaga muhtoj. */
+function buildColumns(
+  canDecide: boolean,
+  onDecide: (itemId: number, decision: "approved" | "rejected") => void,
+  isPending: boolean
+): ColumnDef<ExcusedDay>[] {
+  const base: ColumnDef<ExcusedDay>[] = [
+    { accessorKey: "user_full_name", header: "Xodim" },
+    {
+      accessorKey: "date",
+      header: "Sana",
+      cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
+    },
+    { accessorKey: "reason", header: "Sabab", enableSorting: false },
+    {
+      accessorKey: "status",
+      header: "Holat",
+      cell: ({ row }) => <StatusBadge kind="request" status={row.original.status} />,
+    },
+  ];
+  if (!canDecide) return base;
+
+  base.push({
+    id: "actions",
+    header: "",
+    enableSorting: false,
+    cell: ({ row }) => {
+      // Faqat KUTILAYOTGAN so'rovga qaror chiqariladi. Allaqachon hal
+      // qilinganini backend ham rad etadi (idempotentlik) — tugmani
+      // ko'rsatmaslik shunchaki foydalanuvchini urinishdan qutqaradi.
+      if (row.original.status !== "pending") return null;
+      return (
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isPending}
+            onClick={() => onDecide(row.original.id, "approved")}
+          >
+            Tasdiqlash
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-rose-600 hover:text-rose-700"
+            disabled={isPending}
+            onClick={() => onDecide(row.original.id, "rejected")}
+          >
+            Rad etish
+          </Button>
+        </div>
+      );
+    },
+  });
+  return base;
+}
 
 function MarkExcusedForm() {
   const usersQuery = useUsers("employee");
@@ -117,12 +164,28 @@ export default function ExcusedDays() {
   const [statusFilter, setStatusFilter] = useState("all");
   const query = useExcusedDays(statusFilter === "all" ? undefined : statusFilter);
   const canMark = MARK_EXCUSED_ROLES.includes(user?.role ?? "");
+  const decide = useDecideExcusedDay();
+
+  // Qaror chiqarish qamrovi belgilash bilan bir xil (hr/boss/dasturchi) —
+  // backend ham aynan shu ro'yxatni tekshiradi (excused_days.py: DECIDE_ROLES).
+  const columns = buildColumns(
+    canMark,
+    (itemId, decision) =>
+      decide.mutate(
+        { itemId, decision },
+        {
+          onSuccess: () =>
+            toast.success(decision === "approved" ? "Tasdiqlandi" : "Rad etildi"),
+        }
+      ),
+    decide.isPending
+  );
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Sababli kunlar"
-        description="Xodimning O'ZI yuborgan so'rovni tasdiqlash/rad etish hamon Telegram bot orqali amalga oshiriladi."
+        description="Kutilayotgan so'rovni shu yerdan yoki Telegram bot orqali tasdiqlash mumkin."
       >
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-44">

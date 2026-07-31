@@ -253,6 +253,13 @@ export const useDeleteTask = () => useApiMutation((taskId: number) => api.delete
 export const useExcusedDays = (statusFilter?: string) =>
   useQuery({ queryKey: qk.excusedDays(statusFilter), queryFn: () => api.listExcusedDays(statusFilter) });
 
+export const useDecideExcusedDay = () =>
+  useApiMutation(
+    ({ itemId, decision }: { itemId: number; decision: "approved" | "rejected" }) =>
+      api.decideExcusedDay(itemId, { decision }),
+    [["excused-days"]]
+  );
+
 export const useRecordExcusedDayForUser = () =>
   useApiMutation(
     (data: { user_id: number; reason: string; date?: string }) => api.recordExcusedDayForUser(data),

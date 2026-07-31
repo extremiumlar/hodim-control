@@ -319,6 +319,14 @@ class ExcusedDayForUserBotCreate(BaseModel):
     reason: str
 
 
+class ExcusedDayDecideMe(BaseModel):
+    """Web/ilova versiyasi — `decider_telegram_id` YO'Q, shaxs tokendan
+    olinadi (mijoz kim nomidan qaror chiqarayotganini ayta olmaydi)."""
+
+    decision: str  # approved | rejected
+    override_reason: str | None = Field(default=None, max_length=500)
+
+
 class NormCreate(BaseModel):
     user_id: int
     metric_type: str = Field(min_length=1, max_length=50)  # suhbat | tashrif | custom

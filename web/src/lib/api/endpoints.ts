@@ -174,6 +174,13 @@ export const api = {
     apiFetch<ExcusedDay[]>(`/excused-days${statusFilter ? `?status_filter=${statusFilter}` : ""}`),
   // HR/Boshliq/Dasturchi boshqa xodim NOMIDAN sababli kunni to'g'ridan-to'g'ri
   // BELGILAYDI (so'rov emas, darhol tasdiqlangan holda yoziladi).
+  // Sababli kunni saytdan tasdiqlash/rad etish. Ilgari bu FAQAT botda edi —
+  // push bosilganda oqim uzilib qolardi (2026-07-31).
+  decideExcusedDay: (itemId: number, data: { decision: "approved" | "rejected" }) =>
+    apiFetch<ExcusedDay>(`/excused-days/${itemId}/decide/me`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   recordExcusedDayForUser: (data: { user_id: number; reason: string; date?: string }) =>
     apiFetch<ExcusedDay>("/excused-days/for-user", { method: "POST", body: JSON.stringify(data) }),
   teamNorms: () => apiFetch<TeamNormRow[]>("/norms/team"),
