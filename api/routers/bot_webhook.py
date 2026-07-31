@@ -8,7 +8,6 @@ qiladi, biz uni aiogram Dispatcher'iga uzatamiz. Bot va Dispatcher bir marta
 Faqat settings.bot_webhook_enabled=true bo'lganda api/main.py'ga ulanadi
 (Docker/VPS'da bot alohida polling qiladi — bu router ulanmaydi va bot/ paketi
 import ham qilinmaydi)."""
-import asyncio
 import hmac
 import logging
 
@@ -25,10 +24,6 @@ router = APIRouter(prefix="/bot", tags=["bot"])
 # ostidagi doimiy event-loop ichida yaratilib, keyingi so'rovlarda qayta ishlatiladi.
 _bot = None
 _dp = None
-
-# Fon vazifalariga kuchli havola — aks holda GC tugallanmagan taskni yutib
-# yuborishi mumkin (asyncio hujjatidagi ma'lum tuzoq).
-_bg_tasks: set = set()
 
 
 def _ensure_bot():
@@ -52,38 +47,17 @@ def _ensure_bot():
     return _bot, _dp
 
 
-async def _feed_in_background(bot, dp, update: Update) -> None:
-    """Fon vazifasi: dispatcher'ga uzatish. Xato bu yerda ushlanadi — task
-    exception hech qayerda yutilib qolmasin."""
-    try:
-        await dp.feed_update(bot, update)
-    except Exception:
-        logger.exception("Webhook update ishlashda xatolik (fon)")
-
-
 async def _handle_update(request: Request) -> Response:
-    """Update'ni FON VAZIFASIDA dispatcher'ga uzatadi va 200 ni DARHOL qaytaradi.
-
-    Nega darhol: cPanel'da Passenger'ga ATIGI 1 ta ishchi berilgan. Avval
-    `await dp.feed_update(...)` bot ishlovi TUGAGUNCHA (barcha handlerlar +
-    har bir Telegram'ga javob yuborish, har biri 0.5-2s tarmoq I/O) shu yagona
-    so'rov o'rnini band qilardi — bot faol ishlatilganda sayt so'rovlari
-    navbatda qotardi (davriy 25s+ timeout'lar manbalaridan biri). a2wsgi'ning
-    doimiy event-loop'i so'rov tugagandan keyin ham yashaydi, shuning uchun
-    fon vazifasi bemalol oxirigacha ishlaydi. Polling rejimida aiogram
-    update'larni xuddi shunday parallel ishlaydi — semantika bir xil.
-
-    Har qanday holatda 200 — aks holda Telegram update'ni qayta-qayta
-    yuboraveradi va navbat tiqiladi."""
+    """Update'ni Dispatcher'ga uzatadi. Har qanday xato ushlanadi: 200 qaytaramiz,
+    aks holda Telegram update'ni qayta-qayta yuboraveradi va navbat tiqiladi."""
     try:
         bot, dp = _ensure_bot()
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})
-        task = asyncio.create_task(_feed_in_background(bot, dp, update))
-        _bg_tasks.add(task)
-        task.add_done_callback(_bg_tasks.discard)
+        await dp.feed_update(bot, update)
     except Exception:
-        logger.exception("Webhook update'ni qabul qilishda xatolik")
+        logger.exception("Webhook update ishlashda xatolik")
+    # Telegram'ga har doim 200 — muvaffaqiyatli qabul qilindi (qayta yubormasin)
     return Response(status_code=status.HTTP_200_OK)
 
 

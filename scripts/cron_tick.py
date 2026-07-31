@@ -73,12 +73,12 @@ def _due(now: datetime) -> list:
     def add(path: str, **kw) -> None:
         jobs.append((path, kw))
 
-    # ── Har daqiqalik tick'lar BU RO'YXATDA EMAS (2026-07-31) ─────────────────
-    # group-tick, digest-tick, daily-results/sync, anketa/tick — barchasi
-    # in-process bajariladi (main() pastda). Sabab: jonli o'lchovda har
-    # daqiqadagi HTTP to'plami Passenger'ning YAGONA ishchisini 2-4s band qilib,
-    # o'sha oynaga tushgan foydalanuvchi so'rovlari 3s+ kutar yoki timeout
-    # bo'lardi. Endi ishchiga cron'dan deyarli HTTP kelmaydi.
+    # ── Har daqiqa — FAQAT aniq vaqtga bog'liqlari ────────────────────────────
+    # Bu ikkisi foydalanuvchi sozlagan ANIQ daqiqada ishlashi kerak (vaqt bazadan
+    # o'qiladi, ">=" semantikasi + kuniga-bir-marta qo'riqchisi bilan), shuning
+    # uchun siyraklashtirilmaydi.
+    add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
+    add("/attendance/digest-tick", timeout=60)       # davomat digesti (API vaqtni bazadan tekshiradi)
 
     # ── Siyraklashtirilgan (2026-07-27) ───────────────────────────────────────
     # SABAB: bu hostda Passenger'da ATIGI 1 ta ishchi jarayon bor. Har daqiqada
@@ -91,6 +91,9 @@ def _due(now: datetime) -> list:
     # m==0) hammasi JUFT daqiqalarda, ayniqsa :00 da to'planadi (o'lchandi: bitta
     # daqiqada 11 ta chaqiruv). Bu guruhlar toq daqiqalarga surildi — cho'qqi
     # tekislanadi, yagona ishchi bir zumda to'lib qolmaydi.
+    if m % 2 == 1:
+        add("/daily-results/sync")                   # CRM sync (8 kishilik jamoaga yetarli)
+        add("/anketa/tick", timeout=120)             # anketa max 2 daq kechikib boshlanadi
     if m % 5 == 3:
         add("/knowledge/tick", timeout=120)          # bilim bazasi AI ishlovi (draft yo'q — no-op)
         add("/playbook/tick", timeout=120)           # playbook qurish bosqichlari (build yo'q — no-op)
@@ -265,43 +268,6 @@ async def _run_service_inprocess(now: datetime, label: str, lock: Path, stale_mi
             pass
 
 
-async def _run_minute_ticks_inprocess(now: datetime) -> None:
-    """Har daqiqalik yengil tick'lar — HTTP o'rniga shu jarayonda.
-
-    Har biri alohida sessiya va alohida try ichida: bittasining xatosi
-    qolganlarini to'xtatmasin. Router funksiyalari faqat `db` qabul qiladi,
-    shuning uchun to'g'ridan-to'g'ri chaqirsa bo'ladi."""
-    from db.base import async_session
-
-    done: list[str] = []
-
-    async def one(label: str, fn) -> None:
-        try:
-            async with async_session() as db:
-                await fn(db)
-            done.append(label)
-        except Exception as exc:  # noqa: BLE001 — bittasi qolganini to'xtatmasin
-            print(f"{now:%Y-%m-%d %H:%M} {label} XATO: {type(exc).__name__}: {exc}")
-
-    from api.routers.attendance import attendance_digest_tick
-    from api.routers.stats import group_post_tick
-
-    await one("kunlik-digest", group_post_tick)
-    await one("davomat-digest", attendance_digest_tick)
-
-    if now.minute % 2 == 1:
-        from api.routers import anketa as anketa_router
-        from api.routers.daily_results import sync_daily_results
-
-        await one("crm-sync", sync_daily_results)
-        await one("anketa", anketa_router.tick)
-
-    # Tiriklik belgisi — cron ishlayotganini logdan bir qarashda ko'rish uchun
-    # (avvalgi HTTP "tik:" qatorlari o'rnini bosadi).
-    if done:
-        print(f"{now:%Y-%m-%d %H:%M} tik (in-process): {', '.join(done)}")
-
-
 async def _run_hot_lead_inprocess(now: datetime) -> None:
     async def runner(db):
         from api.services.hot_lead import tick
@@ -351,9 +317,6 @@ async def main() -> None:
         fired = [p for (p, _), r in zip(jobs, results) if r is not None and not isinstance(r, Exception)]
         if fired:
             print(f"{now:%Y-%m-%d %H:%M} tik: {', '.join(fired)}")
-
-    # Har daqiqalik yengil tick'lar (digest'lar; toq daqiqada CRM sync + anketa)
-    await _run_minute_ticks_inprocess(now)
 
     # Issiq lid va harakatsizlik nazorati — in-process (4.7s/2.0s HTTP o'rniga),
     # avvalgi bilan bir xil chastota: har 2 daqiqa / IDLE_WATCH_INTERVAL_MINUTES
