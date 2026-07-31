@@ -648,7 +648,9 @@ class HotLead(Base):
     crm_lead_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     lead_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # CRM "#8323326"
     contact_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # 128: jonli CRM'da bir nechta raqam qo'shilib kelgan holatlar bor (65+ belgi);
+    # SQLite uzunlikni tekshirmasdi, PostgreSQL esa qat'iy (PG'ga ko'chirishda topildi)
+    phone: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Mijozning BARCHA ma'lum kontakt raqamlari (CRM ko'pincha bir nechtasini beradi) —
     # qo'ng'iroq tekshiruvi faqat `phone`ga emas, shu ro'yxatning hammasiga qaraydi
     # (operator ikkinchi raqamga qo'ng'iroq qilgan bo'lishi mumkin).
