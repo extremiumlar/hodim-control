@@ -1203,3 +1203,24 @@ class AdminRecordPatch(BaseModel):
 class AdminForceRole(BaseModel):
     role: str
     override_reason: str = Field(min_length=5, max_length=500)
+
+
+class PushTokenIn(BaseModel):
+    """Expo push token (`ExponentPushToken[...]`) va platforma."""
+
+    token: str = Field(min_length=10, max_length=255)
+    platform: str = Field(pattern="^(android|ios)$")
+
+
+class PushSettingsOut(BaseModel):
+    """Toifa -> yoqiqmi + ko'rsatiladigan nomlar va tinch soatlar oynasi.
+    Nomlar serverdan keladi — ilova va sayt ro'yxatni o'zi takrorlamasin."""
+
+    categories: dict[str, bool]
+    labels: dict[str, str]
+    quiet_from: int
+    quiet_to: int
+
+
+class PushSettingsUpdate(BaseModel):
+    categories: dict[str, bool]

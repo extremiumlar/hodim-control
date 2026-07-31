@@ -1297,3 +1297,53 @@ class PayrollAdjustment(Base):
     reason: Mapped[str] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PushToken(Base):
+    """Mobil ilovaning push manzili (Expo push token).
+
+    Bitta xodimda bir nechta qurilma bo'lishi mumkin, shuning uchun `user_id`
+    UNIKAL EMAS — unikal kalit `token` (bir qurilma bitta token beradi va uni
+    qayta o'rnatishda yangilaydi).
+
+    `last_seen_at` — ilova oxirgi marta token'ni tasdiqlagan payt. Shu maydon
+    "xodim ilovadan foydalanadimi" savoliga javob beradi: agar foydalansa,
+    SHAXSIY xabarlar Telegramga takroran yuborilmaydi (2026-07-31 qarori —
+    aks holda har voqea uchun ikki marta chalinadi). Qurilma yo'qolsa yoki
+    ilova o'chirilsa `last_seen_at` eskiradi va Telegram o'z-o'zidan qaytadi.
+
+    `is_active` — Expo "DeviceNotRegistered" qaytarsa false qilinadi (ilova
+    o'chirilgan). Yozuv o'chirilmaydi: qaysi qurilma qachon o'chganini
+    ko'rish diagnostikada kerak bo'ladi.
+    """
+
+    __tablename__ = "push_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    platform: Mapped[str] = mapped_column(String(10))  # android | ios
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PushSetting(Base):
+    """Xodimning push toifalari bo'yicha tanlovi — FAQAT standartdan FARQ
+    qilganda yozuv paydo bo'ladi.
+
+    Nega shunday: standart qiymatlar rolga bog'liq (`api/services/push.py:
+    DEFAULT_CATEGORIES`) va vaqt o'tib o'zgarishi mumkin. Har xodimga
+    to'liq nusxa yozib qo'yilsa, standart o'zgarganda eski nusxalar uni
+    bosib qolardi va "nega menda yangi toifa chiqmadi" degan savol tug'ilardi.
+    """
+
+    __tablename__ = "push_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    category: Mapped[str] = mapped_column(String(40))
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("user_id", "category", name="uq_push_setting_user_category"),)
