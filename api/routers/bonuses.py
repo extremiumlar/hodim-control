@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import BonusMyOut, BonusOut
 from api.services.bonus import calculate_bonus
-from api.telegram_notify import send_message
+from api.notify import notify_user
+from api.services.push import Category
 from api.timeutil import today_local
 from db.models import AuditLog, Bonus, Role, User
 from db.upsert import upsert
@@ -67,9 +68,10 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
         calculated += 1
 
         if emp.telegram_id:
-            await send_message(
-                emp.telegram_id,
+            await notify_user(
+                db, emp, Category.DECISIONS,
                 f"💰 Bonusingiz ({period}) hisoblandi. Tafsilot uchun saytga kiring.",
+                data={"path": "/me/kpi"},
             )
 
     return {"period": period, "calculated": calculated}

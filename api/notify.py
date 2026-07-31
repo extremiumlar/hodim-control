@@ -57,6 +57,7 @@ async def notify_user(
     title: str | None = None,
     reply_markup: dict | None = None,
     data: dict | None = None,
+    force_telegram: bool = False,
 ) -> dict:
     """Xodimga xabar yuboradi: push + (kerak bo'lsa) Telegram.
 
@@ -64,18 +65,20 @@ async def notify_user(
     `data` — push bosilganda ilova ochadigan bo'lim, masalan
     `{"path": "/me/tasks"}`.
 
-    Qaytaradi: `{"push": <nechta qurilma>, "telegram": <yuborildimi>}`.
+    `force_telegram=True` — Telegram HAR DOIM yuborilsin. Bu inline tugmadagi
+    amal ilovada MAVJUD BO'LMAGANDA kerak (masalan sababli kunni tasdiqlash
+    hozircha faqat botda). Vazifadagi «✅ Bajardim» esa ilovada ham bor
+    (`/me/tasks`), shuning uchun u uchun `force_telegram` SHART EMAS —
+    aks holda eng tez-tez keladigan xabar doim ikki marta chalinardi.
 
-    DIQQAT: `reply_markup` (inline tugmalar) berilgan bo'lsa Telegram HAR DOIM
-    yuboriladi — tugmalar faqat botda ishlaydi, ularni push almashtira
-    olmaydi.
+    Qaytaradi: `{"push": <nechta qurilma>, "telegram": <yuborildimi>}`.
     """
     push_title, push_body = _split_title_body(text, title)
     sent_push = await push_service.send_push(
         db, user, category, push_title, push_body, data=data
     )
 
-    skip_telegram = reply_markup is None and await push_service.should_skip_telegram(
+    skip_telegram = not force_telegram and await push_service.should_skip_telegram(
         db, user, category
     )
     sent_telegram = False

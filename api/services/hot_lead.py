@@ -44,6 +44,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.notify import notify_user
+from api.services.push import Category
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ
 from crm import get_crm_adapter
@@ -309,7 +311,14 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
             await db.flush()  # tugma callback_data uchun lead.id kerak
             delivered = None
             if user and user.telegram_id:
-                delivered = await send_message(user.telegram_id, _notify_text(lead))
+                # Sotuv signali — ilova faol bo'lsa ham Telegram QOLADI:
+                # bu jamoaviy oqim, guruh chatiga ham ketadi va u yerda
+                # tarix sifatida kerak (services/push.py: PERSONAL_CATEGORIES).
+                res = await notify_user(
+                    db, user, Category.SALES_SIGNALS, _notify_text(lead),
+                    data={"path": "/me/lead-stats"},
+                )
+                delivered = res["telegram"] or res["push"]
             elif main_chat_id:
                 # Mas'ul tizimda topilmadi — lid ko'rinmay qolmasin, guruhga
                 text = _notify_text(lead) + "\n\n⚠️ Mas'ul operator tizimda topilmadi — kim oladi?"

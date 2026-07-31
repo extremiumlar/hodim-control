@@ -23,7 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_db, verify_bot_secret
 from api.services import ai_coach, auto_plan, watch_rules, weekly_stats
-from api.telegram_notify import inline_keyboard, send_message
+from api.notify import notify_user
+from api.services.push import Category
+from api.telegram_notify import inline_keyboard
 from api.timeutil import TASHKENT_TZ
 from crm import get_crm_adapter
 from db.models import AiConfig, HourlyActual, HourlyTarget, Role, ShortfallReason, User
@@ -101,9 +103,12 @@ async def tick(dry_run: bool = False, db: AsyncSession = Depends(get_db)) -> dic
             if d.ask_reason:
                 text += _ASK_REASON_SUFFIX
                 await _open_pending_reason(db, d.user.id, now.date(), now.hour)
-            ok = await send_message(d.user.telegram_id, text)
-            item["delivered"] = ok is not None
-            if ok is not None:
+            res = await notify_user(
+                db, d.user, Category.SALES_SIGNALS, text, data={"path": "/me/hourly-plan"}
+            )
+            ok = bool(res["telegram"] or res["push"])
+            item["delivered"] = ok
+            if ok:
                 sent += 1
         results.append(item)
 
@@ -227,7 +232,7 @@ async def _alert_managers(db: AsyncSession, user: User, hour: int, raw_text: str
         f"🔎 Tekshiruv: {note}"
     )
     for m in managers:
-        await send_message(m.telegram_id, text)
+        await notify_user(db, m, Category.SALES_SIGNALS, text, data={"path": "/statistics"})
 
 
 async def _request_manager_confirmation(db: AsyncSession, user: User, row: ShortfallReason) -> int:
@@ -266,7 +271,12 @@ async def _request_manager_confirmation(db: AsyncSession, user: User, row: Short
     markup = inline_keyboard([[("✅ Tasdiqlash", f"sfv:{row.id}:1"), ("❌ Rad etish", f"sfv:{row.id}:0")]])
     sent = 0
     for m in managers:
-        if (await send_message(m.telegram_id, text, reply_markup=markup)) is not None:
+        # Tasdiqlash tugmalari faqat botda — Telegram majburiy.
+        res = await notify_user(
+            db, m, Category.SALES_SIGNALS, text,
+            reply_markup=markup, force_telegram=True, data={"path": "/statistics"},
+        )
+        if res["telegram"] or res["push"]:
             sent += 1
     return sent
 
@@ -392,7 +402,9 @@ async def verify_reason(payload: ReasonVerifyIn, db: AsyncSession = Depends(get_
                 f"❌ Rahbar «{row.reason}» sababini rad etdi. Iltimos, ishni davom ettiring — "
                 "bu holat kun yakuni xulosasida ko'rinadi."
             )
-        await send_message(operator.telegram_id, op_text)
+        await notify_user(
+            db, operator, Category.SALES_SIGNALS, op_text, data={"path": "/me/stats"}
+        )
 
     return {"already": False, "verified": row.verified, "verify_note": row.verify_note, "label": row.reason}
 
@@ -487,9 +499,16 @@ async def weekly_run(dry_run: bool = False, db: AsyncSession = Depends(get_db)) 
         r = await ai_coach.weekly_trend(db, user.id, payload)
         item = {"user_id": user.id, "name": user.full_name, "source": r["source"], "text": r["text"]}
         if not dry_run:
-            ok = await send_message(user.telegram_id, f"📈 <b>Haftalik xulosa</b>\n\n{r['text']}")
-            item["delivered"] = ok is not None
-            if ok is not None:
+            res = await notify_user(
+                db,
+                user,
+                Category.DIGESTS,
+                f"📈 <b>Haftalik xulosa</b>\n\n{r['text']}",
+                data={"path": "/me/stats"},
+            )
+            ok = res["telegram"] or res["push"]
+            item["delivered"] = ok
+            if ok:
                 sent += 1
         results.append(item)
 

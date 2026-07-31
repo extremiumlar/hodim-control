@@ -16,7 +16,9 @@ from api.schemas import (
     UserOut,
 )
 from api.timeutil import today_local
-from api.telegram_notify import inline_keyboard, send_message
+from api.notify import notify_user
+from api.services.push import Category
+from api.telegram_notify import inline_keyboard
 from db.models import AuditLog, ExcusedDay, ExcusedStatus, Role, User
 
 router = APIRouter(prefix="/excused-days", tags=["excused-days"])
@@ -109,7 +111,13 @@ async def _request_excused_day_for_user(
         [[("✅ Tasdiqlayman", f"excused_decide:{item.id}:approved"), ("❌ Rad etaman", f"excused_decide:{item.id}:rejected")]]
     )
     for hr in hr_users:
-        await send_message(hr.telegram_id, text, keyboard)
+        # Qaror tugmalari hozircha faqat botda (web tasdiqlash keyingi
+        # bosqichda qo'shiladi) — shuning uchun Telegram majburiy.
+        await notify_user(
+            db, hr, Category.APPROVALS, text,
+            reply_markup=keyboard, force_telegram=True,
+            data={"path": "/excused-days"},
+        )
 
     return await _to_out(item, db)
 
@@ -167,10 +175,11 @@ async def _record_excused_day_for_user(
     await db.refresh(item)
 
     if target.telegram_id:
-        await send_message(
-            target.telegram_id,
+        await notify_user(
+            db, target, Category.DECISIONS,
             f"🙋 Sizning nomingizdan sababli kun belgilandi: {item.date} — "
             f"{html.escape(item.reason)} (kiritdi: {actor.full_name}).",
+            data={"path": "/me/excused"},
         )
 
     return await _to_out(item, db)
@@ -317,9 +326,10 @@ async def decide_excused_day(item_id: int, payload: ExcusedDayDecide, db: AsyncS
     employee = await db.get(User, item.user_id)
     if employee and employee.telegram_id:
         verdict = "✅ tasdiqlandi" if item.status == ExcusedStatus.approved.value else "❌ rad etildi"
-        await send_message(
-            employee.telegram_id,
+        await notify_user(
+            db, employee, Category.DECISIONS,
             f"Sababli kun so'rovingiz ({item.date}) {verdict}.",
+            data={"path": "/me/excused"},
         )
 
     return await _to_out(item, db)

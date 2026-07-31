@@ -42,7 +42,9 @@ from api.services.attendance_digest import (
     get_digest_config,
     send_attendance_digest,
 )
-from api.telegram_notify import inline_keyboard, send_message
+from api.notify import notify_user
+from api.services.push import Category
+from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
 from db.models import (
     Attendance,
@@ -201,7 +203,12 @@ async def register_face(
         [[("✅ Tasdiqlayman", f"face_rereg_decide:{req.id}:approved"), ("❌ Rad etaman", f"face_rereg_decide:{req.id}:rejected")]]
     )
     for m in managers:
-        await send_message(m.telegram_id, text, keyboard)
+        # Tasdiqlash/rad etish FAQAT botda — ilovada bu ekran yo'q, shuning
+        # uchun Telegram majburiy (force_telegram).
+        await notify_user(
+            db, m, Category.APPROVALS, text,
+            reply_markup=keyboard, force_telegram=True,
+        )
 
     return RegisterFaceOut(status="pending_approval", user=UserOut.model_validate(user))
 
@@ -276,7 +283,11 @@ async def decide_face_rereregistration(
 
     if target.telegram_id:
         verdict = "✅ tasdiqlandi" if item.status == FaceReregStatus.approved.value else "❌ rad etildi"
-        await send_message(target.telegram_id, f"Yuzni qayta ro'yxatdan o'tkazish so'rovingiz {verdict}.")
+        await notify_user(
+            db, target, Category.DECISIONS,
+            f"Yuzni qayta ro'yxatdan o'tkazish so'rovingiz {verdict}.",
+            data={"path": "/check-in"},
+        )
 
     return FaceReregOut(
         id=item.id, user_id=item.user_id, user_full_name=target.full_name,

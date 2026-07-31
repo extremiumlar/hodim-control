@@ -16,7 +16,9 @@ from api.schemas import (
     UserOut,
 )
 from api.routers.norms import is_orphan_employee
-from api.telegram_notify import inline_keyboard, send_message
+from api.notify import notify_user
+from api.services.push import Category
+from api.telegram_notify import inline_keyboard
 from api.timeutil import local_range_utc_naive, today_local
 from db.models import AuditLog, Role, TaskModel, TaskStatus, User
 
@@ -132,10 +134,15 @@ async def _create_task_record(
     if assignee.telegram_id:
         deadline_text = f"\nMuddat: {task.deadline:%Y-%m-%d %H:%M}" if task.deadline else ""
         text = f"🆕 <b>Yangi vazifa</b> ({actor.full_name} tomonidan)\n{html.escape(task.title)}{deadline_text}"
-        await send_message(
-            assignee.telegram_id,
+        # «Bajardim» ilovada ham bor (/me/tasks), shuning uchun ilova faol
+        # bo'lsa Telegram takrorlanmaydi (api/notify.py).
+        await notify_user(
+            db,
+            assignee,
+            Category.TASKS,
             text,
-            inline_keyboard([[("✅ Bajardim", f"task_done:{task.id}")]]),
+            reply_markup=inline_keyboard([[("✅ Bajardim", f"task_done:{task.id}")]]),
+            data={"path": "/me/tasks"},
         )
 
     return task
@@ -392,12 +399,15 @@ async def send_reminders(db: AsyncSession = Depends(get_db)) -> dict:
             continue
         deadline_text = f"\nMuddat: {task.deadline:%Y-%m-%d %H:%M}" if task.deadline else ""
         text = f"⏰ <b>Eslatma:</b> vazifa hali bajarilmagan\n{html.escape(task.title)}{deadline_text}"
-        result = await send_message(
-            assignee.telegram_id,
+        result = await notify_user(
+            db,
+            assignee,
+            Category.TASKS,
             text,
-            inline_keyboard([[("✅ Bajardim", f"task_done:{task.id}")]]),
+            reply_markup=inline_keyboard([[("✅ Bajardim", f"task_done:{task.id}")]]),
+            data={"path": "/me/tasks"},
         )
-        if result:
+        if result["push"] or result["telegram"]:
             sent += 1
 
     return {"pending_count": len(pending_tasks), "reminders_sent": sent}
@@ -510,7 +520,13 @@ async def cancel_task(
     await db.refresh(task)
 
     if assignee.telegram_id:
-        await send_message(assignee.telegram_id, f"❌ Vazifangiz bekor qilindi:\n{html.escape(task.title)}")
+        await notify_user(
+            db,
+            assignee,
+            Category.TASKS,
+            f"❌ Vazifangiz bekor qilindi:\n{html.escape(task.title)}",
+            data={"path": "/me/tasks"},
+        )
 
     return await _to_out(task, db)
 

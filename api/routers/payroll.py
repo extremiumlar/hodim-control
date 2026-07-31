@@ -60,7 +60,8 @@ from api.services.payroll import (
     resolve_policy,
     run_payroll,
 )
-from api.telegram_notify import send_message
+from api.notify import notify_user
+from api.services.push import Category
 from api.timeutil import today_local
 from db.models import (
     AuditLog,
@@ -594,10 +595,13 @@ async def calculate(
         )
     )
     for m in managers:
-        await send_message(
-            m.telegram_id,
+        await notify_user(
+            db,
+            m,
+            Category.APPROVALS,
             f"💰 Payroll tayyor ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
             f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
+            data={"path": "/payroll"},
         )
     # 8-bo'lim (Bosqich 7): barcha pul o'zgarishlari audit qilinadi — hisoblash
     # o'zi pul figurasini o'zgartiradi (garchi qulflamasa ham).
@@ -766,17 +770,23 @@ async def approve_period(
     )
     await db.commit()
 
+    # Ilgari faqat `telegram_id` olinardi; push uchun `User` obyekti kerak
+    # (toifa sozlamasi va qurilma ro'yxati foydalanuvchiga bog'langan).
     user_ids = [p.user_id for p in payslips]
-    result = await db.execute(select(User.id, User.telegram_id).where(User.id.in_(user_ids)))
-    telegram_by_user = dict(result.all())
+    users_by_id = {
+        u.id: u for u in await db.scalars(select(User).where(User.id.in_(user_ids)))
+    }
     for p in payslips:
-        tg_id = telegram_by_user.get(p.user_id)
-        if not tg_id:
+        emp = users_by_id.get(p.user_id)
+        if emp is None:
             continue
-        await send_message(
-            tg_id,
+        await notify_user(
+            db,
+            emp,
+            Category.DECISIONS,
             f"💵 {period} oyi uchun oyligingiz tasdiqlandi. Tafsilot uchun botdagi «Mening oyligim» "
             f"bo'limiga qarang.",
+            data={"path": "/me/payroll"},
         )
 
     return {"period": period, "approved": len(payslips)}
@@ -837,10 +847,13 @@ async def calculate_monthly_cron(
         )
     )
     for m in managers:
-        await send_message(
-            m.telegram_id,
+        await notify_user(
+            db,
+            m,
+            Category.APPROVALS,
             f"💰 Payroll avtomatik hisoblandi ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
             f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
+            data={"path": "/payroll"},
         )
     db.add(
         AuditLog(
@@ -899,7 +912,7 @@ async def late_warnings_tick(
                 f"🕐 Ogohlantirish: bepul kechikish limitingizdan atigi {event['remaining_minutes']} daqiqa "
                 "qoldi. Keyingi kechikish jarima boshlanishiga olib kelishi mumkin."
             )
-        await send_message(user.telegram_id, text)
+        await notify_user(db, user, Category.LATE_WARNING, text, data={"path": "/check-in"})
         warned += 1
     return {"date": target_date.isoformat(), "checked": len(users), "warned": warned, "limit_reached": limit_reached}
 
