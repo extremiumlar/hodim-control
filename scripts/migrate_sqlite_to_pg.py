@@ -59,11 +59,46 @@ async def main() -> None:
     mismatch = []
     async with src.connect() as sc:
         for table in tables:
-            rows = (await sc.execute(select(table))).mappings().all()
+            rows = [dict(r) for r in (await sc.execute(select(table))).mappings().all()]
+
+            # ── Yetim FK tozalash ──────────────────────────────────────────────
+            # SQLite'da FK'lar tarixan majburlanmagan (masalan foydalanuvchi
+            # majburiy o'chirilganda audit_logs.target_user_id yetim qolgan) —
+            # PG esa qat'iy. Ota jadvallar sorted_tables tufayli allaqachon
+            # ko'chirilgan, shuning uchun mavjud ID'larni o'sha yerdan o'qiymiz.
+            # Nullable ustun -> NULL (yozuv saqlanadi); NOT NULL -> aniq xato
+            # bilan to'xtaymiz (jimgina satr o'chirish YO'Q).
+            for fk in table.foreign_keys:
+                col = fk.parent
+                ref_table, ref_col = fk.column.table, fk.column
+                if ref_table is table:
+                    parent_ids = {r[ref_col.name] for r in rows}
+                else:
+                    async with dst.connect() as dc:
+                        parent_ids = set(
+                            (await dc.execute(select(ref_col))).scalars().all()
+                        )
+                orphans = [
+                    r for r in rows if r[col.name] is not None and r[col.name] not in parent_ids
+                ]
+                if not orphans:
+                    continue
+                if not col.nullable:
+                    raise SystemExit(
+                        f"YETIM (NOT NULL!): {table.name}.{col.name} -> {ref_table.name} "
+                        f"({len(orphans)} satr, misol id={orphans[0].get('id')}) — qo'lda qaror kerak"
+                    )
+                for r in orphans:
+                    r[col.name] = None
+                print(
+                    f"  yetim tozalandi: {table.name}.{col.name} -> {ref_table.name}: "
+                    f"{len(orphans)} satr NULL qilindi"
+                )
+
             if rows:
                 async with dst.begin() as dc:
                     for i in range(0, len(rows), CHUNK):
-                        await dc.execute(table.insert(), [dict(r) for r in rows[i : i + CHUNK]])
+                        await dc.execute(table.insert(), rows[i : i + CHUNK])
 
             # Tekshiruv: satr soni ikkala tomonda bir xilmi
             async with dst.connect() as dc:
