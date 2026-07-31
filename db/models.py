@@ -154,7 +154,7 @@ class Team(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    telegram_group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    telegram_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     users: Mapped[list["User"]] = relationship(back_populates="team")
 
@@ -188,7 +188,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True, index=True)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20))
     team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
@@ -242,7 +242,7 @@ class AppLoginToken(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    telegram_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=AppLoginStatus.pending.value)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -331,7 +331,7 @@ class MobilografVideo(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     # Qo'lda kiritilgan ("manual" source) yozuvlarda Telegram xabari yo'q — NULL.
     telegram_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    group_chat_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    group_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     status: Mapped[str] = mapped_column(String(20), default=MobilografStatus.pending.value)
     # telegram_reaction — guruhdagi reaksiya orqali; manual — HR/rahbar qo'lda kiritgan
