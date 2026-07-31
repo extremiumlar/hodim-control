@@ -32,7 +32,23 @@
     @apply border-border;
   }
 
+  /* Standalone PWA'da (iPhon bosh ekranidan ochilganda) `100vh` WKWebView
+     balandligini noto'g'ri hisoblaydi — sahifa tagida bo'sh joy qoladi va
+     foydalanuvchi pastga tushira olmaydi (faqat masshtabni o'zgartirganda
+     repaint bo'lib "tuzalib qoladi"). `-webkit-fill-available` — shu WebKit
+     xatosining rasmiy davolash usuli (2026-07-31 xatolik, davomat sahifasi
+     telefon ekraniga sig'maydi degan shikoyat). `-webkit-overflow-scrolling:
+     touch` — standalone rejimda sahifa scroll'iga momentum (inersiya) beradi,
+     busiz ba'zi iOS versiyalarida scroll "qotib qolgan" his qiladi. */
+  html {
+    height: 100%;
+    height: -webkit-fill-available;
+  }
+
   body {
     @apply bg-slate-50 text-slate-900;
+    min-height: 100%;
+    min-height: -webkit-fill-available;
+    -webkit-overflow-scrolling: touch;
   }
 }

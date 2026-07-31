@@ -2,7 +2,14 @@
 <html lang="uz">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover — SHART: standalone PWA'da (apple-mobile-web-app-
+         capable) bo'lmasa env(safe-area-inset-*) doim 0 bo'lib qoladi VA iOS
+         WebKit past qismini WKWebView balandligiga noto'g'ri moslab, sahifa
+         tagida joy qoldiradi — foydalanuvchi pastga tushira olmaydi, faqat
+         masshtabni o'zgartirganda repaint bo'lib "to'g'rilanadi" (2026-07-31
+         xatolik). EmployeeTabBar.tsx'dagi safe-area-inset-bottom shu bilan
+         birga faollashadi. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>N.B hodimlar</title>
 
     <!-- PWA: iPhone'da App Store'siz "ilova" qilib o'rnatish uchun
