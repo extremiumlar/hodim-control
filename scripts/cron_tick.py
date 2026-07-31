@@ -273,25 +273,33 @@ async def _run_minute_ticks_inprocess(now: datetime) -> None:
     shuning uchun to'g'ridan-to'g'ri chaqirsa bo'ladi."""
     from db.base import async_session
 
+    done: list[str] = []
+
     async def one(label: str, fn) -> None:
         try:
             async with async_session() as db:
                 await fn(db)
+            done.append(label)
         except Exception as exc:  # noqa: BLE001 — bittasi qolganini to'xtatmasin
             print(f"{now:%Y-%m-%d %H:%M} {label} XATO: {type(exc).__name__}: {exc}")
 
     from api.routers.attendance import attendance_digest_tick
     from api.routers.stats import group_post_tick
 
-    await one("kunlik digest tick", group_post_tick)
-    await one("davomat digest tick", attendance_digest_tick)
+    await one("kunlik-digest", group_post_tick)
+    await one("davomat-digest", attendance_digest_tick)
 
     if now.minute % 2 == 1:
         from api.routers import anketa as anketa_router
         from api.routers.daily_results import sync_daily_results
 
-        await one("CRM sync", sync_daily_results)
-        await one("anketa tick", anketa_router.tick)
+        await one("crm-sync", sync_daily_results)
+        await one("anketa", anketa_router.tick)
+
+    # Tiriklik belgisi — cron ishlayotganini logdan bir qarashda ko'rish uchun
+    # (avvalgi HTTP "tik:" qatorlari o'rnini bosadi).
+    if done:
+        print(f"{now:%Y-%m-%d %H:%M} tik (in-process): {', '.join(done)}")
 
 
 async def _run_hot_lead_inprocess(now: datetime) -> None:
