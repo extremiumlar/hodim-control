@@ -153,11 +153,45 @@ haqiqiy HTTPS domenda.
 (A) uzoq muddatli variant sifatida qoladi — WebView yetarli bo'lmasa
 (masalan offline rejim kerak bo'lganda) qayta ko'rib chiqiladi.
 
-### 4.3 Push-token ro'yxatdan o'tkazish
-Yangi jadval `push_tokens` (user_id, expo_push_token, platform, created_at)
-+ endpoint `POST /users/me/push-token`. Mavjud digest/hot-lead/eslatma
-yuboruvchi kod (`attendance_digest.py`, `hot_lead.py`, `daily_digest.py`)
-Telegram'ga qo'shimcha shu jadvaldan push yuborish bilan boyitiladi.
+### 4.3 Push bildirishnomalar — BAJARILDI (2026-07-31)
+
+**Yo'l: to'g'ridan-to'g'ri FCM HTTP v1, Expo relay'i EMAS.** Reja avval Expo
+Push'ni ko'zda tutgan edi, lekin Expo 57 hujjati `getExpoPushTokenAsync` EAS
+`projectId` talab qilishini ko'rsatdi — bizda build butunlay lokal (8.5-band).
+Ikkinchi sabab: bildirishnoma matnida oylik/bonus SUMMASI bo'ladi, uni
+ortiqcha uchinchi tomondan o'tkazmaslik to'g'ri. Ilova
+`getDevicePushTokenAsync()` bilan nativ FCM tokenini beradi.
+
+Jadvallar: `push_tokens` (bir xodimda bir nechta qurilma bo'lishi mumkin,
+`last_seen_at` bilan) va `push_settings` (FAQAT standartdan farq saqlanadi).
+Endpointlar `/me/push/token` va `/me/push/settings` — shaxs faqat tokendan.
+
+**7 toifa** va rolga qarab standart holat (`api/services/push.py`):
+kechikish ogohlantirishi · vazifalar · qaror natijasi — xodimda YOQIQ;
+reja eslatmalari va digestlar — ATAYLAB o'chiq (birinchisi kuniga bir necha
+marta keladi, ikkinchisi push'da o'qilmaydigan uzun matn); tasdiq kutilmoqda
+va sotuv signallari — rahbarda yoqiq (HR'da sotuv signali yo'q).
+
+**Takroriylik qoidasi** (foydalanuvchi qarori): ilovadan faol foydalanadigan
+xodimga SHAXSIY xabarlar Telegramga takrorlanmaydi. Lekin Telegram faqat
+push HAQIQATAN ketgan bo'lsagina o'tkazib yuboriladi (`sent_push > 0`) —
+FCM sozlanmagan yoki toifa o'chirilgan bo'lsa Telegram qaytadi va xabar
+yo'qolmaydi. Jamoaviy signallar (issiq lid, digest) hamisha Telegramda
+qoladi — ular guruh chatida tarix sifatida kerak.
+
+**Tinch soatlar** 22:00–08:00: push yetkaziladi, lekin ovozsiz (`_quiet`
+kanali orqali).
+
+**Android sozlash (qo'lda, `expo prebuild`SIZ):**
+`android/build.gradle`ga `com.google.gms:google-services` classpath,
+`android/app/build.gradle` oxirida plugin SHARTLI qo'llanadi —
+`google-services.json` bo'lmasa APK avvalgidek quriladi, faqat push o'chiq.
+Fayl `.gitignore`da (maxfiy). Serverda `.env`: `FCM_PROJECT_ID` va
+`FCM_SERVICE_ACCOUNT_FILE`.
+
+**iOS (PWA):** nativ push YO'Q — Web Push (VAPID) kerak, alohida ish.
+Shartlari: iOS 16.4+, majburiy «Bosh ekranga qo'shish», service worker
+(saytda hozircha YO'Q). Apple Developer hisobi shart emas.
 
 ### 4.4 Personalizatsiya — mavjud mexanizmni kengaytirish
 
