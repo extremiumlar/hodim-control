@@ -875,6 +875,49 @@ class UysotAdapter(CRMAdapter):
         )
         return {"conversations": conversations, "visits": visits}
 
+    async def get_daily_results_bulk(self, users, day: date) -> dict[int, dict | None]:
+        """Kunlik qo'ng'iroq/tashrif ma'lumotini BIR MARTA yuklab, keyin xodimlarga
+        taqsimlaydi.
+
+        Nega kerak: `_load_day_call_counts` va `_load_day_visits` faqat KUNGA
+        bog'liq (foydalanuvchiga emas) — ular butun kunning ma'lumotini
+        sahifalab yuklaydi. Shuning uchun har xodim uchun alohida
+        `get_daily_results` chaqirish xuddi shu og'ir yuklashni N marta
+        takrorlardi (jonli o'lchov: 4 xodimda /daily-results/sync ~4.4s).
+        cPanel'da Passenger'ning YAGONA ishchisi shu vaqt davomida band bo'lib,
+        sayt so'rovlari navbatda kutardi."""
+        if not CRM_API_KEY:
+            return {u.id: {"conversations": 0, "visits": 0} for u in users}
+
+        targets = [u for u in users if u.crm_external_id or u.crm_visit_external_id]
+        out: dict[int, dict | None] = {
+            u.id: {"conversations": 0, "visits": 0} for u in users if u.id not in {t.id for t in targets}
+        }
+        if not targets:
+            return out
+
+        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+            try:
+                counts = await self._load_day_call_counts(client, day)
+                visits_by_id = await self._load_day_visits(client, day)
+            except httpx.HTTPError:
+                logger.exception("Uysot'dan kunlik ma'lumot olishda xatolik (bulk, day=%s)", day)
+                # Xatoda `None` — chaqiruvchi mavjud yozuvni ustidan yozmaydi
+                # (bitta-bitta chaqiruvdagi bilan bir xil semantika).
+                for u in targets:
+                    out[u.id] = None
+                return out
+
+        for u in targets:
+            conversations = counts.get(u.crm_external_id, 0) if u.crm_external_id else 0
+            visits = (
+                visits_by_id.get(u.crm_visit_external_id, {}).get("count", 0)
+                if u.crm_visit_external_id
+                else 0
+            )
+            out[u.id] = {"conversations": conversations, "visits": visits}
+        return out
+
     async def get_all_daily_call_counts(self, day: date) -> dict[str, int]:
         """Botning `/statistika` buyrug'i uchun: shu kunda barcha operator/managerlarning
         (Uysot `employeeNum`i bo'yicha) qo'ng'iroqlar sonini qaytaradi."""

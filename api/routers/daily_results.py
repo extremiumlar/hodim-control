@@ -192,8 +192,13 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
     synced = 0
     failed = 0
     skipped_manual = 0
+    # Kunlik CRM ma'lumoti BITTA chaqiruvda olinadi: u faqat kunga bog'liq, shuning
+    # uchun har xodim uchun alohida so'rash o'sha og'ir yuklashni N marta
+    # takrorlardi (jonli o'lchov: 4 xodimda ~4.4s). cPanel'da Passenger'ning yagona
+    # ishchisi shu vaqt band bo'lib, sayt so'rovlari navbatda kutardi.
+    results = await adapter.get_daily_results_bulk(employees, today)
     for emp in employees:
-        data = await adapter.get_daily_results(emp, today)
+        data = results.get(emp.id)
         if data is None:
             # CRM'dan ma'lumot olib bo'lmadi (xatolik) — mavjud yozuvni ustidan
             # yozib yubormaslik uchun bu xodimni butunlay o'tkazib yuboramiz.

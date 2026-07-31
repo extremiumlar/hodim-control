@@ -29,6 +29,22 @@ class CRMAdapter(ABC):
         ustidan yozmasligi kerak."""
         raise NotImplementedError
 
+    async def get_daily_results_bulk(
+        self, users: "list[User]", day: date
+    ) -> "dict[int, dict | None]":
+        """BIR NECHTA xodimning kunlik natijasini bitta chaqiruvda qaytaradi:
+        {user.id: {"conversations": int, "visits": int} | None}.
+
+        Standart amalga oshirish — har xodim uchun `get_daily_results` (orqaga
+        moslik: yangi adapter yozganda bu metodni override qilish SHART emas).
+        Lekin kunlik ma'lumotni bir marta yuklab, keyin xodimlarga taqsimlay
+        oladigan CRM (masalan Uysot) buni override qilishi KERAK — aks holda
+        bir xil kunlik ma'lumot har xodim uchun qaytadan yuklanadi."""
+        out: dict[int, dict | None] = {}
+        for user in users:
+            out[user.id] = await self.get_daily_results(user, day)
+        return out
+
     async def get_all_daily_call_counts(self, day: date) -> dict[str, int]:
         """Ixtiyoriy: shu kunda barcha operator/managerlarning qo'ng'iroqlar sonini
         {crm_external_id: soni} ko'rinishida qaytaradi (masalan botning `/statistika`

@@ -21,6 +21,7 @@ import {
   Search,
   type LucideIcon,
 } from "lucide-react";
+import { MobileCard, MobileCardRow } from "@/components/MobileCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -155,33 +156,16 @@ export default function DataTable<TData>({
           <div className="rounded-xl border border-slate-200 bg-white">{emptyContent}</div>
         ) : (
           rows.map((row) => (
-            <div
+            <MobileCard
               key={row.id}
-              className={cn(
-                "rounded-xl border border-slate-200 bg-white px-4 py-2",
-                onRowClick && "cursor-pointer active:bg-slate-50"
-              )}
               onClick={onRowClick ? () => onRowClick(row.original) : undefined}
             >
-              {row.getVisibleCells().map((cell) => {
-                const label = headerLabels.get(cell.column.id);
-                return (
-                  <div
-                    key={cell.id}
-                    className="flex items-baseline justify-between gap-3 border-b border-slate-50 py-2 last:border-0"
-                  >
-                    {/* Sarlavhasiz ustun (masalan amallar tugmasi) — yorliqsiz,
-                        qiymat butun kenglikni oladi */}
-                    {label ? (
-                      <span className="shrink-0 text-xs text-slate-500">{label}</span>
-                    ) : null}
-                    <span className={cn("min-w-0 text-sm", label ? "text-right" : "flex-1")}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+              {row.getVisibleCells().map((cell) => (
+                <MobileCardRow key={cell.id} label={headerLabels.get(cell.column.id)}>
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </MobileCardRow>
+              ))}
+            </MobileCard>
           ))
         )}
         {footer}
