@@ -101,12 +101,12 @@ android {
         applicationId 'uz.nuriddinbuilding.hodimlar'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // Bosqich 3 — kabinetning barcha bo'limlari ulandi (ilgari faqat
-        // davomat ishlardi, qolgan tayllar "Tez orada" ko'rsatardi).
+        // Bosqich 4 — push bildirishnomalar (FCM). Push google-services.json
+        // qo'yilgandan keyin ishlaydi; usiz APK avvalgidek quriladi.
         // versionCode HAR BIR tarqatilgan APK'da oshirilishi kerak: ba'zi
         // o'rnatuvchilar bir xil versionCode ustiga o'rnatishni rad etadi.
-        versionCode 4
-        versionName "1.3.0"
+        versionCode 5
+        versionName "1.4.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -208,4 +208,15 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+}
+
+// ── Push (FCM) ──
+// Plugin FAQAT `google-services.json` mavjud bo'lganda qo'llanadi. Fayl
+// repoda YO'Q (Firebase kalitlari — maxfiy) va u bo'lmasa plugin build'ni
+// "File google-services.json is missing" bilan yiqitadi. Shartli qo'llash
+// bilan: fayl qo'yilmagunча APK avvalgidek quriladi, faqat push ishlamaydi.
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+} else {
+    logger.lifecycle("google-services.json topilmadi — push (FCM) O'CHIQ holatda quriladi")
 }

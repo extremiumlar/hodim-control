@@ -41,3 +41,7 @@ yarn-error.*
 # /android — biz android/ni ATAYLAB commit qilamiz: app/build.gradle (release imzo,
 # MAX_PATH staging C:/hb) va gradle.properties (ABI, keystore yo'li) qo'lda sozlangan —
 # prebuild --clean bularni o'chiradi, ehtiyot bo'ling.
+
+# Firebase FCM kaliti — MAXFIY, repoga tushmasin (build shartli qo'llaydi:
+# fayl bo'lmasa APK push'siz quriladi, android/app/build.gradle oxiriga qara)
+android/app/google-services.json

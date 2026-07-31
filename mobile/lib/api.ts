@@ -96,3 +96,29 @@ export function appLoginPoll(
 export function getMe(): Promise<UserOut> {
   return request("/users/me");
 }
+
+// ── Push bildirishnomalar ──
+
+export interface PushSettings {
+  categories: Record<string, boolean>;
+  /** Toifa nomlari SERVERDAN keladi — ilova ro'yxatni takrorlamasin. */
+  labels: Record<string, string>;
+  quiet_from: number;
+  quiet_to: number;
+}
+
+export function registerPushToken(token: string, platform: "android" | "ios"): Promise<{ ok: boolean }> {
+  return request("/me/push/token", { method: "POST", body: { token, platform } });
+}
+
+export function deletePushToken(token: string, platform: "android" | "ios"): Promise<{ ok: boolean }> {
+  return request("/me/push/token", { method: "DELETE", body: { token, platform } });
+}
+
+export function fetchPushSettings(): Promise<PushSettings> {
+  return request("/me/push/settings");
+}
+
+export function savePushSettings(categories: Record<string, boolean>): Promise<PushSettings> {
+  return request("/me/push/settings", { method: "PUT", body: { categories } });
+}

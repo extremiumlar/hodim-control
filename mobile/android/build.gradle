@@ -9,6 +9,11 @@ buildscript {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+    // Push (FCM): `google-services.json`ni o'qib FCM sozlamalarini APK'ga
+    // qo'shadi. QO'LDA yozilgan — `expo prebuild` bu papkani qayta yaratadi
+    // va release imzo/CMake sozlamalarini yo'q qiladi, shuning uchun
+    // ishlatilmaydi (MOBIL_ILOVA_REJASI 8.5).
+    classpath('com.google.gms:google-services:4.4.2')
   }
 }
 

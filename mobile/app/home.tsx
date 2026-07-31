@@ -2,6 +2,7 @@ import { Redirect, router } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { useAuth } from "../lib/auth";
+import { unregisterPush } from "../lib/push";
 import { visibleSections } from "../lib/sections";
 
 const ROLE_NAMES: Record<string, string> = {
@@ -61,8 +62,16 @@ export default function Home() {
         ))}
       </View>
 
+      <Pressable onPress={() => router.push("/notifications" as never)} style={styles.settingsRow}>
+        <Text style={styles.settingsText}>🔔 Bildirishnoma sozlamalari</Text>
+      </Pressable>
+
       <Pressable
         onPress={async () => {
+          // Avval tokenni o'chiramiz — chiqqandan keyin bu qurilmaga push
+          // ketmasin (token o'chirish avtorizatsiya talab qiladi, shuning
+          // uchun signOut'dan OLDIN).
+          await unregisterPush();
           await signOut();
           router.replace("/login");
         }}
@@ -89,6 +98,12 @@ const styles = StyleSheet.create({
   },
   tileEmoji: { fontSize: 28 },
   tileTitle: { fontSize: 14, fontWeight: "600" },
+  settingsRow: {
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  settingsText: { fontSize: 15, color: "#334155" },
   logout: { alignSelf: "center", padding: 12 },
   logoutText: { color: "#dc2626", fontSize: 15 },
 });
