@@ -1,4 +1,6 @@
+import { type ReactNode } from "react";
 import { type OperatorSummary } from "@/lib/api";
+import { MobileCard, MobileCardRow } from "@/components/MobileCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -37,6 +39,30 @@ function PctBadge({ pct }: { pct: number | null }) {
   );
 }
 
+/**
+ * Ustunlar BIR MARTA e'lon qilinadi — jadval (desktop) va karta (telefon)
+ * ikkalasi ham shu ro'yxatdan quriladi. Aks holda ustun qo'shilganda biri
+ * yangilanib, ikkinchisi jimgina eskirib qolardi.
+ */
+const FIELDS: { key: keyof OperatorRow; label: string }[] = [
+  { key: "name", label: "Xodim" },
+  { key: "calls", label: "📞 Qo'ng'iroq" },
+  { key: "talk", label: "🗣 Gaplashgan" },
+  { key: "leads", label: "🧲 Lid" },
+  { key: "visits", label: "🏠 Tashrif" },
+  { key: "tasks", label: "✅ Vazifa" },
+];
+
+type OperatorRow = {
+  id: string;
+  name: ReactNode;
+  calls: ReactNode;
+  talk: ReactNode;
+  leads: ReactNode;
+  visits: ReactNode;
+  tasks: ReactNode;
+};
+
 /** Operator kesimi jadvali — davr jami va oldingi davrga % farq bilan. */
 export default function OperatorTable({
   summary,
@@ -59,60 +85,95 @@ export default function OperatorTable({
     return <p className="py-4 text-center text-sm text-slate-400">Bu davr uchun ma'lumot yo'q.</p>;
   }
 
+  const rows: OperatorRow[] = summary.operators.map((op) => ({
+    id: String(op.responsible_id),
+    name: (
+      <>
+        {op.name}
+        {!op.is_system_user && (
+          <span
+            className="ml-1 text-xs text-slate-400"
+            title="Tizim foydalanuvchisiga bog'lanmagan (CRM ID)"
+          >
+            ⚠
+          </span>
+        )}
+      </>
+    ),
+    calls: (
+      <>
+        <b>{op.calls}</b>
+        <PctBadge pct={op.calls_pct} />
+      </>
+    ),
+    talk: op.talk_sec ? fmtTalk(op.talk_sec) : "—",
+    leads: op.leads,
+    visits: op.visits,
+    tasks: op.tasks_total != null ? `${op.tasks_done}/${op.tasks_total}` : "—",
+  }));
+
+  const totalsRow: OperatorRow = {
+    id: "jami",
+    name: "Jami",
+    calls: (
+      <>
+        {summary.totals.calls}
+        <PctBadge pct={summary.totals.calls_pct} />
+      </>
+    ),
+    talk: fmtTalk(summary.totals.talk_sec),
+    leads: summary.totals.leads,
+    visits: summary.totals.visits,
+    tasks: null,
+  };
+
   return (
     <>
       <p className="mb-2 text-xs text-slate-400">
         {fmtDay(summary.date_from)} – {fmtDay(summary.date_to)} · % — oldingi teng davrga (
         {fmtDay(summary.prev_from)} – {fmtDay(summary.prev_to)}) nisbatan
       </p>
-      <div className="overflow-x-auto">
+
+      {/* ── Telefon (md dan kichik): karta ko'rinishi ──
+          Ilgari bu yerda faqat `overflow-x-auto` bor edi va 6 ustunli jadval
+          360 px ekranda 255 px yashirin gorizontal scroll berardi. Sahifa
+          darajasidagi overflow 0 bo'lgani uchun (shadcn `Table` o'zi
+          `overflow-auto` wrapper bilan keladi) bu nuqson Bosqich 6 da
+          o'lchovdan chetda qolgan edi. */}
+      <div className="space-y-2 md:hidden">
+        {[...rows, totalsRow].map((row) => (
+          <MobileCard key={row.id} className={row.id === "jami" ? "font-medium" : undefined}>
+            {FIELDS.map((f) => (
+              <MobileCardRow key={f.key} label={f.label}>
+                {row[f.key]}
+              </MobileCardRow>
+            ))}
+          </MobileCard>
+        ))}
+      </div>
+
+      {/* ── Desktop (md va yuqori): jadval ── */}
+      <div className="hidden overflow-x-auto md:block">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Xodim</TableHead>
-              <TableHead>📞 Qo'ng'iroq</TableHead>
-              <TableHead>🗣 Gaplashgan</TableHead>
-              <TableHead>🧲 Lid</TableHead>
-              <TableHead>🏠 Tashrif</TableHead>
-              <TableHead>✅ Vazifa</TableHead>
+              {FIELDS.map((f) => (
+                <TableHead key={f.key}>{f.label}</TableHead>
+              ))}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {summary.operators.map((op) => (
-              <TableRow key={op.responsible_id}>
-                <TableCell>
-                  {op.name}
-                  {!op.is_system_user && (
-                    <span
-                      className="ml-1 text-xs text-slate-400"
-                      title="Tizim foydalanuvchisiga bog'lanmagan (CRM ID)"
-                    >
-                      ⚠
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <b>{op.calls}</b>
-                  <PctBadge pct={op.calls_pct} />
-                </TableCell>
-                <TableCell>{op.talk_sec ? fmtTalk(op.talk_sec) : "—"}</TableCell>
-                <TableCell>{op.leads}</TableCell>
-                <TableCell>{op.visits}</TableCell>
-                <TableCell>
-                  {op.tasks_total != null ? `${op.tasks_done}/${op.tasks_total}` : "—"}
-                </TableCell>
+            {rows.map((row) => (
+              <TableRow key={row.id}>
+                {FIELDS.map((f) => (
+                  <TableCell key={f.key}>{row[f.key]}</TableCell>
+                ))}
               </TableRow>
             ))}
             <TableRow className="font-medium">
-              <TableCell>Jami</TableCell>
-              <TableCell>
-                {summary.totals.calls}
-                <PctBadge pct={summary.totals.calls_pct} />
-              </TableCell>
-              <TableCell>{fmtTalk(summary.totals.talk_sec)}</TableCell>
-              <TableCell>{summary.totals.leads}</TableCell>
-              <TableCell>{summary.totals.visits}</TableCell>
-              <TableCell />
+              {FIELDS.map((f) => (
+                <TableCell key={f.key}>{totalsRow[f.key]}</TableCell>
+              ))}
             </TableRow>
           </TableBody>
         </Table>
