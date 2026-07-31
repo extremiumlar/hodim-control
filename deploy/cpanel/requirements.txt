@@ -2,8 +2,9 @@
 # Docker'dagi alohida api/bot/scheduler requirements o'rniga hammasi birga,
 # chunki cPanel'da bitta "Python App" (bitta virtualenv) ishlaydi.
 #
-# Baza: SQLite (aiosqlite) — mavjud ishlab turgan app.db faylini serverga
-# yuklaydi (ma'lumotlar bilan birga). PostgreSQL kerak emas.
+# Baza: PostgreSQL (asyncpg) — 2026-07-31'da SQLite'dan ko'chirildi (egasi
+# qarori; sabab: ko'p jarayonli parallel yozuvda SQLite qulflanishi).
+# aiosqlite lokal dev uchun qoladi (api/config default'i hamon SQLite).
 
 # --- Web (Passenger ASGI o'rami) ---
 a2wsgi==1.10.7
@@ -12,6 +13,7 @@ a2wsgi==1.10.7
 fastapi==0.115.6
 sqlalchemy==2.0.36
 aiosqlite==0.20.0
+asyncpg==0.31.0
 alembic==1.14.0
 pydantic-settings==2.7.0
 pyjwt==2.10.1
