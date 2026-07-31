@@ -8,14 +8,24 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_CANCEL, BTN_EXCUSED, cancel_menu, menu_for_user
+from bot.keyboards import BTN_CANCEL, BTN_EXCUSED, BTN_MARK_EXCUSED, cancel_menu, menu_for_user
 
 router = Router(name="excused")
+
+# decide_excused_day bilan bir xil qamrov — ROP bu yerda ham yo'q (faqat
+# hr/boss/dasturchi xodim nomidan sababli kun belgilay oladi).
+MARK_EXCUSED_ROLES = {"hr", "boss", "dasturchi"}
 
 
 class ExcusedDayFSM(StatesGroup):
     waiting_for_date = State()
     waiting_for_reason = State()
+
+
+class MarkExcusedFSM(StatesGroup):
+    choosing_employee = State()
+    choosing_date = State()
+    entering_reason = State()
 
 
 def _date_kb() -> InlineKeyboardMarkup:
@@ -44,6 +54,9 @@ async def start_excused_request(message: Message, state: FSMContext) -> None:
 
 @router.message(StateFilter(ExcusedDayFSM.waiting_for_date), F.text == BTN_CANCEL)
 @router.message(StateFilter(ExcusedDayFSM.waiting_for_reason), F.text == BTN_CANCEL)
+@router.message(StateFilter(MarkExcusedFSM.choosing_employee), F.text == BTN_CANCEL)
+@router.message(StateFilter(MarkExcusedFSM.choosing_date), F.text == BTN_CANCEL)
+@router.message(StateFilter(MarkExcusedFSM.entering_reason), F.text == BTN_CANCEL)
 async def cancel_excused_request(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
@@ -116,6 +129,131 @@ async def receive_excused_reason(message: Message, state: FSMContext) -> None:
         "So'rovingiz HR'ga yuborildi, javobini shu yerda kutib turing.",
         reply_markup=menu_for_user(user),
     )
+
+
+def _mark_excused_date_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Bugun", callback_data="mark_excused_date:today"),
+                InlineKeyboardButton(text="Ertaga", callback_data="mark_excused_date:tomorrow"),
+            ]
+        ]
+    )
+
+
+@router.message(F.text == BTN_MARK_EXCUSED)
+async def start_mark_excused(message: Message, state: FSMContext) -> None:
+    # Menyu tugmasi keyboards.py'da hr/boss/dasturchi'ga ko'rinadi, lekin
+    # eski klaviatura keshi qolgan bo'lishi mumkin — norms.py'dagi
+    # BTN_CHANGE_NORM bilan bir xil ikkinchi tekshiruv.
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not user or user["role"] not in MARK_EXCUSED_ROLES:
+        await message.answer("Bu buyruq faqat HR/Boshliq/Dasturchi uchun mavjud.")
+        return
+
+    employees = await api_client.excused_day_targets(message.from_user.id)
+    if not employees:
+        await message.answer("Faol xodimlar topilmadi.")
+        return
+
+    names_by_id = {str(emp["id"]): emp["full_name"] for emp in employees}
+    await state.update_data(names_by_id=names_by_id)
+
+    buttons = [
+        [InlineKeyboardButton(text=emp["full_name"], callback_data=f"markexcusedtarget:{emp['id']}")]
+        for emp in employees
+    ]
+    await state.set_state(MarkExcusedFSM.choosing_employee)
+    await message.answer(
+        "Kim uchun sababli kun belgilaymiz?", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+
+@router.callback_query(StateFilter(MarkExcusedFSM.choosing_employee), F.data.startswith("markexcusedtarget:"))
+async def choose_mark_excused_target(callback: CallbackQuery, state: FSMContext) -> None:
+    target_id = callback.data.split(":")[1]
+    data = await state.get_data()
+    name = (data.get("names_by_id") or {}).get(target_id, "?")
+
+    await state.update_data(target_user_id=int(target_id))
+    await state.set_state(MarkExcusedFSM.choosing_date)
+    await callback.message.edit_text(f"Tanlandi: {name}.")
+    await callback.message.answer(
+        "Qaysi sana uchun? Tugmalardan tanlang yoki aniq sanani "
+        "<code>YYYY-MM-DD</code> ko'rinishida yozing.",
+        reply_markup=_mark_excused_date_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(StateFilter(MarkExcusedFSM.choosing_date), F.data.startswith("mark_excused_date:"))
+async def pick_mark_excused_date(callback: CallbackQuery, state: FSMContext) -> None:
+    choice = callback.data.split(":", 1)[1]
+    day = date.today() if choice == "today" else date.today() + timedelta(days=1)
+    await state.update_data(excused_date=day.isoformat())
+    await state.set_state(MarkExcusedFSM.entering_reason)
+    await callback.message.edit_text(f"Tanlandi: {day.isoformat()}.")
+    await callback.message.answer("Endi sababni yozib yuboring:", reply_markup=cancel_menu())
+    await callback.answer()
+
+
+@router.message(StateFilter(MarkExcusedFSM.choosing_date))
+async def receive_mark_excused_date_text(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    try:
+        day = date.fromisoformat(text)
+    except ValueError:
+        await message.answer(
+            "Sana formati noto'g'ri. <code>YYYY-MM-DD</code> ko'rinishida yozing "
+            "yoki yuqoridagi tugmalardan tanlang.",
+            reply_markup=_mark_excused_date_kb(),
+        )
+        return
+    await state.update_data(excused_date=day.isoformat())
+    await state.set_state(MarkExcusedFSM.entering_reason)
+    await message.answer("Endi sababni yozib yuboring:", reply_markup=cancel_menu())
+
+
+@router.message(StateFilter(MarkExcusedFSM.entering_reason), F.text)
+async def receive_mark_excused_reason(message: Message, state: FSMContext) -> None:
+    reason = (message.text or "").strip()
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+    excused_date = data.get("excused_date")
+    name = (data.get("names_by_id") or {}).get(str(target_user_id), "?")
+    await state.clear()
+
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    try:
+        await api_client.record_excused_day_for_user(
+            message.from_user.id, target_user_id, reason, date_str=excused_date
+        )
+    except httpx.HTTPStatusError as exc:
+        detail = "Xatolik yuz berdi."
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
+        return
+    except Exception:
+        await message.answer(
+            "⚠️ Xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.",
+            reply_markup=menu_for_user(user),
+        )
+        return
+
+    await message.answer(
+        f"✅ {name} uchun {excused_date or 'bugungi kun'} sababli kun sifatida belgilandi.",
+        reply_markup=menu_for_user(user),
+    )
+
+
+@router.message(StateFilter(MarkExcusedFSM.entering_reason))
+async def non_text_mark_excused_reason(message: Message) -> None:
+    await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
 
 
 @router.callback_query(F.data.startswith("excused_decide:"))

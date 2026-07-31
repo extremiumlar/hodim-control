@@ -120,6 +120,27 @@ async def decide_excused_day(item_id: int, decider_telegram_id: int, decision: s
     return resp.json()
 
 
+async def excused_day_targets(telegram_id: int) -> list[dict]:
+    """HR/Boshliq/Dasturchi xodim nomidan sababli kun belgilay oladigan
+    nishonlar ro'yxati (`norm_targets` bilan bir xil naqsh)."""
+    resp = await _get_client().get(f"/excused-days/targets/{telegram_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def record_excused_day_for_user(
+    manager_telegram_id: int, target_user_id: int, reason: str, date_str: str | None = None
+) -> dict:
+    """HR/Boshliq/Dasturchi xodim nomidan sababli kunni to'g'ridan-to'g'ri
+    belgilaydi — `create_excused_day`dan farqli, darhol 'approved' bo'ladi."""
+    payload: dict = {"manager_telegram_id": manager_telegram_id, "target_user_id": target_user_id, "reason": reason}
+    if date_str:
+        payload["date"] = date_str
+    resp = await _get_client().post("/excused-days/for-user/bot", json=payload)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def decide_face_rereg(item_id: int, decider_telegram_id: int, decision: str) -> dict:
     resp = await _get_client().post(
         f"/attendance/face-reregistration/{item_id}/decide",

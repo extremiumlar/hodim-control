@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { CalendarX } from "lucide-react";
+import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
 import StatusBadge from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -13,7 +17,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type ExcusedDay } from "@/lib/api";
-import { useExcusedDays } from "@/lib/queries";
+import { useAuth } from "@/lib/auth";
+import { useExcusedDays, useRecordExcusedDayForUser, useUsers } from "@/lib/queries";
+
+// decide_excused_day bilan bir xil qamrov — ROP xodim nomidan sababli kun
+// belgilay olmaydi (faqat hr/boss/dasturchi).
+const MARK_EXCUSED_ROLES = ["hr", "boss", "dasturchi"];
 
 const columns: ColumnDef<ExcusedDay>[] = [
   { accessorKey: "user_full_name", header: "Xodim" },
@@ -30,15 +39,90 @@ const columns: ColumnDef<ExcusedDay>[] = [
   },
 ];
 
-export default function ExcusedDays() {
-  const [statusFilter, setStatusFilter] = useState("all");
-  const query = useExcusedDays(statusFilter === "all" ? undefined : statusFilter);
+function MarkExcusedForm() {
+  const usersQuery = useUsers("employee");
+  const record = useRecordExcusedDayForUser();
+
+  const [userId, setUserId] = useState<string>("");
+  const [day, setDay] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [reason, setReason] = useState("");
+
+  function onSubmit() {
+    if (!userId) {
+      toast.error("Xodimni tanlang");
+      return;
+    }
+    if (!reason.trim()) {
+      toast.error("Sababni kiriting");
+      return;
+    }
+    record.mutate(
+      { user_id: Number(userId), date: day, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast.success("Sababli kun belgilandi");
+          setReason("");
+        },
+      }
+    );
+  }
 
   return (
-    <div>
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Xodim uchun sababli kun belgilash</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {/* Bu yerda kiritilgan yozuv SO'ROV emas — darhol tasdiqlangan holda
+            yoziladi (kirituvchi allaqachon qaror chiqarishga vakolatli). */}
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-500">Xodim</div>
+            <Select value={userId} onValueChange={setUserId}>
+              <SelectTrigger className="min-w-[220px]">
+                <SelectValue placeholder="Xodim tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {usersQuery.data?.map((u) => (
+                  <SelectItem key={u.id} value={String(u.id)}>
+                    {u.full_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-500">Sana</div>
+            <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="w-40" />
+          </div>
+          <div className="min-w-[240px] flex-1">
+            <div className="mb-1 text-xs font-medium text-slate-500">Sabab</div>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Masalan: kasallik, oilaviy holat"
+            />
+          </div>
+          <Button onClick={onSubmit} disabled={record.isPending}>
+            Belgilash
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function ExcusedDays() {
+  const { user } = useAuth();
+  const [statusFilter, setStatusFilter] = useState("all");
+  const query = useExcusedDays(statusFilter === "all" ? undefined : statusFilter);
+  const canMark = MARK_EXCUSED_ROLES.includes(user?.role ?? "");
+
+  return (
+    <div className="space-y-4">
       <PageHeader
         title="Sababli kunlar"
-        description="Qaror qabul qilish HR tomonidan Telegram bot orqali amalga oshiriladi. Bu sahifa faqat tarixni ko'rish uchun."
+        description="Xodimning O'ZI yuborgan so'rovni tasdiqlash/rad etish hamon Telegram bot orqali amalga oshiriladi."
       >
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-44">
@@ -52,6 +136,8 @@ export default function ExcusedDays() {
           </SelectContent>
         </Select>
       </PageHeader>
+
+      {canMark && <MarkExcusedForm />}
 
       <DataTable
         columns={columns}

@@ -6,12 +6,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
-from api.schemas import ExcusedDayCreate, ExcusedDayDecide, ExcusedDayMeCreate, ExcusedDayOut
+from api.schemas import (
+    ExcusedDayCreate,
+    ExcusedDayDecide,
+    ExcusedDayForUserBotCreate,
+    ExcusedDayForUserCreate,
+    ExcusedDayMeCreate,
+    ExcusedDayOut,
+    UserOut,
+)
 from api.timeutil import today_local
 from api.telegram_notify import inline_keyboard, send_message
 from db.models import AuditLog, ExcusedDay, ExcusedStatus, Role, User
 
 router = APIRouter(prefix="/excused-days", tags=["excused-days"])
+
+# HR nomidan sababli kun BELGILAY oladigan rollar — decide_excused_day bilan bir
+# xil qamrov (ROP bu yerda ham chetda: faqat hr/boss/dasturchi qaror chiqara oladi).
+MANAGER_RECORD_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 
 
 async def _to_out(item: ExcusedDay, db: AsyncSession) -> ExcusedDayOut:
@@ -100,6 +112,113 @@ async def _request_excused_day_for_user(
         await send_message(hr.telegram_id, text, keyboard)
 
     return await _to_out(item, db)
+
+
+async def _record_excused_day_for_user(
+    db: AsyncSession, target: User, actor: User, reason: str, day_in: date | None
+) -> ExcusedDayOut:
+    """HR/Boshliq/Dasturchi boshqa xodim NOMIDAN sababli kunni to'g'ridan-to'g'ri
+    BELGILAYDI — `_request_excused_day_for_user`dan farqli, HR'ga xabar
+    YUBORILMAYDI (o'zi kirityapti) va darhol 'approved' holatda yaratiladi:
+    kirituvchi allaqachon qaror chiqarishga vakolatli, qayta tasdiq so'rash
+    ortiqcha bosqich bo'lardi. Faqat 'Xodim' rolidagilarga qo'llanadi — ROP/HR/
+    Boshliqning bir-birini "sababli kun"ga chiqarib qo'yishi kabi noto'g'ri
+    ishlatilishning oldi olinadi."""
+    if target.role != Role.employee.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Faqat 'Xodim' rolidagi foydalanuvchi uchun belgilash mumkin")
+
+    day = day_in or today_local()
+
+    existing = await db.scalar(
+        select(ExcusedDay).where(
+            ExcusedDay.user_id == target.id,
+            ExcusedDay.date == day,
+            ExcusedDay.status.in_((ExcusedStatus.pending.value, ExcusedStatus.approved.value)),
+        )
+    )
+    if existing is not None:
+        status_uz = "tasdiqlangan" if existing.status == ExcusedStatus.approved.value else "ko'rib chiqilmoqda"
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{target.full_name} uchun {day.isoformat()} kunida allaqachon yozuv bor ({status_uz}).",
+        )
+
+    item = ExcusedDay(
+        user_id=target.id,
+        date=day,
+        reason=reason,
+        status=ExcusedStatus.approved.value,
+        decided_by=actor.id,
+        decided_at=datetime.utcnow(),
+    )
+    db.add(item)
+    await db.flush()
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="excused_day_recorded_by_manager",
+            target_user_id=target.id,
+            before=None,
+            after={"date": item.date.isoformat(), "reason": item.reason},
+        )
+    )
+    await db.commit()
+    await db.refresh(item)
+
+    if target.telegram_id:
+        await send_message(
+            target.telegram_id,
+            f"🙋 Sizning nomingizdan sababli kun belgilandi: {item.date} — "
+            f"{html.escape(item.reason)} (kiritdi: {actor.full_name}).",
+        )
+
+    return await _to_out(item, db)
+
+
+@router.get("/targets/{telegram_id}", response_model=list[UserOut], dependencies=[Depends(verify_bot_secret)])
+async def excused_day_targets(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[User]:
+    """Bot uchun: HR/Boshliq/Dasturchi xodim nomidan sababli kun belgilay
+    oladigan nishonlar ro'yxati — ish jadvali kabi GLOBAL (norma/lavozimga
+    bog'liq tor qamrov emas), chunki HR odatda kim kasal/ta'tilda ekanini
+    biladi va buni ORQADAN qayd etadi."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or actor.role not in MANAGER_RECORD_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    return list(
+        await db.scalars(
+            select(User)
+            .where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
+            .order_by(User.full_name)
+        )
+    )
+
+
+@router.post("/for-user", response_model=ExcusedDayOut)
+async def record_excused_day_for_user(
+    payload: ExcusedDayForUserCreate,
+    actor: User = Depends(require_roles(*MANAGER_RECORD_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> ExcusedDayOut:
+    """Web (JWT) versiyasi."""
+    target = await db.get(User, payload.user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    return await _record_excused_day_for_user(db, target, actor, payload.reason, payload.date)
+
+
+@router.post("/for-user/bot", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])
+async def record_excused_day_for_user_bot(
+    payload: ExcusedDayForUserBotCreate, db: AsyncSession = Depends(get_db)
+) -> ExcusedDayOut:
+    """Bot versiyasi — aktyor `manager_telegram_id`dan yechiladi."""
+    actor = await db.scalar(select(User).where(User.telegram_id == payload.manager_telegram_id))
+    if not actor or actor.role not in MANAGER_RECORD_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    target = await db.get(User, payload.target_user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    return await _record_excused_day_for_user(db, target, actor, payload.reason, payload.date)
 
 
 @router.post("", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])

@@ -38,13 +38,20 @@ async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
 
 
 async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: User) -> User:
-    """Norma boshqarish bilan bir xil doira: Boshliq/Dasturchi — hammaga; ROP/HR —
-    faqat can_manage_norms ruxsat bergan xodimlarga ish jadvalini o'zgartira oladi."""
+    """Boshliq/Dasturchi — hammaga. HR — BARCHA faol 'Xodim' rolidagilarga
+    (ish jadvali/dam kuni norma bilan bir xil tor lavozim-qamrovda EMAS — HR
+    odatda kimning qachon ishlashi/dam olishini bilishi kerak, position.
+    managed_by_roles'ga qarab cheklash bu yerda foydasiz to'siq bo'lardi).
+    ROP hamon can_manage_norms bilan cheklangan (faqat o'z jamoasi/lavozimi)."""
     from api.routers.norms import can_manage_norms  # circular importdan qochish
 
     user = await _get_user_or_404(db, user_id)
     if actor.role in (Role.boss.value, Role.dasturchi.value):
         return user
+    if actor.role == Role.hr.value:
+        if user.role == Role.employee.value and user.is_active:
+            return user
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
     if not can_manage_norms(actor, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
     return user

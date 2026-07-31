@@ -299,6 +299,26 @@ class ExcusedDayDecide(BaseModel):
     override_reason: str | None = Field(default=None, max_length=500)
 
 
+class ExcusedDayForUserCreate(BaseModel):
+    """Web (JWT) — HR/Boshliq/Dasturchi boshqa xodim NOMIDAN sababli kunni
+    to'g'ridan-to'g'ri BELGILAYDI (so'rov emas — kirituvchining o'zi tasdiqlashga
+    vakolatli, shuning uchun darhol 'approved' holatda yoziladi)."""
+
+    user_id: int
+    date: dt.date | None = None
+    reason: str
+
+
+class ExcusedDayForUserBotCreate(BaseModel):
+    """Bot versiyasi — aktyor shaxsi `manager_telegram_id`dan yechiladi
+    (`ExcusedDayForUserCreate`ni qayta ishlatib bo'lmaydi, u tokendan oladi)."""
+
+    manager_telegram_id: int
+    target_user_id: int
+    date: dt.date | None = None
+    reason: str
+
+
 class NormCreate(BaseModel):
     user_id: int
     metric_type: str = Field(min_length=1, max_length=50)  # suhbat | tashrif | custom

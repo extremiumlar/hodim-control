@@ -2951,6 +2951,147 @@ def test_telegram_login_security() -> None:
         conn.close()
 
 
+def test_hr_wide_employee_access() -> None:
+    """HRga BARCHA xodimlar uchun ish jadvali/dam kuni + xodim nomidan sababli
+    kun belgilash huquqi berildi:
+    1. Ish jadvali: HR ilgari faqat can_manage_norms ruxsat bergan (o'ziga
+       biriktirilgan lavozim yoki egasiz) xodimga tegishi mumkin edi — endi
+       BARCHA faol 'Xodim' rolidagilarga (boshqa ROP jamoasidagi bo'lsa ham).
+       ROP/HRning bir-birini yoki Boshliqni boshqarolmasligi saqlangan.
+    2. Sababli kun: HR/Boshliq/Dasturchi xodim nomidan darhol 'approved'
+       holatda yozuv qo'sha oladi (ROP bunga huquqli emas — decide bilan bir xil)."""
+    import httpx
+
+    from api.config import settings
+
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-HrWide%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from work_schedule_weekly where user_id in ({qm})", stale)
+        cur.execute(f"delete from work_schedule_override where user_id in ({qm})", stale)
+        cur.execute(f"delete from excused_days where user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999901001,'T-HrWide-Hr','hr',1,1,datetime('now'))")
+    hr_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999901002,'T-HrWide-Rop','rop',1,1,datetime('now'))")
+    rop_uid = cur.lastrowid
+    # position_id/managed_by_roles YO'Q va manager_id ROPga o'rnatilgan — ESKI
+    # can_manage_norms qoidasida bu HR uchun 403 bo'lardi (na orphan, na HR
+    # lavozimiga tegishli).
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, manager_id, bot_started, is_active, created_at)"
+        " values (999901003,'T-HrWide-Emp',?,?,1,1,datetime('now'))", ("employee", rop_uid))
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    def cleanup_hw():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [hr_uid, rop_uid, emp_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from work_schedule_weekly where user_id in ({qm})", uids)
+            c2.execute(f"delete from work_schedule_override where user_id in ({qm})", uids)
+            c2.execute(f"delete from excused_days where user_id in ({qm})", uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  HR keng qamrov tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        hr_t = token_for(hr_uid, "hr")
+        rop_t = token_for(rop_uid, "rop")
+
+        with httpx.Client(timeout=15) as client:
+            print("\n" + "=" * 60)
+            print("HR KENG QAMROV: ish jadvali + xodim nomidan sababli kun")
+            print("=" * 60)
+
+            # ── Ish jadvali: HR endi ROP jamoasidagi xodimga ham tega oladi ──
+            r = client.get(f"{API_BASE}/work-schedule/{emp_uid}/weekly", headers=auth(hr_t))
+            check("HR boshqa ROP jamoasidagi xodim jadvalini KO'RADI -> 200 (ilgari 403)",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.put(
+                f"{API_BASE}/work-schedule/{emp_uid}/weekly", headers=auth(hr_t),
+                json={"days": [
+                    {"weekday": wd, "is_working": wd < 6, "start_time": "09:00" if wd < 6 else None,
+                     "end_time": "18:00" if wd < 6 else None}
+                    for wd in range(7)
+                ]},
+            )
+            check("HR shu xodim jadvalini O'ZGARTIRA oladi -> 200 (ilgari 403)",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.put(
+                f"{API_BASE}/work-schedule/{emp_uid}/override", headers=auth(hr_t),
+                json={"date": "2020-06-06", "is_working": False, "note": "T-sinov: dam kuni"},
+            )
+            check("HR shu xodimga BITTA KUNLIK dam kuni belgilay oladi -> 200",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.get(f"{API_BASE}/work-schedule/{hr_uid}/weekly", headers=auth(hr_t))
+            check("HR boshqa HR/ROP/Boshliq jadvaliga TEGA OLMAYDI (o'ziga ham) -> 403",
+                  r.status_code == 403, f"kod={r.status_code}")
+
+            # ── Sababli kun: HR/Boshliq/Dasturchi xodim nomidan darhol belgilaydi ──
+            # DIQQAT: endpoint path'i `telegram_id`, DB `id` EMAS.
+            r = client.get(f"{API_BASE}/excused-days/targets/999901001",
+                            headers={"X-Bot-Secret": settings.bot_shared_secret})
+            check("Bot: HR targets -> 200", r.status_code == 200, f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/excused-days/targets/999901002",
+                            headers={"X-Bot-Secret": settings.bot_shared_secret})
+            check("Bot: ROP targets -> 403 (decide huquqi yo'q)", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(
+                f"{API_BASE}/excused-days/for-user", headers=auth(rop_t),
+                json={"user_id": emp_uid, "date": "2020-07-07", "reason": "T-sinov"},
+            )
+            check("ROP xodim nomidan sababli kun BELGILAY OLMAYDI -> 403", r.status_code == 403,
+                  f"kod={r.status_code}")
+
+            r = client.post(
+                f"{API_BASE}/excused-days/for-user", headers=auth(hr_t),
+                json={"user_id": emp_uid, "date": "2020-07-07", "reason": "T-sinov: kasallik"},
+            )
+            check("HR xodim nomidan sababli kun belgilaydi -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
+            body = r.json() if r.status_code == 200 else {}
+            check("Darhol 'approved' holatda (qayta tasdiq shart emas)", body.get("status") == "approved",
+                  f"={body}")
+            check("decided_by HRning o'zi", body.get("decided_by") == hr_uid, f"={body}")
+
+            r = client.post(
+                f"{API_BASE}/excused-days/for-user", headers=auth(hr_t),
+                json={"user_id": emp_uid, "date": "2020-07-07", "reason": "T-sinov: takror"},
+            )
+            check("Bir kunga ikkinchi marta -> 400 (dublikat)", r.status_code == 400, f"kod={r.status_code}")
+
+            r = client.post(
+                f"{API_BASE}/excused-days/for-user", headers=auth(hr_t),
+                json={"user_id": rop_uid, "date": "2020-08-08", "reason": "T-sinov: xodim emas"},
+            )
+            check("Faqat 'Xodim' rolidagi nishonga -> 400 (ROPga belgilab bo'lmaydi)",
+                  r.status_code == 400, f"kod={r.status_code}")
+    except Exception:
+        check("HR keng qamrov (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_hw()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3012,6 +3153,11 @@ def main() -> None:
         test_telegram_login_security()
     except Exception:
         print("Telegram login xavfsizligi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_hr_wide_employee_access()
+    except Exception:
+        print("HR keng qamrov testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

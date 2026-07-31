@@ -172,6 +172,10 @@ export const api = {
   deleteTask: (taskId: number) => apiFetch<{ deleted: boolean }>(`/tasks/${taskId}`, { method: "DELETE" }),
   listExcusedDays: (statusFilter?: string) =>
     apiFetch<ExcusedDay[]>(`/excused-days${statusFilter ? `?status_filter=${statusFilter}` : ""}`),
+  // HR/Boshliq/Dasturchi boshqa xodim NOMIDAN sababli kunni to'g'ridan-to'g'ri
+  // BELGILAYDI (so'rov emas, darhol tasdiqlangan holda yoziladi).
+  recordExcusedDayForUser: (data: { user_id: number; reason: string; date?: string }) =>
+    apiFetch<ExcusedDay>("/excused-days/for-user", { method: "POST", body: JSON.stringify(data) }),
   teamNorms: () => apiFetch<TeamNormRow[]>("/norms/team"),
   updateNorm: (data: { user_id: number; metric_type: string; value: number }) =>
     apiFetch<unknown>("/norms", { method: "POST", body: JSON.stringify(data) }),

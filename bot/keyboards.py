@@ -21,6 +21,7 @@ BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_AI_CENTER = "🧠 Sotuv AI markazi"
 BTN_SET_BUSY = "⏸ Band qilish"
+BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 # Eski alohida tugmalar — endi asosiy menyuda ko'rinmaydi (BTN_AI_CENTER
 # ularni almashtirdi), lekin /anketa, /bilim buyruqlari va shu matnli xabar
 # hamon ishlaydi (foydalanuvchida eski klaviatura keshi qolgan bo'lishi mumkin).
@@ -100,6 +101,11 @@ def main_menu(
         rows.append([KeyboardButton(text=BTN_LEAD_STATS), KeyboardButton(text=BTN_HOURLY_PLAN_CONTROL)])
         # Davomat (kelib-ketish) — kim nechada keldi/kechikdi statistikasi
         rows.append([KeyboardButton(text=BTN_ATTENDANCE_STATS)])
+        if role in {"hr", "boss", "dasturchi"}:
+            # Xodim o'zi bot ishlata olmagan holatda (masalan kasal) HR/Boshliq
+            # uning nomidan sababli kunni to'g'ridan-to'g'ri belgilaydi
+            # (decide_excused_day bilan bir xil qamrov — ROP bu yerda ham yo'q).
+            rows.append([KeyboardButton(text=BTN_MARK_EXCUSED)])
         if role in {"rop", "boss", "dasturchi"}:
             # Sotuv AI sinovi — rahbar mijoz savolini yozib javob sifatini tekshiradi
             rows.append([KeyboardButton(text=BTN_SALES_AI)])
