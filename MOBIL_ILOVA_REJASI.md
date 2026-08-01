@@ -389,6 +389,27 @@ shuni tekshirish kerak.
 Xodimlarga tarqatishda: Samsung telefonli xodimlar uchun bu qadam
 ko'rsatmaga majburiy kiritilishi kerak.
 
+### Saytdan yuklab olish (2026-08-01 dan)
+
+APK endi saytdan tarqatiladi: **https://nuriddin-building.uz/hodimlar-tizimi.apk**
+— xodimga shu havolani yuborish kifoya, Telegram'ga fayl tashlash shart emas.
+
+Qanday ishlaydi: `passenger_wsgi.py`da `/` mount'idan OLDIN aniq marshrut,
+fayl esa server REPO ILDIZIDA (`~/hodimlar-tizimi/hodimlar-tizimi.apk`).
+Ataylab webdist'da EMAS (robocopy /MIR har web-buildda uni o'chirib yuborardi)
+va git'da ham emas (*.apk ignore'da). MIME to'g'ri
+(`application/vnd.android.package-archive`), `Cache-Control: no-cache` —
+URL har versiyada bir xil qolgani uchun kesh xodimga eski APK berib
+qo'ymasligi kerak.
+
+**Yangi versiya chiqarish tartibi:**
+1. `cd mobile/android && ./gradlew assembleRelease` (versionCode oshirilgan holda)
+2. `cp mobile/android/app/build/outputs/apk/release/app-release.apk hodimlar-tizimi.apk`
+3. `scp -i ~/.ssh/id_ed25519_hodimlar_cpanel -P 30151 hodimlar-tizimi.apk nuriddi5@167.235.222.200:~/hodimlar-tizimi/hodimlar-tizimi.apk`
+4. Restart SHART EMAS — FileResponse har so'rovda diskdan o'qiydi.
+5. Tekshirish: `curl -sI https://nuriddin-building.uz/hodimlar-tizimi.apk`
+   — Content-Type `application/vnd.android.package-archive` va yangi hajm.
+
 ### Fayl nomi — nuqta qo'ymang
 
 APK nomida **faqat bitta nuqta** (kengaytma oldidagi) bo'lsin:
