@@ -43,6 +43,13 @@ async function request<T>(
   });
 
   if (!resp.ok) {
+    // 401 — token yaroqsiz yoki xodim faolsizlantirilgan (`is_active=false`
+    // serverda tokenni darhol kesadi). Saqlangan tokenni SHU YERDA
+    // tozalaymiz: ilgari u faqat ilova sovuq ishga tushganda tekshirilardi,
+    // ya'ni bekor qilingan token telefonda kun bo'yi qolib ketardi.
+    if (auth && resp.status === 401) {
+      await clearStoredToken();
+    }
     let detail = resp.statusText;
     try {
       const data = await resp.json();

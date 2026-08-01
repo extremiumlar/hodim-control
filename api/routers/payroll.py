@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -657,10 +657,17 @@ async def list_payslips(
 
 @router.get("/{period}/export")
 async def export_payroll(
-    period: str, actor: User = Depends(_require_view), db: AsyncSession = Depends(get_db)
+    period: str = Path(pattern=r"^\d{4}-\d{2}$"),
+    actor: User = Depends(_require_view),
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Excel ish haqi varag'i — Bosqich 7. ROP faqat o'z jamoasini eksport
-    qiladi (`list_payslips` bilan bir xil qamrov naqshi)."""
+    qiladi (`list_payslips` bilan bir xil qamrov naqshi).
+
+    `period` naqsh bilan cheklangan (`api/schemas.py` dagi bilan bir xil):
+    u pastda `Content-Disposition` SARLAVHASIGA to'g'ridan-to'g'ri
+    qo'yiladi, ya'ni tekshirilmasa qo'shtirnoqni yopib, sarlavhaga begona
+    parametr qo'shish mumkin edi."""
     user_ids = None
     if actor.role == Role.rop.value:
         user_ids = [u.id for u in await _visible_users(db, actor)]
