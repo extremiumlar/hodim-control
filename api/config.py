@@ -58,6 +58,20 @@ class Settings(BaseSettings):
     # o'chirish (ishdan ketsa, telefoni yo'qolsa) tokenni darhol kesadi.
     jwt_expire_minutes: int = 43200
 
+    # Oldimizda nechta ISHONCHLI proxy turibdi (nginx, LiteSpeed, CDN...).
+    # `rate_limit` mijoz IP'sini `X-Forwarded-For` dan shu songa qarab OLADI.
+    #
+    # NEGA KERAK: nginx `$proxy_add_x_forwarded_for` bilan sarlavhaga QO'SHADI,
+    # ya'ni ro'yxatning BIRINCHI qiymati — mijozning O'ZI yozgan qiymat.
+    # Ilgari aynan birinchisi olinardi: hujumchi har so'rovda tasodifiy
+    # `X-Forwarded-For` yozib, barcha rate-limit cheklovlarini aylanib
+    # o'tardi (va har so'rov `LoginAttempt` qatori yaratgani uchun bazani
+    # shishirardi). Oxiridan sanaganda faqat bizning proxy yozgan qiymat olinadi.
+    #
+    # cPanel'da nginx + LiteSpeed bo'lsa 2 bo'lishi mumkin — `/health` ga
+    # so'rov yuborib, log'dagi X-Forwarded-For uzunligini tekshiring.
+    trusted_proxy_count: int = 1
+
     frontend_url: str = "http://localhost:5173"
     telegram_login_bot_username: str = ""
     # Taklif havolasi (invite_token) muddati — shu kundan keyin token yaroqsiz

@@ -77,7 +77,56 @@ def _build_target():
                     response.headers["Cache-Control"] = MODEL_CACHE
                 return response
 
-        root_app = FastAPI()
+        # docs_url/redoc_url/openapi_url ATAYLAB o'chirilgan. `api/main.py`
+        # ularni `settings.debug` ostida yopgan, LEKIN bu tashqi qobiq alohida
+        # `FastAPI()` bo'lgani uchun o'zining STANDART /docs, /redoc,
+        # /openapi.json yo'llarini sayt ILDIZIDA ochib qo'yardi — ya'ni
+        # backenddagi ataylab qilingan cheklovni chetlab o'tardi.
+        root_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+        @root_app.middleware("http")
+        async def security_headers(request, call_next):  # noqa: ANN001, ANN202
+            """Xavfsizlik sarlavhalari — SHU YERDA, chunki jonli deploy cPanel
+            (Passenger) orqali va oldidagi nginx konfiguratsiyasi bizning
+            nazoratimizda emas.
+
+            CSP NEGA MUHIM: JWT `localStorage`da turadi va mobil ilova uni
+            WebView'ga kiritadi (`mobile/components/EmbeddedWeb.tsx`) — ya'ni
+            saytdagi istalgan HTML-inyeksiya darhol to'liq hisob o'g'irlashga
+            aylanardi. CSP shu zanjirni uzadi.
+
+            `setdefault` ishlatiladi: ichki ilova (masalan APK yuklab olish)
+            o'z sarlavhasini qo'ygan bo'lsa, uni bosib ketmasin.
+            """
+            response = await call_next(request)
+            h = response.headers
+            h.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; "
+                # Telegram Login Widget — saytdagi YAGONA tashqi skript
+                "script-src 'self' https://telegram.org; "
+                "frame-src https://oauth.telegram.org; "
+                # data: — Face ID canvas'dan chiqadigan rasm; https: — avatarlar
+                "img-src 'self' data: https:; "
+                # Tailwind ichki (inline) uslublar qo'yadi
+                "style-src 'self' 'unsafe-inline'; "
+                "connect-src 'self'; "
+                "object-src 'none'; base-uri 'self'; form-action 'self'; "
+                # Clickjacking — sayt hech qayerga freym qilinmasin
+                "frame-ancestors 'none'",
+            )
+            h.setdefault("X-Frame-Options", "DENY")
+            h.setdefault("X-Content-Type-Options", "nosniff")
+            h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            # camera/geolocation — DAVOMAT UCHUN SHART, olib tashlamang.
+            h.setdefault(
+                "Permissions-Policy", "camera=(self), geolocation=(self), microphone=()"
+            )
+            h.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+            return response
+
         root_app.mount("/api", api_app)  # /api oldin tekshiriladi
 
         # ── APK yuklab olish ──

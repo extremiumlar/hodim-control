@@ -65,6 +65,33 @@ async def verify_bot_secret(x_bot_secret: str | None = Header(default=None)) -> 
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Bot autentifikatsiyasi muvaffaqiyatsiz")
 
 
+def _client_identifier(request: Request) -> str:
+    """Rate-limit uchun mijoz manzili.
+
+    XAVFSIZLIK: `X-Forwarded-For` ning BIRINCHI qiymatini olish MUMKIN EMAS.
+    nginx uni `$proxy_add_x_forwarded_for` bilan quradi, ya'ni MIJOZ yuborgan
+    sarlavhaga o'z qiymatini QO'SHADI:
+
+        mijoz yuboradi:  X-Forwarded-For: 1.2.3.4        (o'ylab topilgan)
+        nginx qiladi:    X-Forwarded-For: 1.2.3.4, <haqiqiy IP>
+
+    Ilgari birinchisi olinardi — demak hujumchi har so'rovda tasodifiy qiymat
+    yozib, barcha rate-limit cheklovlarini bemalol aylanib o'tardi (va har
+    so'rov `LoginAttempt` qatori yaratgani uchun bazani ham shishirardi).
+
+    Shuning uchun OXIRIDAN sanaymiz: `trusted_proxy_count` — bizning
+    proxy'larimiz soni, ya'ni oxirgi shuncha qiymatni faqat o'zimiz yozgan
+    bo'lishimiz mumkin. Ro'yxat kutilganidan qisqa bo'lsa (mijoz sarlavhani
+    umuman yubormagan) — eng chapdagi mavjud qiymat olinadi."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            idx = len(parts) - max(settings.trusted_proxy_count, 1)
+            return parts[idx] if idx >= 0 else parts[0]
+    return request.client.host if request.client else "unknown"
+
+
 def rate_limit(endpoint: str, max_attempts: int, window_seconds: int):
     """So'rov chastotasini DB asosida cheklaydigan sliding-window dependency
     fabrikasi. Bu yerda himoyalanadigan endpointlar parol SO'RAMAYDI (Telegram
@@ -72,18 +99,13 @@ def rate_limit(endpoint: str, max_attempts: int, window_seconds: int):
     BRUTE-FORCE HIMOYASI EMAS, faqat DoS/resurs himoyasi (xato konfiguratsiya
     yoki niyatli bombalash API'ni/bazani band qilib qo'ymasin).
 
-    IP `X-Forwarded-For` headeridan olinadi (birinchi qiymat), topilmasa
-    `request.client.host`ga tushadi. DIQQAT: production'da (cPanel/nginx) bu
-    header TO'G'RI uzatilishi SHART — aks holda barcha so'rovlar bitta
-    manzildan kelayotgandek ko'rinib, bitta faol foydalanuvchi hammani
-    bloklab qo'yishi mumkin."""
+    IP `X-Forwarded-For` headeridan olinadi, topilmasa `request.client.host`ga
+    tushadi. DIQQAT: production'da (cPanel/nginx) bu header TO'G'RI uzatilishi
+    SHART — aks holda barcha so'rovlar bitta manzildan kelayotgandek ko'rinib,
+    bitta faol foydalanuvchi hammani bloklab qo'yishi mumkin."""
 
     async def checker(request: Request, db: AsyncSession = Depends(get_db)) -> None:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            identifier = forwarded.split(",")[0].strip()
-        else:
-            identifier = request.client.host if request.client else "unknown"
+        identifier = _client_identifier(request)
 
         window_start = datetime.utcnow() - timedelta(seconds=window_seconds)
         count = await db.scalar(
