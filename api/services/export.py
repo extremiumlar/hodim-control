@@ -93,7 +93,16 @@ async def _crm_daily_maps(db: AsyncSession, date_from: date, date_to: date) -> t
     return calls, leads, talk
 
 
-async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) -> BytesIO:
+async def build_report_xlsx(
+    db: AsyncSession, date_from: date, date_to: date, user_ids: list[int] | None = None
+) -> BytesIO:
+    """`user_ids` berilsa — hisobot faqat shu xodimlar bilan cheklanadi.
+
+    NEGA KERAK: hisobotda har bir xodimning BONUS summasi bor va ilgari
+    funksiya chaqiruvchining kimligini umuman bilmasdi — ya'ni ROP butun
+    tashkilotning bonuslarini yuklab olardi. Naqsh `build_payroll_xlsx` dan
+    olindi (u allaqachon shunday ishlaydi). `None` — cheklovsiz
+    (HR/Boshliq/Dasturchi)."""
     day_start, day_end = local_range_utc_naive(date_from, date_to)
 
     # Bonus faqat aniq bitta oy tanlanganda ko'rsatiladi (davr YYYY-MM formatida saqlanadi,
@@ -102,11 +111,12 @@ async def build_report_xlsx(db: AsyncSession, date_from: date, date_to: date) ->
         date_from.strftime("%Y-%m") if date_from.strftime("%Y-%m") == date_to.strftime("%Y-%m") else None
     )
 
-    employees = list(
-        await db.scalars(
-            select(User).where(User.role == Role.employee.value, User.is_active == True).order_by(User.full_name)  # noqa: E712
-        )
+    employee_query = select(User).where(
+        User.role == Role.employee.value, User.is_active == True  # noqa: E712
     )
+    if user_ids is not None:
+        employee_query = employee_query.where(User.id.in_(user_ids))
+    employees = list(await db.scalars(employee_query.order_by(User.full_name)))
 
     # Ustunlar dinamik: kamida bitta faol xodim lavozimida uchraydigan metrikalar.
     # Xodimda kuzatilmaydigan metrika 0 emas "—" bilan ko'rsatiladi — "0 natija"

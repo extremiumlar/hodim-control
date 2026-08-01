@@ -1,10 +1,12 @@
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from api.deps import get_db, require_roles, verify_bot_secret
+from api.routers.payroll import can_view_payroll
 from api.schemas import AuditLogOut
 from db.models import AuditLog, Role, User
 
@@ -44,10 +46,36 @@ async def list_audit_logs(
     target_user_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[AuditLogOut]:
     query = select(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)
+
+    # XAVFSIZLIK: audit yozuvining `before`/`after` maydonlarida OYLIK summasi
+    # ochiq turadi (`payroll.py: salary_rate_created/updated`). Bu yerda esa
+    # `target_user_id` faqat FILTR edi — cheklov emas. Ya'ni ROP
+    # `GET /audit-logs?action=salary_rate_created` bilan HAMMANING, jumladan
+    # Boshliqning oyligini o'qib olardi — holbuki `/payroll/rates` uni
+    # ataylab chiqarib tashlagan.
+    #
+    # ROP uchun qamrov `can_view_payroll` bilan bir xil: faqat o'zi va o'z
+    # jamoasi. Ro'yxat kichik (200 qator), shuning uchun filtrlash Python
+    # tomonida — `can_view_payroll` lavozimga ham qaraydi va uni SQL'ga
+    # ko'chirish mantiqni ikki joyda takrorlashga olib kelardi.
+    if actor.role == Role.rop.value:
+        visible = {
+            u.id
+            for u in await db.scalars(select(User).options(selectinload(User.position)))
+            if can_view_payroll(actor, u)
+        }
+        query = query.where(
+            or_(
+                AuditLog.target_user_id.in_(visible),
+                # Nishoni yo'q yozuvlar (tizim amallari) — ular shaxsiy
+                # ma'lumot ochmaydi.
+                AuditLog.target_user_id.is_(None),
+            )
+        )
     if action:
         query = query.where(AuditLog.action == action)
     if actor_id:

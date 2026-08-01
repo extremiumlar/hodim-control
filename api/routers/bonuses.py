@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.routers.payroll import can_view_payroll
 from api.schemas import BonusMyOut, BonusOut
 from api.services.bonus import calculate_bonus
 from api.notify import notify_user
@@ -80,9 +81,22 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
 @router.get("", response_model=list[BonusOut])
 async def list_bonuses(
     user_id: int,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[Bonus]:
+    # XAVFSIZLIK: ilgari faqat ROL tekshirilardi, EGALIK esa yo'q edi
+    # (`actor` hatto `_` ga bog'langan va ishlatilmasdi) — ya'ni ROP istalgan
+    # `user_id` ni berib, jumladan Boshliqning bonus summasi va breakdown'ini
+    # o'qib olardi. Bonus — oylik bilan bir xil darajadagi ma'lumot,
+    # shuning uchun qamrov ham `can_view_payroll` bilan bir xil.
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    if not can_view_payroll(actor, target):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Bu xodimning bonus ma'lumotini ko'rish huquqingiz yo'q"
+        )
+
     query = select(Bonus).where(Bonus.user_id == user_id).order_by(Bonus.period.desc())
     return list(await db.scalars(query))
 

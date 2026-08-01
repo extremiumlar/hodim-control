@@ -6,7 +6,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm import selectinload
+
 from api.deps import get_db, require_roles, verify_bot_secret
+from api.routers.payroll import can_view_payroll
 from api.services.daily_digest import send_daily_digest
 from api.services.export import build_report_xlsx
 from api.services.weekly_digest import send_weekly_digest
@@ -14,6 +17,18 @@ from api.timeutil import today_local
 from db.models import Role, User
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+async def _visible_user_ids(db: AsyncSession, actor: User) -> list[int] | None:
+    """Chaqiruvchi hisobotda ko'ra oladigan xodimlar. `None` — cheklovsiz.
+
+    `can_view_payroll` lavozimga ham qaraydi (`managed_by_roles`), shuning
+    uchun `selectinload(User.position)` bilan yuklanadi — aks holda lazy-load
+    async sessiyada xato beradi."""
+    if actor.role != Role.rop.value:
+        return None
+    users = await db.scalars(select(User).options(selectinload(User.position)))
+    return [u.id for u in users if can_view_payroll(actor, u)]
 
 
 class SummaryTarget(BaseModel):
@@ -28,10 +43,13 @@ class SummaryTarget(BaseModel):
 async def export_report(
     date_from: date,
     date_to: date,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    buffer = await build_report_xlsx(db, date_from, date_to)
+    # XAVFSIZLIK: XLSX ichida har bir xodimning BONUS summasi bor, chaqiruvchi
+    # esa ilgari umuman hisobga olinmasdi — ROP butun tashkilotning bonuslarini
+    # yuklab olardi. Qamrov `can_view_payroll` bilan bir xil.
+    buffer = await build_report_xlsx(db, date_from, date_to, await _visible_user_ids(db, actor))
     filename = f"hisobot_{date_from.isoformat()}_{date_to.isoformat()}.xlsx"
     return StreamingResponse(
         buffer,

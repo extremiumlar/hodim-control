@@ -269,12 +269,26 @@ async def list_my_excused_days(
 @router.get("", response_model=list[ExcusedDayOut])
 async def list_excused_days(
     status_filter: str | None = None,
-    _: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[ExcusedDayOut]:
     query = select(ExcusedDay).order_by(ExcusedDay.created_at.desc())
     if status_filter:
         query = query.where(ExcusedDay.status == status_filter)
+
+    # XAVFSIZLIK: sababli kun `reason` maydonida kasallik, oilaviy holat kabi
+    # nozik shaxsiy ma'lumot bo'ladi, ro'yxatda esa hech qanday foydalanuvchi
+    # filtri yo'q edi — ya'ni ROP butun kompaniyaning sabablarini o'qirdi.
+    # Boshqa joylarda ROP allaqachon `manager_id` bo'yicha cheklangan
+    # (`tasks.py: list_tasks`, `norms.py: team_norms`) — shu qoidani bu yerga
+    # ham qo'llaymiz. HR/Boshliq/Dasturchi — avvalgidek hammasini ko'radi
+    # (qarorni ular chiqaradi, `DECIDE_ROLES`).
+    if actor.role == Role.rop.value:
+        team_ids = [
+            u.id for u in await db.scalars(select(User).where(User.manager_id == actor.id))
+        ]
+        query = query.where(ExcusedDay.user_id.in_([*team_ids, actor.id]))
+
     items = list(await db.scalars(query))
     return await _to_out_many(items, db)
 
