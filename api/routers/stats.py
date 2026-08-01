@@ -21,12 +21,14 @@ from api.schemas import (
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from crm import get_crm_adapter
 from db.models import (
+    CrmLeadState,
     DailyResult,
     DailyResultSource,
     ExcusedDay,
     ExcusedStatus,
     GroupPostConfig,
     HourlyActual,
+    LeadEvent,
     LeadStageDaily,
     MobilografStatus,
     MobilografVideo,
@@ -333,11 +335,47 @@ async def _snapshot_calls(db: AsyncSession, adapter, today: date) -> int:
     return len(agg)
 
 
+async def _local_lead_breakdown(db: AsyncSession, day: date) -> list[dict]:
+    """Bugungi operator×bosqich kesimi LOKAL ma'lumotdan (CRM skanisiz):
+    shu kuni haqiqiy voqea (`LeadEvent` — webhook yoki diff-engine yozgan) bo'lgan
+    lidlar, ularning JORIY holati (`CrmLeadState`) bo'yicha guruhlanadi.
+
+    2026-08-01, webhook-only rejim: ilgari bu kesim uchun CRM'dan butun baza
+    (180+ sahifa) skanerlanardi. Semantik farq ONGLI: eski skan "bugun HAR QANDAY
+    tahrir ko'rgan lid"ni sanardi (teg qo'shish ham), bu esa "bugun HAQIQIY
+    voqea (yangi lid / bosqich / mas'ul o'zgarishi) bo'lgan lid"ni sanaydi —
+    loyihaning o'zi guruh digestini aynan shu aniqroq o'lchovga o'tkazgan
+    (lead_events.py), endi LeadStageDaily ham unga ergashadi."""
+    day_start, day_end = local_range_utc_naive(day, day)
+    touched_ids = select(LeadEvent.crm_lead_id).where(
+        LeadEvent.detected_at >= day_start, LeadEvent.detected_at < day_end
+    ).distinct()
+    states = await db.scalars(select(CrmLeadState).where(CrmLeadState.crm_lead_id.in_(touched_ids)))
+
+    agg: dict[tuple[int, int], dict] = {}
+    for s in states:
+        if s.responsible_id is None:
+            continue  # mas'ulsiz lid operator kesimiga kirmaydi (eski skan bilan bir xil)
+        key = (s.responsible_id, s.pipe_status_id)
+        row = agg.setdefault(key, {
+            "responsible_id": s.responsible_id,
+            "responsible_name": s.responsible_name or str(s.responsible_id),
+            "pipe_status_id": s.pipe_status_id,
+            "stage_name": s.stage_name,
+            "count": 0,
+        })
+        row["count"] += 1
+    return list(agg.values())
+
+
 async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
     """Bugungi kunning operator×bosqich (lidlar) va operator (qo'ng'iroqlar) kesimini
-    CRM'dan skanerlab bazaga yozadi. Lid skaneri sekin (butun baza, bir necha daqiqa),
-    qo'ng'iroq skaneri tez (call-history vaqt bo'yicha tartiblangan). CRM xatosida
-    tegishli qism yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
+    bazaga yozadi. Qo'ng'iroqlar HAR DOIM CRM call-history'dan (webhook buni
+    bermaydi); lidlar — polling rejimida CRM skanidan, webhook-only rejimda
+    lokal LeadEvent/CrmLeadState'dan (CRM'ga so'rovsiz). CRM xatosida tegishli
+    qism yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
+    from api.services import crm_mode
+
     adapter = get_crm_adapter(settings.crm_type)
     if not adapter:
         return {"synced": False, "reason": "CRM sozlanmagan"}
@@ -347,7 +385,10 @@ async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
     # Qo'ng'iroqlar (tez) — avval, chunki lid skaneri uzoq
     calls_rows = await _snapshot_calls(db, adapter, today)
 
-    rows = await adapter.get_daily_lead_breakdown(today)
+    if crm_mode.lead_polling_active():
+        rows = await adapter.get_daily_lead_breakdown(today)
+    else:
+        rows = await _local_lead_breakdown(db, today)
     if rows is None:
         return {"synced": calls_rows >= 0, "reason": "Lidlarni CRM'dan olib bo'lmadi", "call_operators": calls_rows}
 

@@ -88,6 +88,13 @@ class Settings(BaseSettings):
 
     crm_type: str = "none"
     crm_webhook_secret: str = ""
+    # Lid POLLING skanlari (diff-tick/reconcile, issiq-lid detect, LeadStageDaily
+    # lid skani). 2026-08-01: Uysot webhook ochilgach foydalanuvchi qarori bilan
+    # default O'CHIQ — lid voqealari webhook'dan keladi (/crm-webhook/uysot).
+    # true — eski polling rejimi (webhook'siz muhit / favqulodda zaxira).
+    # DIQQAT: CRM_WEBHOOK_SECRET bo'sh bo'lsa polling avtomatik davom etadi
+    # (api/services/crm_mode.py) — lid oqimi hech qachon butunlay o'chmaydi.
+    crm_lead_polling_enabled: bool = False
 
     # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
     # Bo'sh — endpoint o'chiq (404). Tasodifiy uzun qiymat qo'ying:

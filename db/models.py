@@ -1369,3 +1369,29 @@ class PushSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (UniqueConstraint("user_id", "category", name="uq_push_setting_user_category"),)
+
+
+class CrmWebhookLog(Base):
+    """Uysot CRM webhook'idan kelgan har bir XOM so'rov jurnali.
+
+    Uysot webhook'ni endigina ochdi (2026-08-01, faqat lid eventlari) va payload
+    formati RASMIY HUJJATLASHTIRILMAGAN — shu jurnal formatni jonli oqimdan
+    o'rganish, parse xatolarini keyin qayta o'ynatish va "webhook keldimi o'zi"
+    diagnostikasi uchun YAGONA manba. Parse muvaffaqiyatli bo'lsa ham yoziladi
+    (keyin format o'zgarsa taqqoslab bo'ladi); jadval o'sib ketmasin deb
+    scheduler'ning kunlik tozalash joyidan emas, webhook servisining o'zida
+    RETENTION_DAYS bo'yicha eski qatorlar o'chiriladi."""
+
+    __tablename__ = "crm_webhook_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    remote_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Maxsus (standart bo'lmagan) headerlar JSON ko'rinishida — Uysot sekretni
+    # qaysi header bilan yuborishini aniqlash uchun. Sekret qiymatining o'zi
+    # yozilishidan OLDIN maskalanadi (api/services/uysot_webhook.py).
+    headers: Mapped[dict | list | None] = mapped_column(JSON, nullable=True)
+    payload: Mapped[str] = mapped_column(Text)  # xom tana (JSON bo'lmasa ham saqlanadi)
+    # Parse natijasi: nechta lid voqeasi ajratildi / xato bo'lsa qisqa izoh
+    parsed_events: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)

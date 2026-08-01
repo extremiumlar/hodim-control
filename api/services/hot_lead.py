@@ -546,8 +546,20 @@ async def daily_accuracy_report(db: AsyncSession, day: date) -> dict:
 async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
     """Bitta to'liq aylanish: aniqlash+xabar → CRM holat sinxroni (drift/terminal)
     → birinchi qo'ng'iroq → eskalatsiya → tuzatish. dry_run — hech narsa
-    yozmaydi/yubormaydi, faqat nima bo'lishini qaytaradi."""
-    detect = await detect_and_notify(db, dry_run)
+    yozmaydi/yubormaydi, faqat nima bo'lishini qaytaradi.
+
+    2026-08-01: webhook-only rejimda (crm_mode) ANIQLASH bosqichi bu yerda
+    o'tkazib yuboriladi — yangi lid kelganda Uysot webhook'i `detect_and_notify`ni
+    O'ZI turtadi (uysot_webhook._maybe_trigger_hot_lead), operator DM'ni 2 daqiqa
+    kutmasdan ~1 sekundda oladi. Qolgan bosqichlar (birinchi qo'ng'iroq,
+    eskalatsiya, tuzatish) VAQTGA va call-history'ga bog'liq — webhook ularni
+    bera olmaydi, shuning uchun scheduler'da qoladi."""
+    from api.services import crm_mode
+
+    if dry_run or crm_mode.lead_polling_active():
+        detect = await detect_and_notify(db, dry_run)
+    else:
+        detect = {"skipped": "webhook_mode"}
     sync = await sync_crm_state(db, dry_run)
     first_calls = await check_first_calls(db, dry_run)
     escalation = await escalate_stale(db, dry_run)

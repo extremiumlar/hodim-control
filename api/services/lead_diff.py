@@ -64,7 +64,17 @@ async def _existing_state_map(db: AsyncSession, lead_ids: list[int]) -> dict[int
 
 async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False) -> dict:
     """Bitta diff aylanish. Qaytaradi: {ok, baseline, scanned, new_leads,
-    stage_events, responsible_events, dry_run}. CRM xatosida {"ok": False, ...}."""
+    stage_events, responsible_events, dry_run}. CRM xatosida {"ok": False, ...}.
+
+    2026-08-01: webhook-only rejimda (crm_mode) skan UMUMAN qilinmaydi — bosqich/
+    mas'ul o'zgarishlarini endi Uysot webhook'i o'zi yetkazadi va ular
+    `uysot_webhook.apply_lead_record` orqali xuddi shu CrmLeadState/LeadEvent
+    jadvallariga yoziladi. dry_run bundan mustasno (qo'lda diagnostika)."""
+    from api.services import crm_mode
+
+    if not dry_run and not crm_mode.lead_polling_active():
+        return {"ok": True, "skipped": "webhook_mode", "full": full}
+
     adapter = _adapter()
     if adapter is None:
         return {"ok": False, "reason": "CRM sozlanmagan yoki diff-engine'ni qo'llab-quvvatlamaydi"}

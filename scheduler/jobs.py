@@ -77,6 +77,8 @@ async def lead_diff_tick() -> None:
     lidlarining HAQIQIY bosqich/mas'ul o'zgarishini aniqlab `LeadEvent`ga yozadi.
     Guruh digesti shundan o'qiydi (deyarli real-vaqtli, taxminiy emas)."""
     body = await call_api("/lead-events/diff-tick", timeout=180, label="Lid diff tick")
+    if body is not None and body.get("skipped"):
+        return  # webhook-only rejim (crm_mode) — skan API tomonda ataylab o'chiq
     if body is not None and body.get("ok"):
         logger.info(
             "Lid diff: skanerlandi=%s yangi=%s bosqich=%s mas'ul=%s",
@@ -89,6 +91,8 @@ async def lead_diff_reconcile() -> None:
     chegaralangan skan oynasidan tashqarida qolgan eski-lekin-qayta-faollashgan
     lidlarni ushlab qoladigan xavfsizlik to'ri."""
     body = await call_api("/lead-events/reconcile", timeout=900, label="Lid diff reconcile")
+    if body is not None and body.get("skipped"):
+        return  # webhook-only rejim (crm_mode) — skan API tomonda ataylab o'chiq
     if body is not None and body.get("ok"):
         logger.info(
             "Lid diff (to'liq): skanerlandi=%s yangi=%s bosqich=%s mas'ul=%s",
