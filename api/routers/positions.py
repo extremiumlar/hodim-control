@@ -43,6 +43,16 @@ async def create_position(
     if duplicate:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu nomdagi lavozim allaqachon mavjud")
 
+    # `update_position` bilan bir xil sabab: `managed_by_roles` avtorizatsiya
+    # kirish ma'lumoti. Aks holda HR shu maydon bilan YANGI lavozim yaratib,
+    # keyin xodimni o'sha lavozimga o'tkazib, o'ziga huquq berardi — ya'ni
+    # tahrirdagi cheklov aylanib o'tilardi.
+    if payload.managed_by_roles and actor.role not in (Role.boss.value, Role.dasturchi.value):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Lavozimning boshqaruv rollarini faqat Boshliq yoki Dasturchi belgilay oladi",
+        )
+
     position = Position(
         name=payload.name,
         menu_flags=payload.menu_flags,
@@ -101,6 +111,20 @@ async def update_position(
     # Faqat yuborilgan maydonlar yangilanadi (None yuborilmagan degani emas —
     # exclude_unset bilan farqlaymiz, masalan menu_flags'ni null qilish ham mumkin).
     updates = payload.model_dump(exclude_unset=True)
+
+    # XAVFSIZLIK: `managed_by_roles` — oddiy sozlama emas, AVTORIZATSIYA
+    # kirish ma'lumoti: `can_manage_norms`, `can_view_payroll`, `_can_assign`
+    # va `_can_manage_existing_task` aynan shunga qaraydi. Bu endpoint esa
+    # HR'ga ochiq va `model_dump`ni ko'r-ko'rona `setattr` qilardi — ya'ni HR
+    # `PATCH /positions/3 {"managed_by_roles": ["hr"]}` bilan O'ZIGA o'sha
+    # lavozimdagi xodimlarning normasi/vazifasi/oyligi ustidan huquq bera
+    # olardi. O'z-o'ziga huquq berish — hech qachon past rolning ishi emas.
+    if "managed_by_roles" in updates and actor.role not in (Role.boss.value, Role.dasturchi.value):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Lavozimning boshqaruv rollarini faqat Boshliq yoki Dasturchi o'zgartira oladi",
+        )
+
     for field, value in updates.items():
         setattr(position, field, value)
 

@@ -142,9 +142,34 @@ async def _missed_hours_vs_baseline(
     return missed
 
 
+MANAGER_ROLES = (Role.rop.value, Role.boss.value, Role.dasturchi.value)
+
+
+async def _require_manager(db: AsyncSession, telegram_id: int) -> User:
+    """Chaqiruvchini aniqlaydi va rahbar ekanini tekshiradi.
+
+    NEGA KERAK: bu routerdagi endpointlar OPERATORLARNING ish natijalarini
+    (reja vs haqiqiy, gaplashish vaqti, "yolg'on sabab aytgan" belgilari)
+    qaytaradi. Router darajasida `verify_bot_secret` bor, lekin u faqat
+    "so'rov botdan keldimi" degan savolga javob beradi — KIM so'rayotgani
+    tekshirilmasdi. Naqsh `api/routers/knowledge.py: _require_manager` dan.
+    """
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
+    return actor
+
+
 @router.post("/nudge/{telegram_id}")
-async def nudge(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
-    """Bitta operator uchun hozirgi holatga (reja vs haqiqiy) qarab yo'naltiruvchi matn."""
+async def nudge(
+    telegram_id: int, actor_telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Bitta operator uchun hozirgi holatga (reja vs haqiqiy) qarab yo'naltiruvchi matn.
+
+    `actor_telegram_id` — SO'RAYOTGAN rahbar (nishondan alohida): ilgari
+    faqat nishon aniqlanardi, ya'ni chaqiruvchi hech qanday tekshiruvsiz
+    boshqa odamning ish natijalarini olardi."""
+    await _require_manager(db, actor_telegram_id)
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
@@ -174,11 +199,18 @@ async def nudge(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @router.post("/group-summary")
-async def group_summary(db: AsyncSession = Depends(get_db)) -> dict:
+async def group_summary(actor_telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Bugungi jamoa uchun kun yakuni xulosasi (barcha sotuv operatorlari agregati).
     Har operatorga kun ichidagi pasayish epizodlari ("soat 14:00–16:00 orqada, keyin
     to'g'irladi") KOD tomonidan hisoblanib payload'ga qo'shiladi — AI aniq soat va
-    holat bilan gapiradi, taxmin qilmaydi."""
+    holat bilan gapiradi, taxmin qilmaydi.
+
+    XAVFSIZLIK: ilgari bu endpointda AKTYOR umuman yo'q edi (imzosi faqat
+    `db` olardi), holbuki javobda BARCHA operatorlarning natijalari va
+    "yolg'on sabab aytgan" belgilari bor. Kod bazasida chaqiruvchisi ham
+    topilmadi — ya'ni bu unutilgan debug endpointi. O'chirish o'rniga
+    rahbar tekshiruvi qo'yildi (kelajakda kerak bo'lishi mumkin)."""
+    await _require_manager(db, actor_telegram_id)
     day = today_local()
     now = datetime.now(TASHKENT_TZ)
     upto_hour = now.hour if now.date() == day else 23
