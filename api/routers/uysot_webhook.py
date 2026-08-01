@@ -80,6 +80,13 @@ def _verify_secret(request: Request) -> None:
     for candidate in _candidate_secrets(request):
         if hmac.compare_digest(candidate, settings.crm_webhook_secret):
             return
+    # Rad etilgan so'rov DB jurnaliga tushmaydi — shu log yagona iz. Uysot
+    # noto'g'ri/boshqa kanalda sekret yuborayotganini aynan shundan bilamiz.
+    logger.warning(
+        "CRM webhook so'rovi rad etildi (sekret mos emas yoki yo'q) — IP: %s, UA: %s",
+        _remote_ip(request),
+        request.headers.get("user-agent", "-")[:100],
+    )
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Webhook sekreti noto'g'ri")
 
 
