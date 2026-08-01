@@ -289,6 +289,12 @@ async def _access_token() -> str | None:
                 "exp": int(now) + 3600,
             },
         )
+        # `google_jwt.encode` BYTES qaytaradi. Uni to'g'ridan-to'g'ri
+        # form-ma'lumotga qo'ysak httpx `b'eyJ...'` ko'rinishida yuboradi va
+        # Google 400 "invalid_request" bilan rad etadi (jonli serverda aynan
+        # shu xato chiqdi). Satrga o'girish SHART.
+        if isinstance(assertion, bytes):
+            assertion = assertion.decode("ascii")
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 OAUTH_TOKEN_URL,

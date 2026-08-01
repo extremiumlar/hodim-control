@@ -14,3 +14,9 @@ web/*.tsbuildinfo
 .claude/
 .idea/
 *.apk
+
+# ⛔ MAXFIY: Firebase service account kaliti va shunga o'xshash sirlar.
+# Repoga TUSHMASLIGI shart — tushsa kalitni bekor qilib qaytadan yaratish kerak.
+*firebase-adminsdk*.json
+planning-with-ai-*.json
+secrets/
