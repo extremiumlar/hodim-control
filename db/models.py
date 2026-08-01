@@ -249,6 +249,26 @@ class AppLoginToken(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    # ── Juftlik kodi (pairing code) — hisob egallashga qarshi ──
+    # ILOVA ekranida ko'rsatiladi, foydalanuvchi esa uni BOTGA yozadi.
+    #
+    # NEGA KERAK (haqiqiy zaiflik edi): ilgari bot deep-link ochilishi bilan
+    # hech narsa so'ramasdan tasdiqlardi. Hujumchi `/auth/app-login/start`ni
+    # o'zi chaqirib (endpoint autentifikatsiyasiz), hosil bo'lgan havolani
+    # xodimga yuborardi — xodim BIR MARTA bosishi bilan hujumchi
+    # `/auth/app-login/poll` orqali o'sha xodimning 30 kunlik JWT'sini olardi.
+    #
+    # NEGA TUGMA EMAS, YOZISH: variantli tugmalar (to'g'ri kod + soxtalari)
+    # muammoni HAL QILMAYDI — ilovani umuman ochmagan qurbon baribir taxmin
+    # qilib bosishi mumkin (4 variantda 25% ehtimol). Kodni YOZISH esa
+    # tasdiqlovchi odam haqiqatan ILOVA EKRANINI ko'rayotganini isbotlaydi:
+    # hujumchining ilovasidagi kod qurbonga ko'rinmaydi, ya'ni u yozadigan
+    # narsasi yo'q.
+    pairing_code: Mapped[str] = mapped_column(String(8), default="")
+    # Noto'g'ri urinishlar. Kod qisqa (4 raqam) — cheklovsiz bo'lsa taxmin
+    # qilib topish mumkin. Chegaraga yetganda token butunlay kuyadi.
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+
 
 class UsedTelegramLoginHash(Base):
     """Telegram Login Widget'ning `hash`ini bir marta ishlatilgach eslab qoladi —

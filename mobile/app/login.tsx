@@ -20,6 +20,12 @@ export default function Login() {
   const { signIn } = useAuth();
   const [phase, setPhase] = useState<Phase>("idle");
   const [errorText, setErrorText] = useState("");
+  // Juftlik kodi — foydalanuvchi shuni botga YOZADI. Aynan shu narsa
+  // "tasdiqlayotgan odam haqiqatan shu ekranni ko'ryaptimi" degan savolga
+  // javob beradi: ilgari bot deep-link ochilishi bilan darhol tasdiqlardi,
+  // ya'ni hujumchi o'zi yasagan havolani xodimga yuborib, uning hisobiga
+  // kira olardi (bitta bosish bilan).
+  const [pairingCode, setPairingCode] = useState("");
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopPolling = useCallback(() => {
@@ -35,9 +41,11 @@ export default function Login() {
     stopPolling();
     setPhase("waiting");
     setErrorText("");
+    setPairingCode("");
 
     try {
-      const { login_token, deep_link } = await appLoginStart();
+      const { login_token, deep_link, pairing_code } = await appLoginStart();
+      setPairingCode(pairing_code);
       try {
         await Linking.openURL(deep_link);
       } catch {
@@ -74,11 +82,20 @@ export default function Login() {
     <View style={styles.container}>
       <Text style={styles.title}>Hodimlar Tizimi</Text>
       <Text style={styles.subtitle}>
-        Kirish uchun Telegram orqali tasdiqlang — botga o'tib «Tasdiqlash» tugmasini bosing.
+        Kirish uchun Telegram orqali tasdiqlang — botga o'tib, quyidagi kodni yozing.
       </Text>
 
       {phase === "waiting" ? (
         <View style={styles.waitingBox}>
+          {pairingCode ? (
+            <View style={styles.codeBox}>
+              <Text style={styles.codeLabel}>Botga shu kodni yozing</Text>
+              <Text style={styles.code}>{pairingCode}</Text>
+              <Text style={styles.codeHint}>
+                Kodni hech kimga aytmang — u faqat shu qurilmaga kirish uchun.
+              </Text>
+            </View>
+          ) : null}
           <ActivityIndicator />
           <Text style={styles.waitingText}>Telegram'da tasdiqlashingiz kutilmoqda…</Text>
           <Pressable onPress={startLogin} style={styles.secondaryButton}>
@@ -114,6 +131,20 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   waitingBox: { alignItems: "center", gap: 12 },
+  codeBox: {
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 28,
+    paddingVertical: 18,
+    borderRadius: 16,
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+  },
+  codeLabel: { fontSize: 13, color: "#1e40af", fontWeight: "600" },
+  // letterSpacing — raqamlar aniq ajralib tursin, xato o'qilmasin
+  code: { fontSize: 40, fontWeight: "700", letterSpacing: 8, color: "#1e3a8a" },
+  codeHint: { fontSize: 12, color: "#64748b", textAlign: "center", maxWidth: 260 },
   waitingText: { color: "#555" },
   secondaryButton: { paddingHorizontal: 16, paddingVertical: 8 },
   secondaryButtonText: { color: "#2563eb", fontSize: 14 },

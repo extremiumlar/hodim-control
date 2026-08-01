@@ -1,3 +1,4 @@
+import hmac
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
@@ -27,6 +28,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Mobil ilova kirishi (deep-link + bir martalik token) — MOBIL_ILOVA_REJASI.md
 # 4.1-band. Token shu vaqt ichida tasdiqlanmasa yaroqsiz bo'ladi.
 APP_LOGIN_TOKEN_TTL_MINUTES = 5
+
+# Juftlik kodini necha marta noto'g'ri yozish mumkin. Kod 4 raqamli (10 000
+# variant) — 3 urinishda topish ehtimoli 0.03%, ya'ni amalda imkonsiz, lekin
+# haqiqiy foydalanuvchi bir-ikki marta adashsa ham qayta urina oladi.
+MAX_PAIRING_ATTEMPTS = 3
 
 # Barcha faol foydalanuvchilar saytga kira oladi: rahbarlar (boss/rop/hr/dasturchi)
 # to'liq boshqaruv panelini, xodimlar (employee) esa faqat o'z davomat (Face ID
@@ -100,18 +106,35 @@ async def bot_token(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)
     return await _issue_token(user)
 
 
-@router.post("/app-login/start", response_model=AppLoginStartOut)
+@router.post(
+    "/app-login/start", response_model=AppLoginStartOut,
+    # Endpoint autentifikatsiyasiz (ilova hali kirmagan) — cheklovsiz bo'lsa
+    # istalgan kishi cheksiz token/qator yasab, bazani shishira olardi.
+    dependencies=[Depends(rate_limit("app-login-start", 10, 900))],
+)
 async def app_login_start(db: AsyncSession = Depends(get_db)) -> AppLoginStartOut:
     """Mobil ilova ekrani ochilganda chaqiradi: yangi bir martalik token yaratadi
-    va foydalanuvchi botga o'tishi uchun deep-link qaytaradi (4.1-band)."""
+    va foydalanuvchi botga o'tishi uchun deep-link qaytaradi (4.1-band).
+
+    Bilan birga JUFTLIK KODI yaratiladi — ilova uni ekranda ko'rsatadi,
+    foydalanuvchi esa botga yozadi. Sababi
+    `db/models.py: AppLoginToken.pairing_code` izohida."""
     token = secrets.token_urlsafe(32)
+    # 4 raqam — yozish oson, taxmin qilish esa 3 urinish chegarasi bilan
+    # amalda imkonsiz (0.03%). `secrets` — tasodifiylik bashorat qilinmasin.
+    pairing_code = f"{secrets.randbelow(10000):04d}"
     expires_at = datetime.utcnow() + timedelta(minutes=APP_LOGIN_TOKEN_TTL_MINUTES)
-    db.add(AppLoginToken(token=token, expires_at=expires_at))
+    db.add(AppLoginToken(token=token, expires_at=expires_at, pairing_code=pairing_code))
     await db.commit()
 
     bot_username = settings.telegram_login_bot_username
     deep_link = f"https://t.me/{bot_username}?start=applogin_{token}"
-    return AppLoginStartOut(login_token=token, deep_link=deep_link, expires_at=expires_at)
+    return AppLoginStartOut(
+        login_token=token,
+        deep_link=deep_link,
+        expires_at=expires_at,
+        pairing_code=pairing_code,
+    )
 
 
 @router.post(
@@ -120,10 +143,14 @@ async def app_login_start(db: AsyncSession = Depends(get_db)) -> AppLoginStartOu
 async def app_login_confirm(
     payload: AppLoginConfirmRequest, db: AsyncSession = Depends(get_db)
 ) -> AppLoginConfirmOut:
-    """Bot `/start applogin_<token>` qabul qilib, foydalanuvchi tasdiqlagach
-    chaqiradi. Faqat bot chaqira oladi (X-Bot-Secret) — ilova to'g'ridan-to'g'ri
-    `telegram_id` yubora olmaydi, aks holda boshqa birovning hisobiga kirish
-    so'ralishi mumkin edi."""
+    """Bot `/start applogin_<token>` qabul qilib, foydalanuvchi ILOVADAGI
+    JUFTLIK KODINI yozgach chaqiradi. Faqat bot chaqira oladi (X-Bot-Secret) —
+    ilova to'g'ridan-to'g'ri `telegram_id` yubora olmaydi, aks holda boshqa
+    birovning hisobiga kirish so'ralishi mumkin edi.
+
+    Kod tekshiruvi shu yerda (botda emas): bot faqat foydalanuvchi yozgan
+    matnni uzatadi, qaror esa serverda qabul qilinadi va urinishlar ham shu
+    yerda sanaladi."""
     row = await db.scalar(select(AppLoginToken).where(AppLoginToken.token == payload.login_token))
     if not row or row.status != AppLoginStatus.pending.value or row.expires_at < datetime.utcnow():
         return AppLoginConfirmOut(status="invalid")
@@ -132,6 +159,23 @@ async def app_login_confirm(
     if not user or not user.is_active or user.role not in SITE_ROLES:
         return AppLoginConfirmOut(status="no_account")
 
+    # Kod tekshiruvi — HISOB EGALLASHGA QARSHI ASOSIY HIMOYA.
+    # `row.pairing_code` bo'sh bo'lishi mumkin (migratsiyadan oldingi eski
+    # qator) — bunday token HECH QACHON tasdiqlanmasin, aks holda bo'sh kod
+    # yuborish yetarli bo'lib qolardi. `compare_digest` — doimiy vaqt.
+    submitted = (payload.pairing_code or "").strip()
+    if not row.pairing_code or not submitted or not hmac.compare_digest(submitted, row.pairing_code):
+        row.failed_attempts += 1
+        attempts_left = MAX_PAIRING_ATTEMPTS - row.failed_attempts
+        if attempts_left <= 0:
+            # Token kuydi: 4 raqamni cheksiz taxmin qilib bo'lmasin.
+            row.status = AppLoginStatus.used.value
+            row.used_at = datetime.utcnow()
+            await db.commit()
+            return AppLoginConfirmOut(status="invalid", attempts_left=0)
+        await db.commit()
+        return AppLoginConfirmOut(status="wrong_code", attempts_left=attempts_left)
+
     row.telegram_id = payload.telegram_id
     row.status = AppLoginStatus.confirmed.value
     row.confirmed_at = datetime.utcnow()
@@ -139,7 +183,13 @@ async def app_login_confirm(
     return AppLoginConfirmOut(status="ok")
 
 
-@router.post("/app-login/poll", response_model=AppLoginPollOut)
+@router.post(
+    "/app-login/poll", response_model=AppLoginPollOut,
+    # Ilova bir necha soniyada bir chaqiradi, shuning uchun cheklov bo'sh —
+    # maqsad brute-force emas (token 256-bitli), balki bazani so'rov bilan
+    # ko'mib tashlashning oldini olish.
+    dependencies=[Depends(rate_limit("app-login-poll", 200, 900))],
+)
 async def app_login_poll(
     payload: AppLoginPollRequest, db: AsyncSession = Depends(get_db)
 ) -> AppLoginPollOut:
@@ -175,9 +225,19 @@ async def login_security_cleanup(db: AsyncSession = Depends(get_db)) -> dict:
     (dev-login, 3600s) shundan qisqa."""
     hash_cutoff = datetime.utcnow() - timedelta(hours=25)
     attempt_cutoff = datetime.utcnow() - timedelta(hours=1)
+    # Ilova login tokenlari 5 daqiqada eskiradi; 1 soat — yetarli zahira.
+    # Ilgari bu jadval UMUMAN tozalanmasdi va cheksiz o'sib borardi.
+    app_token_cutoff = datetime.utcnow() - timedelta(hours=1)
 
     hash_result = await db.execute(delete(UsedTelegramLoginHash).where(UsedTelegramLoginHash.consumed_at < hash_cutoff))
     attempt_result = await db.execute(delete(LoginAttempt).where(LoginAttempt.created_at < attempt_cutoff))
+    app_token_result = await db.execute(
+        delete(AppLoginToken).where(AppLoginToken.created_at < app_token_cutoff)
+    )
     await db.commit()
 
-    return {"deleted_hashes": hash_result.rowcount, "deleted_attempts": attempt_result.rowcount}
+    return {
+        "deleted_hashes": hash_result.rowcount,
+        "deleted_attempts": attempt_result.rowcount,
+        "deleted_app_login_tokens": app_token_result.rowcount,
+    }

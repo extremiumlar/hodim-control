@@ -51,10 +51,18 @@ async def telegram_start(telegram_id: int, invite_token: str | None) -> dict:
     return resp.json()
 
 
-async def confirm_app_login(login_token: str, telegram_id: int) -> dict:
+async def confirm_app_login(login_token: str, telegram_id: int, pairing_code: str) -> dict:
+    """Ilova kirishini tasdiqlaydi. `pairing_code` — foydalanuvchi ILOVA
+    ekranidan o'qib botga yozgan 4 raqamli kod. Uni tekshirish SERVERDA
+    (`api/routers/auth.py`), bot faqat matnni uzatadi — qaror va urinishlar
+    hisobi bitta joyda bo'lsin."""
     resp = await _get_client().post(
         "/auth/app-login/confirm",
-        json={"login_token": login_token, "telegram_id": telegram_id},
+        json={
+            "login_token": login_token,
+            "telegram_id": telegram_id,
+            "pairing_code": pairing_code,
+        },
     )
     resp.raise_for_status()
     return resp.json()

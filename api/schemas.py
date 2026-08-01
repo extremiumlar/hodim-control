@@ -168,15 +168,24 @@ class AppLoginStartOut(BaseModel):
     login_token: str
     deep_link: str
     expires_at: datetime
+    # Ilova ekranida KO'RSATILADI, foydalanuvchi esa uni botga yozadi.
+    # `db/models.py: AppLoginToken.pairing_code` izohiga qarang.
+    pairing_code: str
 
 
 class AppLoginConfirmRequest(BaseModel):
     login_token: str
     telegram_id: int
+    # Foydalanuvchi botga yozgan kod. Bo'sh/noto'g'ri bo'lsa tasdiqlanmaydi.
+    pairing_code: str = ""
 
 
 class AppLoginConfirmOut(BaseModel):
-    status: str  # ok | invalid | no_account
+    # ok | invalid | no_account | wrong_code — `wrong_code` bilan birga
+    # `attempts_left` keladi, bot foydalanuvchiga nechta urinish qolganini
+    # ko'rsatadi.
+    status: str
+    attempts_left: int | None = None
 
 
 class AppLoginPollRequest(BaseModel):

@@ -77,6 +77,8 @@ export interface AppLoginStart {
   login_token: string;
   deep_link: string;
   expires_at: string;
+  /** Ilova ekranida ko'rsatiladi, foydalanuvchi uni BOTGA yozadi. */
+  pairing_code: string;
 }
 
 export function appLoginStart(): Promise<AppLoginStart> {
