@@ -22,6 +22,10 @@ interface Props {
   livenessThreshold?: number;
   buttonLabel?: string;
   hint?: string;
+  // Yuz aniqlanib, o'lchami yetarli bo'lgan zahoti tiriklik sinovi TUGMASIZ
+  // boshlanadi. Default: `verify` uchun yoqiq, `register` uchun o'chiq —
+  // ro'yxatdan o'tkazish ongli (bir martalik) amal, tasodifan boshlanmasin.
+  autoStart?: boolean;
   // 4.11-band: `capturing` faqat FaceCapture ICHKI (freym olish) holatini
   // bildiradi — natija chaqiruvchiga (`onResult`) uzatilgach, chaqiruvchining
   // O'ZINING tarmoq so'rovi (masalan register-face) hali ketayotgan bo'lsa ham,
@@ -40,6 +44,7 @@ export default function FaceCapture({
   livenessThreshold = 0.5,
   buttonLabel,
   hint,
+  autoStart = mode === "verify",
   disabled = false,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -51,7 +56,6 @@ export default function FaceCapture({
   });
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState("");
-  const [lastResult, setLastResult] = useState<any>(null);
   const [live, setLive] = useState<LiveStatus>({ detected: false, size: 0, score: 0 });
   // Tiriklik sinovi (ko'z pirpiratish / og'iz ochish) real-vaqtli holati
   const [challenge, setChallenge] = useState<LivenessProgress | null>(null);
@@ -153,11 +157,44 @@ export default function FaceCapture({
     };
   }, [modelsReady, capturing]);
 
+  // Tasdiqlash (check-in) uchun yuz KATTAROQ bo'lishi kerak — tiriklik
+  // sinovida landmark shovqinining nisbiy zarari yuz o'lchamiga bog'liq
+  // (`MIN_VERIFY_FACE_SIZE` izohiga qarang). Ro'yxatdan o'tishda esa
+  // eski chegara (yuz bor/yo'q) yetarli — u yerda mimika o'lchanmaydi.
+  // DIQQAT: avtomatik boshlash effekti shu qiymatga bog'liq, shuning uchun
+  // u effektdan OLDIN hisoblanishi shart (aks holda TDZ xatosi).
+  const requiredSize = mode === "verify" ? MIN_VERIFY_FACE_SIZE : MIN_FACE_SIZE;
+  const sizeGood = live.size >= requiredSize;
+
+  // Avtomatik boshlash (egasi so'rovi 2026-07-31): ilgari xodim «Keldim»ni
+  // bosgach kamera ochilar, so'ng YANA bitta tugmani bosishi kerak edi —
+  // ortiqcha qadam, telefonda ayniqsa noqulay. Endi yuz aniqlanib o'lchami
+  // yetarli bo'lgan zahoti sinov o'zi boshlanadi.
+  //
+  // `armed` — bir martalik "tetik": sinov boshlangach o'chadi. Xato bo'lsa
+  // (tiriklik tasdiqlanmadi) qayta YOQILMAYDI — aks holda cheksiz halqa
+  // bo'lardi: xato → yuz hamon ko'rinib turibdi → darhol qayta boshlash →
+  // xato. Xodim «Qayta urinish»ni bosganda qayta tetiklanadi.
+  const [armed, setArmed] = useState(autoStart);
+  useEffect(() => {
+    if (!armed || capturing || disabled) return;
+    if (!modelsReady || !live.detected || !sizeGood) return;
+    setArmed(false);
+    void capture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armed, capturing, disabled, modelsReady, live.detected, sizeGood]);
+
+  function retry() {
+    setError("");
+    setChallenge(null);
+    if (autoStart) setArmed(true);
+    else void capture();
+  }
+
   async function capture() {
     if (!videoRef.current) return;
     setCapturing(true);
     setError("");
-    setLastResult(null);
     try {
       if (mode === "register") {
         const r = await captureForRegister(videoRef.current, 8);
@@ -167,7 +204,6 @@ export default function FaceCapture({
           setCapturing(false);
           return;
         }
-        setLastResult(r);
         onResult(r);
       } else {
         setChallenge(null);
@@ -183,7 +219,6 @@ export default function FaceCapture({
           setCapturing(false);
           return;
         }
-        setLastResult(r);
         if (r.liveness < livenessThreshold) {
           // Diagnostika raqamlari xabarga ATAYLAB kiritilgan: chegara jonli
           // qurilmalarda noto'g'ri ishlab qolsa, xodim aynan shu sonlarni
@@ -216,14 +251,8 @@ export default function FaceCapture({
   const defaultHint =
     mode === "register"
       ? "8 freym ushlanadi, eng aniqi tanlanadi. Kameraga 40-60 sm masofada turing."
-      : "Tugmani bosgach kameraga tik qarab, bir necha soniya shunchaki turing — tirikligingiz o'zingiz beixtiyor pirpiratganingizda avtomatik tasdiqlanadi (rasm buni qila olmaydi).";
+      : "Kameraga tik qarab turing — yuzingiz aniqlanishi bilan tasdiqlash O'ZI boshlanadi va tugagach avtomatik yuboriladi.";
 
-  // Tasdiqlash (check-in) uchun yuz KATTAROQ bo'lishi kerak — tiriklik
-  // sinovida landmark shovqinining nisbiy zarari yuz o'lchamiga bog'liq
-  // (`MIN_VERIFY_FACE_SIZE` izohiga qarang). Ro'yxatdan o'tishda esa
-  // eski chegara (yuz bor/yo'q) yetarli — u yerda mimika o'lchanmaydi.
-  const requiredSize = mode === "verify" ? MIN_VERIFY_FACE_SIZE : MIN_FACE_SIZE;
-  const sizeGood = live.size >= requiredSize;
   const statusColor = !live.detected ? "bg-rose-500" : !sizeGood ? "bg-amber-500" : "bg-emerald-500";
   const statusText = !live.detected
     ? "❌ Yuz aniqlanmadi"
@@ -356,30 +385,10 @@ export default function FaceCapture({
 
       <p className="text-xs text-slate-500 text-center whitespace-pre-line">{hint || defaultHint}</p>
 
-      {lastResult && mode === "verify" && (
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="bg-slate-50 rounded-lg p-2 text-center">
-            <div className="text-slate-500">Tiriklik</div>
-            <div
-              className={`text-lg font-bold ${
-                lastResult.liveness >= livenessThreshold ? "text-emerald-600" : "text-rose-600"
-              }`}
-            >
-              {(lastResult.liveness * 100).toFixed(0)}%
-            </div>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-2 text-center">
-            <div className="text-slate-500">Mimika</div>
-            <div className="text-lg font-bold text-slate-700">
-              {lastResult.blinkDetected ? "👁" : lastResult.mouthDetected ? "👄" : "—"}
-            </div>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-2 text-center">
-            <div className="text-slate-500">Aniqlik</div>
-            <div className="text-lg font-bold text-slate-700">{(lastResult.avgScore * 100).toFixed(0)}%</div>
-          </div>
-        </div>
-      )}
+      {/* Natija paneli (Tiriklik/Mimika/Aniqlik) ATAYLAB olib tashlandi:
+          muvaffaqiyatda modal darhol yopiladi (ko'rinmasdi ham), xatoda esa
+          aynan shu raqamlar xato matnida batafsilroq chiqadi — telefon
+          ekranida ikki marta takrorlash ortiqcha shovqin edi. */}
 
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg px-3 py-2 text-xs whitespace-pre-wrap">
@@ -388,16 +397,36 @@ export default function FaceCapture({
       )}
 
       <div className="flex gap-2">
-        <button
-          onClick={capture}
-          disabled={disabled || !modelsReady || capturing || !live.detected || !sizeGood}
-          className={`${btnPrimary} flex-1`}
-          title={!live.detected ? "Yuz aniqlanmadi" : !sizeGood ? "Yaqinroq turing" : ""}
-        >
-          {capturing ? "Tahlil qilinmoqda..." : buttonLabel || defaultLabel}
-        </button>
+        {/* Avtomatik rejimda asosiy tugma UMUMAN yo'q — sinov o'zi boshlanadi.
+            Tugma faqat xato bo'lgandan keyin («Qayta urinish») paydo bo'ladi. */}
+        {!autoStart ? (
+          <button
+            onClick={capture}
+            disabled={disabled || !modelsReady || capturing || !live.detected || !sizeGood}
+            className={`${btnPrimary} flex-1`}
+            title={!live.detected ? "Yuz aniqlanmadi" : !sizeGood ? "Yaqinroq turing" : ""}
+          >
+            {capturing ? "Tahlil qilinmoqda..." : buttonLabel || defaultLabel}
+          </button>
+        ) : (
+          // Faqat kamera ISHLAYOTGAN bo'lsa ko'rsatiladi: oqim umuman
+          // ochilmagan bo'lsa (ruxsat berilmagan) qayta urinish hech narsa
+          // qilmasdi — `live.detected` hech qachon rost bo'lmaydi va tugma
+          // xatoni jimgina tozalab, xodimni "nima bo'ldi?" holatida qoldirardi.
+          // Bunday holatda faqat xato matni qoladi (u nima qilishni aytadi).
+          error &&
+          stream && (
+            <button onClick={retry} disabled={disabled || capturing} className={`${btnPrimary} flex-1`}>
+              Qayta urinish
+            </button>
+          )
+        )}
         {onCancel && (
-          <button onClick={onCancel} disabled={disabled} className={btnGhost}>
+          <button
+            onClick={onCancel}
+            disabled={disabled}
+            className={`${btnGhost} ${autoStart && !(error && stream) ? "flex-1" : ""}`}
+          >
             Bekor
           </button>
         )}

@@ -167,7 +167,9 @@ export default function CheckIn() {
       return;
     }
     setCheckError(null);
-    setStatusMsg("Joylashuv tekshirilmoqda...");
+    // Brauzer shu paytda joylashuv ruxsatini so'raydi — xodim "nega kutyapman"
+    // deb qolmasligi uchun matn aynan shuni aytadi (keyin kamera ruxsati).
+    setStatusMsg("Joylashuv ruxsati so'ralmoqda — «Ruxsat berish»ni tanlang...");
     try {
       // Faqat ruxsat/xatoni ERTA ushlash uchun — qiymatning o'zi ishlatilmaydi
       // (3.6-band: yuz tasdiqlangandan keyin QAYTA olinadi, aks holda eskiradi).
@@ -361,12 +363,17 @@ export default function CheckIn() {
       )}
 
       {showFace && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          {/* max-h + overflow: past ekranda (yoki landscape'da) video + matn +
-              tugma modaldan chiqib ketardi va scroll qilib bo'lmasdi — xodim
-              «Keldim» tugmasiga yeta olmasdi. 100dvh (100vh emas): mobil
-              brauzerda manzil satri paydo bo'lganda vh o'zgarmay qoladi. */}
-          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+        // Telefonda TO'LIQ EKRAN (sm dan kichik): ilgari qorong'i fon ustidagi
+        // kichkina karta edi va kamera juda tor ko'rinardi — modal p-4 + karta
+        // p-5 = 72px chekka yo'qolardi. Kattaroq ekranda (sm+) eski markazlashgan
+        // karta ko'rinishi saqlanadi.
+        // max-h + overflow: past ekranda (yoki landscape'da) kontent chiqib
+        // ketardi va scroll qilib bo'lmasdi. 100dvh (100vh emas): mobil
+        // brauzerda manzil satri paydo bo'lganda vh o'zgarmay qoladi.
+        <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/60 sm:items-center sm:p-4">
+          <div
+            className="flex h-full w-full flex-col overflow-y-auto bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg sm:rounded-2xl sm:p-5 sm:shadow-2xl"
+          >
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold">
                 Yuz tasdiqlash ({showFace === "check-in" ? "Keldim" : "Ketdim"})
