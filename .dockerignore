@@ -18,6 +18,12 @@ __pycache__
 *.sqlite3
 logs
 
+# Baza NUSXALARI — `*.db` bularni qamramaydi (nom ".db" bilan tugamaydi).
+# Ichida xodimlarning shaxsiy ma'lumotlari bor, image'ga tushmasin.
+app.db.bak*
+*.bak_*
+backups
+
 # Sirlar (compose env_file orqali beriladi, image ichiga kirmasin)
 .env
 

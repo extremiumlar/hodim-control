@@ -30,3 +30,30 @@ google-services.json
 secrets/
 *.pem
 *.p12
+
+# ⛔ MAXFIY: baza NUSXALARI va zaxiralar — ichida xodimlarning shaxsiy
+# ma'lumotlari bor (yuz deskriptorlari, oyliklar, telefon raqamlar).
+# DIQQAT: yuqoridagi `*.db` naqshi bularni QAMRAMAYDI, chunki fayl nomi
+# ".db" bilan TUGAMAYDI — "app.db.bak_2026-07-27_bosqich1_migration" kabi.
+# Repo ochiq (public) bo'lgani uchun bitta `git add -A` butun bazani
+# internetga chiqarib yuborardi. Yuz biometrikasini esa parol kabi
+# almashtirib bo'lmaydi.
+app.db.bak*
+*.bak_*
+backups/
+
+# Loglar — `*.log` faqat FAYL nomiga mos keladi, papkani qamramaydi
+logs/
+
+# Xavfsizlik/bug audit hujjatlari — ichida zaifliklar ro'yxati bo'ladi.
+# Ochiq repoda bu hujumchi uchun tayyor qo'llanma.
+*bug_audit*
+*XAVFSIZLIK_AUDIT*
+*TUZATISH_PROMTI*
+
+# ⛔ MAXFIY: Android release imzo parollari. Kalit sizib chiqsa, hujumchi
+# XUDDI SHU IMZO bilan zararli APK yasaydi va Android uni haqiqiy ilova
+# ustiga "yangilanish" sifatida o'rnatadi (ma'lumot papkasi — jumladan
+# SecureStore'dagi JWT — meros qoladi). Parollar `~/.gradle/gradle.properties`
+# da turishi kerak; namuna uchun `gradle.properties.example` ga qarang.
+mobile/android/gradle.properties
