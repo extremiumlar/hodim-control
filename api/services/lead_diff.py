@@ -66,13 +66,14 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
     """Bitta diff aylanish. Qaytaradi: {ok, baseline, scanned, new_leads,
     stage_events, responsible_events, dry_run}. CRM xatosida {"ok": False, ...}.
 
-    2026-08-01: webhook-only rejimda (crm_mode) skan UMUMAN qilinmaydi — bosqich/
-    mas'ul o'zgarishlarini endi Uysot webhook'i o'zi yetkazadi va ular
+    2026-08-01: webhook JONLI bo'lgandagina (crm_mode dalil tekshiruvi) skan
+    o'tkazib yuboriladi — bosqich/mas'ul o'zgarishlarini Uysot webhook'i
     `uysot_webhook.apply_lead_record` orqali xuddi shu CrmLeadState/LeadEvent
-    jadvallariga yoziladi. dry_run bundan mustasno (qo'lda diagnostika)."""
+    jadvallariga yozadi. Webhook jim bo'lsa polling o'zi davom etadi.
+    dry_run bundan mustasno (qo'lda diagnostika)."""
     from api.services import crm_mode
 
-    if not dry_run and not crm_mode.lead_polling_active():
+    if not dry_run and not await crm_mode.lead_polling_active(db):
         return {"ok": True, "skipped": "webhook_mode", "full": full}
 
     adapter = _adapter()

@@ -556,7 +556,7 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
     bera olmaydi, shuning uchun scheduler'da qoladi."""
     from api.services import crm_mode
 
-    if dry_run or crm_mode.lead_polling_active():
+    if dry_run or await crm_mode.lead_polling_active(db):
         detect = await detect_and_notify(db, dry_run)
     else:
         detect = {"skipped": "webhook_mode"}

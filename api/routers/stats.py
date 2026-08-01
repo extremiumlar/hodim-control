@@ -385,7 +385,7 @@ async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
     # Qo'ng'iroqlar (tez) — avval, chunki lid skaneri uzoq
     calls_rows = await _snapshot_calls(db, adapter, today)
 
-    if crm_mode.lead_polling_active():
+    if await crm_mode.lead_polling_active(db):
         rows = await adapter.get_daily_lead_breakdown(today)
     else:
         rows = await _local_lead_breakdown(db, today)
