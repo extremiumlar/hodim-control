@@ -16,6 +16,8 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import { isAllowedWebPath } from "./sections";
+
 import {
   deletePushToken,
   fetchPushSettings,
@@ -131,7 +133,10 @@ export function pathFromNotification(
     | Record<string, unknown>
     | undefined;
   const path = data?.path;
-  // Faqat o'z saytimizning ichki yo'li — tashqi manzil ochilmasin.
-  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) return null;
+  // `view.tsx` bilan BIR XIL oq ro'yxat: bildirishnoma yo'li ham oxir-oqibat
+  // WebView'da (JWT kiritilgan holda) ochiladi, shuning uchun tekshiruv ham
+  // bir xil qattiqlikda bo'lishi kerak. Backend hozir aynan shu yo'llarni
+  // yuboradi (`api/notify.py`), ya'ni bu hech narsani buzmaydi.
+  if (typeof path !== "string" || !isAllowedWebPath(path)) return null;
   return path;
 }

@@ -137,3 +137,41 @@ export function visibleSections(user: UserOut | null): Section[] {
   const ctx = buildContext(user);
   return SECTIONS.filter((s) => s.visible(ctx));
 }
+
+/**
+ * Davomat sahifasi — Layout'SIZ marshrut (`web/src/App.tsx`). `SECTIONS` da
+ * u `nativeRoute` sifatida turadi, lekin oxir-oqibat WebView'da shu yo'l
+ * ochiladi, shuning uchun oq ro'yxatga alohida qo'shiladi.
+ */
+export const CHECKIN_WEB_PATH = "/embed/check-in";
+
+/**
+ * WebView'da ochilishi MUMKIN bo'lgan yo'llarning to'liq ro'yxati.
+ *
+ * XAVFSIZLIK: `app/view.tsx` ilovaning `hodimlarapp://` sxemasi orqali
+ * TASHQARIDAN ochiladi (MainActivity `exported=true`, BROWSABLE), ya'ni
+ * istalgan veb-sahifa yoki o'rnatilgan ilova
+ * `hodimlarapp://view?path=...` yuborishi mumkin. Ilgari tekshiruv faqat
+ * "yo'l `/` bilan boshlanadimi" edi — bu domen almashtirishga yo'l
+ * qo'ymasa ham, O'Z saytimizdagi ISTALGAN yo'l va query'ni ochishga ruxsat
+ * berardi. Kelajakdagi biror sahifada aks etuvchi (reflected) inyeksiya
+ * paydo bo'lsa, o'sha zahoti JWT o'g'irlashga aylanardi (token WebView
+ * localStorage'iga kiritiladi).
+ *
+ * Shuning uchun aniq moslik (exact match) bilan tekshiramiz. Yangi bo'lim
+ * qo'shilsa — u `SECTIONS`ga qo'shiladi va bu ro'yxatga AVTOMAT tushadi.
+ */
+const ALLOWED_WEB_PATHS: ReadonlySet<string> = new Set<string>([
+  CHECKIN_WEB_PATH,
+  ...SECTIONS.map((s) => s.webPath).filter((p): p is string => typeof p === "string"),
+]);
+
+/**
+ * Berilgan yo'l WebView'da ochilishi mumkinmi.
+ *
+ * Query/fragment ATAYLAB rad etiladi: bo'limlarning hech biriga ular kerak
+ * emas, ruxsat berilsa esa oq ro'yxatning ma'nosi qolmaydi (`/me/norm?x=<script>`).
+ */
+export function isAllowedWebPath(path: string): boolean {
+  return ALLOWED_WEB_PATHS.has(path);
+}

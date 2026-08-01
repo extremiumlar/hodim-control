@@ -16,6 +16,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Text, View } from "react-native";
 
 import EmbeddedWeb, { Message, styles, useWebPhase } from "../components/EmbeddedWeb";
+import { isAllowedWebPath } from "../lib/sections";
 
 export default function ViewScreen() {
   const params = useLocalSearchParams<{ path?: string; title?: string }>();
@@ -24,9 +25,17 @@ export default function ViewScreen() {
   const path = typeof params.path === "string" ? params.path : "";
   const title = typeof params.title === "string" ? params.title : "Bo'lim";
 
-  // Faqat o'z saytimizning ichki yo'li ochilsin — parametr tashqaridan
-  // (masalan deep-link orqali) kelib qolsa, ixtiyoriy manzil ochilmasin.
-  if (!path.startsWith("/") || path.startsWith("//")) {
+  // Faqat OLDINDAN BELGILANGAN bo'lim yo'llari ochilsin (`lib/sections.ts`).
+  //
+  // XAVFSIZLIK: bu ekran ilovaning `hodimlarapp://` sxemasi orqali
+  // TASHQARIDAN ochiladi (MainActivity `exported=true`, BROWSABLE filtri),
+  // ya'ni istalgan veb-sahifa `hodimlarapp://view?path=...` yuborishi mumkin.
+  // Ilgari tekshiruv faqat "`/` bilan boshlanadimi" edi: u domen
+  // almashtirishga yo'l qo'ymasa ham, O'Z saytimizdagi ISTALGAN yo'l va
+  // query'ni ochardi. WebView'ga esa JWT kiritiladi — demak kelajakda biror
+  // sahifada aks etuvchi inyeksiya paydo bo'lsa, shu ekran orqali darhol
+  // token o'g'irlashga aylanardi.
+  if (!isAllowedWebPath(path)) {
     return (
       <Message
         title="Bo'lim topilmadi"

@@ -34,6 +34,12 @@ function embedUrl(path: string): string {
   return `${WEB_BASE_URL}${path}${sep}embed=1`;
 }
 
+/**
+ * Ruxsat etilgan YAGONA origin. Bir marta hisoblanadi va `onShouldStart`da
+ * hamda `originWhitelist`da ishlatiladi — ikkalasi bir manbadan bo'lsin.
+ */
+const ALLOWED_ORIGIN = new URL(WEB_BASE_URL).origin;
+
 export type WebPhase =
   | { kind: "loading" }
   | { kind: "no-permission" }
@@ -123,6 +129,20 @@ export default function EmbeddedWeb({
   // Sayt JWT'ni localStorage["access_token"]dan o'qiydi (web/src/lib/auth.tsx) —
   // sahifa skriptlari ishga tushishidan OLDIN yozamiz, aks holda /login ga
   // yo'naltiriladi.
+  //
+  // ⚠️ BU YERDA QOLGAN XAVF (kod bilan to'liq yopib bo'lmaydi):
+  // `injectedJavaScriptBeforeContentLoaded` nativ tomonda `onPageStarted`da
+  // chaqiriladi, ya'ni HAR sahifa yuklanishida — faqat birinchisida emas.
+  // Origin tekshiruvi esa JS callback'i orqali ishlaydi va nativ tomon uni
+  // atigi 250 ms kutadi: javob yetib bormasa navigatsiyaga RUXSAT berib
+  // yuboradi ("defaulting to allow loading", RNCWebViewClient.java:112-114).
+  // Ya'ni JS thread band bo'lgan lahzada tekshiruv umuman ishlamay qolishi
+  // mumkin, va o'sha paytda token begona sahifaga yozilardi.
+  //
+  // Buni butunlay yopishning YAGONA yo'li — bu yerga 30 kunlik JWT'ni umuman
+  // kiritmaslik: WebView uchun qisqa muddatli (bir necha daqiqalik), alohida
+  // token berish. Bu backend o'zgarishini talab qiladi, shuning uchun alohida
+  // ish sifatida rejalashtirilgan (audit hisoboti, B3-5).
   const injectedToken = `
     (function () {
       try {
@@ -134,9 +154,34 @@ export default function EmbeddedWeb({
 
   // WebView faqat o'z saytimizda qolsin: sahifadagi tashqi havola ilova
   // ichida ochilib qolmasin (tizim brauzerida ochilsin).
+  //
+  // XAVFSIZLIK — nega `startsWith` EMAS, `origin` solishtiriladi:
+  // `startsWith("https://nuriddin-building.uz")` ORIGIN tekshiruvi emas.
+  // Unga quyidagilar ham mos keladi va hujumchi ularni bemalol ro'yxatdan
+  // o'tkaza oladi:
+  //     https://nuriddin-building.uz.evil.com/
+  //     https://nuriddin-building.uzevil.com/
+  // JWT esa `injectedJavaScriptBeforeContentLoaded` orqali HAR sahifa
+  // yuklanishida localStorage'ga yoziladi (react-native-webview'da u
+  // `onPageStarted`da chaqiriladi, faqat birinchi yuklanishda emas) — ya'ni
+  // shunday domenga o'tilsa, xodimning tokeni TO'G'RIDAN-TO'G'RI hujumchining
+  // sahifasiga yozilardi.
   const onShouldStart = (req: WebViewNavigation): boolean => {
-    if (req.url.startsWith(WEB_BASE_URL)) return true;
-    void Linking.openURL(req.url);
+    let origin: string | null = null;
+    try {
+      origin = new URL(req.url).origin;
+    } catch {
+      return false; // manzilni parse qilib bo'lmasa — ishonmaymiz
+    }
+    if (origin === ALLOWED_ORIGIN) return true;
+
+    // Tashqi havola tizim brauzerida ochiladi — LEKIN faqat http(s).
+    // Aks holda sahifa `intent://`, `file://` yoki ilovaning o'z
+    // `hodimlarapp://` sxemasini OS'ga uzatib, boshqa ilovalarni qo'zg'atishi
+    // yoki o'zimizning deep-link'imizni chaqirishi mumkin edi.
+    if (origin.startsWith("http://") || origin.startsWith("https://")) {
+      void Linking.openURL(req.url);
+    }
     return false;
   };
 
@@ -159,6 +204,30 @@ export default function EmbeddedWeb({
         source={{ uri: embedUrl(path) }}
         injectedJavaScriptBeforeContentLoaded={injectedToken}
         onShouldStartLoadWithRequest={onShouldStart}
+        // Qo'pol old-filtr. DIQQAT — bu YETARLI EMAS va yuqoridagi
+        // `onShouldStart`ning o'rnini BOSMAYDI:
+        //   - u nativ emas, JS tomonda ishlaydi (WebViewShared.tsx);
+        //   - `originWhitelistToRegex` naqshni `^...` bilan boshlaydi, LEKIN
+        //     oxiriga `$` QO'YMAYDI — ya'ni bu ham PREFIKS moslik va
+        //     "https://nuriddin-building.uz.evil.com" unga ham mos keladi.
+        // Sukut qiymati ['http://*','https://*'] bo'lgani uchun baribir
+        // foydasi bor: begona sxemalar va butunlay boshqa domenlar shu yerda
+        // kesiladi. Haqiqiy himoya — `onShouldStart`dagi origin TENGLIGI.
+        originWhitelist={[ALLOWED_ORIGIN]}
+        // `window.open()` / target="_blank" popup'i `WebViewClient`SIZ yangi
+        // WebView yaratadi — ya'ni `onShouldStartLoadWithRequest` umuman
+        // chaqirilmaydi va sahifa ilova ichida KO'RINMAS holda yuklanadi.
+        // Bu bilan yuqoridagi origin tekshiruvini butunlay chetlab o'tish
+        // mumkin edi.
+        setSupportMultipleWindows={false}
+        // Faqat o'z saytimiz ochiladi — uchinchi tomon cookie'lari keraksiz,
+        // ular esa yuqoridagi popup/download yo'llari orqali begona kontentga
+        // sessiya biriktirib yuborishi mumkin.
+        thirdPartyCookiesEnabled={false}
+        // Standart yuklovchi sayt COOKIE'larini biriktirib, faylni ommaviy
+        // Downloads papkasiga so'rovsiz yozadi. Bo'limlarning hech biri fayl
+        // yuklamaydi, shuning uchun butunlay to'xtatamiz.
+        onFileDownload={() => undefined}
         onLoadEnd={() => setPageLoading(false)}
         mediaPlaybackRequiresUserAction={!media}
         allowsInlineMediaPlayback={media}
