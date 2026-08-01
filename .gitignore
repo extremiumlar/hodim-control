@@ -51,9 +51,15 @@ logs/
 *XAVFSIZLIK_AUDIT*
 *TUZATISH_PROMTI*
 
-# ⛔ MAXFIY: Android release imzo parollari. Kalit sizib chiqsa, hujumchi
-# XUDDI SHU IMZO bilan zararli APK yasaydi va Android uni haqiqiy ilova
-# ustiga "yangilanish" sifatida o'rnatadi (ma'lumot papkasi — jumladan
-# SecureStore'dagi JWT — meros qoladi). Parollar `~/.gradle/gradle.properties`
-# da turishi kerak; namuna uchun `gradle.properties.example` ga qarang.
-mobile/android/gradle.properties
+# ⛔ MAXFIY: Android release imzo parollari HECH QACHON repoga tushmasin.
+# Kalit sizib chiqsa, hujumchi XUDDI SHU IMZO bilan zararli APK yasaydi va
+# Android uni haqiqiy ilova ustiga "yangilanish" sifatida o'rnatadi
+# (ma'lumot papkasi — jumladan SecureStore'dagi JWT — meros qoladi).
+#
+# DIQQAT: `mobile/android/gradle.properties` ning O'ZI kuzatiladi — unda
+# Expo/Gradle build sozlamalari bor va usiz toza clone'da build ishlamaydi.
+# Imzo qiymatlari esa `~/.gradle/gradle.properties` da (repodan tashqarida).
+# Quyidagilar — imzo uchun ishlatiladigan alohida fayl nomlari.
+mobile/android/keystore.properties
+*.keystore
+*.jks
