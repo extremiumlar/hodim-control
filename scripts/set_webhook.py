@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from aiogram import Bot  # noqa: E402
 
-from bot.config import API_BASE_URL, BOT_SHARED_SECRET, BOT_TOKEN  # noqa: E402
+from bot.config import API_BASE_URL, BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET  # noqa: E402
 from bot.setup import build_dispatcher  # noqa: E402
 
 
@@ -51,7 +51,7 @@ async def main() -> None:
 
         await bot.set_webhook(
             url=url,
-            secret_token=BOT_SHARED_SECRET,
+            secret_token=TELEGRAM_WEBHOOK_SECRET,
             allowed_updates=allowed_update_types(dp),
             drop_pending_updates=False,
         )

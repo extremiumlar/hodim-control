@@ -21,6 +21,19 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     bot_shared_secret: str = _PLACEHOLDER_BOT_SECRET
+    # Telegram webhook sekreti — `bot_shared_secret`DAN ALOHIDA bo'lishi kerak.
+    #
+    # NEGA AJRATILDI: `bot_shared_secret` — bu `X-Bot-Secret`, ya'ni ~100 ta
+    # ichki endpointning kaliti VA `/auth/bot-token` orqali to'liq Dasturchi
+    # JWT'sini beradi. Webhook sekreti esa tashqi tomonga (Telegram) beriladi
+    # va sizib chiqish ehtimoli yuqoriroq (eski `/bot/webhook/{secret}` yo'li
+    # uni access_log'ga yozib qo'yardi). Ikkalasi bir xil bo'lsa, bitta log
+    # qatori butun tizimni ochib berardi.
+    #
+    # Bo'sh bo'lsa — orqaga moslik uchun `bot_shared_secret` ishlatiladi, lekin
+    # .env'da ALOHIDA qiymat qo'ying va `scripts/set_webhook.py` ni qayta
+    # ishga tushiring.
+    telegram_webhook_secret: str = ""
     # cPanel deploy: bot alohida polling jarayoni sifatida emas, shu API ichida
     # webhook orqali ishlaydi (shared hostingda doimiy jarayon yo'q). Default
     # O'CHIQ — Docker/VPS'da bot alohida polling qiladi, ikki marta ishlanmasin.
@@ -144,19 +157,41 @@ class Settings(BaseSettings):
                 out.append(val)
         return out
 
+    @property
+    def webhook_secret(self) -> str:
+        """Telegram webhook uchun amaldagi sekret. Alohida qiymat berilmagan
+        bo'lsa — orqaga moslik uchun `bot_shared_secret`ga tushadi."""
+        return self.telegram_webhook_secret or self.bot_shared_secret
+
     @model_validator(mode="after")
     def _warn_on_placeholder_secrets(self) -> "Settings":
+        # DIQQAT: BO'SH qiymat ham rad etiladi, nafaqat placeholder.
+        # Sabab: `hmac.compare_digest("", "")` -> True. Sekret bo'sh bo'lsa
+        # `/bot/webhook` butunlay ochilib ketardi va istalgan kishi SOXTA
+        # Telegram update yuborib, istalgan foydalanuvchini (jumladan
+        # Dasturchini) taqlid qila olardi. Ilgari faqat placeholder
+        # tekshirilgani uchun `BOT_SHARED_SECRET=` bilan tizim jimgina
+        # ishga tushib ketardi.
+        _MIN_SECRET_LEN = 16
         placeholders = []
-        if self.jwt_secret == _PLACEHOLDER_JWT_SECRET:
+        if not self.jwt_secret or self.jwt_secret == _PLACEHOLDER_JWT_SECRET:
             placeholders.append("JWT_SECRET")
-        if self.bot_shared_secret == _PLACEHOLDER_BOT_SECRET:
+        elif len(self.jwt_secret) < _MIN_SECRET_LEN:
+            placeholders.append(f"JWT_SECRET (juda qisqa, kamida {_MIN_SECRET_LEN} belgi)")
+        if not self.bot_shared_secret or self.bot_shared_secret == _PLACEHOLDER_BOT_SECRET:
             placeholders.append("BOT_SHARED_SECRET")
+        elif len(self.bot_shared_secret) < _MIN_SECRET_LEN:
+            placeholders.append(f"BOT_SHARED_SECRET (juda qisqa, kamida {_MIN_SECRET_LEN} belgi)")
+        # Alohida webhook sekreti IXTIYORIY (bo'sh bo'lsa bot_shared_secret'ga
+        # tushadi), lekin berilgan bo'lsa — u ham jiddiy bo'lsin.
+        if self.telegram_webhook_secret and len(self.telegram_webhook_secret) < _MIN_SECRET_LEN:
+            placeholders.append(f"TELEGRAM_WEBHOOK_SECRET (juda qisqa, kamida {_MIN_SECRET_LEN} belgi)")
 
         if placeholders:
             message = (
-                f"XAVFSIZLIK OGOHLANTIRISHI: {', '.join(placeholders)} hali standart "
-                "(placeholder) qiymatda turibdi — .env faylida haqiqiy maxfiy "
-                "qiymatlar bilan almashtiring."
+                f"XAVFSIZLIK OGOHLANTIRISHI: {', '.join(placeholders)} bo'sh, standart "
+                "(placeholder) yoki juda qisqa qiymatda turibdi — .env faylida haqiqiy "
+                "maxfiy qiymatlar bilan almashtiring."
             )
             if self.debug:
                 logger.error(message)

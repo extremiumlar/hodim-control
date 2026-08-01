@@ -8,6 +8,11 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BOT_SHARED_SECRET = os.getenv("BOT_SHARED_SECRET", "please-change-this-bot-secret")
+# Telegram webhook sekreti — `BOT_SHARED_SECRET`DAN ALOHIDA (api/config.py dagi
+# `webhook_secret` bilan bir xil qoida: bo'sh bo'lsa eskisiga tushadi).
+# Nega ajratilgan: BOT_SHARED_SECRET `/auth/bot-token` orqali to'liq Dasturchi
+# JWT'sini beradi, webhook sekreti esa tashqi tomonga (Telegram) beriladi.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "") or BOT_SHARED_SECRET
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 TELEGRAM_GROUP_CHAT_ID = int(os.getenv("TELEGRAM_GROUP_CHAT_ID", "0") or "0")
 

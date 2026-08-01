@@ -63,29 +63,26 @@ async def _handle_update(request: Request) -> Response:
 
 @router.post("/webhook")
 async def telegram_webhook(request: Request) -> Response:
-    """ASOSIY webhook: sekret Telegram'ning `secret_token` mexanizmi orqali
+    """YAGONA webhook: sekret Telegram'ning `secret_token` mexanizmi orqali
     `X-Telegram-Bot-Api-Secret-Token` SARLAVHASIDA keladi (URL'da emas).
 
     Nega shunday: URL yo'llari nginx/cPanel `access_log` ga to'liq yoziladi va
     shared hostingda log fayllari boshqa jarayonlarga ham ko'rinishi mumkin —
     sekret yo'lda bo'lsa u yerdan sizib chiqadi va bot qatlamining barcha
-    endpointlari ochiladi."""
+    endpointlari ochiladi.
+
+    ESKI `/webhook/{secret}` yo'li (sekret URL'da) BUTUNLAY OLIB TASHLANDI —
+    aynan yuqoridagi sabab bo'yicha. Yangilashdan keyin
+    `python scripts/set_webhook.py` ni bir marta ishga tushiring."""
     token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if not hmac.compare_digest(token, settings.bot_shared_secret):
+    # XAVFSIZLIK: `not token` tekshiruvi SHART. `hmac.compare_digest("", "")`
+    # -> True, ya'ni sekret bo'sh bo'lsa (masalan .env'da `BOT_SHARED_SECRET=`)
+    # bu yo'l butunlay ochilib ketardi: istalgan kishi SOXTA Telegram update
+    # yuborib, `message.from_user.id` orqali istalgan foydalanuvchini —
+    # jumladan Dasturchini — taqlid qila olardi. `api/deps.py`dagi
+    # `verify_bot_secret` da bu to'g'ri qilingan, shu naqshni takrorlaymiz.
+    # (Endi `config.py` bo'sh sekret bilan umuman ishga tushmaydi — bu ikkinchi
+    # qatlam, chunki bitta qatlamga tayanish shu xatoni keltirib chiqargan edi.)
+    if not token or not hmac.compare_digest(token, settings.webhook_secret):
         return Response(status_code=status.HTTP_403_FORBIDDEN)
-    return await _handle_update(request)
-
-
-@router.post("/webhook/{secret}", deprecated=True)
-async def telegram_webhook_legacy(secret: str, request: Request) -> Response:
-    """ESKI yo'l (sekret URL'da) — faqat orqaga moslik uchun: deploy paytida
-    webhook hali yangi manzilga ko'chirilmagan bo'lsa, botning uzilib qolmasligi
-    uchun. `scripts/set_webhook.py --set` ishga tushirilgach bu yo'l ishlatilmaydi
-    va uni olib tashlash mumkin."""
-    if not hmac.compare_digest(secret, settings.bot_shared_secret):
-        return Response(status_code=status.HTTP_403_FORBIDDEN)
-    logger.warning(
-        "Webhook ESKI yo'l bilan keldi (sekret URL'da). "
-        "`python scripts/set_webhook.py --set` bilan yangi manzilga ko'chiring."
-    )
     return await _handle_update(request)
