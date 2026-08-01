@@ -159,7 +159,7 @@ async def team_norms(
 async def norm_targets(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[User]:
     """Bot `/norma_ozgartir` oqimi uchun: aktyor norma belgilay oladigan xodimlar."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor:
+    if not actor or not actor.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     employees = list(
@@ -193,7 +193,7 @@ async def create_norm(
 @router.post("/bot-update", response_model=NormOut, dependencies=[Depends(verify_bot_secret)])
 async def bot_update_norm(payload: NormBotUpdate, db: AsyncSession = Depends(get_db)) -> Norm:
     actor = await db.scalar(select(User).where(User.telegram_id == payload.changer_telegram_id))
-    if not actor or actor.role not in {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}:
+    if not actor or not actor.is_active or actor.role not in {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     target = await db.get(User, payload.target_user_id)

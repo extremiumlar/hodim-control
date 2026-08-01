@@ -138,7 +138,7 @@ async def save_reason(payload: ReasonIn, db: AsyncSession = Depends(get_db)) -> 
     if label is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum sabab kodi")
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     day = date_type.fromisoformat(payload.date)
@@ -291,7 +291,7 @@ async def save_reason_text(payload: ReasonTextIn, db: AsyncSession = Depends(get
     javob matni. Da'vo faktlarga zid bo'lsa rahbarlarga ogohlantirish; avtomatik
     tekshirib BO'LMAGAN sabab esa ROPga tasdiqlash tugmalari bilan boradi."""
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     text = payload.text.strip()
@@ -377,7 +377,7 @@ async def verify_reason(payload: ReasonVerifyIn, db: AsyncSession = Depends(get_
     qaror yakuniy: keyingi bosishlarga {"already": true} qaytadi. Rad etilsa
     operatorga ham xabar boradi (kun yakunida "mos kelmadi" bo'lib ko'rinadi)."""
     actor = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not actor or actor.role not in (Role.rop.value, Role.boss.value, Role.dasturchi.value):
+    if not actor or not actor.is_active or actor.role not in (Role.rop.value, Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat ROP/Boshliq uchun")
 
     row = await db.get(ShortfallReason, payload.reason_id)
@@ -434,7 +434,7 @@ def _config_out(cfg: AiConfig) -> dict:
 async def get_config(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Rahbarlar uchun joriy AI sozlamalari (bot /ai_sozlama ko'rsatadi)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in _MANAGER_ROLES:
+    if not actor or not actor.is_active or actor.role not in _MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
     return _config_out(await _get_ai_config(db))
 
@@ -453,7 +453,7 @@ async def set_config(telegram_id: int, payload: ConfigIn, db: AsyncSession = Dep
     tamoyili: AI'ni rahbar boshqaradi). Kun yakuni AI xulosasining alohida vaqti
     yo'q — u kunlik digest bilan birga chiqadi (vaqt: /statistika_vaqt)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in (Role.boss.value, Role.dasturchi.value):
+    if not actor or not actor.is_active or actor.role not in (Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Sozlamani faqat Boshliq o'zgartira oladi")
 
     cfg = await _get_ai_config(db)

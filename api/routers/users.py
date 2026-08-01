@@ -309,7 +309,7 @@ async def create_user(
 @router.get("/by-telegram/{telegram_id}", response_model=UserOut, dependencies=[Depends(verify_bot_secret)])
 async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)) -> User:
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return user
 
@@ -404,7 +404,7 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         return TelegramStartResponse(status="ok", user=UserOut.model_validate(user))
 
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         return TelegramStartResponse(status="no_account")
 
     if not user.bot_started:
@@ -614,6 +614,15 @@ async def deactivate_user(
     _require_can_affect(actor, user)
 
     user.is_active = False
+    # `telegram_id` ATAYLAB tozalanmaydi: deaktivatsiyani bekor qilish
+    # (`/activate`) hisobni qaytadan ishga tushirishi kerak, aks holda xodim
+    # qayta ishga olinganda yangi taklif havolasi majburiy bo'lardi.
+    # Huquqni kesish `is_active` orqali ishlaydi: JWT yo'lida
+    # `get_current_user` (api/deps.py) har so'rovda tekshiradi, BOT yo'lida esa
+    # `telegram_id` bo'yicha shaxs aniqlanadigan HAR BIR joyda tekshiriladi
+    # (`/users/by-telegram` 404 qaytaradi, ya'ni bot menyu ham qurmaydi).
+    # Ilgari bot yo'lida bu tekshiruv yo'q edi — ishdan ketgan Boshliq audit
+    # jurnalini o'qib, AI kuzatuvini o'chirib qo'ya olardi.
     # Ishdan bo'shagan xodimning Face ID deskriptori bazada abadiy qolmasin —
     # aks holda uning o'rniga kelgan yangi xodim (yoki hisobni qayta oluvchi)
     # eski biometrikaga qo'shilib qolishi yoki uni bilib-bilmay ustiga yozishi

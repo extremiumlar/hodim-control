@@ -228,7 +228,7 @@ async def decide_face_rereregistration(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
 
     decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
-    if not decider or decider.role not in MANAGER_ROLES:
+    if not decider or not decider.is_active or decider.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     if payload.decision not in (FaceReregStatus.approved.value, FaceReregStatus.rejected.value):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri qaror")

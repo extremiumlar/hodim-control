@@ -189,7 +189,7 @@ async def create_task(
 @router.post("/bot-create", response_model=TaskOut, dependencies=[Depends(verify_bot_secret)])
 async def bot_create_task(payload: TaskBotCreate, db: AsyncSession = Depends(get_db)) -> TaskOut:
     actor = await db.scalar(select(User).where(User.telegram_id == payload.assigner_telegram_id))
-    if not actor or actor.role not in MANAGER_ROLES:
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     assignee = await _resolve_assignee(db, actor, payload.assigned_to)
@@ -202,7 +202,7 @@ async def bot_create_task(payload: TaskBotCreate, db: AsyncSession = Depends(get
 )
 async def assignable_users(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[User]:
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor:
+    if not actor or not actor.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     if actor.role not in MANAGER_ROLES:
@@ -279,7 +279,7 @@ async def create_bulk_tasks(
 @router.post("/bot-bulk-create", dependencies=[Depends(verify_bot_secret)])
 async def bot_create_bulk_tasks(payload: TaskBulkBotCreate, db: AsyncSession = Depends(get_db)) -> dict:
     actor = await db.scalar(select(User).where(User.telegram_id == payload.assigner_telegram_id))
-    if not actor or actor.role not in {Role.boss.value, Role.dasturchi.value}:
+    if not actor or not actor.is_active or actor.role not in {Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     return await _create_bulk_tasks(db, actor, payload)
@@ -313,7 +313,7 @@ async def bot_tasks_overview(telegram_id: int, db: AsyncSession = Depends(get_db
     vazifalar — kim bajardi, kim bajarmadi. ROP faqat o'z jamoasini ko'radi
     (web'dagi list_tasks bilan bir xil qamrov)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in MANAGER_ROLES:
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     start_utc, end_utc = local_range_utc_naive(today_local(), today_local())
@@ -347,7 +347,7 @@ async def _my_tasks_for_user(db: AsyncSession, user: User) -> list[TaskOut]:
 async def list_my_tasks(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[TaskOut]:
     """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _my_tasks_for_user(db, user)
 
@@ -432,7 +432,11 @@ async def _complete_task_for_user(db: AsyncSession, task_id: int, user: User | N
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vazifa topilmadi")
 
-    if not user or user.id != task.assigned_to:
+    # `is_active` shu YAGONA joyda tekshiriladi — bot va web ikkalasi ham shu
+    # yordamchidan o'tadi. Bot yo'lida shaxs `telegram_id` orqali topiladi va
+    # `get_current_user`dagi kabi avtomatik `is_active` tekshiruvi yo'q, ya'ni
+    # ishdan bo'shatilgan xodim vazifa yopishda davom etardi.
+    if not user or not user.is_active or user.id != task.assigned_to:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu vazifa sizga tegishli emas")
 
     if task.status == TaskStatus.done.value:

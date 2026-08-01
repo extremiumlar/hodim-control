@@ -116,7 +116,7 @@ async def my_bonuses_web(
 @router.get("/my/{telegram_id}", response_model=BonusMyOut, dependencies=[Depends(verify_bot_secret)])
 async def my_latest_bonus(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BonusMyOut:
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     latest = await db.scalar(

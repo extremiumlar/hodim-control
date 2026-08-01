@@ -56,7 +56,7 @@ async def claim(payload: ClaimIn, db: AsyncSession = Depends(get_db)) -> dict:
     """Operator issiq lidni qabul qildi. Faqat tayinlangan operator (yoki lid
     egasiz bo'lsa istalgan xodim) qabul qila oladi; qayta bosishda vaqt o'zgarmaydi."""
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     lead = await db.get(HotLead, payload.hot_lead_id)
     if not lead:

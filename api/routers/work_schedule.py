@@ -431,7 +431,7 @@ async def all_week(
     `digest_tick` har daqiqa ishlagani uchun bu sezilarli yuk edi. Endi hamma
     xodim uchun weekly/override BITTA so'rovda olinib, lug'atga solinadi."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in MANAGER_ROLES:
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
     users = list(
         await db.scalars(

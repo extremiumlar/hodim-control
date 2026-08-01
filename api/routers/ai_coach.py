@@ -146,7 +146,7 @@ async def _missed_hours_vs_baseline(
 async def nudge(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Bitta operator uchun hozirgi holatga (reja vs haqiqiy) qarab yo'naltiruvchi matn."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     now = datetime.now(TASHKENT_TZ)
     day = now.date()

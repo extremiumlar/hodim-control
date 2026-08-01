@@ -26,7 +26,7 @@ class SetBusyIn(BaseModel):
 @router.post("/set")
 async def set_busy(payload: SetBusyIn, db: AsyncSession = Depends(get_db)) -> dict:
     setter = await db.scalar(select(User).where(User.telegram_id == payload.setter_telegram_id))
-    if not setter or setter.role not in (Role.boss.value, Role.dasturchi.value):
+    if not setter or not setter.is_active or setter.role not in (Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat Boshliq/Dasturchi band vaqt belgilay oladi")
 
     target = await db.get(User, payload.target_user_id)
@@ -57,7 +57,7 @@ async def list_active(telegram_id: int, db: AsyncSession = Depends(get_db)) -> l
     """Boshliq/Dasturchi hozir band qilib qo'ygan odamlar ro'yxati (bot ko'rsatish
     uchun ishlatishi mumkin)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in (Role.boss.value, Role.dasturchi.value):
+    if not actor or not actor.is_active or actor.role not in (Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Faqat Boshliq/Dasturchi ko'ra oladi")
 
     now = datetime.utcnow()

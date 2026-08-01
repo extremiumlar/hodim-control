@@ -986,7 +986,7 @@ async def _late_status_for_user(db: AsyncSession, user: User) -> BotLateStatusOu
 async def my_payslip(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotPayslipOut:
     """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if user is None:
+    if user is None or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _latest_payslip_for_user(db, user)
 
@@ -1007,7 +1007,7 @@ async def my_payslip_web(
 )
 async def my_late_status(telegram_id: int, db: AsyncSession = Depends(get_db)) -> BotLateStatusOut:
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if user is None:
+    if user is None or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _late_status_for_user(db, user)
 

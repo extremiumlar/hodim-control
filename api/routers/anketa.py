@@ -938,7 +938,7 @@ async def answer(payload: AnswerPayload, db: AsyncSession = Depends(get_db)) -> 
         return {"handled": False}
 
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         return {"handled": False}
 
     assignment = await db.scalar(

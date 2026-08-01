@@ -16,7 +16,7 @@ router = APIRouter(prefix="/mobilograf-videos", tags=["mobilograf"])
 @router.post("", response_model=MobilografOut, dependencies=[Depends(verify_bot_secret)])
 async def create_mobilograf_video(payload: MobilografCreate, db: AsyncSession = Depends(get_db)) -> MobilografVideo:
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user or user.role != Role.employee.value:
+    if not user or not user.is_active or user.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Faqat xodimlar mobilograf video yubora oladi")
 
     video = MobilografVideo(
@@ -136,6 +136,10 @@ async def react_mobilograf_video(payload: MobilografReact, db: AsyncSession = De
 
     is_authorized = bool(
         reactor
+        # Ishdan bo'shatilgan rahbar reaksiya qoldira olmasin: `deactivate_user`
+        # `is_active`ni o'chiradi, lekin bot yo'lida shaxs `telegram_id` orqali
+        # topiladi va JWT'dagi kabi avtomatik tekshiruv yo'q.
+        and reactor.is_active
         and owner
         and (reactor.role in {Role.boss.value, Role.dasturchi.value} or reactor.id == owner.manager_id)
     )

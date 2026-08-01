@@ -193,7 +193,7 @@ async def excused_day_targets(telegram_id: int, db: AsyncSession = Depends(get_d
     bog'liq tor qamrov emas), chunki HR odatda kim kasal/ta'tilda ekanini
     biladi va buni ORQADAN qayd etadi."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in MANAGER_RECORD_ROLES:
+    if not actor or not actor.is_active or actor.role not in MANAGER_RECORD_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     return list(
         await db.scalars(
@@ -223,7 +223,7 @@ async def record_excused_day_for_user_bot(
 ) -> ExcusedDayOut:
     """Bot versiyasi — aktyor `manager_telegram_id`dan yechiladi."""
     actor = await db.scalar(select(User).where(User.telegram_id == payload.manager_telegram_id))
-    if not actor or actor.role not in MANAGER_RECORD_ROLES:
+    if not actor or not actor.is_active or actor.role not in MANAGER_RECORD_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     target = await db.get(User, payload.target_user_id)
     if not target:
@@ -235,7 +235,7 @@ async def record_excused_day_for_user_bot(
 async def request_excused_day(payload: ExcusedDayCreate, db: AsyncSession = Depends(get_db)) -> ExcusedDayOut:
     """Bot uchun — shaxsni tanadagi `telegram_id`dan yechadi."""
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _request_excused_day_for_user(db, user, payload.reason, payload.date)
 
@@ -345,7 +345,7 @@ async def decide_excused_day(
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
     decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
-    if not decider or decider.role not in DECIDE_ROLES:
+    if not decider or not decider.is_active or decider.role not in DECIDE_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     return await _decide_excused_day(db, item, decider, payload.decision, payload.override_reason)
 

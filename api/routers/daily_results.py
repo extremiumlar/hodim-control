@@ -155,7 +155,7 @@ async def _today_result_for_user(db: AsyncSession, user: User) -> DailyResultTod
 async def today_daily_result(telegram_id: int, db: AsyncSession = Depends(get_db)) -> DailyResultTodayOut:
     """Bot uchun — shaxsni `telegram_id`dan yechadi, mantiq yordamchida."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _today_result_for_user(db, user)
 

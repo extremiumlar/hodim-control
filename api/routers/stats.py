@@ -201,7 +201,7 @@ async def my_stats(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MySt
     """Bot uchun ("📈 Statistikam") — shaxsni `telegram_id`dan yechadi, mantiq
     yordamchida."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not user:
+    if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
     return await _my_stats_for_user(db, user)
 
@@ -913,7 +913,7 @@ async def set_group_time(
 ) -> dict:
     """Guruhga yuborish vaqtini o'zgartirish — faqat Boshliq (yoki Dasturchi)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in (Role.boss.value, Role.dasturchi.value):
+    if not actor or not actor.is_active or actor.role not in (Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Vaqtni faqat Boshliq o'zgartira oladi")
     if not (0 <= hour <= 23) or not (0 <= minute <= 59):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Vaqt noto'g'ri (soat 0-23, daqiqa 0-59)")

@@ -326,7 +326,7 @@ async def employee_hourly_plan(telegram_id: int, user_id: int, db: AsyncSession 
     from api.routers.norms import can_manage_norms  # circular importdan qochish
 
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value):
+    if not actor or not actor.is_active or actor.role not in (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
 
     target = await db.get(User, user_id)

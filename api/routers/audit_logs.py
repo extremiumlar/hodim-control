@@ -72,7 +72,7 @@ async def list_audit_logs_for_bot(
     """Bot "🧾 Audit jurnali" tugmasi uchun oxirgi yozuvlar — faqat
     Boshliq/Dasturchi (botda ixcham ko'rinish, to'liq filtrlar saytda)."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in {Role.boss.value, Role.dasturchi.value}:
+    if not actor or not actor.is_active or actor.role not in {Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
 
     limit = min(max(limit, 1), 50)

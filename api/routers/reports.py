@@ -50,7 +50,7 @@ async def export_report_for_bot(
     """Bot "📥 Hisobot (Excel)" tugmasi uchun: davr (bugun / shu hafta / shu oy)
     Toshkent sanasi bo'yicha backendda hisoblanadi — bot server vaqtiga bog'liq emas."""
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or actor.role not in {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}:
+    if not actor or not actor.is_active or actor.role not in {Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
     if period not in BOT_EXPORT_PERIODS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum davr")
