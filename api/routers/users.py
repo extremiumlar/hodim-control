@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, is_superadmin, require_roles, verify_bot_secret
 from api.timeutil import today_local
 from crm import get_crm_adapter
 from db.models import (
@@ -51,6 +51,40 @@ def _invite_link(token: str) -> str:
 
 def _invite_expiry() -> datetime:
     return datetime.utcnow() + timedelta(days=settings.invite_token_ttl_days)
+
+
+# Rol ierarxiyasi — kim kimning hisobiga ta'sir qila oladi. Raqam qanchalik
+# katta bo'lsa, huquq shunchalik yuqori.
+#
+# NEGA KERAK (haqiqiy zaiflik edi): `reset-account` nishonning rolini umuman
+# tekshirmasdan yangi taklif havolasini QAYTARARDI. HR huquqidagi kishi
+# `POST /users/<dasturchi_id>/reset-account` chaqirib, javobdagi havolani o'z
+# Telegramida ochsa — `telegram_start` o'sha hisobni uning telegram_id'siga
+# bog'lardi va `/auth/telegram-login` unga DASTURCHI sifatida JWT berardi.
+# Ya'ni eng past rahbar roli eng yuqorisini egallardi.
+_ROLE_RANK = {
+    Role.employee.value: 0,
+    Role.rop.value: 1,
+    Role.hr.value: 2,
+    Role.boss.value: 3,
+    Role.dasturchi.value: 4,
+}
+
+
+def _require_can_affect(actor: User, target: User) -> None:
+    """Chaqiruvchi nishon hisobga ta'sir qiluvchi amal bajara oladimi.
+
+    Dasturchi — cheklovsiz (`is_superadmin`, yagona darvoza naqshi).
+    Qolganlar faqat O'ZIDAN PAST roldagi hisobga tegishi mumkin. TENG daraja
+    ham taqiqlanadi: aks holda ikkita HR bir-birining hisobini egallab, keyin
+    birgalikda yuqoriga chiqishi mumkin edi."""
+    if is_superadmin(actor):
+        return
+    if _ROLE_RANK.get(target.role, 0) >= _ROLE_RANK.get(actor.role, 0):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Bu foydalanuvchi sizdan yuqori yoki teng darajada — unga ta'sir qila olmaysiz",
+        )
 
 
 @router.get("/me", response_model=UserOut)
@@ -461,6 +495,10 @@ async def update_position(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    # Lavozim `managed_by_roles` orqali kimga kim boshqaruvchi ekanini
+    # belgilaydi — ya'ni yuqori roldagi hisobning lavozimini almashtirish
+    # bilvosita huquq o'zgartirishdir.
+    _require_can_affect(actor, user)
 
     position_name = None
     if payload.position_id is not None:
@@ -538,6 +576,10 @@ async def update_role(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    # Yuqoridagi tekshiruv "qanday rol BERISH mumkin"ni cheklaydi; bu esa
+    # "KIMGA tegish mumkin"ni. Ikkalasi ham kerak — aks holda HR Boshliqni
+    # "employee"ga tushirib, keyin hisobini bemalol egallab olardi.
+    _require_can_affect(actor, user)
 
     before = user.role
     user.role = payload.role
@@ -568,6 +610,8 @@ async def deactivate_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    # HR Boshliq/Dasturchini o'chirib qo'ya olmasin (xizmatdan mahrum qilish).
+    _require_can_affect(actor, user)
 
     user.is_active = False
     # Ishdan bo'shagan xodimning Face ID deskriptori bazada abadiy qolmasin —
@@ -629,6 +673,10 @@ async def reset_account(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    # ENG MUHIM tekshiruv: bu funksiya yangi taklif havolasini QAYTARADI, ya'ni
+    # uni chaqirgan kishi nishon hisobga kira oladi. Roli tekshirilmasa —
+    # to'g'ridan-to'g'ri hisob egallash.
+    _require_can_affect(actor, user)
 
     before_telegram_id = user.telegram_id
     had_face = user.has_face
@@ -730,6 +778,9 @@ async def delete_user(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    # Boshliq Dasturchi hisobini o'chira olmasin — bu ham hisobni egallashning
+    # bir shakli (o'chirib, o'sha telegram_id bilan yangi hisob yaratish).
+    _require_can_affect(actor, user)
 
     is_dasturchi = actor.role == Role.dasturchi.value
     if not is_dasturchi and await _has_dependent_records(db, user_id):
