@@ -79,6 +79,40 @@ def _build_target():
 
         root_app = FastAPI()
         root_app.mount("/api", api_app)  # /api oldin tekshiriladi
+
+        # ── APK yuklab olish ──
+        # Fayl REPO ILDIZIDA turadi (webdist'da EMAS — webdist har web-buildda
+        # `robocopy /MIR` bilan web/dist'dan qayta quriladi va begona fayl
+        # O'CHIB KETADI; git'da ham emas, chunki *.apk .gitignore'da — har
+        # versiya ~54 MB blob tarixni shishirardi). Yangi versiya chiqqanda
+        # fayl scp bilan yangilanadi, URL O'ZGARMAYDI.
+        #
+        # Marshrut "/" mount'idan OLDIN qo'shilishi SHART: Starlette yo'llarni
+        # qo'shilish tartibida tekshiradi, aks holda SPA fallback bu yo'lga
+        # index.html qaytarib yuborardi (aynan shu xato oldin bor edi —
+        # /hodimlar-tizimi.apk "yuklab olinadi" deb ko'ringan, aslida HTML
+        # qaytargan).
+        APK_FILE = ROOT / "hodimlar-tizimi.apk"
+
+        @root_app.get("/hodimlar-tizimi.apk")
+        async def download_apk():  # noqa: ANN202 — FastAPI marshrutlari uslubi
+            from fastapi import HTTPException
+            from fastapi.responses import FileResponse
+
+            if not APK_FILE.exists():
+                raise HTTPException(404, "APK hali serverga yuklanmagan")
+            return FileResponse(
+                APK_FILE,
+                # To'g'ri MIME — Android brauzeri faylni ochishga urinmasdan
+                # to'g'ridan-to'g'ri o'rnatuvchiga uzatadi.
+                media_type="application/vnd.android.package-archive",
+                filename="hodimlar-tizimi.apk",
+                # URL har versiyada BIR XIL qoladi — kesh qilinsa xodim eski
+                # APK'ni olib qolardi. no-cache: har safar serverdan
+                # tekshiriladi (ETag/Last-Modified bilan baribir tez).
+                headers={"Cache-Control": "no-cache"},
+            )
+
         root_app.mount("/", SPAStaticFiles(directory=str(WEBDIST), html=True), name="spa")
         return root_app
     # ── Subdomen rejimi: faqat API ──
