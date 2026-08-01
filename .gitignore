@@ -17,6 +17,16 @@ web/*.tsbuildinfo
 
 # ⛔ MAXFIY: Firebase service account kaliti va shunga o'xshash sirlar.
 # Repoga TUSHMASLIGI shart — tushsa kalitni bekor qilib qaytadan yaratish kerak.
-*firebase-adminsdk*.json
-planning-with-ai-*.json
+# Naqshlar ATAYLAB keng: kalit fayl nomi yuklab olinganda tasodifiy bo'ladi
+# (masalan "...-adminsdk-fbsvc-e2bc16ed46.json") va qo'lda qayta nomlanganda
+# ".txt" ham bo'lishi mumkin — bittasi o'tib ketsa kalit GitHub'ga chiqadi.
+*firebase-adminsdk*
+*service-account*.json
+*service_account*.json
+planning-with-ai*
+planning with ai*
+fcm*.json
+google-services.json
 secrets/
+*.pem
+*.p12
