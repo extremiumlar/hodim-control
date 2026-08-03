@@ -3483,6 +3483,95 @@ def test_attendance_reminder() -> None:
         conn.close()
 
 
+def test_dashboard_day_off() -> None:
+    """Dashboardda «dam olishda» bo'limi (A-bo'lim, 2026-08-03).
+
+    Dam kunidagilar ilgari hech qayerda ko'rinmasdi: `working_today`dan
+    tushib qolar, `not_checked_in`ga ham kirmas edi (to'g'ri — jarima ham
+    olmaydi), lekin rahbar ekranida javobsiz farq qolardi.
+
+    MUHIM: bu FAQAT ko'rinish — hisob-kitobga ta'sir qilmasligi ham
+    tekshiriladi (`working_today` va `not_checked_in` o'zgarmasin)."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("DASHBOARD: «bugun dam olishda» bo'limi")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    today = date.today().isoformat()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-DayOff%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for t in ("attendance", "work_schedule_override", "work_schedule_weekly"):
+            cur.execute(f"delete from {t} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999906001,'T-DayOff-Resting','employee',1,1,datetime('now'))")
+    rest_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999906002,'T-DayOff-Working','employee',1,1,datetime('now'))")
+    work_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999906003,'T-DayOff-Hr','hr',1,1,datetime('now'))")
+    hr_uid = cur.lastrowid
+    cur.execute(
+        "insert into work_schedule_override (user_id, date, is_working, updated_at)"
+        " values (?,?,0,datetime('now'))", (rest_uid, today))
+    cur.execute(
+        "insert into work_schedule_override (user_id, date, is_working, start_time, end_time, updated_at)"
+        " values (?,?,1,'09:00','18:00',datetime('now'))", (work_uid, today))
+    conn.commit()
+
+    def cleanup_do():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [rest_uid, work_uid, hr_uid]
+            qm = ",".join("?" * len(uids))
+            for t in ("attendance", "work_schedule_override", "work_schedule_weekly"):
+                c2.execute(f"delete from {t} where user_id in ({qm})", uids)
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Dam kuni tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        hr_t = token_for(hr_uid, "hr")
+        with httpx.Client(timeout=20) as client:
+            r = client.get(f"{API_BASE}/attendance/dashboard", headers=auth(hr_t))
+            check("dashboard -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            body = r.json() if r.status_code == 200 else {}
+            names = {x["full_name"] for x in body.get("on_day_off", [])}
+            summary = body.get("summary", {})
+
+            check("Dam kunidagi xodim ro'yxatda BOR", "T-DayOff-Resting" in names, f"={sorted(names)}")
+            check("Ishlayotgan xodim ro'yxatda YO'Q", "T-DayOff-Working" not in names, f"={sorted(names)}")
+            check("summary.on_day_off soni ro'yxat bilan mos",
+                  summary.get("on_day_off") == len(body.get("on_day_off", [])),
+                  f"soni={summary.get('on_day_off')} ro'yxat={len(body.get('on_day_off', []))}")
+            # Hisob-kitobga ta'sir qilmasligi: dam kunidagi na "ishlashi kerak",
+            # na "kelmagan" ga kirmaydi.
+            check("Dam kunidagi 'kelmagan' ga KIRMAYDI",
+                  summary.get("not_checked_in", 0) <= summary.get("working_today", 0),
+                  f"kelmagan={summary.get('not_checked_in')} ishlashi_kerak={summary.get('working_today')}")
+    except Exception:
+        check("Dashboard dam kuni (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_do()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3564,6 +3653,11 @@ def main() -> None:
         test_attendance_reminder()
     except Exception:
         print("Davomat eslatmasi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_dashboard_day_off()
+    except Exception:
+        print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

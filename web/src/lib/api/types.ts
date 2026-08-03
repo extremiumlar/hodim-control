@@ -105,6 +105,9 @@ export interface AttendanceDashboard {
     late_today: number;
     left_today: number;
     not_checked_in: number;
+    /** Bugun ish jadvali bo'yicha DAM OLISHDAGILAR soni. Ular
+        `working_today`ga ham, `not_checked_in`ga ham kirmaydi. */
+    on_day_off: number;
     month_late_minutes: number;
     month_worked_hours: number;
   };
@@ -116,6 +119,8 @@ export interface AttendanceDashboard {
     late_minutes: number;
     status: string;
   }[];
+  /** Bugun dam olishdagi xodimlar — «kelmadi» bilan aralashib ketmasligi uchun. */
+  on_day_off: { user_id: number; full_name: string }[];
 }
 
 export interface EmployeeAttendanceSummary {

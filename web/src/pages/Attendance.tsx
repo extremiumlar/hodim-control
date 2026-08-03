@@ -3,6 +3,7 @@ import { format, subDays } from "date-fns";
 import {
   AlertTriangle,
   CalendarCheck,
+  CalendarOff,
   CheckCircle2,
   Clock,
   DoorOpen,
@@ -535,7 +536,7 @@ export default function Attendance() {
         </div>
       ) : (
         s && (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
             <StatCard label="Bugun ishlashi kerak" value={s.working_today} icon={Users} />
             <StatCard label="Keldi" value={s.checked_in_today} icon={LogIn} />
             <StatCard label="Hozir ofisda" value={s.present_now} icon={CalendarCheck} />
@@ -547,9 +548,41 @@ export default function Attendance() {
               icon={UserX}
               warn={s.not_checked_in > 0}
             />
+            {/* Dam olishdagilar ATAYLAB `warn` SIZ: bu muammo emas, ular
+                jarima ham olmaydi. Ilgari bu son hech qayerda ko'rinmasdi va
+                "8 xodim bor, lekin 5 tasi ishlaydi" degan farq javobsiz qolardi. */}
+            <StatCard label="Dam olishda" value={s.on_day_off} icon={CalendarOff} />
             <StatCard label="Oy: ishlangan soat" value={s.month_worked_hours} icon={Clock} />
           </div>
         )
+      )}
+
+      {/* Bugun dam olishdagilar — faqat kimdir bo'lsa ko'rsatiladi (bo'sh
+          kartochka ekranni behuda egallamasin). Bu ro'yxat "kelmagan" EMAS:
+          ular ish jadvali bo'yicha dam olishda, jarima ham olmaydi. */}
+      {(dash?.on_day_off.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">
+              Bugun dam olishda ({dash?.on_day_off.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {dash?.on_day_off.map((p) => (
+                <span
+                  key={p.user_id}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600"
+                >
+                  {p.full_name}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Ish jadvali bo'yicha dam kuni — kechikish va jarima hisoblanmaydi.
+            </p>
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid gap-6 md:grid-cols-2">

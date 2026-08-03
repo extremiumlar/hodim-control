@@ -455,12 +455,22 @@ async def dashboard(
         )
     }
     default_working = today.weekday() < 5
-    working_today = sum(
-        1
-        for u in employees
-        if overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working))
-    )
+
+    def _works_today(u: User) -> bool:
+        return bool(overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working)))
+
+    working_today = sum(1 for u in employees if _works_today(u))
     not_checked_in = max(0, working_today - checked_in_today)
+
+    # Bugun DAM OLISHDAGILAR — alohida ro'yxat. Ilgari ular hech qayerda
+    # ko'rinmasdi: `working_today`dan tushib qolar, `not_checked_in`ga ham
+    # kirmas edi (to'g'ri — jarima ham olmaydi), lekin rahbar ekranida
+    # "bugun 5 kishi ishlaydi, 8 xodim bor" degan javobsiz farq qolardi.
+    # Hisob-kitobga TA'SIR QILMAYDI — faqat ko'rinish.
+    on_day_off = sorted(
+        ({"user_id": u.id, "full_name": u.full_name} for u in employees if not _works_today(u)),
+        key=lambda r: r["full_name"],
+    )
 
     month_late = await db.scalar(
         select(func.coalesce(func.sum(Attendance.late_minutes), 0)).where(
@@ -505,11 +515,13 @@ async def dashboard(
             "late_today": late_today,
             "left_today": left_today,
             "not_checked_in": not_checked_in,
+            "on_day_off": len(on_day_off),
             "month_late_minutes": int(month_late or 0),
             "month_worked_hours": round(int(month_worked or 0) / 60, 1),
         },
         "in_office": in_office,
         "recent": recent,
+        "on_day_off": on_day_off,
     }
 
 
