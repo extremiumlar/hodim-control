@@ -90,6 +90,19 @@ function PayrollManageRoute({ children }: { children: JSX.Element }) {
   return children;
 }
 
+// Payroll SOZLAMALARI sahifasi: rahbarlar + Dasturchi/Boshliq shaxsan
+// «kechikish normasi» huquqini bergan odamlar (masalan ROP). Sahifaning
+// o'zi jarima qoidasidan tashqari narsalarni ham ko'rsatishi mumkin, lekin
+// backend har bir endpointni alohida qo'riqlaydi: bayroq FAQAT
+// `/payroll/policies` ni ochadi, hisoblash/tasdiqlashni EMAS.
+function FinePolicyRoute({ children }: { children: JSX.Element }) {
+  const { user } = useAuth();
+  const allowed =
+    PAYROLL_MANAGE_ROLES.includes(user?.role ?? "") || !!user?.can_edit_fine_policy;
+  if (!allowed) return <Navigate to="/payroll" replace />;
+  return children;
+}
+
 // Dasturchi rejimi (super-admin, OYLIK_JARIMA_REJASI.md 11-bo'lim) — FAQAT
 // dasturchi, Boshliq HAM kirmaydi (u override tarixini /audit-logs orqali
 // emas, hozircha faqat backenddan ko'radi — 11.6-band).
@@ -174,7 +187,7 @@ export default function App() {
           <Route path="payroll" element={<ManagerRoute><Payroll /></ManagerRoute>} />
           <Route
             path="payroll/settings"
-            element={<PayrollManageRoute><PayrollSettings /></PayrollManageRoute>}
+            element={<FinePolicyRoute><PayrollSettings /></FinePolicyRoute>}
           />
           <Route path="overtime" element={<PayrollManageRoute><Overtime /></PayrollManageRoute>} />
           <Route path="dasturchi" element={<DasturchiRoute><AdminOverride /></DasturchiRoute>} />

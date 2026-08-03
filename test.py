@@ -3572,6 +3572,118 @@ def test_dashboard_day_off() -> None:
         conn.close()
 
 
+def test_fine_policy_rights() -> None:
+    """Kechikish normasini o'zgartirish huquqi (C-bo'lim, 2026-08-03).
+
+    1. Bayroqli odam (roli hr/boss/dasturchi EMAS) jarima qoidasini
+       o'zgartira oladi.
+    2. Bayroqsiz ROP -> 403.
+    3. ⚠️ Bayroq FAQAT jarima qoidasini ochadi — oylik hisoblash/tasdiqlash
+       va stavkalar OCHILMAYDI (aks holda bitta bayroq bilan butun payroll
+       boshqaruvi berilib qolardi).
+    4. Huquqni Boshliq VA Dasturchi bera oladi; HR bera OLMAYDI."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("KECHIKISH NORMASI HUQUQI (shaxsan beriladi)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-Fine%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    def mk(tg: int, name: str, role: str, flag: int = 0) -> int:
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " can_edit_fine_policy, created_at) values (?,?,?,1,1,?,datetime('now'))",
+            (tg, name, role, flag))
+        return cur.lastrowid
+
+    granted_uid = mk(999908001, "T-Fine-Granted", "rop", 1)   # bayroqli ROP
+    plain_uid = mk(999908002, "T-Fine-PlainRop", "rop", 0)    # bayroqsiz ROP
+    boss_uid = mk(999908003, "T-Fine-Boss", "boss")
+    dev_uid = mk(999908004, "T-Fine-Dev", "dasturchi")
+    hr_uid = mk(999908005, "T-Fine-Hr", "hr")
+    conn.commit()
+
+    def cleanup_fp():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [granted_uid, plain_uid, boss_uid, dev_uid, hr_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Jarima huquqi tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        granted_t = token_for(granted_uid, "rop")
+        plain_t = token_for(plain_uid, "rop")
+        boss_t = token_for(boss_uid, "boss")
+        dev_t = token_for(dev_uid, "dasturchi")
+        hr_t = token_for(hr_uid, "hr")
+
+        with httpx.Client(timeout=20) as client:
+            # 1. Bayroqli ROP qoidani KO'RA va O'ZGARTIRA oladi
+            r = client.get(f"{API_BASE}/payroll/policies", headers=auth(granted_t))
+            check("Bayroqli ROP qoidani ko'radi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            # 2. Bayroqsiz ROP -> 403
+            r = client.get(f"{API_BASE}/payroll/policies", headers=auth(plain_t))
+            check("Bayroqsiz ROP -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # 3. ⚠️ Bayroq BOSHQA payroll amallarini OCHMAYDI
+            r = client.get(f"{API_BASE}/payroll/rates", headers=auth(granted_t))
+            check("Bayroqli ROP STAVKALARGA kira OLMAYDI -> 403", r.status_code == 403,
+                  f"kod={r.status_code} (bayroq faqat jarima qoidasini ochishi kerak)")
+            r = client.post(
+                f"{API_BASE}/payroll/2020-01/calculate", headers=auth(granted_t), json={},
+            )
+            check("Bayroqli ROP oylik HISOBLAY olmaydi -> 403", r.status_code == 403,
+                  f"kod={r.status_code}")
+
+            # 4. Huquqni kim bera oladi
+            r = client.get(f"{API_BASE}/payroll/fine-policy-editors", headers=auth(boss_t))
+            check("Boshliq ro'yxatni ko'radi -> 200", r.status_code == 200, f"kod={r.status_code}")
+            names = [x["full_name"] for x in r.json()] if r.status_code == 200 else []
+            check("Ro'yxatda bayroqli ROP bor", "T-Fine-Granted" in names, f"={names}")
+
+            r = client.get(f"{API_BASE}/payroll/fine-policy-editors", headers=auth(hr_t))
+            check("HR huquq ro'yxatiga kira OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.post(
+                f"{API_BASE}/payroll/fine-policy-editors/{plain_uid}", headers=auth(dev_t),
+                json={"granted": True, "reason": "T-sinov: dasturchi beradi"},
+            )
+            check("Dasturchi huquq beradi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+
+            r = client.post(
+                f"{API_BASE}/payroll/fine-policy-editors/{plain_uid}", headers=auth(boss_t),
+                json={"granted": False, "reason": "T-sinov: boshliq oladi"},
+            )
+            check("Boshliq huquqni oladi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            r = client.post(
+                f"{API_BASE}/payroll/fine-policy-editors/{plain_uid}", headers=auth(hr_t),
+                json={"granted": True, "reason": "T-sinov: hr bera olmaydi"},
+            )
+            check("HR huquq bera OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+    except Exception:
+        check("Kechikish normasi huquqi (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_fp()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3658,6 +3770,11 @@ def main() -> None:
         test_dashboard_day_off()
     except Exception:
         print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_fine_policy_rights()
+    except Exception:
+        print("Kechikish normasi huquqi testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

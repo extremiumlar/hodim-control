@@ -71,6 +71,7 @@ export const qk = {
   adminAudit: ["admin", "audit"] as const,
   attendanceEditors: ["admin", "attendance-editors"] as const,
   locationExempt: ["admin", "location-exempt"] as const,
+  finePolicyEditors: ["payroll", "fine-policy-editors"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -589,6 +590,16 @@ export const useSetAttendanceEditor = () =>
     ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
       api.setAttendanceEditor(userId, granted, reason),
     [qk.attendanceEditors, ["users"], qk.adminAudit]
+  );
+
+export const useFinePolicyEditors = () =>
+  useQuery({ queryKey: qk.finePolicyEditors, queryFn: api.listFinePolicyEditors });
+
+export const useSetFinePolicyEditor = () =>
+  useApiMutation(
+    ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
+      api.setFinePolicyEditor(userId, granted, reason),
+    [qk.finePolicyEditors, ["users"]]
   );
 
 export const useLocationExempt = () =>

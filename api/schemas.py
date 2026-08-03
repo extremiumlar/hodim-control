@@ -99,6 +99,9 @@ class UserOut(BaseModel):
     can_edit_attendance: bool = False
     # Joylashuvsiz check-in ruxsati — frontend GPS so'ramasligi uchun kerak.
     skip_location_check: bool = False
+    # Kechikish/jarima qoidasini o'zgartirish huquqi — frontend
+    # /payroll/settings sahifasiga kirishni shu bo'yicha ochadi.
+    can_edit_fine_policy: bool = False
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False

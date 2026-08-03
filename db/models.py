@@ -224,6 +224,19 @@ class User(Base):
     # o'tiladi. Aks holda check-in umuman himoyasiz qolardi (istalgan odam
     # istalgan joydan bosaverardi).
     skip_location_check: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Kechikish/jarima QOIDASINI (`FinePolicy`) o'zgartirish huquqi — roldan
+    # mustaqil, SHAXSAN beriladi. hr/boss/dasturchi uchun ahamiyatsiz (ularda
+    # roli bo'yicha bor).
+    #
+    # Beruvchi: Dasturchi YOKI Boshliq (avvalgi ikki bayroqdan farqi shu —
+    # ular faqat Dasturchi qo'lida edi; egasi "dasturchi yoki boss hal
+    # qiladi" dedi).
+    #
+    # ⚠️ Bu bayroq FAQAT jarima qoidasini ochadi — oylik hisoblash,
+    # tasdiqlash, stavka va boshqa payroll amallari TEGILMAYDI (ular
+    # `_require_manage` da qoladi). Aks holda bir bayroq bilan butun
+    # payroll boshqaruvi berilib qolardi.
+    can_edit_fine_policy: Mapped[bool] = mapped_column(Boolean, default=False)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # Taklif havolasi muddati (Telegram login xavfsizlik arxitekturasi, Layer 3) —
     # `invite_token_ttl_days` (api/config.py) asosida beriladi. NULL — migratsiyadan

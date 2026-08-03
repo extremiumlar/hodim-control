@@ -32,13 +32,16 @@ import {
   type OvertimeProfile,
   type SalaryRate,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import {
   useCreateSalaryRate,
   useDeleteFinePolicy,
   useFinePolicies,
+  useFinePolicyEditors,
   useOvertimeProfiles,
   usePositions,
   useSalaryRates,
+  useSetFinePolicyEditor,
   useUpsertFinePolicy,
   useUpsertOvertimeProfile,
   useUsers,
@@ -773,28 +776,144 @@ function OvertimeProfileTab() {
   );
 }
 
+/**
+ * Kechikish normasi huquqini boshqarish — FAQAT Boshliq/Dasturchi ko'radi.
+ * Egasining qarori: "balkim hr o'zgartira olar balkim rop, uni kimgadir
+ * biriktirish funksiyasini dasturchi yoki boss hal qiladi".
+ */
+function FinePolicyEditorsCard() {
+  const usersQuery = useUsers();
+  const editorsQuery = useFinePolicyEditors();
+  const setEditor = useSetFinePolicyEditor();
+  const [userId, setUserId] = useState<string>("");
+  const [reason, setReason] = useState("");
+  const [granted, setGranted] = useState(true);
+
+  function submit() {
+    if (!userId) return toast.error("Xodimni tanlang");
+    if (reason.trim().length < 5) return toast.error("Sabab kamida 5 belgi");
+    setEditor.mutate(
+      { userId: Number(userId), granted, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          toast.success(granted ? "Huquq berildi" : "Huquq olindi");
+          setReason("");
+        },
+      }
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Kechikish normasini o'zgartirish huquqi</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-slate-500">
+          Tanlangan odam <b>faqat jarima qoidasini</b> o'zgartira oladi — oylik hisoblash,
+          tasdiqlash va stavkalar unga ochilmaydi. HR/Boshliq/Dasturchida bu huquq roli
+          bo'yicha allaqachon bor.
+        </p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label>Xodim</Label>
+            <Select value={userId} onValueChange={setUserId}>
+              <SelectTrigger className="min-w-[220px]">
+                <SelectValue placeholder="Tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {(usersQuery.data ?? [])
+                  .filter((u) => !["hr", "boss", "dasturchi"].includes(u.role))
+                  .map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {u.full_name} ({u.role}){u.can_edit_fine_policy ? " — huquqi bor" : ""}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="min-w-[220px] flex-1">
+            <Label>Sabab</Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Nima uchun (kamida 5 belgi)"
+            />
+          </div>
+          <Button onClick={() => { setGranted(true); submit(); }} disabled={setEditor.isPending}>
+            Berish
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => { setGranted(false); submit(); }}
+            disabled={setEditor.isPending}
+          >
+            Olib qo'yish
+          </Button>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 p-3">
+          <div className="mb-1 text-xs font-medium text-slate-500">Hozir huquqi borlar</div>
+          {editorsQuery.isLoading ? (
+            <div className="text-xs text-slate-400">Yuklanmoqda...</div>
+          ) : (editorsQuery.data ?? []).length === 0 ? (
+            <div className="text-xs text-slate-400">Hech kimga berilmagan.</div>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {(editorsQuery.data ?? []).map((e) => (
+                <li key={e.id}>
+                  {e.full_name} <span className="text-xs text-slate-400">({e.role})</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PayrollSettings() {
+  const { user } = useAuth();
+  // Roli bo'yicha to'liq payroll boshqaruvchisi — u stavka/qo'shimcha ish
+  // tablarini ham ko'radi. Faqat `can_edit_fine_policy` bayrog'i bilan
+  // kirgan odamga ular KO'RSATILMAYDI: backend baribir 403 beradi, tab
+  // ochilsa xodim "nega ishlamayapti?" degan holatga tushardi.
+  const isPayrollManager = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
+  const canGrant = ["boss", "dasturchi"].includes(user?.role ?? "");
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Ish haqi sozlamalari"
-        description="Jarima qoidasi, oylik stavkalar va qo'shimcha ish profillari."
+        description={
+          isPayrollManager
+            ? "Jarima qoidasi, oylik stavkalar va qo'shimcha ish profillari."
+            : "Sizga kechikish/jarima qoidasini o'zgartirish huquqi berilgan."
+        }
       />
       <Tabs defaultValue="policy">
         <TabsList>
           <TabsTrigger value="policy">Jarima qoidasi</TabsTrigger>
-          <TabsTrigger value="rates">Oylik stavkalar</TabsTrigger>
-          <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>
+          {isPayrollManager && <TabsTrigger value="rates">Oylik stavkalar</TabsTrigger>}
+          {isPayrollManager && <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>}
         </TabsList>
         <TabsContent value="policy">
-          <FinePolicyTab />
+          <div className="space-y-6">
+            <FinePolicyTab />
+            {canGrant && <FinePolicyEditorsCard />}
+          </div>
         </TabsContent>
-        <TabsContent value="rates">
-          <SalaryRateTab />
-        </TabsContent>
-        <TabsContent value="overtime">
-          <OvertimeProfileTab />
-        </TabsContent>
+        {isPayrollManager && (
+          <TabsContent value="rates">
+            <SalaryRateTab />
+          </TabsContent>
+        )}
+        {isPayrollManager && (
+          <TabsContent value="overtime">
+            <OvertimeProfileTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

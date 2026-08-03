@@ -458,6 +458,14 @@ export const api = {
       `/admin/users/${userId}/attendance-editor`,
       { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
     ),
+  // Kechikish/jarima qoidasini o'zgartirish huquqi (beruvchi: Boshliq yoki
+  // Dasturchi — shuning uchun /admin EMAS, /payroll ostida).
+  listFinePolicyEditors: () => apiFetch<AttendanceEditorRow[]>("/payroll/fine-policy-editors"),
+  setFinePolicyEditor: (userId: number, granted: boolean, reason: string) =>
+    apiFetch<{ user_id: number; can_edit_fine_policy: boolean }>(
+      `/payroll/fine-policy-editors/${userId}`,
+      { method: "POST", body: JSON.stringify({ granted, reason }) }
+    ),
   // Joylashuvsiz («bez lokatsiya») check-in ruxsati.
   listLocationExempt: () => apiFetch<LocationExemptRow[]>("/admin/location-exempt"),
   setLocationExempt: (userId: number, granted: boolean, reason: string) =>

@@ -30,6 +30,10 @@ export interface User {
   /** Joylashuvsiz check-in: GPS umuman so'ralmaydi, ofis radiusi tekshirilmaydi
       (Face ID baribir talab qilinadi). */
   skip_location_check: boolean;
+  /** Kechikish/jarima qoidasini o'zgartirish huquqi — Dasturchi yoki Boshliq
+      shaxsan beradi. FAQAT jarima qoidasini ochadi (oylik hisoblash/tasdiqlash
+      emas). */
+  can_edit_fine_policy: boolean;
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
   has_face: boolean;

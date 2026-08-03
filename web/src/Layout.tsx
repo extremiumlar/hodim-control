@@ -59,6 +59,10 @@ interface NavItem {
   end?: boolean;
   onlyPositionsManager?: boolean; // faqat hr/boss/dasturchi
   onlyPayrollManager?: boolean; // faqat hr/boss/dasturchi (ROP'da yo'q)
+  // hr/boss/dasturchi YOKI «kechikish normasi» huquqi shaxsan berilganlar.
+  // `onlyPayrollManager` dan ATAYLAB alohida — u «Qo'shimcha ish»ni ham
+  // yopadi, uni esa bayroq ochmaydi (backend 403 beradi).
+  onlyFinePolicyEditor?: boolean;
   onlyDasturchi?: boolean; // faqat dasturchi (super-admin)
 }
 
@@ -97,7 +101,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/payroll", label: "Ish haqi", icon: Banknote },
       { to: "/overtime", label: "Qo'shimcha ish", icon: TimerReset, onlyPayrollManager: true },
-      { to: "/payroll/settings", label: "Sozlamalar", icon: Settings, onlyPayrollManager: true },
+      { to: "/payroll/settings", label: "Sozlamalar", icon: Settings, onlyFinePolicyEditor: true },
     ],
   },
   {
@@ -167,12 +171,14 @@ function SidebarNav({
   collapsed,
   canManagePositions,
   canManagePayroll,
+  canEditFinePolicy,
   isDasturchi,
   onNavigate,
 }: {
   collapsed: boolean;
   canManagePositions: boolean;
   canManagePayroll: boolean;
+  canEditFinePolicy: boolean;
   isDasturchi: boolean;
   onNavigate?: () => void;
 }) {
@@ -184,6 +190,7 @@ function SidebarNav({
             (i) =>
               (!i.onlyPositionsManager || canManagePositions) &&
               (!i.onlyPayrollManager || canManagePayroll) &&
+              (!i.onlyFinePolicyEditor || canEditFinePolicy) &&
               (!i.onlyDasturchi || isDasturchi)
           );
           if (!items.length) return null;
@@ -264,6 +271,10 @@ export default function Layout() {
   const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePositions = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
   const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
+  // ATAYLAB alohida: `canManagePayroll` «Qo'shimcha ish» havolasini ham
+  // boshqaradi, uni esa bayroq OCHMAYDI (backend 403 beradi). Ikkalasini
+  // bitta qilib qo'ysam, huquq egasi bosib bo'lmaydigan havolani ko'rardi.
+  const canEditFinePolicy = canManagePayroll || !!user?.can_edit_fine_policy;
   const isDasturchi = user?.role === "dasturchi";
 
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
@@ -342,6 +353,7 @@ export default function Layout() {
             collapsed={collapsed}
             canManagePositions={canManagePositions}
             canManagePayroll={canManagePayroll}
+            canEditFinePolicy={canEditFinePolicy}
             isDasturchi={isDasturchi}
           />
         </aside>
@@ -365,6 +377,7 @@ export default function Layout() {
                     collapsed={false}
                     canManagePositions={canManagePositions}
                     canManagePayroll={canManagePayroll}
+            canEditFinePolicy={canEditFinePolicy}
                     isDasturchi={isDasturchi}
                     onNavigate={() => setMobileOpen(false)}
                   />

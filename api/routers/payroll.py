@@ -19,7 +19,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,6 +113,78 @@ def _require_manage(actor: User = Depends(require_roles(*PAYROLL_MANAGE_ROLES)))
     return actor
 
 
+def _require_fine_policy_manage(actor: User = Depends(get_current_user)) -> User:
+    """Kechikish/jarima QOIDASI uchun alohida darvoza: roli bo'yicha
+    (hr/boss/dasturchi) YOKI shaxsan berilgan `can_edit_fine_policy`.
+
+    NEGA `_require_manage` kengaytirilmadi: u stavka, qo'shimcha ish, oylik
+    hisoblash va TASDIQLASH kabi amallarni ham qo'riqlaydi. Bitta bayroq
+    bilan ularning hammasini ochib yuborish — masalan ROP o'z oyligini o'zi
+    tasdiqlay olishi — mutlaqo boshqa xavf edi. Shuning uchun bayroq FAQAT
+    shu darvozani ochadi."""
+    if actor.role in PAYROLL_MANAGE_ROLES or actor.can_edit_fine_policy:
+        return actor
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+
+# Kechikish normasi huquqini BERADIGANLAR — Dasturchi yoki Boshliq (egasining
+# qarori: "balkim hr o'zgartira olar balkim rop, uni kimgadir biriktirish
+# funksiyasini dasturchi yoki boss hal qiladi"). HR bu yerda YO'Q: u normani
+# o'zgartira oladi, lekin BOSHQALARGA huquq tarqata olmaydi.
+FINE_POLICY_GRANT_ROLES = (Role.boss.value, Role.dasturchi.value)
+
+
+class FinePolicyEditorGrant(BaseModel):
+    granted: bool
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.get("/fine-policy-editors")
+async def list_fine_policy_editors(
+    _actor: User = Depends(require_roles(*FINE_POLICY_GRANT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Kechikish normasini o'zgartirish huquqi SHAXSAN berilganlar. Roli
+    bo'yicha huquqi borlar (hr/boss/dasturchi) bu ro'yxatga kirmaydi."""
+    rows = list(
+        await db.scalars(
+            select(User).where(User.can_edit_fine_policy.is_(True)).order_by(User.full_name)
+        )
+    )
+    return [{"id": u.id, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in rows]
+
+
+@router.post("/fine-policy-editors/{user_id}")
+async def set_fine_policy_editor(
+    user_id: int,
+    payload: FinePolicyEditorGrant,
+    actor: User = Depends(require_roles(*FINE_POLICY_GRANT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Kechikish/jarima qoidasini o'zgartirish huquqini beradi/oladi.
+
+    Berish auditga yoziladi — jarima qoidasi bevosita xodim haqiga ta'sir
+    qiladi, ya'ni "kim bu huquqni kimga bergan" savoli keyinchalik albatta
+    chiqadi."""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = bool(target.can_edit_fine_policy)
+    target.can_edit_fine_policy = payload.granted
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="fine_policy_editor_set",
+            target_user_id=user_id,
+            before={"can_edit_fine_policy": before},
+            after={"can_edit_fine_policy": payload.granted, "reason": payload.reason},
+        )
+    )
+    await db.commit()
+    return {"user_id": user_id, "can_edit_fine_policy": payload.granted}
+
+
 async def _visible_users(db: AsyncSession, actor: User) -> list[User]:
     """Rahbar ko'ra oladigan davomat-kuzatiladigan xodimlar ro'yxati. ROP uchun
     `can_view_payroll` bilan filtrlanadi; boshqa rahbarlarga hammasi."""
@@ -144,7 +216,7 @@ async def _policy_label(db: AsyncSession, policy: FinePolicy) -> str | None:
 
 
 @router.get("/policies", response_model=list[FinePolicyOut])
-async def list_policies(_actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)):
+async def list_policies(_actor: User = Depends(_require_fine_policy_manage), db: AsyncSession = Depends(get_db)):
     policies = list(await db.scalars(select(FinePolicy).order_by(FinePolicy.scope, FinePolicy.scope_id)))
     out: list[FinePolicyOut] = []
     for p in policies:
@@ -156,7 +228,7 @@ async def list_policies(_actor: User = Depends(_require_manage), db: AsyncSessio
 
 @router.put("/policies", response_model=FinePolicyOut)
 async def upsert_policy(
-    payload: FinePolicyIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+    payload: FinePolicyIn, actor: User = Depends(_require_fine_policy_manage), db: AsyncSession = Depends(get_db)
 ):
     """Scope+scope_id bo'yicha upsert — mavjud bo'lsa yangilanadi, bo'lmasa
     yaratiladi. Har o'zgarish (jarima summasi/qoidasi — bevosita xodim
@@ -196,7 +268,7 @@ async def upsert_policy(
 
 @router.delete("/policies/{policy_id}")
 async def delete_policy(
-    policy_id: int, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+    policy_id: int, actor: User = Depends(_require_fine_policy_manage), db: AsyncSession = Depends(get_db)
 ) -> dict:
     policy = await db.get(FinePolicy, policy_id)
     if policy is None:
