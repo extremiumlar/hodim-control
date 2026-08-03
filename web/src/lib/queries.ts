@@ -72,6 +72,7 @@ export const qk = {
   attendanceEditors: ["admin", "attendance-editors"] as const,
   locationExempt: ["admin", "location-exempt"] as const,
   finePolicyEditors: ["payroll", "fine-policy-editors"] as const,
+  explanations: (statusFilter?: string) => ["explanations", statusFilter ?? "all"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -590,6 +591,21 @@ export const useSetAttendanceEditor = () =>
     ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
       api.setAttendanceEditor(userId, granted, reason),
     [qk.attendanceEditors, ["users"], qk.adminAudit]
+  );
+
+export const useExplanations = (statusFilter?: string) =>
+  useQuery({
+    queryKey: qk.explanations(statusFilter),
+    queryFn: () => api.listExplanations(statusFilter),
+  });
+
+// Qabul qilinsa ExcusedDay yaratiladi va davomat qayta hisoblanadi —
+// shuning uchun ["excused-days"] va ["attendance"] ham invalidatsiya qilinadi.
+export const useDecideExplanation = () =>
+  useApiMutation(
+    ({ reqId, accept, note }: { reqId: number; accept: boolean; note?: string }) =>
+      api.decideExplanation(reqId, accept, note),
+    [["explanations"], ["excused-days"], ["attendance"]]
   );
 
 export const useFinePolicyEditors = () =>

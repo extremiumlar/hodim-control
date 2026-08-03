@@ -672,3 +672,19 @@ export interface AttendanceEditorRow {
 /** Joylashuvsiz («bez lokatsiya») check-in ruxsati berilgan odam —
     `AttendanceEditorRow` bilan bir xil shakl, lekin boshqa ma'no. */
 export type LocationExemptRow = AttendanceEditorRow;
+
+/** Sababsiz kelmagan kun uchun tushuntirish xati. */
+export interface ExplanationRequestRow {
+  id: number;
+  user_id: number;
+  user_full_name: string | null;
+  date: string;
+  /** pending — so'raldi; answered — xodim yozdi; accepted/rejected — HR qarori. */
+  status: "pending" | "answered" | "accepted" | "rejected";
+  asked_at: string | null;
+  answer_text: string | null;
+  answered_at: string | null;
+  decided_by: number | null;
+  decided_at: string | null;
+  decision_note: string | null;
+}

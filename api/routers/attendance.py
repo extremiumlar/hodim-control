@@ -6,7 +6,7 @@ import json
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +54,10 @@ from db.models import (
     AttendanceReminder,
     AttendanceStatus,
     AuditLog,
+    ExcusedDay,
+    ExcusedStatus,
+    ExplanationRequest,
+    ExplanationStatus,
     FaceReregistrationRequest,
     FaceReregStatus,
     OfficeLocation,
@@ -1063,3 +1067,185 @@ async def attendance_reminder_tick(
             sent += 1
 
     return {"date": day.isoformat(), "candidates": len(planned), "sent": sent}
+
+
+# ─────────────────────────────────────────────
+# Tushuntirish xati (sababsiz kelmagan kun)
+# ─────────────────────────────────────────────
+
+
+class ExplanationAnswer(BaseModel):
+    """Bot orqali xodimning javobi. Shaxs `telegram_id`dan yechiladi —
+    mijoz `user_id` yubora olmaydi (boshqa birov nomidan javob yozmasin)."""
+
+    telegram_id: int
+    answer_text: str = Field(min_length=3, max_length=2000)
+
+
+class ExplanationDecision(BaseModel):
+    """HR qarori. `accept=True` — sababli deb qabul qilinadi va MAVJUD
+    `ExcusedDay` mexanizmi orqali kun sababliga o'tadi (jarima o'z-o'zidan
+    tushadi). `accept=False` — jarima o'z kuchida qoladi."""
+
+    accept: bool
+    note: str | None = Field(default=None, max_length=1000)
+
+
+def _explanation_out(req: ExplanationRequest, full_name: str | None = None) -> dict:
+    return {
+        "id": req.id,
+        "user_id": req.user_id,
+        "user_full_name": full_name,
+        "date": req.date.isoformat(),
+        "status": req.status,
+        "asked_at": req.asked_at.isoformat() if req.asked_at else None,
+        "answer_text": req.answer_text,
+        "answered_at": req.answered_at.isoformat() if req.answered_at else None,
+        "decided_by": req.decided_by,
+        "decided_at": req.decided_at.isoformat() if req.decided_at else None,
+        "decision_note": req.decision_note,
+    }
+
+
+@router.post("/explanations/{req_id}/answer", dependencies=[Depends(verify_bot_secret)])
+async def answer_explanation(
+    req_id: int, payload: ExplanationAnswer, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Xodim botda tushuntirish yozadi."""
+    req = await db.get(ExplanationRequest, req_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if user is None or user.id != req.user_id:
+        # BOSHQA odamning so'roviga javob yozib bo'lmaydi — callback tugmasi
+        # boshqa chatga forward qilinsa ham.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu so'rov sizga tegishli emas")
+    if req.status in (ExplanationStatus.accepted.value, ExplanationStatus.rejected.value):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
+
+    req.answer_text = payload.answer_text.strip()
+    req.answered_at = datetime.utcnow()
+    req.status = ExplanationStatus.answered.value
+    await db.commit()
+
+    hrs = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_((Role.hr.value, Role.boss.value)), User.telegram_id.isnot(None)
+            )
+        )
+    )
+    text = (
+        f"📄 <b>Tushuntirish xati keldi</b>\nXodim: {user.full_name}\n"
+        f"Sana: {req.date}\nJavob: {json.dumps(req.answer_text, ensure_ascii=False)[1:-1]}"
+    )
+    for hr in hrs:
+        await notify_user(db, hr, Category.APPROVALS, text, data={"path": "/excused-days"})
+
+    return {"ok": True, "status": req.status}
+
+
+@router.get("/explanations")
+async def list_explanations(
+    status_filter: str | None = None,
+    _actor: User = Depends(require_roles(*ATTENDANCE_EDIT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """HR/Boshliq uchun tushuntirish xatlari ro'yxati (yangi birinchi)."""
+    q = select(ExplanationRequest).order_by(ExplanationRequest.date.desc(), ExplanationRequest.id.desc())
+    if status_filter:
+        q = q.where(ExplanationRequest.status == status_filter)
+    rows = list(await db.scalars(q))
+    names = {
+        u.id: u.full_name
+        for u in await db.scalars(select(User).where(User.id.in_({r.user_id for r in rows} or {0})))
+    }
+    return [_explanation_out(r, names.get(r.user_id)) for r in rows]
+
+
+@router.post("/explanations/{req_id}/decide")
+async def decide_explanation(
+    req_id: int,
+    payload: ExplanationDecision,
+    actor: User = Depends(require_roles(*ATTENDANCE_EDIT_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """HR qarori.
+
+    `accept=True` — MAVJUD `ExcusedDay` yaratiladi (darhol `approved`) va
+    o'sha kungi davomat yozuvi qayta hisoblanadi: `is_excused_day` rost
+    bo'lgach `recompute_attendance` kechikish/jarima holatini o'zi to'g'rilaydi.
+    ⚠️ Yangi jarima yo'li YARATILMAYDI — aks holda ikkita mustaqil hisob
+    paydo bo'lardi."""
+    req = await db.get(ExplanationRequest, req_id)
+    if req is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
+
+    target = await db.get(User, req.user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    req.status = (
+        ExplanationStatus.accepted.value if payload.accept else ExplanationStatus.rejected.value
+    )
+    req.decided_by = actor.id
+    req.decided_at = datetime.utcnow()
+    req.decision_note = (payload.note or "").strip() or None
+
+    if payload.accept:
+        # Mavjud mexanizm: sababli kun. Dublikat bo'lmasligi uchun avval
+        # tekshiriladi (xodim o'zi ham so'rov yuborgan bo'lishi mumkin).
+        existing = await db.scalar(
+            select(ExcusedDay).where(
+                ExcusedDay.user_id == target.id,
+                ExcusedDay.date == req.date,
+                ExcusedDay.status.in_((ExcusedStatus.pending.value, ExcusedStatus.approved.value)),
+            )
+        )
+        if existing is None:
+            db.add(
+                ExcusedDay(
+                    user_id=target.id,
+                    date=req.date,
+                    reason=req.answer_text or "Tushuntirish xati qabul qilindi",
+                    status=ExcusedStatus.approved.value,
+                    decided_by=actor.id,
+                    decided_at=datetime.utcnow(),
+                )
+            )
+        elif existing.status != ExcusedStatus.approved.value:
+            existing.status = ExcusedStatus.approved.value
+            existing.decided_by = actor.id
+            existing.decided_at = datetime.utcnow()
+        await db.flush()
+
+        # O'sha kungi davomat yozuvini qayta hisoblash — `is_excused_day` endi
+        # rost, ya'ni kechikish/status o'z-o'zidan to'g'rilanadi.
+        att = await db.scalar(
+            select(Attendance).where(Attendance.user_id == target.id, Attendance.date == req.date)
+        )
+        if att is not None:
+            await recompute_attendance(db, att, target)
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="explanation_decided",
+            target_user_id=target.id,
+            before={"status": ExplanationStatus.answered.value},
+            after={"date": req.date.isoformat(), "accepted": payload.accept, "note": req.decision_note},
+        )
+    )
+    await db.commit()
+    await db.refresh(req)
+
+    if target.telegram_id:
+        verdict = (
+            "✅ Tushuntirishingiz qabul qilindi — kun sababli deb belgilandi."
+            if payload.accept
+            else "❌ Tushuntirishingiz qabul qilinmadi — kun sababsiz bo'lib qoladi."
+        )
+        await notify_user(db, target, Category.DECISIONS, f"{verdict}\nSana: {req.date}")
+
+    return _explanation_out(req, target.full_name)

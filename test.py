@@ -3684,6 +3684,140 @@ def test_fine_policy_rights() -> None:
         conn.close()
 
 
+def test_explanation_letters() -> None:
+    """Tushuntirish xati (B-bo'lim, 2026-08-03).
+
+    Oqim: sababsiz `absent` -> tizim so'raydi -> xodim botda javob yozadi ->
+    HR qaror qiladi. Qabul qilinsa MAVJUD `ExcusedDay` orqali kun sababliga
+    o'tadi va jarima o'z-o'zidan tushadi (yangi jarima yo'li YO'Q).
+
+    ⚠️ Real xodimga xabar ketmasligi uchun so'rov QO'LDA yaratiladi
+    (`ask_explanations` job'i emas) — u bot xabari yuborardi."""
+    import httpx
+
+    from api.config import settings
+
+    print("\n" + "=" * 60)
+    print("TUSHUNTIRISH XATI (sababsiz kelmagan kun)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    DAY = "2020-11-11"
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-Expl%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for t in ("explanation_requests", "attendance", "excused_days", "work_schedule_override"):
+            cur.execute(f"delete from {t} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999909001,'T-Expl-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999909002,'T-Expl-Hr','hr',1,1,datetime('now'))")
+    hr_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999909003,'T-Expl-Other','employee',1,1,datetime('now'))")
+    other_uid = cur.lastrowid
+    # Sababsiz kelmagan kun + so'rov (job'siz, xabar yubormasdan)
+    cur.execute(
+        "insert into attendance (user_id, date, late_minutes, early_leave_minutes, worked_minutes,"
+        " status, is_weekend, created_at, updated_at)"
+        " values (?,?,0,0,0,'absent',0,datetime('now'),datetime('now'))", (emp_uid, DAY))
+    cur.execute(
+        "insert into explanation_requests (user_id, date, status, asked_at)"
+        " values (?,?,'pending',datetime('now'))", (emp_uid, DAY))
+    req_id = cur.lastrowid
+    conn.commit()
+
+    def cleanup_ex():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [emp_uid, hr_uid, other_uid]
+            qm = ",".join("?" * len(uids))
+            for t in ("explanation_requests", "attendance", "excused_days", "work_schedule_override"):
+                c2.execute(f"delete from {t} where user_id in ({qm})", uids)
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Tushuntirish tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        hr_t = token_for(hr_uid, "hr")
+        emp_t = token_for(emp_uid, "employee")
+        bot_hdr = {"X-Bot-Secret": settings.bot_shared_secret}
+
+        with httpx.Client(timeout=20) as client:
+            # 1. BOSHQA odam javob yoza OLMAYDI (tugma forward qilinsa ham)
+            r = client.post(
+                f"{API_BASE}/attendance/explanations/{req_id}/answer", headers=bot_hdr,
+                json={"telegram_id": 999909003, "answer_text": "Men boshqa odamman"},
+            )
+            check("Begona odam javob yoza OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # 2. Egasi javob yozadi
+            r = client.post(
+                f"{API_BASE}/attendance/explanations/{req_id}/answer", headers=bot_hdr,
+                json={"telegram_id": 999909001, "answer_text": "T-sinov: kasal bo'lib qoldim"},
+            )
+            check("Xodim javob yozadi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            check("Holat 'answered' bo'ldi", r.status_code == 200 and r.json().get("status") == "answered",
+                  f"={r.json() if r.status_code == 200 else None}")
+
+            # 3. Xodim ro'yxatni ko'ra OLMAYDI (faqat hr/boss/dasturchi)
+            r = client.get(f"{API_BASE}/attendance/explanations", headers=auth(emp_t))
+            check("Oddiy xodim ro'yxatga kira OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.get(f"{API_BASE}/attendance/explanations?status_filter=answered", headers=auth(hr_t))
+            check("HR ro'yxatni ko'radi -> 200", r.status_code == 200, f"kod={r.status_code}")
+            ids = [x["id"] for x in r.json()] if r.status_code == 200 else []
+            check("Javob kelgan xat ro'yxatda bor", req_id in ids, f"={ids}")
+
+            # 4. HR QABUL qiladi -> ExcusedDay yaratiladi, davomat qayta hisoblanadi
+            r = client.post(
+                f"{API_BASE}/attendance/explanations/{req_id}/decide", headers=auth(hr_t),
+                json={"accept": True, "note": "T-sinov: qabul"},
+            )
+            check("HR qabul qiladi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            check("Holat 'accepted'", r.status_code == 200 and r.json().get("status") == "accepted",
+                  f"={r.json() if r.status_code == 200 else None}")
+
+            c = db()
+            exc = c.execute(
+                "select status from excused_days where user_id=? and date=?", (emp_uid, DAY)
+            ).fetchone()
+            att_status = c.execute(
+                "select status from attendance where user_id=? and date=?", (emp_uid, DAY)
+            ).fetchone()
+            c.close()
+            check("MAVJUD ExcusedDay yaratildi va 'approved'", exc is not None and exc[0] == "approved",
+                  f"={exc}")
+            check("Davomat yozuvi qayta hisoblandi (endi 'absent' emas)",
+                  att_status is not None and att_status[0] != "absent", f"={att_status}")
+
+            # 5. Hal qilingan xatga qayta javob yozib bo'lmaydi
+            r = client.post(
+                f"{API_BASE}/attendance/explanations/{req_id}/answer", headers=bot_hdr,
+                json={"telegram_id": 999909001, "answer_text": "T-sinov: qayta yozaman"},
+            )
+            check("Hal qilingan xatga qayta javob -> 400", r.status_code == 400, f"kod={r.status_code}")
+    except Exception:
+        check("Tushuntirish xati (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_ex()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3775,6 +3909,11 @@ def main() -> None:
         test_fine_policy_rights()
     except Exception:
         print("Kechikish normasi huquqi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_explanation_letters()
+    except Exception:
+        print("Tushuntirish xati testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

@@ -28,6 +28,12 @@ class MarkExcusedFSM(StatesGroup):
     entering_reason = State()
 
 
+class ExplanationFSM(StatesGroup):
+    """Tushuntirish xati — xodim sababsiz kelmagan kun uchun izoh yozadi."""
+
+    waiting_text = State()
+
+
 def _date_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -253,6 +259,75 @@ async def receive_mark_excused_reason(message: Message, state: FSMContext) -> No
 
 @router.message(StateFilter(MarkExcusedFSM.entering_reason))
 async def non_text_mark_excused_reason(message: Message) -> None:
+    await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
+
+
+@router.callback_query(F.data.startswith("explain:"))
+async def start_explanation(callback: CallbackQuery, state: FSMContext) -> None:
+    """«✍️ Tushuntirish yozish» tugmasi — kechqurungi job yuborgan xabarda."""
+    req_id = int(callback.data.split(":")[1])
+    await state.clear()
+    await state.set_state(ExplanationFSM.waiting_text)
+    await state.update_data(explanation_id=req_id)
+    await callback.message.answer(
+        "Sababingizni yozib yuboring (kamida 3 belgi). HR ko'rib chiqadi.",
+        reply_markup=cancel_menu(),
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(ExplanationFSM.waiting_text), F.text == BTN_CANCEL)
+async def cancel_explanation(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    await message.answer(
+        "Bekor qilindi. Tushuntirishni keyinroq ham yozishingiz mumkin — "
+        "yuqoridagi xabardagi tugmani qayta bosing.",
+        reply_markup=menu_for_user(user),
+    )
+
+
+@router.message(StateFilter(ExplanationFSM.waiting_text), F.text)
+async def receive_explanation(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    req_id = data.get("explanation_id")
+    if not req_id:
+        await state.clear()
+        await message.answer("Sessiya topilmadi. Xabardagi tugmani qayta bosing.")
+        return
+    if len(text) < 3:
+        # Holat SAQLANADI — xodim qayta yozsin (matn juda qisqa).
+        await message.answer("Juda qisqa — sababni to'liqroq yozing.", reply_markup=cancel_menu())
+        return
+
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    try:
+        await api_client.answer_explanation(req_id, message.from_user.id, text)
+    except httpx.HTTPStatusError as exc:
+        detail = "Xatolik yuz berdi."
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
+        return
+    except Exception:
+        await message.answer(
+            "⚠️ Xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.",
+            reply_markup=menu_for_user(user),
+        )
+        return
+
+    await message.answer(
+        "✅ Tushuntirishingiz HR'ga yuborildi. Qaror chiqqach shu yerda xabar beramiz.",
+        reply_markup=menu_for_user(user),
+    )
+
+
+@router.message(StateFilter(ExplanationFSM.waiting_text))
+async def non_text_explanation(message: Message) -> None:
     await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
 
 

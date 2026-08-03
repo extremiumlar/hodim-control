@@ -20,6 +20,7 @@ import type {
   Office,
   OperatorSummary,
   AttendanceEditorRow,
+  ExplanationRequestRow,
   LocationExemptRow,
   OverrideAuditRow,
   OvertimeEntry,
@@ -458,6 +459,16 @@ export const api = {
       `/admin/users/${userId}/attendance-editor`,
       { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
     ),
+  // Tushuntirish xatlari (sababsiz kelmagan kun) — HR ko'radi va qaror qiladi.
+  listExplanations: (statusFilter?: string) =>
+    apiFetch<ExplanationRequestRow[]>(
+      `/attendance/explanations${statusFilter ? `?status_filter=${statusFilter}` : ""}`
+    ),
+  decideExplanation: (reqId: number, accept: boolean, note?: string) =>
+    apiFetch<ExplanationRequestRow>(`/attendance/explanations/${reqId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ accept, note: note || null }),
+    }),
   // Kechikish/jarima qoidasini o'zgartirish huquqi (beruvchi: Boshliq yoki
   // Dasturchi — shuning uchun /admin EMAS, /payroll ostida).
   listFinePolicyEditors: () => apiFetch<AttendanceEditorRow[]>("/payroll/fine-policy-editors"),

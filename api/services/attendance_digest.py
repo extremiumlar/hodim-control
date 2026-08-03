@@ -18,6 +18,7 @@ import html
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import _effective_today
@@ -314,6 +315,70 @@ async def write_absent_records(db: AsyncSession, day=None) -> int:
     return written
 
 
+async def ask_explanations(db: AsyncSession, day=None) -> int:
+    """Sababsiz kelmagan xodimlardan TUSHUNTIRISH XATI so'raydi.
+
+    `write_absent_records` dan KEYIN chaqiriladi — o'sha payt `absent`
+    yozuvlari allaqachon bor. Dam kuni va sababli kun bu yerga UMUMAN
+    yetib kelmaydi: `collect_day` ularni `absent` ro'yxatiga qo'shmaydi.
+
+    ⚠️ JARIMAGA TEGMAYDI — kun `absent` bo'lib qolaveradi va jarima o'z
+    kuchida turadi. Faqat HR "sababli" deb qabul qilsa, MAVJUD `ExcusedDay`
+    orqali kun sababliga aylanadi (`decide_explanation`).
+
+    Idempotent: UNIQUE(user_id, date) — bir kunga bitta so'rov."""
+    from api.notify import notify_user
+    from api.services.push import Category
+    from api.telegram_notify import inline_keyboard
+    from db.models import ExplanationRequest
+
+    day = day or today_local()
+    absent_rows = list(
+        await db.scalars(
+            select(Attendance).where(Attendance.date == day, Attendance.status == "absent")
+        )
+    )
+    if not absent_rows:
+        return 0
+
+    existing = {
+        r.user_id
+        for r in await db.scalars(select(ExplanationRequest).where(ExplanationRequest.date == day))
+    }
+
+    asked = 0
+    for att in absent_rows:
+        if att.user_id in existing:
+            continue
+        user = await db.get(User, att.user_id)
+        if user is None or not user.is_active or user.telegram_id is None:
+            continue
+
+        req = ExplanationRequest(user_id=user.id, date=day)
+        db.add(req)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            continue  # boshqa chaqiruv ulgurdi
+        await db.refresh(req)
+
+        text = (
+            f"📄 <b>Tushuntirish xati</b>\n\n"
+            f"{day} kuni sizda kelish qayd etilmagan va sababli kun ham belgilanmagan.\n"
+            f"Iltimos, sababini yozib yuboring — HR ko'rib chiqadi.\n\n"
+            f"<i>Agar sabab uzrli deb topilsa, o'sha kun sababli kunga o'tkaziladi.</i>"
+        )
+        keyboard = inline_keyboard([[("✍️ Tushuntirish yozish", f"explain:{req.id}")]])
+        # Telegram MAJBURIY: javob yozish faqat botda mumkin (ilovada bu
+        # ekran yo'q), shuning uchun push bilan almashtirib bo'lmaydi.
+        await notify_user(
+            db, user, Category.DECISIONS, text, reply_markup=keyboard, force_telegram=True
+        )
+        asked += 1
+    return asked
+
+
 async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
     """2.2-band (Savol C javobi: FAQAT avtomatik) — kelib-u «Ketdim» bosmagan
     xodimlarning O'TGAN kunlari (bugundan oldingi) avtomatik yopiladi. Bosmasa
@@ -433,10 +498,16 @@ async def digest_tick(db: AsyncSession) -> dict:
             # 2.2-band (Savol C: FAQAT avtomatik) — kelib-u "Ketdim" bosmagan
             # o'tgan kunlar shu bir xil "kun tugadi" nuqtasida yopiladi.
             closed = await auto_close_unclosed_checkouts(db, today)
+            # Tushuntirish xati — `write_absent_records` dan KEYIN, chunki u
+            # `absent` yozuvlarini endi yaratdi. Bir xil atomik "band qilish"
+            # ichida, ya'ni kuniga bir marta so'raladi.
+            asked = await ask_explanations(db, today)
             if written:
                 fired.append({"kind": "absent_marking", "written": written})
             if closed:
                 fired.append({"kind": "auto_checkout_close", "closed": closed})
+            if asked:
+                fired.append({"kind": "explanation_asked", "asked": asked})
 
     for kind, enabled, hour, minute, last in (
         ("morning", cfg.morning_enabled, cfg.morning_hour, cfg.morning_minute, cfg.morning_last_posted),

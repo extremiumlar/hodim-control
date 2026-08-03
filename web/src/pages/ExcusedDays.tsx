@@ -20,7 +20,9 @@ import { type ExcusedDay } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   useDecideExcusedDay,
+  useDecideExplanation,
   useExcusedDays,
+  useExplanations,
   useRecordExcusedDayForUser,
   useUsers,
 } from "@/lib/queries";
@@ -211,6 +213,117 @@ export default function ExcusedDays() {
         searchPlaceholder="Xodim yoki sabab bo'yicha qidirish..."
         empty={{ icon: CalendarX, text: "Sababli kun so'rovlari topilmadi." }}
       />
+
+      {canMark && <ExplanationsSection />}
     </div>
+  );
+}
+
+/**
+ * Tushuntirish xatlari — sababsiz kelmagan kun uchun.
+ *
+ * Oqim: kechqurun tizim sababsiz `absent` kunni topadi -> xodimga botdan
+ * «Nega kelmadingiz?» -> xodim javob yozadi -> HR shu yerda qaror qiladi.
+ *
+ * ⚠️ «Qabul qilish» — MAVJUD sababli kun mexanizmini ishga soladi
+ * (`ExcusedDay` yaratiladi, davomat qayta hisoblanadi va jarima o'z-o'zidan
+ * tushadi). Yangi jarima yo'li YO'Q.
+ */
+function ExplanationsSection() {
+  // Default «answered» — HR uchun eng muhimi: javob kelgan, qaror kutilyapti.
+  const [filter, setFilter] = useState("answered");
+  const query = useExplanations(filter === "all" ? undefined : filter);
+  const decide = useDecideExplanation();
+
+  const rows = query.data ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-base">Tushuntirish xatlari</CardTitle>
+          <Select value={filter} onValueChange={setFilter}>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="answered">Javob kelgan (qaror kutilyapti)</SelectItem>
+              <SelectItem value="pending">Javob kutilmoqda</SelectItem>
+              <SelectItem value="accepted">Qabul qilingan</SelectItem>
+              <SelectItem value="rejected">Rad etilgan</SelectItem>
+              <SelectItem value="all">Barchasi</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-3 text-xs text-slate-500">
+          Sababsiz kelmagan kun uchun tizim xodimdan tushuntirish so'raydi.{" "}
+          <b>«Sababli deb qabul qilish»</b> — o'sha kun sababli kunga o'tadi va jarima
+          tushadi. <b>«Rad etish»</b> — jarima o'z kuchida qoladi.
+        </p>
+
+        {query.isLoading ? (
+          <div className="text-sm text-slate-400">Yuklanmoqda...</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-slate-400">Bu holatda xat yo'q.</div>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((r) => (
+              <li key={r.id} className="rounded-lg border border-slate-200 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium">
+                    {r.user_full_name ?? `#${r.user_id}`}{" "}
+                    <span className="text-slate-400">
+                      — {format(new Date(r.date), "dd.MM.yyyy")}
+                    </span>
+                  </div>
+                  <StatusBadge kind="request" status={r.status} />
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">
+                  {r.answer_text ?? (
+                    <span className="text-slate-400">Xodim hali javob yozmagan.</span>
+                  )}
+                </p>
+                {r.decision_note && (
+                  <p className="mt-1 text-xs text-slate-400">Izoh: {r.decision_note}</p>
+                )}
+                {/* Qaror faqat javob kelgan xatga — javobsiz xatni hal qilish
+                    xodimga o'zini oqlash imkonini bermay yopib qo'yardi. */}
+                {r.status === "answered" && (
+                  <div className="mt-2 flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={decide.isPending}
+                      onClick={() =>
+                        decide.mutate(
+                          { reqId: r.id, accept: true },
+                          { onSuccess: () => toast.success("Sababli deb qabul qilindi") }
+                        )
+                      }
+                    >
+                      Sababli deb qabul qilish
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={decide.isPending}
+                      onClick={() =>
+                        decide.mutate(
+                          { reqId: r.id, accept: false },
+                          { onSuccess: () => toast.success("Rad etildi — jarima qoladi") }
+                        )
+                      }
+                    >
+                      Rad etish
+                    </Button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

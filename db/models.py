@@ -887,6 +887,43 @@ class AttendanceReminder(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ExplanationStatus(str, enum.Enum):
+    pending = "pending"      # so'raldi, xodim hali javob yozmagan
+    answered = "answered"    # xodim javob yozdi, HR qarori kutilmoqda
+    accepted = "accepted"    # HR sababli deb qabul qildi -> ExcusedDay yaratiladi
+    rejected = "rejected"    # HR rad etdi -> jarima o'z kuchida qoladi
+
+
+class ExplanationRequest(Base):
+    """Sababsiz kelmagan kun uchun TUSHUNTIRISH XATI so'rovi.
+
+    Egasining talabi: "agar sababsiz bo'lsa tushuntirish xati olinadi, agar
+    sababli bo'lsa hr o'zi kiritadigan funksiya ham kerak".
+
+    ⚠️ MAVJUD JARIMA MANTIQIGA TEGMAYDI — bu ustiga qo'shiladigan QATLAM.
+    Kun `absent` bo'lib qolaveradi va jarima o'z kuchida turadi; faqat HR
+    "sababli" deb qabul qilsa, MAVJUD `ExcusedDay` mexanizmi orqali kun
+    sababliga aylanadi va jarima o'z-o'zidan tushadi. Yangi jarima yo'li
+    YARATILMAYDI — aks holda ikkita mustaqil hisob paydo bo'lardi.
+
+    Bir kunga bitta so'rov: UNIQUE(user_id, date) — kechqurungi job bir necha
+    marta ishlasa ham (yoki qo'lda qayta chaqirilsa) takror so'ralmaydi."""
+
+    __tablename__ = "explanation_requests"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_explanation_user_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(String(20), default=ExplanationStatus.pending.value, index=True)
+    asked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class FsmState(Base):
     """Bot FSM holati — cPanel (webhook) rejimida XOTIRA O'RNIGA bazada.
 

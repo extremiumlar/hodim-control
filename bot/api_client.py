@@ -119,6 +119,17 @@ async def create_excused_day(telegram_id: int, reason: str, date_str: str | None
     return resp.json()
 
 
+async def answer_explanation(req_id: int, telegram_id: int, answer_text: str) -> dict:
+    """Xodimning tushuntirish xati javobi. Shaxs `telegram_id`dan yechiladi —
+    boshqa birov nomidan javob yozib bo'lmaydi (backend tekshiradi)."""
+    resp = await _get_client().post(
+        f"/attendance/explanations/{req_id}/answer",
+        json={"telegram_id": telegram_id, "answer_text": answer_text},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def decide_excused_day(item_id: int, decider_telegram_id: int, decision: str) -> dict:
     resp = await _get_client().post(
         f"/excused-days/{item_id}/decide",
