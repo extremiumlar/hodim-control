@@ -201,16 +201,22 @@ async def nudge(
 @router.post("/group-summary")
 async def group_summary(actor_telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
     """Bugungi jamoa uchun kun yakuni xulosasi (barcha sotuv operatorlari agregati).
-    Har operatorga kun ichidagi pasayish epizodlari ("soat 14:00–16:00 orqada, keyin
-    to'g'irladi") KOD tomonidan hisoblanib payload'ga qo'shiladi — AI aniq soat va
-    holat bilan gapiradi, taxmin qilmaydi.
 
-    XAVFSIZLIK: ilgari bu endpointda AKTYOR umuman yo'q edi (imzosi faqat
-    `db` olardi), holbuki javobda BARCHA operatorlarning natijalari va
-    "yolg'on sabab aytgan" belgilari bor. Kod bazasida chaqiruvchisi ham
-    topilmadi — ya'ni bu unutilgan debug endpointi. O'chirish o'rniga
-    rahbar tekshiruvi qo'yildi (kelajakda kerak bo'lishi mumkin)."""
+    XAVFSIZLIK: ilgari bu endpointda AKTYOR umuman yo'q edi, holbuki javobda
+    BARCHA operatorlarning natijalari va "yolg'on sabab aytgan" belgilari bor —
+    rahbar tekshiruvi qo'yilgan. DIQQAT: mantiqning o'zi `build_group_summary`da —
+    uni kunlik guruh digesti (daily_digest, tizim nomidan, aktyorsiz) ham chaqiradi;
+    aktyor tekshiruvini o'sha ichki funksiyaga ko'chirmang (2026-08-01..03 da aynan
+    shu xato digestni har kuni 18:00 da yiqitib, guruh 3 kun digestsiz qolgan)."""
     await _require_manager(db, actor_telegram_id)
+    return await build_group_summary(db)
+
+
+async def build_group_summary(db: AsyncSession) -> dict:
+    """Kun yakuni AI xulosasining o'zagi (aktyor tekshiruvisiz — ichki chaqiruvlar
+    uchun). Har operatorga kun ichidagi pasayish epizodlari ("soat 14:00–16:00
+    orqada, keyin to'g'irladi") KOD tomonidan hisoblanib payload'ga qo'shiladi —
+    AI aniq soat va holat bilan gapiradi, taxmin qilmaydi."""
     day = today_local()
     now = datetime.now(TASHKENT_TZ)
     upto_hour = now.hour if now.date() == day else 23

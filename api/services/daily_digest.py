@@ -91,15 +91,20 @@ async def _talk_by_user(db: AsyncSession, day: date) -> dict[int, int]:
     return {uid: int(talk or 0) for uid, talk in rows.all()}
 
 
-async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
-    """Bir kunning operator kesimi: {responsible_id: {name, calls, leads, visits}}.
-    Qo'ng'iroqlar — `OperatorCallsDaily` snapshotidan (tez, CRM call-history
-    asosida). Lid/tashrif — diff-engine `LeadEvent` jurnalidan (`lead_diff.py`):
-    HAQIQIY bosqich/mas'ul o'zgarish voqealari, "bugun tegilgan (istalgan
-    tahrir)" taxminidan farqli."""
+async def _day_by_operator(db: AsyncSession, day: date) -> tuple[dict[int, dict], int]:
+    """Bir kunning operator kesimi: ({responsible_id: {name, calls, leads, visits}},
+    jami_noyob_tashrif). Qo'ng'iroqlar — `OperatorCallsDaily` snapshotidan (tez,
+    CRM call-history asosida). Lid/tashrif — diff-engine `LeadEvent` jurnalidan
+    (`lead_diff.py`): HAQIQIY bosqich/mas'ul o'zgarish voqealari.
+
+    `jami_noyob_tashrif` — dual-kreditsiz: operator kesimida bitta tashrif
+    ikki odamga (olib kelgan + yopgan) yozilishi mumkin, tashkilot jami esa
+    haqiqiy tashriflar sonini ko'rsatishi kerak."""
     agg: dict[int, dict] = {}
 
-    event_agg = await lead_diff.daily_operator_breakdown(db, day, _visit_pipe_status_ids())
+    event_agg, total_visits = await lead_diff.daily_operator_breakdown(
+        db, day, _visit_pipe_status_ids()
+    )
     for rid, a in event_agg.items():
         entry = agg.setdefault(rid, {"name": a["name"], "calls": 0, "leads": 0, "visits": 0})
         entry["leads"] = a["leads_touched"]
@@ -113,7 +118,7 @@ async def _day_by_operator(db: AsyncSession, day: date) -> dict[int, dict]:
         if not a.get("name"):
             a["name"] = c.responsible_name
 
-    return agg
+    return agg, total_visits
 
 
 async def _freshness_line(db: AsyncSession) -> str | None:
@@ -175,8 +180,8 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     """Digest matnini quradi (yubormaydi). Qaytaradi: {"text", "operators"} —
     bugun umuman faoliyat bo'lmasa text=None."""
     day = day or today_local()
-    today_ops = await _day_by_operator(db, day)
-    yesterday_ops = await _day_by_operator(db, day - timedelta(days=1))
+    today_ops, today_unique_visits = await _day_by_operator(db, day)
+    yesterday_ops, _ = await _day_by_operator(db, day - timedelta(days=1))
     tasks = await _tasks_by_user(db, day)
     talk_by_user = await _talk_by_user(db, day)
 
@@ -247,7 +252,10 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
 
     total_calls = sum(a["calls"] for a in active.values())
     total_leads = sum(a["leads"] for a in active.values())
-    total_visits = sum(a["visits"] for a in active.values())
+    # Jami — NOYOB tashriflar (dual-kredit yig'indisi emas: 1 tashrif 2 bo'lib
+    # ko'rinmasin; operator qatorlarida kreditlar atayin qoladi).
+    total_visits = today_unique_visits
+    visit_credits = sum(a["visits"] for a in active.values())
     # Jami gaplashgan vaqt — faqat digestda ko'rsatilgan (faol) operatorlarники
     active_uids = {user_by_rid[rid].id for rid in active if rid in user_by_rid}
     total_talk = sum(sec for uid, sec in talk_by_user.items() if uid in active_uids)
@@ -282,6 +290,13 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "
         "🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>"
     )
+    if visit_credits > total_visits:
+        # Dual-kredit ishlagan kun: operator 🏠 yig'indisi jamidan katta — nima
+        # uchunligini o'quvchi bilsin (aks holda "raqamlar to'g'ri kelmayapti" bo'ladi)
+        parts.append(
+            "<i>🏠 jami — noyob tashriflar; lidni olib kelgan va yopgan operatorlar "
+            "alohida kredit oladi</i>"
+        )
     if 0 in active:
         # rid=0 — CRM'da employeeNum'i tizim foydalanuvchisiga bog'lanmagan qo'ng'iroqlar
         # yig'indisi (aniq ro'yxat API logida "CRM ID bog'lanmagan" WARNING'ida).
@@ -308,9 +323,13 @@ async def _ai_summary_text(db: AsyncSession) -> str | None:
     if cfg is not None and not cfg.group_summary_enabled:
         return None
 
-    from api.routers.ai_coach import group_summary  # circular importdan qochish
+    from api.routers.ai_coach import build_group_summary  # circular importdan qochish
 
-    result = await group_summary(db)
+    # DIQQAT: endpoint `group_summary`ni EMAS, ichki `build_group_summary`ni
+    # chaqiramiz — endpoint aktyor (rahbar telegram_id) talab qiladi, digest esa
+    # tizim nomidan yuboriladi. 2026-08-01 xavfsizlik o'zgarishida endpoint imzosi
+    # o'zgargani bu chaqiruvni sindirib, guruh 3 kun digestsiz qolgan edi.
+    result = await build_group_summary(db)
     return result.get("text") or None
 
 
@@ -363,12 +382,12 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
     if not dry_run and cfg.correction_last_posted == today:
         return {"sent": False, "reason": "Bugun allaqachon tekshirilgan"}
 
-    final_ops = await _day_by_operator(db, yesterday)
+    final_ops, final_unique_visits = await _day_by_operator(db, yesterday)
     active = {rid: a for rid, a in final_ops.items() if a["calls"] or a["leads"] or a["visits"]}
     final = {
         "calls": sum(a["calls"] for a in active.values()),
         "leads": sum(a["leads"] for a in active.values()),
-        "visits": sum(a["visits"] for a in active.values()),
+        "visits": final_unique_visits,
     }
     posted = {
         "calls": cfg.last_posted_calls or 0,
@@ -378,7 +397,11 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
 
     diff_calls = final["calls"] - posted["calls"]
     threshold = max(_CORRECTION_MIN_ABS_CALLS, round(posted["calls"] * _CORRECTION_MIN_PCT / 100))
-    significant = diff_calls >= threshold
+    # Tashrif farqi HAR DOIM sezilarli: soni kichik, qiymati katta — kechikib
+    # aniqlangan tashrif (tungi to'liq skan, skan uzilishi) ertalab albatta
+    # ko'rinsin (ilgari faqat qo'ng'iroq farqi trigger edi, tashrif o'zgarishi
+    # jimgina yo'qolardi).
+    significant = diff_calls >= threshold or final["visits"] != posted["visits"]
 
     if not dry_run:
         # Qo'riqchi natijadan qat'i nazar yoziladi — bir kunda bitta tekshiruv
@@ -389,8 +412,11 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
     if not significant:
         return {"sent": False, "reason": "Farq sezilarli emas", **result}
 
-    # Faqat o'zgargan ko'rsatkichlar qatorga kiradi (qo'ng'iroq har doim — trigger o'zi)
-    pieces = [f"📞 {posted['calls']} → {final['calls']} (+{diff_calls})"]
+    # Faqat o'zgargan ko'rsatkichlar qatorga kiradi (trigger endi qo'ng'iroq YOKI tashrif)
+    pieces = []
+    if diff_calls:
+        sign = "+" if diff_calls > 0 else ""
+        pieces.append(f"📞 {posted['calls']} → {final['calls']} ({sign}{diff_calls})")
     if final["leads"] != posted["leads"]:
         pieces.append(f"🧲 {posted['leads']} → {final['leads']}")
     if final["visits"] != posted["visits"]:

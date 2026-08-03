@@ -601,6 +601,35 @@ class UysotAdapter(CRMAdapter):
 
         return records_out
 
+    async def _scan_visit_stage_leads(self, client: httpx.AsyncClient) -> list[dict]:
+        """Hozir "Tashrif" bosqich(lar)ida TURGAN lidlar — yaratilgan sanasidan
+        qat'i nazar. Nega kerak: tez skan faqat so'nggi N kunda YARATILGAN
+        lidlarni ko'radi, 30+ kunlik lid Tashrifga o'tsa uni faqat tungi to'liq
+        skan topardi (03:30 da — tashrif keyingi kunga yozilib ketardi,
+        2026-08-03 da tasdiqlangan). Bu qo'shimcha so'rov arzon: Tashrifda
+        odatda bir necha o'nlab lid turadi (1-2 sahifa)."""
+        if not CRM_UYSOT_VISIT_PIPE_STATUS_IDS:
+            return []
+        extra = {"pipeStatusIds": list(CRM_UYSOT_VISIT_PIPE_STATUS_IDS)}
+        records_out: list[dict] = []
+        page = 1
+        total_pages = None
+        while page <= MAX_ACTIVE_LEAD_SCAN_PAGES:
+            body = await self._fetch_lead_page(client, page, extra=extra)
+            if total_pages is None:
+                total_pages = body.get("totalPages") or 1
+            records = body.get("data") or []
+            if not records:
+                break
+            for record in records:
+                if record.get("id") is not None:
+                    records_out.append(record)
+            if page >= total_pages:
+                break
+            page += 1
+            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+        return records_out
+
     async def get_active_leads_snapshot(self, created_since_ts: int | None = None) -> list[dict] | None:
         """Diff-engine uchun: lidlarning joriy holati (bosqich+mas'ul), sana
         filtrsiz. Qarang: `CRMAdapter.get_active_leads_snapshot`."""
@@ -611,6 +640,14 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=timeout) as client:
             try:
                 records = await self._scan_active_leads(client, created_since_ts)
+                if created_since_ts is not None:
+                    # Tez rejimda Tashrif bosqichidagi eski lidlar ham qo'shiladi
+                    # (dublikatlar quyida id bo'yicha yutiladi); to'liq skan
+                    # ularni allaqachon qamraydi.
+                    seen_ids = {r["id"] for r in records}
+                    for record in await self._scan_visit_stage_leads(client):
+                        if record["id"] not in seen_ids:
+                            records.append(record)
                 names = await self._load_pipe_status_names(client)
             except httpx.HTTPError:
                 logger.exception(

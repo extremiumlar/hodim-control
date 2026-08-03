@@ -45,10 +45,18 @@ failed: list[str] = []
 
 
 def check(name: str, cond: bool, extra: str = "") -> None:
-    """Bitta tekshiruv natijasini qayd etadi va chiqaradi."""
+    """Bitta tekshiruv natijasini qayd etadi va chiqaradi. Chop etish konsol
+    kodlashiga chidamli — aks holda extra ichidagi «» kabi belgi Windows
+    konsolida UnicodeEncodeError otib, TESTNING O'ZINI yiqitardi (natija
+    baholanmasdan FAIL bo'lardi)."""
     (passed if cond else failed).append(name)
     mark = "  [OK]  " if cond else "  [FAIL]"
-    print(f"{mark} {name}" + (f"  | {extra}" if extra else ""))
+    line = f"{mark} {name}" + (f"  | {extra}" if extra else "")
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "utf-8"
+        print(line.encode(enc, "replace").decode(enc, "replace"))
 
 
 def db() -> sqlite3.Connection:
@@ -3915,12 +3923,103 @@ def main() -> None:
     except Exception:
         print("Tushuntirish xati testida kutilmagan xato:\n" + traceback.format_exc())
 
+    try:
+        test_visit_counting()
+    except Exception:
+        print("Tashrif hisoblash testida kutilmagan xato:\n" + traceback.format_exc())
+
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")
     for name in failed:
         print(f"  FAIL: {name}")
     print("=" * 60)
     sys.exit(1 if failed else 0)
+
+
+def test_visit_counting() -> None:
+    """Tashrif hisoblash (lead_diff.daily_operator_breakdown) — 2026-08-03
+    tuzatishlari:
+      1. Kechikib aniqlangan voqea (detected_at ertasi kun) CRM vaqti
+         (`crm_updated_ts`) bo'yicha O'Z kuniga tushadi.
+      2. Dual-kredit operator kesimida qoladi (yopgan +1, olib kelgan +1),
+         lekin JAMI — noyob tashriflar (kreditlar yig'indisi emas).
+      3. Mas'ulsiz tashrif operator kesimiga kirmaydi, jamida yo'qolmaydi.
+      4. Tashrif bosqichlari ORASIDA ko'chish qayta sanalmaydi.
+      5. Keyingi kunning voqeasi bu kunga kirmaydi.
+    Sinov ma'lumoti o'tmish sanada (2020-06-10) va 9998xxxxx lid ID bilan —
+    jonli hisobga ta'sir qilmaydi, oxirida to'liq o'chiriladi."""
+    import asyncio as _asyncio
+    from datetime import timezone as _timezone
+
+    print("\n" + "=" * 60)
+    print("TASHRIF HISOBLASH (diff-engine kunlik kesim)")
+    print("=" * 60)
+
+    from sqlalchemy import delete as _delete
+
+    from api.services import lead_diff
+    from db.base import async_session
+    from db.models import LeadEvent
+
+    DAY = date(2020, 6, 10)
+    VISIT_IDS = {990001, 990002}
+    L = 999800000  # sinov lid ID bazasi (jonli ID'lardan ancha yuqori)
+    # 2020-06-10 Tashkent kuni = UTC 06-09 19:00 .. 06-10 19:00; CRM vaqti sifatida
+    # kun o'rtasi (12:00 mahalliy = 07:00 UTC) olinadi
+    day_epoch = int(datetime(2020, 6, 10, 7, 0, tzinfo=_timezone.utc).timestamp())
+
+    def ev(lead, etype, from_st, to_st, from_resp, to_resp, first_resp, det, crm_ts):
+        return LeadEvent(
+            crm_lead_id=lead, event_type=etype,
+            from_pipe_status_id=from_st, from_stage_name=None,
+            to_pipe_status_id=to_st,
+            to_stage_name="Tashrif" if to_st in VISIT_IDS else "Boshqa",
+            from_responsible_id=from_resp, to_responsible_id=to_resp,
+            to_responsible_name=None if to_resp is None else f"T-Op{to_resp}",
+            first_responsible_id=first_resp, crm_updated_ts=crm_ts, detected_at=det,
+        )
+
+    async def _run():
+        async with async_session() as s:
+            await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
+            s.add_all([
+                # A: kechikib aniqlangan (ertasi kun 02:00 UTC) — CRM vaqti bilan 06-10 ga tushishi kerak
+                ev(L + 1, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 11, 2, 0), day_epoch),
+                # B: dual-kredit — yopgan 991002, olib kelgan 991003
+                ev(L + 2, "stage_change", 111, 990002, 991002, 991002, 991003, datetime(2020, 6, 10, 9, 0), day_epoch),
+                # C: mas'ulsiz tashrif — jamida bor, operator kesimida yo'q
+                ev(L + 3, "first_seen", None, 990001, None, None, None, datetime(2020, 6, 10, 10, 0), day_epoch),
+                # D: Tashrif bosqichlari orasida ko'chish — tashrif sanalmasin
+                ev(L + 4, "stage_change", 990001, 990002, 991001, 991001, 991001, datetime(2020, 6, 10, 11, 0), day_epoch),
+                # F: yana dual-kredit (yopgan 991001, olib kelgan 991003) — jami/kredit farqi uchun
+                ev(L + 6, "stage_change", 111, 990001, 991001, 991001, 991003, datetime(2020, 6, 10, 12, 0), day_epoch),
+                # E: KEYINGI kun voqeasi (CRM vaqti 06-11) — bu kunga kirmasin
+                ev(L + 5, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 11, 9, 0), day_epoch + 86400),
+            ])
+            await s.commit()
+            try:
+                return await lead_diff.daily_operator_breakdown(s, DAY, VISIT_IDS)
+            finally:
+                await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
+                await s.commit()
+
+    try:
+        agg, unique = _asyncio.run(_run())
+        credits = sum(a["visits"] for a in agg.values())
+        check("kechikib aniqlangan tashrif o'z kuniga tushdi (991001=2: A+F)",
+              agg.get(991001, {}).get("visits") == 2, f"991001={agg.get(991001)}")
+        check("dual-kredit: yopgan (991002) +1", agg.get(991002, {}).get("visits") == 1,
+              f"991002={agg.get(991002)}")
+        check("dual-kredit: olib kelgan (991003) +2 (B+F)",
+              agg.get(991003, {}).get("visits") == 2, f"991003={agg.get(991003)}")
+        check("JAMI noyob tashrif = 4 (kredit yig'indisi 5 emas)", unique == 4,
+              f"unique={unique}, kreditlar={credits}")
+        check("kredit yig'indisi = 5 (operator kesimi dual-kredit bilan)", credits == 5,
+              f"kreditlar={credits}")
+        check("keyingi kun voqeasi kirmadi / Tashrif ichi ko'chish sanalmadi",
+              agg.get(991001, {}).get("leads_touched") == 3, f"991001={agg.get(991001)}")
+    except Exception:
+        check("tashrif hisoblash testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
 
 if __name__ == "__main__":

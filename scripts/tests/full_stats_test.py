@@ -117,12 +117,13 @@ async def main():
     yesterday = today - dt.timedelta(days=1)
 
     async with async_session() as db:
-        # ═══ T1: digest_group_targets (V0) ═══
-        t = digest_group_targets(555)
+        # ═══ T1: digest_group_targets (b9b3da7 dan beri async + MonitoredGroup) ═══
+        t = await digest_group_targets(db, 555)
         check("T1a chat_id berilsa faqat o'sha", t == [555], f"{t}")
-        t = digest_group_targets(None)
-        expected_all = [settings.telegram_group_chat_id, *settings.stats_group_ids]
-        check("T1b default: asosiy + stats guruhlar", t == expected_all, f"{t}")
+        t = await digest_group_targets(db, None)
+        # Manzillar endi bazadan (MonitoredGroup) — aniq ro'yxatni oldindan bilib
+        # bo'lmaydi, invariantlar tekshiriladi: ro'yxat, takror yo'q, 0 yo'q.
+        check("T1b default: ro'yxat qaytadi", isinstance(t, list), f"{t}")
         check("T1c takror/0 yo'q", len(t) == len(set(t)) and 0 not in t)
 
         # ═══ T2: kunlik digest jami raqamlari mustaqil hisob bilan mos (V5 asosi) ═══
@@ -369,7 +370,7 @@ async def main():
             check("T11a tick fired", tick.get("fired") is True)
             check(
                 "T11b tick xabarlarni barcha guruhlarga 'yubordi' (patch)",
-                len(sent_messages) == len(digest_group_targets(None)),
+                len(sent_messages) == len(await digest_group_targets(db, None)),
                 f"{len(sent_messages)} ta chat",
             )
             check("T11c last_posted_date bugun", cfg.last_posted_date == today)

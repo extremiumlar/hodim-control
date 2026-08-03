@@ -23,7 +23,7 @@ jimgina yoziladi, voqea YARATILMAYDI (aks holda mavjud minglab lidning
 barchasi "o'zgardi" deb hisoblanib spam/noto'g'ri statistika bo'lardi —
 `hot_lead.py`dagi bir xil naqsh)."""
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,12 +208,44 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
     }
 
 
+# Kechikkan aniqlash uchun qidiruv oynasi: voqea CRM'da bir kuni bo'lib, bizga
+# keyinroq ko'rinishi mumkin (skan uzilishi — 2026-08-01..02 da ~28 soat; tungi
+# 03:30 to'liq skan 30+ kunlik lidlarni ertasiga topadi). 3 kun — ko'rilgan eng
+# uzun kechikishdan katta zaxira.
+_DETECTION_LAG_DAYS = 3
+
+
+def _event_effective_utc(ev: LeadEvent) -> datetime:
+    """Voqeaning HAQIQIY vaqti (naive UTC). CRM `updatedTimestamp`i bosqich
+    o'tishining o'zida yangilanadi, ya'ni voqea vaqtiga `detected_at`dan ancha
+    yaqin — skan kechiksa ham tashrif O'Z kuniga tushishi uchun shuni olamiz
+    (isbot 2026-08-02: 10:46 dagi partiya voqealarining 5 tasi CRM bo'yicha
+    08-01 ga tegishli edi). Qiymat yo'q/nosog'lom (0, kelajak) bo'lsa —
+    `detected_at` qoladi."""
+    ts = ev.crm_updated_ts or 0
+    if ts > 10**12:  # millisekundda kelib qolgan bo'lsa
+        ts //= 1000
+    if ts > 0:
+        eff = datetime.utcfromtimestamp(ts)
+        # CRM vaqti aniqlashdan keyin bo'lolmaydi — kichik soat farqiga ruxsat
+        if eff <= ev.detected_at + timedelta(minutes=5):
+            return eff
+    return ev.detected_at
+
+
 async def daily_operator_breakdown(
     db: AsyncSession, day: date, visit_pipe_status_ids: set[int] | None
-) -> dict[int, dict]:
+) -> tuple[dict[int, dict], int]:
     """Kunlik operator kesimi — `LeadEvent`dan (taxminiy `updatedTimestamp`
-    emas, haqiqiy voqealardan). Qaytaradi: {responsible_id: {name,
-    leads_touched, visits}}.
+    emas, haqiqiy voqealardan). Qaytaradi: ({responsible_id: {name,
+    leads_touched, visits}}, jami_noyob_tashrif).
+
+    `jami_noyob_tashrif` — shu kuni Tashrifga KIRGAN voqealar soni, dual-kreditsiz
+    (tashkilot "Jami" qatori uchun; kreditlar yig'indisi bitta tashrifni ikki
+    odamga yozgani uchun jami sifatida ishlatilsa raqam shishardi).
+
+    Voqea KUNGA `_event_effective_utc` bo'yicha biriktiriladi (`detected_at`
+    emas) — skan kechikkanda ham tashrif haqiqatda bo'lgan kuniga tushadi.
 
     `leads_touched` — shu operatorga (voqea paytidagi `to_responsible_id`)
     tegishli HAQIQIY bosqich/mas'ul o'zgarish (yoki yangi lid) voqealari soni.
@@ -237,8 +269,15 @@ async def daily_operator_breakdown(
     qisqa bo'lgani uchun operator→manager→Tashrif to'liq zanjiri hali jonli
     misolda ko'rilmagan (mexanizm to'g'ri qurilgan, vaqt sinovi kerak)."""
     day_start, day_end = local_range_utc_naive(day, day)
+    # Kechikib aniqlangan voqealar ham kirsin: detected_at oynasi oldinga kengaytirilib,
+    # kunga tegishlilik keyin effective vaqt bilan filtrlansin. Effective vaqt
+    # detected_at'dan keyin bo'lolmaydi, shuning uchun day_start'dan oldin
+    # aniqlangan voqea bu kunga tegishli emas — orqaga kengaytirish shart emas.
     rows = await db.scalars(
-        select(LeadEvent).where(LeadEvent.detected_at >= day_start, LeadEvent.detected_at < day_end)
+        select(LeadEvent).where(
+            LeadEvent.detected_at >= day_start,
+            LeadEvent.detected_at < day_end + timedelta(days=_DETECTION_LAG_DAYS),
+        )
     )
     visit_ids = visit_pipe_status_ids or set()
 
@@ -246,18 +285,28 @@ async def daily_operator_breakdown(
         return agg.setdefault(rid, {"name": name or str(rid), "leads_touched": 0, "visits": 0})
 
     agg: dict[int, dict] = {}
+    total_visits = 0
     for ev in rows:
-        rid = ev.to_responsible_id
-        if rid is None:
+        eff = _event_effective_utc(ev)
+        if not (day_start <= eff < day_end):
             continue
-        a = _bucket(rid, ev.to_responsible_name)
-        a["leads_touched"] += 1
 
         is_new_visit = (
             bool(visit_ids)
             and ev.to_pipe_status_id in visit_ids
             and ev.from_pipe_status_id not in visit_ids
         )
+        if is_new_visit:
+            # Mas'ulsiz voqea operator kesimiga tushmaydi, lekin tashkilot
+            # jamida baribir haqiqiy tashrif — yo'qolmasin.
+            total_visits += 1
+
+        rid = ev.to_responsible_id
+        if rid is None:
+            continue
+        a = _bucket(rid, ev.to_responsible_name)
+        a["leads_touched"] += 1
+
         if not is_new_visit:
             continue
         a["visits"] += 1
@@ -268,7 +317,7 @@ async def daily_operator_breakdown(
             # User.crm_visit_external_id orqali haqiqiy ismga almashtiriladi
             # (boshqa "Boshqa operatorlar" holatlari bilan bir xil naqsh).
             _bucket(ev.first_responsible_id, None)["visits"] += 1
-    return agg
+    return agg, total_visits
 
 
 async def last_diff_tick_at(db: AsyncSession) -> datetime | None:

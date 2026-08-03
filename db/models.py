@@ -527,10 +527,11 @@ class LeadEvent(Base):
     `updatedTimestamp`ga asoslangan taxminiy hisobdan farqli, aniq "qachon,
     qaysi bosqichdan qaysi bosqichga, kimdan kimga o'tdi" voqeasi.
 
-    `detected_at` — bizning tizim buni PAYQAGAN vaqt (Asia/Tashkent kuni shu
-    asosida olinadi); CRM o'zi voqea vaqtini bermaydi, faqat joriy holatni
-    beradi — detektsiya vaqti haqiqiy o'zgarish vaqtiga eng yaqin taxmin
-    (poll oralig'i xatosi bilan, odatda bir necha daqiqa)."""
+    `detected_at` — bizning tizim buni PAYQAGAN vaqt. Kunlik kesimda voqea kuni
+    endi `crm_updated_ts` (CRM'ning o'z vaqti, bosqich o'tishida yangilanadi)
+    bo'yicha olinadi, `detected_at` faqat zaxira (`lead_diff._event_effective_utc`)
+    — skan kechikkanda (uzilish, tungi to'liq skan) tashrif noto'g'ri kunga
+    yozilmasligi uchun (2026-08-03 tuzatishi)."""
 
     __tablename__ = "lead_events"
 
