@@ -215,6 +215,9 @@ def _fcm_message(
     lekin telefon chalinmaydi.
     """
     payload = {"category": category, **(data or {})}
+    # Bosilganda ochiladigan sahifa — `data["path"]` chaqiruvchilardan keladi
+    # (masalan "/check-in"). Web push'da bu `fcm_options.link` orqali ishlaydi.
+    link = str(payload.get("path") or "/")
     return {
         "message": {
             "token": token,
@@ -228,6 +231,29 @@ def _fcm_message(
                     "channel_id": f"{category}_quiet" if quiet else category,
                     "default_sound": not quiet,
                 },
+            },
+            # Web/PWA (iPhone uchun asosiy yo'l). Android tokeniga bu blok
+            # e'tiborsiz qoladi va aksincha — FCM tokenning turiga qarab
+            # keragini oladi, shuning uchun ikkalasini birga yuborish xavfsiz.
+            "webpush": {
+                "headers": {
+                    # Tinch soatlarda past muhimlik — telefon chalinmaydi,
+                    # lekin xabar yetkaziladi (Android bilan bir xil qoida).
+                    "Urgency": "low" if quiet else "high",
+                    # 24 soat: telefon o'chiq bo'lsa ham ertalab yetib borsin.
+                    "TTL": "86400",
+                },
+                "notification": {
+                    "title": title,
+                    "body": body,
+                    "icon": "/icon-192.png",
+                    "badge": "/icon-192.png",
+                    # Toifa bo'yicha guruhlash: bir xil toifadagi eski xabar
+                    # yangisi bilan almashadi, ekran to'lib ketmaydi.
+                    "tag": category,
+                    "silent": quiet,
+                },
+                "fcm_options": {"link": link},
             },
         }
     }

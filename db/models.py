@@ -1442,7 +1442,9 @@ class PushToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    platform: Mapped[str] = mapped_column(String(10))  # android | ios
+    # android | ios | web. `web` — brauzer/PWA (iPhone uchun asosiy yo'l:
+    # iOS'da nativ ilova yo'q, xodim saytni bosh ekranga qo'shadi).
+    platform: Mapped[str] = mapped_column(String(10))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

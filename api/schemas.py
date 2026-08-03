@@ -1256,10 +1256,15 @@ class AdminAttendanceEditorGrant(BaseModel):
 
 
 class PushTokenIn(BaseModel):
-    """Expo push token (`ExponentPushToken[...]`) va platforma."""
+    """FCM qurilma tokeni va platforma.
+
+    `web` — brauzer/PWA tokeni (iPhone uchun asosiy yo'l: iOS'da nativ
+    ilovamiz yo'q, xodimlar saytni bosh ekranga qo'shib ishlatadi).
+    FCM web push tokenlari ham xuddi shu `messages:send` API orqali
+    yuboriladi, ya'ni backendda alohida yuborish yo'li kerak emas."""
 
     token: str = Field(min_length=10, max_length=255)
-    platform: str = Field(pattern="^(android|ios)$")
+    platform: str = Field(pattern="^(android|ios|web)$")
 
 
 class PushSettingsOut(BaseModel):

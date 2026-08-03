@@ -23,6 +23,7 @@ import type {
   ExplanationRequestRow,
   LocationExemptRow,
   OverrideAuditRow,
+  PushSettingsOut,
   OvertimeEntry,
   OvertimeProfile,
   OvertimeProfileInput,
@@ -459,6 +460,25 @@ export const api = {
       `/admin/users/${userId}/attendance-editor`,
       { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
     ),
+  // ── Push (brauzer/PWA) ──
+  // Shaxs FAQAT tokendan olinadi — mijoz `user_id` yubormaydi (backend
+  // `/me/push/...` ostida, `get_current_user` bilan).
+  registerPushToken: (token: string, platform: "web" | "android" | "ios") =>
+    apiFetch<{ ok: boolean }>("/me/push/token", {
+      method: "POST",
+      body: JSON.stringify({ token, platform }),
+    }),
+  unregisterPushToken: (token: string, platform: "web" | "android" | "ios") =>
+    apiFetch<{ ok: boolean }>("/me/push/token", {
+      method: "DELETE",
+      body: JSON.stringify({ token, platform }),
+    }),
+  pushSettings: () => apiFetch<PushSettingsOut>("/me/push/settings"),
+  updatePushSettings: (categories: Record<string, boolean>) =>
+    apiFetch<PushSettingsOut>("/me/push/settings", {
+      method: "PUT",
+      body: JSON.stringify({ categories }),
+    }),
   // Tushuntirish xatlari (sababsiz kelmagan kun) — HR ko'radi va qaror qiladi.
   listExplanations: (statusFilter?: string) =>
     apiFetch<ExplanationRequestRow[]>(

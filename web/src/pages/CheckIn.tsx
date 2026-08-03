@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { CheckCircle2, LogIn, LogOut, MapPin, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import LateStatusCard from "@/components/LateStatusCard";
+import PushEnableCard from "@/components/PushEnableCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -358,6 +359,11 @@ export default function CheckIn() {
           </div>
         </CardContent>
       </Card>
+
+      {/* iPhone uchun asosiy push yo'li — taklif aynan shu yerda, chunki
+          eslatma «Keldim/Ketdim» uchun kerak. Android APK ichida (embed)
+          ko'rsatilmaydi: u yerda nativ push bor. */}
+      <PushEnableCard />
 
       <LateStatusCard />
 

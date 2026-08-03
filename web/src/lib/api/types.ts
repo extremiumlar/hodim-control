@@ -673,6 +673,16 @@ export interface AttendanceEditorRow {
     `AttendanceEditorRow` bilan bir xil shakl, lekin boshqa ma'no. */
 export type LocationExemptRow = AttendanceEditorRow;
 
+/** Push toifalari sozlamasi. Nomlar SERVERDAN keladi — sayt va mobil ilova
+    ro'yxatni o'zi takrorlamasin (yangi toifa qo'shilganda ikki joyda
+    unutilib qolardi). */
+export interface PushSettingsOut {
+  categories: Record<string, boolean>;
+  labels: Record<string, string>;
+  quiet_from: number;
+  quiet_to: number;
+}
+
 /** Sababsiz kelmagan kun uchun tushuntirish xati. */
 export interface ExplanationRequestRow {
   id: number;
