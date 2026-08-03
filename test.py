@@ -3374,6 +3374,76 @@ def test_location_exempt_checkin() -> None:
         conn.close()
 
 
+def test_attendance_list_dates() -> None:
+    """«Yozuvlar» ro'yxatining sana filtri (2026-08-03 regressiyasi).
+
+    ⚠️ BU BUG LOKALDA TAKRORLANMAYDI: SQLite sanani matn sifatida saqlaydi va
+    satr bilan solishtirishga rozi bo'ladi. PostgreSQL esa rad etadi —
+    «operator does not exist: date >= character varying» — ya'ni jonli
+    serverda endpoint 500 qaytarardi va rahbar panelidagi jadval doim bo'sh
+    ko'rinardi. Shuning uchun bu test tipni EMAS, xulq-atvorni qo'riqlaydi:
+    (a) to'g'ri sana bilan 200 va oraliqdan tashqaridagi yozuv KIRMAYDI;
+    (b) noto'g'ri formatda 400 (ilgari 500 bo'lardi)."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("DAVOMAT RO'YXATI — SANA FILTRI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "boss/dasturchi/hr yo'q")
+        return
+    token = token_for(mgr[0], mgr[1])
+    if not token:
+        return
+
+    conn = db()
+    cur = conn.cursor()
+    today = date.today()
+    inside = (today - timedelta(days=2)).isoformat()
+    outside = (today - timedelta(days=40)).isoformat()
+    uid = None
+    try:
+        cur.execute(
+            "insert into users (full_name, role, is_active, bot_started, created_at)"
+            " values (?,?,1,0,datetime('now'))",
+            ("T-SanaFiltr", "employee"),
+        )
+        uid = cur.lastrowid
+        for d in (inside, outside):
+            cur.execute(
+                "insert into attendance (user_id, date, status, late_minutes,"
+                " early_leave_minutes, worked_minutes, is_weekend, created_at, updated_at)"
+                " values (?,?,?,0,0,0,0,datetime('now'),datetime('now'))",
+                (uid, d, "present"),
+            )
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=20) as c:
+            r = c.get(
+                "/attendance",
+                params={"user_id": uid, "date_from": (today - timedelta(days=7)).isoformat(),
+                        "date_to": today.isoformat()},
+                headers=auth(token),
+            )
+            check("sana oralig'i bilan 200 qaytdi", r.status_code == 200, f"status={r.status_code} {r.text[:120]}")
+            if r.status_code == 200:
+                dates = [row["date"] for row in r.json()]
+                check("oraliq ICHIDAGI yozuv keldi", inside in dates, f"dates={dates}")
+                check("oraliqdan TASHQARIDAGI yozuv kelmadi", outside not in dates, f"dates={dates}")
+
+            r2 = c.get("/attendance", params={"date_from": "03.08.2026"}, headers=auth(token))
+            check("noto'g'ri sana formatida 400 (500 EMAS)", r2.status_code == 400,
+                  f"status={r2.status_code}")
+    finally:
+        if uid is not None:
+            cur.execute("delete from attendance where user_id=?", (uid,))
+            cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        conn.close()
+
+
 def test_attendance_reminder() -> None:
     """«Keldim/Ketdim bosishni unutmang» eslatmasi (D-bo'lim, 2026-08-03).
 
@@ -3902,6 +3972,11 @@ def main() -> None:
         test_location_exempt_checkin()
     except Exception:
         print("Bez-lokatsiya check-in testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_attendance_list_dates()
+    except Exception:
+        print("Davomat ro'yxati sana filtri testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_attendance_reminder()

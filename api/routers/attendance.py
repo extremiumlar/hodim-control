@@ -396,13 +396,28 @@ async def list_attendance(
     _actor: User = Depends(_require_manager),
     db: AsyncSession = Depends(get_db),
 ) -> list[AttendanceOut]:
+    # Sana SATR emas, `date` obyektiga aylantirilishi SHART.
+    #
+    # NEGA: `Attendance.date` — DATE ustuni. SQLite'da satr bilan solishtirish
+    # ishlardi (u sanani ham matn sifatida saqlaydi), PostgreSQL esa buni
+    # RAD ETADI: «operator does not exist: date >= character varying». Ya'ni
+    # PG'ga o'tgandan keyin bu endpoint 500 qaytara boshladi va rahbar
+    # panelidagi «Yozuvlar» jadvali doim bo'sh ko'rinardi — davomatni qo'lda
+    # tuzatib bo'lmaslikning ASL sababi shu edi (bosish uchun qator yo'q).
+    # `/readiness` da aynan shu naqsh allaqachon to'g'ri qilingan.
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sana formati «YYYY-MM-DD» bo'lishi kerak")
+
     q = select(Attendance, User.full_name).join(User, Attendance.user_id == User.id)
     if user_id is not None:
         q = q.where(Attendance.user_id == user_id)
-    if date_from:
-        q = q.where(Attendance.date >= date_from)
-    if date_to:
-        q = q.where(Attendance.date <= date_to)
+    if start:
+        q = q.where(Attendance.date >= start)
+    if end:
+        q = q.where(Attendance.date <= end)
     if status_filter:
         q = q.where(Attendance.status == status_filter)
     q = q.order_by(Attendance.date.desc(), Attendance.check_in_time.desc())
