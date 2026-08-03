@@ -57,24 +57,58 @@ def _build_target():
         # eski kesh yangi model bilan aralashadi.
         MODEL_CACHE = "public, max-age=2592000"  # 30 kun, /assets bilan bir xil
 
+        # index.html'ga UZOQ KESH QO'YILMASIN.
+        #
+        # NEGA: /assets/* fayllari nomida hash bor va ularga 30 kunlik kesh
+        # tushadi — bu to'g'ri, chunki mazmun o'zgarsa NOM ham o'zgaradi.
+        # index.html esa aksincha: nomi doim bir xil, ichida esa o'sha hash'li
+        # nomlar turadi. Unga hech qanday Cache-Control tushmasa, brauzer
+        # evristikaga o'tadi (odatda Last-Modified'dan beri o'tgan vaqtning
+        # ~10%) va uni serverdan SO'RAMASDAN keshdan beradi. Natijada:
+        # deploy bo'ladi, lekin xodim eski index.html -> eski chunk'larni
+        # ko'raveradi va "yangilik chiqmayapti" deydi. AYNAN SHU HOLAT
+        # 03.08.2026 da HR panelida sodir bo'ldi.
+        #
+        # "no-cache" = "keshla, lekin har safar serverdan tasdiqla". ETag
+        # bor, ya'ni o'zgarmagan bo'lsa 304 qaytadi — trafik ortmaydi,
+        # faqat bitta yengil so'rov qo'shiladi.
+        NO_STORE_HASHLESS = "no-cache"
+
+        # Nomida hash BO'LMAGAN, ildizdan beriladigan fayllar. Service worker
+        # ham shu ro'yxatda: brauzer uni odatda o'zi qayta tekshiradi, lekin
+        # LiteSpeed .js kengaytmasiga max-age qo'yib yuborishi mumkin va
+        # o'shanda push sozlamasi eski SW'da qotib qolardi.
+        HASHLESS_FILES = {"index.html", "firebase-messaging-sw.js", "manifest.webmanifest"}
+
         class SPAStaticFiles(StaticFiles):
             """React Router uchun: mavjud bo'lmagan yo'lda 404 o'rniga index.html
             qaytaradi (masalan /attendance to'g'ridan-to'g'ri ochilganda).
-            Yuz modellariga esa uzoq kesh sarlavhasini qo'yadi."""
+            Yuz modellariga uzoq, hash'siz fayllarga esa qisqa kesh qo'yadi."""
 
             async def get_response(self, path, scope):
                 try:
                     response = await super().get_response(path, scope)
                 except StarletteHTTPException as exc:
                     if exc.status_code == 404:
-                        return await super().get_response("index.html", scope)
+                        # Fallback ham aynan index.html — kesh sarlavhasi
+                        # shu yerda ham qo'yilishi SHART, aks holda
+                        # /attendance kabi yo'llar keshda qotib qolardi.
+                        response = await super().get_response("index.html", scope)
+                        response.headers["Cache-Control"] = NO_STORE_HASHLESS
+                        return response
                     raise
                 # Starlette `path`ni os.path.normpath bilan quradi — Windows'da
                 # u "models\\..." bo'ladi, Linux'da "models/...". Serverda
                 # Linux, lekin OS'ga bog'liq tekshiruv yozmaymiz (lokal sinov
                 # ham ishlasin).
-                if path.replace("\\", "/").startswith("models/"):
+                clean = path.replace("\\", "/")
+                if clean.startswith("models/"):
                     response.headers["Cache-Control"] = MODEL_CACHE
+                # `html=True` bo'lgani uchun "/" so'rovi bu yerga "." bo'lib
+                # keladi, "/index.html" esa "index.html" bo'lib — ikkalasi ham
+                # o'sha faylni beradi, ikkalasi ham qamralishi kerak.
+                elif clean in HASHLESS_FILES or clean in (".", ""):
+                    response.headers["Cache-Control"] = NO_STORE_HASHLESS
                 return response
 
         # docs_url/redoc_url/openapi_url ATAYLAB o'chirilgan. `api/main.py`
