@@ -10,6 +10,7 @@ import {
   Hourglass,
   LogIn,
   Pencil,
+  Plus,
   RefreshCw,
   Trash2,
   UserX,
@@ -35,6 +36,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   type Attendance as AttendanceRow,
@@ -53,6 +61,7 @@ import {
   useDeleteAttendance,
   useAdminManualAttendance,
   useManualAttendance,
+  useUsers,
 } from "@/lib/queries";
 import { fmtLocalTime as fmtTime } from "@/lib/utils";
 
@@ -64,45 +73,76 @@ function toHm(iso: string | null): string {
 // Davomat yozuvini qo'lda tuzatish — HR/Boshliq (backend ATTENDANCE_EDIT_ROLES).
 // Vaqtlar mahalliy devor-soati bo'yicha yuboriladi; kechikish/ishlangan vaqtni
 // server ish jadvalidan qayta hisoblaydi, shuning uchun bu yerda ular yo'q.
+//
+// IKKI REJIM, BITTA DIALOG:
+//   `row` bor  -> mavjud yozuvni tuzatish (jadvaldagi qalam tugmasi);
+//   `row` null -> YANGI yozuv (xodim va sana shu yerda tanlanadi).
+// Nega birlashtirildi: backend `apply_manual_attendance` allaqachon "bo'lmasa
+// yaratadi" mantig'ida, ya'ni ikkalasi bitta so'rov. Alohida dialog qilinsa,
+// vaqt/sabab/tekshiruv qoidalari ikki joyda takrorlanib, biri unutilardi.
+//
+// Yangi yozuv rejimi NEGA KERAK: xodim kun davomida umuman «Keldim» bosmagan
+// bo'lsa, jadvalda uning qatori YO'Q (bo'sh yozuv faqat kechqurun yaratiladi)
+// — ya'ni tuzatish uchun bosadigan qalam ham yo'q edi.
 function EditAttendanceDialog({
+  open,
   row,
   onClose,
   silent = false,
 }: {
+  open: boolean;
+  /** null — yangi yozuv rejimi. */
   row: AttendanceRow | null;
   onClose: () => void;
   /** Dasturchi rejimi: AUDITSIZ endpoint, sabab so'ralmaydi (hech qayerga
       yozilmaydi). Egasining aniq talabi — "auditlarga tushmasdan". */
   silent?: boolean;
 }) {
+  const creating = row === null;
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
+  const [newUserId, setNewUserId] = useState("");
+  const [newDate, setNewDate] = useState("");
   const audited = useManualAttendance();
   const silentMutation = useAdminManualAttendance();
   const mutation = silent ? silentMutation : audited;
 
+  // Xodim ro'yxati faqat yangi yozuv rejimida kerak — tuzatishda xodim
+  // qatordan ma'lum.
+  const usersQuery = useUsers();
+
   // Yangi qator tanlanganda maydonlarni o'sha yozuv qiymatlari bilan to'ldiramiz.
+  // Dialog OCHILISHIGA ham bog'liq: yangi yozuv rejimida `row` doim null
+  // bo'lgani uchun `[row]` o'zgarmasdi va ikkinchi ochilishda eski qiymatlar
+  // qolib ketardi.
   useEffect(() => {
+    if (!open) return;
     setCheckIn(toHm(row?.check_in_time ?? null));
     setCheckOut(toHm(row?.check_out_time ?? null));
     setNote(row?.note ?? "");
     setReason("");
-  }, [row]);
+    setNewUserId("");
+    setNewDate(format(new Date(), "yyyy-MM-dd"));
+  }, [row, open]);
 
   // Jim rejimda sabab umuman so'ralmaydi — u hech qayerga yozilmaydi,
   // ya'ni majburlash faqat ortiqcha qadam bo'lardi.
   const reasonTooShort = !silent && reason.trim().length < 5;
   const invalidOrder = !!checkIn && !!checkOut && checkOut <= checkIn;
   const outWithoutIn = !!checkOut && !checkIn;
+  // Yangi yozuvda xodim va sana majburiy — ularsiz nimaga yozilishi noma'lum.
+  const targetMissing = creating && (!newUserId || !newDate);
 
   return (
-    <Dialog open={row !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {row?.user_full_name} — {row ? format(new Date(row.date), "dd.MM.yyyy") : ""}
+            {creating
+              ? "Yangi davomat yozuvi"
+              : `${row?.user_full_name} — ${row ? format(new Date(row.date), "dd.MM.yyyy") : ""}`}
           </DialogTitle>
           <DialogDescription>
             Face ID/GPS ishlamagan yoki xodim bosishni unutgan kunni tuzatish — yozuv
@@ -120,6 +160,40 @@ function EditAttendanceDialog({
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
+          {creating && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="att-user">
+                  Xodim <span className="text-rose-600">*</span>
+                </Label>
+                <Select value={newUserId} onValueChange={setNewUserId}>
+                  <SelectTrigger id="att-user">
+                    <SelectValue placeholder="Tanlang..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {usersQuery.data?.map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="att-date">
+                  Sana <span className="text-rose-600">*</span>
+                </Label>
+                <Input
+                  id="att-date"
+                  type="date"
+                  value={newDate}
+                  onChange={(e) => setNewDate(e.target.value)}
+                  max={format(new Date(), "yyyy-MM-dd")}
+                />
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="att-in">Keldim</Label>
@@ -183,14 +257,16 @@ function EditAttendanceDialog({
           </Button>
           <Button
             disabled={
-              !row || reasonTooShort || invalidOrder || outWithoutIn || mutation.isPending
+              targetMissing || reasonTooShort || invalidOrder || outWithoutIn || mutation.isPending
             }
             onClick={() => {
-              if (!row) return;
+              const targetId = row ? row.user_id : Number(newUserId);
+              const targetDay = row ? row.date : newDate;
+              if (!targetId || !targetDay) return;
               mutation.mutate(
                 {
-                  user_id: row.user_id,
-                  date: row.date,
+                  user_id: targetId,
+                  date: targetDay,
                   check_in: checkIn || null,
                   check_out: checkOut || null,
                   note: note.trim() || null,
@@ -448,6 +524,8 @@ export default function Attendance() {
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
   const [deleting, setDeleting] = useState<AttendanceRow | null>(null);
   const [editing, setEditing] = useState<AttendanceRow | null>(null);
+  // Yangi yozuv dialogi — `editing` null qolgani uchun alohida bayroq kerak.
+  const [adding, setAdding] = useState(false);
 
   const dashQuery = useAttendanceDashboard();
   const listQuery = useAttendanceList({ date_from: dateFrom, date_to: dateTo });
@@ -675,6 +753,14 @@ export default function Attendance() {
               setDateTo(t);
             }}
           />
+          {/* Xodim umuman bosmagan kun uchun — o'sha kun jadvalda qator
+              sifatida umuman yo'q, ya'ni tuzatish uchun bosadigan joy yo'q. */}
+          {canEdit && (
+            <Button variant="outline" size="sm" className="ml-auto" onClick={() => setAdding(true)}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              Yozuv qo'shish
+            </Button>
+          )}
         </div>
         <DataTable
           columns={rowColumns}
@@ -689,8 +775,12 @@ export default function Attendance() {
 
       {canEdit && (
         <EditAttendanceDialog
+          open={editing !== null || adding}
           row={editing}
-          onClose={() => setEditing(null)}
+          onClose={() => {
+            setEditing(null);
+            setAdding(false);
+          }}
           silent={isDasturchi}
         />
       )}
