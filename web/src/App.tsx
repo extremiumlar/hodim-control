@@ -71,6 +71,17 @@ function ManagerRoute({ children }: { children: JSX.Element }) {
   return children;
 }
 
+// Davomat sahifasi: rahbarlar + Dasturchi SHAXSAN davomat tuzatish huquqini
+// bergan odamlar. Oddiy xodimga huquq berilgan bo'lsa, u ham shu sahifaga
+// kira olishi kerak — aks holda huquq bor, lekin ishlatadigan joyi yo'q.
+function AttendanceRoute({ children }: { children: JSX.Element }) {
+  const { user } = useAuth();
+  if (!isManager(user?.role) && !user?.can_edit_attendance) {
+    return <Navigate to="/check-in" replace />;
+  }
+  return children;
+}
+
 // Payroll sozlash/hisoblash sahifalari: ROP ham "rahbar", lekin bu yerga kira
 // olmaydi — payslip ro'yxatini o'z jamoasi uchun /payroll'da ko'radi.
 function PayrollManageRoute({ children }: { children: JSX.Element }) {
@@ -148,7 +159,7 @@ export default function App() {
               bu yerda yangi sahifa emas — faqat xodimga yo'l ochiladi. */}
           <Route path="me/lead-stats" element={<LeadStats />} />
           <Route path="me/excused" element={<MeExcused />} />
-          <Route path="attendance" element={<ManagerRoute><Attendance /></ManagerRoute>} />
+          <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />

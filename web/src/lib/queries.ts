@@ -69,6 +69,7 @@ export const qk = {
   myExcusedDays: ["excused-days", "me"] as const,
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
+  attendanceEditors: ["admin", "attendance-editors"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -573,3 +574,18 @@ export const useForceRoleAdmin = () =>
 
 export const useOverrideAudit = () =>
   useQuery({ queryKey: qk.adminAudit, queryFn: api.listOverrideAudit });
+
+// Dasturchi jim tuzatishi — AUDITSIZ, shuning uchun qk.adminAudit
+// ATAYLAB invalidatsiya qilinmaydi (u yerda yangi yozuv paydo bo'lmaydi).
+export const useAdminManualAttendance = () =>
+  useApiMutation(api.adminManualAttendance, [["attendance"]]);
+
+export const useAttendanceEditors = () =>
+  useQuery({ queryKey: qk.attendanceEditors, queryFn: api.listAttendanceEditors });
+
+export const useSetAttendanceEditor = () =>
+  useApiMutation(
+    ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
+      api.setAttendanceEditor(userId, granted, reason),
+    [qk.attendanceEditors, ["users"], qk.adminAudit]
+  );

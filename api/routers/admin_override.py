@@ -20,7 +20,14 @@ from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_dasturchi
-from api.schemas import AdminForceRole, AdminNormSet, AdminOverrideReason, AdminRecordPatch
+from api.schemas import (
+    AdminAttendanceEditorGrant,
+    AdminAttendanceManualUpdate,
+    AdminForceRole,
+    AdminNormSet,
+    AdminOverrideReason,
+    AdminRecordPatch,
+)
 from api.services.payroll import PayrollLocked, run_payroll
 from api.timeutil import today_local
 from db.models import (
@@ -517,6 +524,97 @@ async def recalculate_attendance(
     )
     await db.commit()
     return {"recalculated": recalculated}
+
+
+@router.put("/attendance/manual")
+async def admin_manual_attendance(
+    payload: AdminAttendanceManualUpdate,
+    _: User = Depends(require_dasturchi),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Davomat keldi/ketdi vaqtini QO'LDA tuzatadi — **AUDITSIZ va JIM**.
+
+    ⚠️ Bu endpoint shu modulning 4-tamoyilidan (11.2-band, "Cheklovsizlik ≠
+    izsizlik") ATAYLAB chetga chiqadi: egasining aniq talabi — Dasturchi
+    tuzatishi "auditlarga tushmasdan" bo'lsin. Shuning uchun bu yerda
+    `_log_override` chaqirilmaydi va hech qanday `AuditLog` yozilmaydi.
+    Bot xabari ham yuborilmaydi (davomat tahririda umuman bot xabari yo'q —
+    faqat shu holat saqlanadi).
+
+    Oqibati ochiq aytilgan: bu vaqtni kim/qachon o'zgartirgani keyinchalik
+    HECH QAYERDAN bilib bo'lmaydi. Davomat oylik va kechikish jarimasini
+    belgilagani uchun, nizo chiqsa tiklab bo'lmaydi.
+
+    Audit KERAK bo'lgan variant — `PUT /attendance/manual` (HR/Boshliq va
+    shaxsan ruxsat berilgan odamlar; ular uchun audit saytda ko'rinadi).
+
+    Xuddi `/attendance/manual` kabi yozuvni YARATADI ham — xodim «Keldim»
+    bosishni unutgan kun uchun yangi yozuv ochiladi."""
+    from api.routers.attendance import apply_manual_attendance
+
+    target = await db.get(User, payload.user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    att, _before, created = await apply_manual_attendance(db, payload, target)
+    await db.commit()
+    await db.refresh(att)
+    return {
+        "id": att.id,
+        "user_id": att.user_id,
+        "date": att.date.isoformat(),
+        "check_in_time": att.check_in_time.isoformat() if att.check_in_time else None,
+        "check_out_time": att.check_out_time.isoformat() if att.check_out_time else None,
+        "late_minutes": att.late_minutes,
+        "worked_minutes": att.worked_minutes,
+        "status": att.status,
+        "created": created,
+        "audited": False,
+    }
+
+
+@router.get("/attendance-editors")
+async def list_attendance_editors(
+    _: User = Depends(require_dasturchi), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """Davomat vaqtini tuzatish huquqi SHAXSAN berilgan odamlar ro'yxati.
+    Roli bo'yicha huquqi borlar (hr/boss/dasturchi) bu ro'yxatga kirmaydi —
+    ularga bayroq kerak emas."""
+    rows = list(
+        await db.scalars(
+            select(User).where(User.can_edit_attendance.is_(True)).order_by(User.full_name)
+        )
+    )
+    return [{"id": u.id, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in rows]
+
+
+@router.post("/users/{user_id}/attendance-editor")
+async def set_attendance_editor(
+    user_id: int,
+    payload: AdminAttendanceEditorGrant,
+    actor: User = Depends(require_dasturchi),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Davomat vaqtini tuzatish huquqini beradi/olib qo'yadi (faqat Dasturchi).
+
+    DIQQAT — bu amalning O'ZI audit jurnaliga YOZILADI (tuzatishlardan
+    farqli). Sabab: bu vaqt tuzatish emas, HUQUQ berish; kimga qachon
+    berilgani bilinmasa, keyinchalik "bu odam nega tahrirlay olyapti?"
+    degan savolga javob qolmaydi. Egasi jim bo'lishini so'ragan narsa —
+    vaqt tuzatishning o'zi edi."""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = bool(target.can_edit_attendance)
+    target.can_edit_attendance = payload.granted
+    await _log_override(
+        db, actor, "attendance_editor_set", user_id,
+        {"can_edit_attendance": before}, {"can_edit_attendance": payload.granted},
+        payload.override_reason,
+    )
+    await db.commit()
+    return {"user_id": user_id, "can_edit_attendance": payload.granted}
 
 
 @router.post("/users/{user_id}/force-role")

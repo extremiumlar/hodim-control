@@ -3092,6 +3092,169 @@ def test_hr_wide_employee_access() -> None:
         conn.close()
 
 
+def test_attendance_edit_rights() -> None:
+    """Davomat keldi/ketdi vaqtini tuzatish huquqlari (egasining 2026-08-03 talabi):
+
+    1. Dasturchi `PUT /admin/attendance/manual` — AUDITSIZ va jim
+       (`AuditLog` yozuvi UMUMAN yaratilmaydi).
+    2. Oddiy `PUT /attendance/manual` — audit YOZADI (saytda ko'rinsin).
+    3. Huquq SHAXSAN beriladi (`can_edit_attendance`): roli hr/boss/dasturchi
+       bo'lmagan odam ham tuzata oladi.
+    4. Bayroq bilan tahrirlayotgan odam O'Z yozuvini tuzata OLMAYDI.
+    5. Bayroqsiz va roli yo'q odam -> 403.
+    6. Yozuv bo'lmasa YARATILADI («Keldim» bosish esidan chiqqan holat)."""
+    import httpx
+
+    from api.config import settings
+
+    print("\n" + "=" * 60)
+    print("DAVOMAT TUZATISH HUQUQLARI (dasturchi jim + shaxsiy ruxsat)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    DAY = "2020-09-09"
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-AttEdit%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from attendance where user_id in ({qm})", stale)
+        cur.execute(f"delete from work_schedule_weekly where user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, can_edit_attendance, created_at)"
+        " values (999903001,'T-AttEdit-Dev','dasturchi',1,1,0,datetime('now'))")
+    dev_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, can_edit_attendance, created_at)"
+        " values (999903002,'T-AttEdit-Emp','employee',1,1,0,datetime('now'))")
+    emp_uid = cur.lastrowid
+    # Bayroq bilan ruxsat berilgan ODDIY XODIM (roli bo'yicha huquqi yo'q)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, can_edit_attendance, created_at)"
+        " values (999903003,'T-AttEdit-Granted','employee',1,1,1,datetime('now'))")
+    granted_uid = cur.lastrowid
+    # Huquqsiz oddiy xodim
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, can_edit_attendance, created_at)"
+        " values (999903004,'T-AttEdit-NoRight','employee',1,1,0,datetime('now'))")
+    noright_uid = cur.lastrowid
+    for uid in (emp_uid, granted_uid):
+        cur.execute(
+            "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+            " select ?, wd, 1, '09:00', '18:00', datetime('now') from (select 0 wd union select 1 union select 2"
+            " union select 3 union select 4 union select 5 union select 6)", (uid,))
+    conn.commit()
+
+    def cleanup_ae():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [dev_uid, emp_uid, granted_uid, noright_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from attendance where user_id in ({qm})", uids)
+            c2.execute(f"delete from work_schedule_weekly where user_id in ({qm})", uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Davomat huquqi tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    def audit_count(uid: int) -> int:
+        c = db()
+        try:
+            return c.execute(
+                "select count(*) from audit_logs where target_user_id=? and action='attendance_manual_edit'", (uid,)
+            ).fetchone()[0]
+        finally:
+            c.close()
+
+    try:
+        dev_t = token_for(dev_uid, "dasturchi")
+        granted_t = token_for(granted_uid, "employee")
+        noright_t = token_for(noright_uid, "employee")
+
+        with httpx.Client(timeout=15) as client:
+            # ── 1. Dasturchi JIM tuzatishi: yozuv YARATILADI, audit YO'Q ──
+            before_audit = audit_count(emp_uid)
+            r = client.put(
+                f"{API_BASE}/admin/attendance/manual", headers=auth(dev_t),
+                json={"user_id": emp_uid, "date": DAY, "check_in": "09:25", "check_out": "18:00"},
+            )
+            check("Dasturchi jim tuzatish -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            body = r.json() if r.status_code == 200 else {}
+            check("Yozuv YARATILDI (bosish esidan chiqqan holat)", body.get("created") is True, f"={body}")
+            check("Kechikish qayta hisoblandi (09:25 -> 25 daq)", body.get("late_minutes") == 25, f"={body}")
+            check("Javobda audited=False", body.get("audited") is False, f"={body}")
+            check("AuditLog yozuvi YARATILMADI (jim)", audit_count(emp_uid) == before_audit,
+                  f"oldin={before_audit} keyin={audit_count(emp_uid)}")
+
+            # ── 2. Shaxsan ruxsat berilgan XODIM tuzata oladi + audit YOZILADI ──
+            before_audit = audit_count(emp_uid)
+            r = client.put(
+                f"{API_BASE}/attendance/manual", headers=auth(granted_t),
+                json={"user_id": emp_uid, "date": DAY, "check_in": "09:00", "check_out": "18:00",
+                      "reason": "T-sinov: bayroq bilan tuzatish"},
+            )
+            check("Bayroq berilgan xodim tuzata oladi -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
+            check("Kechikish 0 ga tushdi (09:00)", r.status_code == 200 and r.json().get("late_minutes") == 0,
+                  f"={r.json() if r.status_code == 200 else None}")
+            check("AuditLog YOZILDI (saytda ko'rinsin)", audit_count(emp_uid) == before_audit + 1,
+                  f"oldin={before_audit} keyin={audit_count(emp_uid)}")
+
+            # ── 3. O'Z yozuvini tuzata OLMAYDI ──
+            r = client.put(
+                f"{API_BASE}/attendance/manual", headers=auth(granted_t),
+                json={"user_id": granted_uid, "date": DAY, "check_in": "09:00",
+                      "reason": "T-sinov: o'zimniki"},
+            )
+            check("Bayroq egasi O'Z yozuvini tuzata OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # ── 4. Huquqsiz xodim -> 403 ──
+            r = client.put(
+                f"{API_BASE}/attendance/manual", headers=auth(noright_t),
+                json={"user_id": emp_uid, "date": DAY, "check_in": "10:00", "reason": "T-sinov: ruxsatsiz"},
+            )
+            check("Huquqsiz xodim -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = client.put(
+                f"{API_BASE}/admin/attendance/manual", headers=auth(granted_t),
+                json={"user_id": emp_uid, "date": DAY, "check_in": "10:00"},
+            )
+            check("Bayroq egasi JIM endpointga kira OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # ── 5. Huquq berish/olish (faqat Dasturchi) + audit ──
+            r = client.post(
+                f"{API_BASE}/admin/users/{noright_uid}/attendance-editor", headers=auth(dev_t),
+                json={"granted": True, "override_reason": "T-sinov: huquq berish"},
+            )
+            check("Dasturchi huquq beradi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            c = db()
+            flag = c.execute("select can_edit_attendance from users where id=?", (noright_uid,)).fetchone()[0]
+            c.close()
+            check("Bayroq bazada 1 bo'ldi", flag == 1, f"={flag}")
+
+            r = client.get(f"{API_BASE}/admin/attendance-editors", headers=auth(dev_t))
+            names = [x["full_name"] for x in r.json()] if r.status_code == 200 else []
+            check("Ro'yxatda yangi huquq egasi bor", "T-AttEdit-NoRight" in names, f"={names}")
+
+            r = client.post(
+                f"{API_BASE}/admin/users/{noright_uid}/attendance-editor", headers=auth(granted_t),
+                json={"granted": True, "override_reason": "T-sinov: ruxsatsiz berish"},
+            )
+            check("Dasturchi bo'lmagan huquq bera OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+    except Exception:
+        check("Davomat tuzatish huquqlari (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_ae()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3158,6 +3321,11 @@ def main() -> None:
         test_hr_wide_employee_access()
     except Exception:
         print("HR keng qamrov testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_attendance_edit_rights()
+    except Exception:
+        print("Davomat tuzatish huquqlari testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

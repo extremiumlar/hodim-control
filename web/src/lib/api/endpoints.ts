@@ -19,6 +19,7 @@ import type {
   LeadStageMonth,
   Office,
   OperatorSummary,
+  AttendanceEditorRow,
   OverrideAuditRow,
   OvertimeEntry,
   OvertimeProfile,
@@ -72,9 +73,17 @@ export const api = {
     apiFetch<LateStatRow[]>(`/attendance/late-stats?days=${days}`),
   deleteAttendance: (attendanceId: number) =>
     apiFetch<{ deleted: boolean }>(`/attendance/${attendanceId}`, { method: "DELETE" }),
-  // HR/Boshliq qo'lda tuzatishi — Face ID/GPS ishlamay qolgan kunlar uchun.
+  // HR/Boshliq (va shaxsan ruxsat berilganlar) qo'lda tuzatishi — Face ID/GPS
+  // ishlamay qolgan yoki xodim bosishni unutgan kunlar uchun. Audit yoziladi.
   manualAttendance: (data: ManualAttendancePayload) =>
     apiFetch<Attendance>("/attendance/manual", { method: "PUT", body: JSON.stringify(data) }),
+  // Dasturchi varianti — AUDITSIZ va jim (egasining aniq talabi). Sabab
+  // so'ralmaydi, chunki hech qayerga yozilmaydi.
+  adminManualAttendance: (data: ManualAttendancePayload) =>
+    apiFetch<{ id: number; created: boolean; audited: boolean }>("/admin/attendance/manual", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   attendanceReadiness: (params: { date_from?: string; date_to?: string } = {}) => {
     const q = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
@@ -440,4 +449,12 @@ export const api = {
       body: JSON.stringify({ role, override_reason: reason }),
     }),
   listOverrideAudit: () => apiFetch<OverrideAuditRow[]>("/admin/audit/overrides"),
+  // Davomat vaqtini tuzatish huquqi SHAXSAN berilganlar (rol bo'yicha
+  // huquqi borlar — hr/boss/dasturchi — bu ro'yxatga kirmaydi).
+  listAttendanceEditors: () => apiFetch<AttendanceEditorRow[]>("/admin/attendance-editors"),
+  setAttendanceEditor: (userId: number, granted: boolean, reason: string) =>
+    apiFetch<{ user_id: number; can_edit_attendance: boolean }>(
+      `/admin/users/${userId}/attendance-editor`,
+      { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
+    ),
 };

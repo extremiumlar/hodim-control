@@ -94,6 +94,9 @@ class UserOut(BaseModel):
     bot_started: bool
     is_active: bool
     is_seat: bool = False
+    # Frontend shu bayroqqa qarab davomat tahriri tugmasini ko'rsatadi
+    # (rol bo'yicha huquqi bo'lmagan, lekin shaxsan ruxsat berilgan odam uchun).
+    can_edit_attendance: bool = False
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
@@ -800,6 +803,17 @@ class AttendanceManualUpdate(BaseModel):
         return v
 
 
+class AdminAttendanceManualUpdate(AttendanceManualUpdate):
+    """Dasturchining JIM tuzatishi — `reason` MAJBURIY EMAS.
+
+    Sababi: bu endpoint hech qanday `AuditLog` yozmaydi (egasining talabi
+    "auditlarga tushmasdan"), ya'ni sabab yozilib qoladigan joy YO'Q.
+    Uni baribir majburiy qilish — hech qayerga bormaydigan matnni yozishga
+    majburlash bo'lardi. Vaqt formati tekshiruvi ota sinfdan meros qoladi."""
+
+    reason: str = ""
+
+
 class ReadinessIssue(BaseModel):
     """Davomat ma'lumotidagi bitta "e'tibor bering" holati."""
 
@@ -1219,6 +1233,14 @@ class AdminRecordPatch(BaseModel):
 
 class AdminForceRole(BaseModel):
     role: str
+    override_reason: str = Field(min_length=5, max_length=500)
+
+
+class AdminAttendanceEditorGrant(BaseModel):
+    """Davomat vaqtini tuzatish huquqini berish/olib qo'yish (faqat Dasturchi).
+    Sabab majburiy — huquq berish auditga tushadi (tuzatishning O'ZI emas)."""
+
+    granted: bool
     override_reason: str = Field(min_length=5, max_length=500)
 
 

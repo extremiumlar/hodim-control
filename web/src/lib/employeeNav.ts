@@ -20,6 +20,7 @@ import {
   ListTodo,
   Target,
   TrendingUp,
+  PencilLine,
   UserCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -58,6 +59,8 @@ interface NavContext {
   metrics: string[];
   hasSalesMetric: boolean;
   hasTrackableMetric: boolean;
+  /** Dasturchi shaxsan bergan davomat tuzatish huquqi. */
+  canEditAttendance: boolean;
 }
 
 function buildContext(user: User): NavContext {
@@ -72,6 +75,7 @@ function buildContext(user: User): NavContext {
     metrics,
     hasSalesMetric: metrics.some((m) => SALES_METRICS.includes(m)),
     hasTrackableMetric: metrics.some((m) => TRACKABLE_METRICS.includes(m)),
+    canEditAttendance: !!user.can_edit_attendance,
   };
 }
 
@@ -87,6 +91,16 @@ export const EMPLOYEE_SECTIONS: EmployeeSection[] = [
     to: "/check-in",
     icon: UserCheck,
     visible: () => true,
+  },
+  {
+    // Dasturchi shaxsan huquq bergan xodim uchun — boshqalarning keldi/ketdi
+    // vaqtini tuzatish sahifasi. Rahbarlarga bu yerda kerak emas: ular
+    // sidebar orqali kiradi (bu ro'yxat faqat xodim qobig'i uchun).
+    key: "attendance-edit",
+    label: "Davomat tuzatish",
+    to: "/attendance",
+    icon: PencilLine,
+    visible: (ctx) => ctx.canEditAttendance,
   },
   {
     key: "schedule",

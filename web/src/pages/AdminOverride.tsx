@@ -36,7 +36,9 @@ import {
   useDeleteAdminRecord,
   useDeletePayrollPeriodAdmin,
   useForceRecalculatePayrollAdmin,
+  useAttendanceEditors,
   useForceRoleAdmin,
+  useSetAttendanceEditor,
   useOverrideAudit,
   usePatchAdminRecord,
   usePatchPayslipAdmin,
@@ -672,6 +674,12 @@ function SystemTab({ editMode }: { editMode: boolean }) {
   const [newRole, setNewRole] = useState("employee");
   const [roleOpen, setRoleOpen] = useState(false);
 
+  const editorsQuery = useAttendanceEditors();
+  const setEditor = useSetAttendanceEditor();
+  const [grantUserId, setGrantUserId] = useState<number | null>(null);
+  const [grantValue, setGrantValue] = useState(true);
+  const [grantOpen, setGrantOpen] = useState(false);
+
   if (!editMode) {
     return (
       <p className="text-sm text-slate-500">
@@ -745,6 +753,100 @@ function SystemTab({ editMode }: { editMode: boolean }) {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Davomat tuzatish huquqi</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Tanlangan odam boshqa xodimlarning keldi/ketdi vaqtini tuzata oladi (yozuv
+            bo'lmasa yaratadi ham). <b>O'z yozuvini tuzata olmaydi.</b> Uning tuzatishlari
+            audit jurnalida saytda ko'rinadi, botga xabar ketmaydi. HR/Boshliq/Dasturchida
+            bu huquq roli bo'yicha allaqachon bor — ularga berish shart emas.
+          </p>
+          <div>
+            <Label>Xodim</Label>
+            <Select
+              value={grantUserId ? String(grantUserId) : undefined}
+              onValueChange={(v) => setGrantUserId(Number(v))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {(usersQuery.data ?? [])
+                  .filter((u) => !["hr", "boss", "dasturchi"].includes(u.role))
+                  .map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {u.full_name} ({u.role}){u.can_edit_attendance ? " — huquqi bor" : ""}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={!grantUserId}
+              onClick={() => { setGrantValue(true); setGrantOpen(true); }}
+            >
+              Huquq berish
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!grantUserId}
+              onClick={() => { setGrantValue(false); setGrantOpen(true); }}
+            >
+              Olib qo'yish
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-1 text-xs font-medium text-slate-500">
+              Hozir huquqi borlar (shaxsan berilgan)
+            </div>
+            {editorsQuery.isLoading ? (
+              <div className="text-xs text-slate-400">Yuklanmoqda...</div>
+            ) : (editorsQuery.data ?? []).length === 0 ? (
+              <div className="text-xs text-slate-400">Hech kimga berilmagan.</div>
+            ) : (
+              <ul className="space-y-1 text-sm">
+                {(editorsQuery.data ?? []).map((e) => (
+                  <li key={e.id} className="flex items-center justify-between">
+                    <span>
+                      {e.full_name}{" "}
+                      <span className="text-xs text-slate-400">({e.role})</span>
+                    </span>
+                    {!e.is_active && <span className="text-xs text-rose-500">nofaol</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <ReasonDialog
+        open={grantOpen}
+        onOpenChange={setGrantOpen}
+        title={grantValue ? "Davomat tuzatish huquqi beriladi" : "Davomat tuzatish huquqi olinadi"}
+        description="Huquq berish/olishning O'ZI audit jurnaliga yoziladi (tuzatishlardan farqli)."
+        destructive={!grantValue}
+        loading={setEditor.isPending}
+        onConfirm={(reason) => {
+          if (!grantUserId) return;
+          setEditor.mutate(
+            { userId: grantUserId, granted: grantValue, reason },
+            {
+              onSuccess: () => {
+                toast.success(grantValue ? "Huquq berildi" : "Huquq olindi");
+                setGrantOpen(false);
+              },
+            }
+          );
+        }}
+      />
       <ReasonDialog
         open={recalcOpen}
         onOpenChange={setRecalcOpen}

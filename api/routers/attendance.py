@@ -753,53 +753,39 @@ async def attendance_readiness(
     return AttendanceReadiness(**await collect_readiness(db, start, end))
 
 
-@router.put("/manual", response_model=AttendanceOut)
-async def manual_attendance(
-    payload: AttendanceManualUpdate,
-    actor: User = Depends(require_roles(*ATTENDANCE_EDIT_ROLES)),
-    db: AsyncSession = Depends(get_db),
-) -> AttendanceOut:
-    """Bir kunlik davomat yozuvini QO'LDA tuzatadi yoki yaratadi (HR/Boshliq).
+async def apply_manual_attendance(
+    db: AsyncSession, payload: AttendanceManualUpdate, target: User
+) -> tuple[Attendance, dict, bool]:
+    """Davomat yozuvini yaratadi/tuzatadi va qayta hisoblaydi — AUDITSIZ, commitsiz.
 
-    Nima uchun kerak: Face ID yoki GPS ishlamay qolsa, xodim «Keldim» bosa
-    olmaydi va tizimda "kelmagan" bo'lib qoladi. Kechikish daqiqalari oylik
-    jarimasiga aylanadigan bo'lgach, bunday har bir xato real nizoga aylanadi.
-    Ilgari bu holatni faqat Dasturchi, faqat butunlay O'CHIRISH orqali "tuzata"
-    olardi — ya'ni ma'lumotni yo'qotish evaziga.
+    Ikki chaqiruvchi bor va ular audit bo'yicha ATAYLAB farq qiladi:
+    - `manual_attendance` (bu fayl) — audit YOZADI (HR/Boshliq va shaxsan
+      ruxsat berilgan odamlar; egasi "ularning auditlari saytda ko'rinib
+      tursin" dedi);
+    - `admin_override.admin_manual_attendance` — audit YOZMAYDI (Dasturchi,
+      egasining aniq talabi: "auditlarga tushmasdan").
 
-    Vaqtlar mahalliy "HH:MM" ko'rinishida keladi; `late_minutes`/`worked_minutes`
-    kiritilmaydi — ular o'sha kungi ish jadvalidan qayta hisoblanadi
-    (`recompute_attendance`), shu sababli check-in oqimi bilan bir xil qoida
-    qo'llanadi. Sabab MAJBURIY va audit jurnaliga tushadi."""
-    target = await db.get(User, payload.user_id)
-    if target is None or not target.is_active:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    Umumiy mantiq shu yerda turadi, aks holda ikki joyda takrorlanib,
+    biri (masalan `recompute_attendance` chaqiruvi) unutilib qolardi.
+    Qaytaradi: (yozuv, o'zgarishdan OLDINGI holat, yangi yaratildimi)."""
     if target.role not in ATTENDANCE_TRACKED_ROLES:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Bu rol uchun davomat kuzatuvi yoqilmagan"
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu rol uchun davomat kuzatuvi yoqilmagan")
     if payload.date > today_local():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Kelajakdagi kunni tuzatib bo'lmaydi")
     if payload.check_out and not payload.check_in:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "«Ketdim» ni «Keldim» siz belgilab bo'lmaydi"
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "«Ketdim» ni «Keldim» siz belgilab bo'lmaydi")
 
     check_in_utc = local_hm_to_utc(payload.date, payload.check_in) if payload.check_in else None
     check_out_utc = local_hm_to_utc(payload.date, payload.check_out) if payload.check_out else None
     if check_in_utc and check_out_utc and check_out_utc <= check_in_utc:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "«Ketdim» vaqti «Keldim» dan keyin bo'lishi kerak"
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "«Ketdim» vaqti «Keldim» dan keyin bo'lishi kerak")
 
     att = await db.scalar(
-        select(Attendance).where(
-            Attendance.user_id == payload.user_id, Attendance.date == payload.date
-        )
+        select(Attendance).where(Attendance.user_id == target.id, Attendance.date == payload.date)
     )
     created = att is None
     if att is None:
-        att = Attendance(user_id=payload.user_id, date=payload.date)
+        att = Attendance(user_id=target.id, date=payload.date)
         db.add(att)
 
     before = {
@@ -823,6 +809,50 @@ async def manual_attendance(
     att.check_out_lat = att.check_out_lng = None
 
     await recompute_attendance(db, att, target)
+    return att, before, created
+
+
+def can_edit_attendance_records(actor: User) -> bool:
+    """Roli bo'yicha (hr/boss/dasturchi) YOKI shaxsan berilgan bayroq bilan."""
+    return actor.role in ATTENDANCE_EDIT_ROLES or bool(actor.can_edit_attendance)
+
+
+@router.put("/manual", response_model=AttendanceOut)
+async def manual_attendance(
+    payload: AttendanceManualUpdate,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttendanceOut:
+    """Bir kunlik davomat yozuvini QO'LDA tuzatadi yoki yaratadi (HR/Boshliq).
+
+    Nima uchun kerak: Face ID yoki GPS ishlamay qolsa, xodim «Keldim» bosa
+    olmaydi va tizimda "kelmagan" bo'lib qoladi. Kechikish daqiqalari oylik
+    jarimasiga aylanadigan bo'lgach, bunday har bir xato real nizoga aylanadi.
+    Ilgari bu holatni faqat Dasturchi, faqat butunlay O'CHIRISH orqali "tuzata"
+    olardi — ya'ni ma'lumotni yo'qotish evaziga.
+
+    Vaqtlar mahalliy "HH:MM" ko'rinishida keladi; `late_minutes`/`worked_minutes`
+    kiritilmaydi — ular o'sha kungi ish jadvalidan qayta hisoblanadi
+    (`recompute_attendance`), shu sababli check-in oqimi bilan bir xil qoida
+    qo'llanadi. Sabab MAJBURIY va audit jurnaliga tushadi.
+
+    Ruxsat: roli bo'yicha (hr/boss/dasturchi) YOKI shaxsan berilgan
+    `can_edit_attendance` bayrog'i bilan. Bayroq bilan kelganlar O'Z
+    yozuvini tuzata OLMAYDI — o'z kechikishini o'chirib, jarimadan qutulib
+    qolmasligi uchun (egasining aniq sharti: "barcha xodimlar lekin
+    o'zinikini emas")."""
+    if not can_edit_attendance_records(actor):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    if actor.role not in ATTENDANCE_EDIT_ROLES and payload.user_id == actor.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "O'z davomat yozuvingizni o'zingiz tuzata olmaysiz"
+        )
+
+    target = await db.get(User, payload.user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    att, before, created = await apply_manual_attendance(db, payload, target)
 
     db.add(
         AuditLog(

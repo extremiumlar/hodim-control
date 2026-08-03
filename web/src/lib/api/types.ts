@@ -23,6 +23,10 @@ export interface User {
   bot_started: boolean;
   is_active: boolean;
   is_seat: boolean;
+  /** Davomat keldi/ketdi vaqtini tuzatish huquqi — Dasturchi SHAXSAN beradi
+      (roldan qat'i nazar). hr/boss/dasturchi uchun ahamiyatsiz: ular baribir
+      tahrirlay oladi. */
+  can_edit_attendance: boolean;
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
   has_face: boolean;
@@ -643,4 +647,12 @@ export interface OverrideAuditRow {
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
   created_at: string;
+}
+
+/** Davomat vaqtini tuzatish huquqi SHAXSAN berilgan odam. */
+export interface AttendanceEditorRow {
+  id: number;
+  full_name: string;
+  role: string;
+  is_active: boolean;
 }

@@ -50,6 +50,7 @@ import {
   useAttendanceList,
   useAttendanceReadiness,
   useDeleteAttendance,
+  useAdminManualAttendance,
   useManualAttendance,
 } from "@/lib/queries";
 import { fmtLocalTime as fmtTime } from "@/lib/utils";
@@ -65,15 +66,21 @@ function toHm(iso: string | null): string {
 function EditAttendanceDialog({
   row,
   onClose,
+  silent = false,
 }: {
   row: AttendanceRow | null;
   onClose: () => void;
+  /** Dasturchi rejimi: AUDITSIZ endpoint, sabab so'ralmaydi (hech qayerga
+      yozilmaydi). Egasining aniq talabi — "auditlarga tushmasdan". */
+  silent?: boolean;
 }) {
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
-  const mutation = useManualAttendance();
+  const audited = useManualAttendance();
+  const silentMutation = useAdminManualAttendance();
+  const mutation = silent ? silentMutation : audited;
 
   // Yangi qator tanlanganda maydonlarni o'sha yozuv qiymatlari bilan to'ldiramiz.
   useEffect(() => {
@@ -83,7 +90,9 @@ function EditAttendanceDialog({
     setReason("");
   }, [row]);
 
-  const reasonTooShort = reason.trim().length < 5;
+  // Jim rejimda sabab umuman so'ralmaydi — u hech qayerga yozilmaydi,
+  // ya'ni majburlash faqat ortiqcha qadam bo'lardi.
+  const reasonTooShort = !silent && reason.trim().length < 5;
   const invalidOrder = !!checkIn && !!checkOut && checkOut <= checkIn;
   const outWithoutIn = !!checkOut && !checkIn;
 
@@ -95,8 +104,17 @@ function EditAttendanceDialog({
             {row?.user_full_name} — {row ? format(new Date(row.date), "dd.MM.yyyy") : ""}
           </DialogTitle>
           <DialogDescription>
-            Face ID yoki GPS ishlamay qolgan kunni tuzatish. Kechikish va ishlangan vaqt
-            ish jadvali bo'yicha qayta hisoblanadi. O'zgarish audit jurnaliga tushadi.
+            Face ID/GPS ishlamagan yoki xodim bosishni unutgan kunni tuzatish — yozuv
+            bo'lmasa yangisi ochiladi. Kechikish va ishlangan vaqt ish jadvali bo'yicha
+            qayta hisoblanadi.{" "}
+            {silent ? (
+              <span className="font-medium text-amber-700">
+                Dasturchi rejimi: bu o'zgarish audit jurnaliga TUSHMAYDI va hech kimga
+                xabar berilmaydi.
+              </span>
+            ) : (
+              "O'zgarish audit jurnaliga tushadi (botga xabar yuborilmaydi)."
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -136,17 +154,19 @@ function EditAttendanceDialog({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="att-reason">
-              Sabab <span className="text-rose-600">*</span>
-            </Label>
-            <Input
-              id="att-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Nima uchun tuzatilyapti (kamida 5 belgi)"
-            />
-          </div>
+          {!silent && (
+            <div className="space-y-1.5">
+              <Label htmlFor="att-reason">
+                Sabab <span className="text-rose-600">*</span>
+              </Label>
+              <Input
+                id="att-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Nima uchun tuzatilyapti (kamida 5 belgi)"
+              />
+            </div>
+          )}
 
           {invalidOrder && (
             <p className="text-sm text-rose-600">«Ketdim» «Keldim» dan keyin bo'lishi kerak.</p>
@@ -173,14 +193,18 @@ function EditAttendanceDialog({
                   check_in: checkIn || null,
                   check_out: checkOut || null,
                   note: note.trim() || null,
-                  reason: reason.trim(),
+                  // Jim rejimda sabab yozilmaydi — backend uni talab qilmaydi.
+                  reason: silent ? "" : reason.trim(),
                 },
                 {
-                  onSuccess: (updated) => {
+                  onSuccess: (updated: { late_minutes?: number }) => {
+                    const late = updated.late_minutes;
                     toast.success(
-                      updated.late_minutes > 0
-                        ? `Saqlandi — kechikish ${updated.late_minutes} daqiqa.`
-                        : "Saqlandi — kechikish yo'q."
+                      late === undefined
+                        ? "Saqlandi (jim rejim — audit yozilmadi)."
+                        : late > 0
+                          ? `Saqlandi — kechikish ${late} daqiqa.`
+                          : "Saqlandi — kechikish yo'q."
                     );
                     onClose();
                   },
@@ -414,9 +438,11 @@ function LateStatsSection() {
 export default function Attendance() {
   const { user } = useAuth();
   const isDasturchi = user?.role === "dasturchi";
-  // Qo'lda tuzatish — HR/Boshliq/Dasturchi. ROP'da yo'q: u kechikishni ko'radi,
-  // lekin uni tuzata olmaydi (backend ham xuddi shu ro'yxatni tekshiradi).
-  const canEdit = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
+  // Qo'lda tuzatish — HR/Boshliq/Dasturchi ROLI bo'yicha, YOKI Dasturchi
+  // shaxsan bergan `can_edit_attendance` bayrog'i bilan (ROP yoki oddiy
+  // xodim ham bo'lishi mumkin). Backend aynan shu qoidani tekshiradi.
+  const canEdit =
+    !!user && (["hr", "boss", "dasturchi"].includes(user.role) || user.can_edit_attendance);
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
   const [deleting, setDeleting] = useState<AttendanceRow | null>(null);
@@ -447,7 +473,11 @@ export default function Attendance() {
               <Button
                 variant="ghost"
                 size="sm"
-                title="Qo'lda tuzatish"
+                title={
+                  isDasturchi
+                    ? "Qo'lda tuzatish (Dasturchi — auditsiz)"
+                    : "Qo'lda tuzatish"
+                }
                 onClick={() => setEditing(row.original)}
               >
                 <Pencil className="h-3.5 w-3.5" />
@@ -624,7 +654,13 @@ export default function Attendance() {
         />
       </div>
 
-      {canEdit && <EditAttendanceDialog row={editing} onClose={() => setEditing(null)} />}
+      {canEdit && (
+        <EditAttendanceDialog
+          row={editing}
+          onClose={() => setEditing(null)}
+          silent={isDasturchi}
+        />
+      )}
 
       {isDasturchi && (
         <ConfirmDialog

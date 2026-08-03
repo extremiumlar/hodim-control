@@ -200,6 +200,19 @@ class User(Base):
     # qayta-egallanadigan: invite-link har doim (bot_started bo'lsa ham) qayta olinadi,
     # va uni boshqa odam bosib /start qilsa, o'sha avtomatik joriy egasi bo'lib qoladi.
     is_seat: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Davomat (keldi/ketdi) vaqtini QO'LDA tuzatish huquqi — ROLDAN qat'i nazar,
+    # SHAXSAN berilgan ruxsat. Roli bo'yicha huquqi borlar (hr/boss/dasturchi)
+    # uchun bu bayroq ahamiyatsiz — ular baribir tahrirlay oladi.
+    #
+    # Nega alohida ustun, yangi rol emas: egasi "ma'lum bir odamlarga" berishni
+    # so'radi — masalan bitta ROP yoki bitta xodimga. Yangi rol yaratilsa,
+    # o'sha odam boshqa hamma joyda ham (norma, oylik, statistika) yangi rol
+    # huquqlarini olib qolardi.
+    #
+    # Beruvchi: FAQAT Dasturchi (`POST /admin/users/{id}/attendance-editor`).
+    # Cheklov: shu bayroq bilan tahrirlayotgan odam O'Z yozuvini tuzata OLMAYDI
+    # (o'z kechikishini o'zi o'chirib tashlamasligi uchun) — `manual_attendance`.
+    can_edit_attendance: Mapped[bool] = mapped_column(Boolean, default=False)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # Taklif havolasi muddati (Telegram login xavfsizlik arxitekturasi, Layer 3) —
     # `invite_token_ttl_days` (api/config.py) asosida beriladi. NULL — migratsiyadan
