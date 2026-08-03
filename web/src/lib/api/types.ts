@@ -27,6 +27,9 @@ export interface User {
       (roldan qat'i nazar). hr/boss/dasturchi uchun ahamiyatsiz: ular baribir
       tahrirlay oladi. */
   can_edit_attendance: boolean;
+  /** Joylashuvsiz check-in: GPS umuman so'ralmaydi, ofis radiusi tekshirilmaydi
+      (Face ID baribir talab qilinadi). */
+  skip_location_check: boolean;
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
   has_face: boolean;
@@ -656,3 +659,7 @@ export interface AttendanceEditorRow {
   role: string;
   is_active: boolean;
 }
+
+/** Joylashuvsiz («bez lokatsiya») check-in ruxsati berilgan odam —
+    `AttendanceEditorRow` bilan bir xil shakl, lekin boshqa ma'no. */
+export type LocationExemptRow = AttendanceEditorRow;

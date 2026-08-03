@@ -617,6 +617,49 @@ async def set_attendance_editor(
     return {"user_id": user_id, "can_edit_attendance": payload.granted}
 
 
+@router.get("/location-exempt")
+async def list_location_exempt(
+    _: User = Depends(require_dasturchi), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """Joylashuvsiz («bez lokatsiya») check-in ruxsati berilgan xodimlar."""
+    rows = list(
+        await db.scalars(
+            select(User).where(User.skip_location_check.is_(True)).order_by(User.full_name)
+        )
+    )
+    return [{"id": u.id, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in rows]
+
+
+@router.post("/users/{user_id}/location-exempt")
+async def set_location_exempt(
+    user_id: int,
+    payload: AdminAttendanceEditorGrant,
+    actor: User = Depends(require_dasturchi),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Joylashuvsiz check-in ruxsatini beradi/olib qo'yadi (faqat Dasturchi).
+
+    Ruxsat berilgan xodim «Keldim»/«Ketdim»ni ISTALGAN joydan bosa oladi —
+    ofis radiusi va GPS aniqligi tekshirilmaydi. Face ID esa BEKOR
+    QILINMAYDI: aks holda check-in umuman himoyasiz qolardi.
+
+    Huquq berish auditga yoziladi (`can_edit_attendance` bilan bir xil
+    sabab: kimga qachon berilgani bilinmasa, keyin javob topilmaydi)."""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = bool(target.skip_location_check)
+    target.skip_location_check = payload.granted
+    await _log_override(
+        db, actor, "location_exempt_set", user_id,
+        {"skip_location_check": before}, {"skip_location_check": payload.granted},
+        payload.override_reason,
+    )
+    await db.commit()
+    return {"user_id": user_id, "skip_location_check": payload.granted}
+
+
 @router.post("/users/{user_id}/force-role")
 async def force_role(
     user_id: int, payload: AdminForceRole, actor: User = Depends(require_dasturchi), db: AsyncSession = Depends(get_db)

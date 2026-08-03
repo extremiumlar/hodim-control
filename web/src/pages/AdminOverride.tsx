@@ -38,7 +38,9 @@ import {
   useForceRecalculatePayrollAdmin,
   useAttendanceEditors,
   useForceRoleAdmin,
+  useLocationExempt,
   useSetAttendanceEditor,
+  useSetLocationExempt,
   useOverrideAudit,
   usePatchAdminRecord,
   usePatchPayslipAdmin,
@@ -680,6 +682,12 @@ function SystemTab({ editMode }: { editMode: boolean }) {
   const [grantValue, setGrantValue] = useState(true);
   const [grantOpen, setGrantOpen] = useState(false);
 
+  const exemptQuery = useLocationExempt();
+  const setExempt = useSetLocationExempt();
+  const [exemptUserId, setExemptUserId] = useState<number | null>(null);
+  const [exemptValue, setExemptValue] = useState(true);
+  const [exemptOpen, setExemptOpen] = useState(false);
+
   if (!editMode) {
     return (
       <p className="text-sm text-slate-500">
@@ -827,6 +835,95 @@ function SystemTab({ editMode }: { editMode: boolean }) {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Joylashuvsiz check-in («bez lokatsiya»)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Ruxsat berilgan xodim «Keldim»/«Ketdim»ni <b>istalgan joydan</b> bosa oladi —
+            ofis radiusi va GPS aniqligi tekshirilmaydi. <b>Face ID baribir talab
+            qilinadi.</b> Doimiy ob'ektda yurmaydigan xodimlar uchun (mobilograf,
+            kuryer, ko'chma sotuv).
+          </p>
+          <div>
+            <Label>Xodim</Label>
+            <Select
+              value={exemptUserId ? String(exemptUserId) : undefined}
+              onValueChange={(v) => setExemptUserId(Number(v))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Tanlang" />
+              </SelectTrigger>
+              <SelectContent>
+                {(usersQuery.data ?? []).map((u) => (
+                  <SelectItem key={u.id} value={String(u.id)}>
+                    {u.full_name} ({u.role}){u.skip_location_check ? " — ruxsati bor" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={!exemptUserId}
+              onClick={() => { setExemptValue(true); setExemptOpen(true); }}
+            >
+              Ruxsat berish
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!exemptUserId}
+              onClick={() => { setExemptValue(false); setExemptOpen(true); }}
+            >
+              Olib qo'yish
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="mb-1 text-xs font-medium text-slate-500">Hozir ruxsati borlar</div>
+            {exemptQuery.isLoading ? (
+              <div className="text-xs text-slate-400">Yuklanmoqda...</div>
+            ) : (exemptQuery.data ?? []).length === 0 ? (
+              <div className="text-xs text-slate-400">Hech kimga berilmagan.</div>
+            ) : (
+              <ul className="space-y-1 text-sm">
+                {(exemptQuery.data ?? []).map((e) => (
+                  <li key={e.id} className="flex items-center justify-between">
+                    <span>
+                      {e.full_name} <span className="text-xs text-slate-400">({e.role})</span>
+                    </span>
+                    {!e.is_active && <span className="text-xs text-rose-500">nofaol</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <ReasonDialog
+        open={exemptOpen}
+        onOpenChange={setExemptOpen}
+        title={exemptValue ? "Joylashuvsiz check-in ruxsati beriladi" : "Joylashuv ruxsati olinadi"}
+        description="Bu amal audit jurnaliga yoziladi. Face ID bekor qilinmaydi — faqat GPS chetlab o'tiladi."
+        destructive={!exemptValue}
+        loading={setExempt.isPending}
+        onConfirm={(reason) => {
+          if (!exemptUserId) return;
+          setExempt.mutate(
+            { userId: exemptUserId, granted: exemptValue, reason },
+            {
+              onSuccess: () => {
+                toast.success(exemptValue ? "Ruxsat berildi" : "Ruxsat olindi");
+                setExemptOpen(false);
+              },
+            }
+          );
+        }}
+      />
       <ReasonDialog
         open={grantOpen}
         onOpenChange={setGrantOpen}

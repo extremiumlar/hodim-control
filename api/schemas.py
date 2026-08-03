@@ -97,6 +97,8 @@ class UserOut(BaseModel):
     # Frontend shu bayroqqa qarab davomat tahriri tugmasini ko'rsatadi
     # (rol bo'yicha huquqi bo'lmagan, lekin shaxsan ruxsat berilgan odam uchun).
     can_edit_attendance: bool = False
+    # Joylashuvsiz check-in ruxsati — frontend GPS so'ramasligi uchun kerak.
+    skip_location_check: bool = False
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
@@ -709,10 +711,16 @@ class OfficeOut(BaseModel):
 
 
 class MeCheckRequest(BaseModel):
-    """Web (kirgan xodim) orqali Keldim/Ketdim — GPS + Face ID."""
+    """Web (kirgan xodim) orqali Keldim/Ketdim — GPS + Face ID.
 
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
+    `latitude`/`longitude` NULL bo'lishi mumkin: «bez lokatsiya» ruxsati
+    (`User.skip_location_check`) berilgan xodim koordinata umuman
+    yubormaydi. 0,0 yuborish ATAYLAB rad etildi — u ma'lumotda
+    "Atlantika okeanida check-in qildi" degan soxta iz qoldirardi.
+    Ruxsati YO'Q xodim NULL yuborsa, servis xato beradi (pastda)."""
+
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     face_descriptor: list[float] = Field(min_length=128, max_length=128)
     liveness: float = Field(default=0.0, ge=0.0, le=1.0)
     # Brauzer `position.coords.accuracy` (metr) — berilmasa (eski frontend) tekshiruv

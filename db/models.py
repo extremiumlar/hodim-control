@@ -213,6 +213,17 @@ class User(Base):
     # Cheklov: shu bayroq bilan tahrirlayotgan odam O'Z yozuvini tuzata OLMAYDI
     # (o'z kechikishini o'zi o'chirib tashlamasligi uchun) — `manual_attendance`.
     can_edit_attendance: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Joylashuvsiz («bez lokatsiya») check-in ruxsati — shu bayroq yoqilgan xodim
+    # «Keldim»/«Ketdim»ni ISTALGAN joydan bosa oladi: ofis radiusi tekshirilmaydi.
+    #
+    # Kimga: doimiy ob'ektda yurmaydigan xodimlar (masalan mobilograf, kuryer,
+    # ko'chma sotuv) — ular ofisga kirmasdan ishlaydi va GPS tekshiruvi ularni
+    # doim bloklardi.
+    #
+    # DIQQAT: Face ID (yuz tasdiqlash) BEKOR QILINMAYDI — faqat GPS chetlab
+    # o'tiladi. Aks holda check-in umuman himoyasiz qolardi (istalgan odam
+    # istalgan joydan bosaverardi).
+    skip_location_check: Mapped[bool] = mapped_column(Boolean, default=False)
     invite_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # Taklif havolasi muddati (Telegram login xavfsizlik arxitekturasi, Layer 3) —
     # `invite_token_ttl_days` (api/config.py) asosida beriladi. NULL — migratsiyadan

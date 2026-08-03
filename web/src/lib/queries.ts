@@ -70,6 +70,7 @@ export const qk = {
   adminRecords: (entity: string) => ["admin", "records", entity] as const,
   adminAudit: ["admin", "audit"] as const,
   attendanceEditors: ["admin", "attendance-editors"] as const,
+  locationExempt: ["admin", "location-exempt"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -588,4 +589,14 @@ export const useSetAttendanceEditor = () =>
     ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
       api.setAttendanceEditor(userId, granted, reason),
     [qk.attendanceEditors, ["users"], qk.adminAudit]
+  );
+
+export const useLocationExempt = () =>
+  useQuery({ queryKey: qk.locationExempt, queryFn: api.listLocationExempt });
+
+export const useSetLocationExempt = () =>
+  useApiMutation(
+    ({ userId, granted, reason }: { userId: number; granted: boolean; reason: string }) =>
+      api.setLocationExempt(userId, granted, reason),
+    [qk.locationExempt, ["users"], qk.adminAudit]
   );

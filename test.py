@@ -3255,6 +3255,117 @@ def test_attendance_edit_rights() -> None:
         conn.close()
 
 
+def test_location_exempt_checkin() -> None:
+    """«Bez lokatsiya» check-in (egasining 2026-08-03 talabi):
+
+    1. Bayroqli xodim ISTALGAN joydan (koordinatasiz) «Keldim» qila oladi.
+    2. Bayroqsiz xodim koordinatasiz yuborsa — RAD etiladi (aks holda GPS
+       tekshiruvini istalgan kishi `latitude: null` bilan chetlab o'tardi).
+    3. Bayroqli xodimda ham Face ID BEKOR QILINMAYDI.
+    4. Ruxsatni faqat Dasturchi bera oladi."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("JOYLASHUVSIZ CHECK-IN («bez lokatsiya»)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    FACE_JSON = json.dumps([0.05] * 128)
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-NoGeo%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from attendance where user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, face_descriptor,"
+        " skip_location_check, created_at) values (999904001,'T-NoGeo-Free','employee',1,1,?,1,datetime('now'))",
+        (FACE_JSON,))
+    free_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, face_descriptor,"
+        " skip_location_check, created_at) values (999904002,'T-NoGeo-Bound','employee',1,1,?,0,datetime('now'))",
+        (FACE_JSON,))
+    bound_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999904003,'T-NoGeo-Dev','dasturchi',1,1,datetime('now'))")
+    dev_uid = cur.lastrowid
+    conn.commit()
+
+    def cleanup_ng():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [free_uid, bound_uid, dev_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from attendance where user_id in ({qm})", uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Bez-lokatsiya tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        free_t = token_for(free_uid, "employee")
+        bound_t = token_for(bound_uid, "employee")
+        dev_t = token_for(dev_uid, "dasturchi")
+        body_nogeo = {"latitude": None, "longitude": None, "face_descriptor": [0.05] * 128, "liveness": 1.0}
+
+        with httpx.Client(timeout=20) as client:
+            # 1. Bayroqli xodim — koordinatasiz o'tadi
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(free_t), json=body_nogeo)
+            check("Bayroqli xodim koordinatasiz «Keldim» -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:160]}")
+            check("Masofa NULL (0 emas — soxta 'ofis markazi' bo'lmasin)",
+                  r.status_code == 200 and r.json().get("check_in_distance_m") is None,
+                  f"={r.json().get('check_in_distance_m') if r.status_code == 200 else None}")
+
+            # 2. Bayroqsiz xodim — koordinatasiz RAD etiladi
+            r = client.post(f"{API_BASE}/attendance/me/check-in", headers=auth(bound_t), json=body_nogeo)
+            check("Bayroqsiz xodim koordinatasiz -> RAD etiladi", r.status_code >= 400,
+                  f"kod={r.status_code} {r.text[:160]}")
+
+            # 3. Bayroqli xodimda Face ID baribir tekshiriladi (begona yuz)
+            c = db()
+            c.execute("delete from attendance where user_id=?", (free_uid,))
+            c.commit()
+            c.close()
+            r = client.post(
+                f"{API_BASE}/attendance/me/check-in", headers=auth(free_t),
+                json={**body_nogeo, "face_descriptor": [0.9] * 128},
+            )
+            check("Bayroqli xodim BEGONA yuz bilan -> RAD (Face ID bekor emas)",
+                  r.status_code >= 400, f"kod={r.status_code} {r.text[:160]}")
+
+            # 4. Ruxsatni faqat Dasturchi beradi
+            r = client.post(
+                f"{API_BASE}/admin/users/{bound_uid}/location-exempt", headers=auth(dev_t),
+                json={"granted": True, "override_reason": "T-sinov: bez lokatsiya"},
+            )
+            check("Dasturchi ruxsat beradi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            c = db()
+            flag = c.execute("select skip_location_check from users where id=?", (bound_uid,)).fetchone()[0]
+            c.close()
+            check("Bayroq bazada 1 bo'ldi", flag == 1, f"={flag}")
+
+            r = client.post(
+                f"{API_BASE}/admin/users/{bound_uid}/location-exempt", headers=auth(free_t),
+                json={"granted": True, "override_reason": "T-sinov: ruxsatsiz"},
+            )
+            check("Dasturchi bo'lmagan ruxsat bera OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+    except Exception:
+        check("Bez-lokatsiya check-in (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_ng()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3326,6 +3437,11 @@ def main() -> None:
         test_attendance_edit_rights()
     except Exception:
         print("Davomat tuzatish huquqlari testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_location_exempt_checkin()
+    except Exception:
+        print("Bez-lokatsiya check-in testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

@@ -159,6 +159,8 @@ export default function CheckIn() {
 
   const att = todayQuery.data ?? null;
   const busy = checkIn.isPending || checkOut.isPending;
+  // «Bez lokatsiya» ruxsati — GPS umuman so'ralmaydi (server ham tekshirmaydi).
+  const skipLocation = !!user?.skip_location_check;
 
   async function startCheck(action: Action) {
     if (!user?.has_face) {
@@ -167,6 +169,14 @@ export default function CheckIn() {
       return;
     }
     setCheckError(null);
+    // «Bez lokatsiya» ruxsati bo'lsa GPS UMUMAN so'ralmaydi — server ham uni
+    // tekshirmaydi, ya'ni ruxsat so'rash faqat ortiqcha to'siq bo'lardi
+    // (ko'chada yurgan xodimda GPS aniqligi ko'pincha yomon).
+    if (skipLocation) {
+      setShowFace(action);
+      setStatusMsg("");
+      return;
+    }
     // Brauzer shu paytda joylashuv ruxsatini so'raydi — xodim "nega kutyapman"
     // deb qolmasligi uchun matn aynan shuni aytadi (keyin kamera ruxsati).
     setStatusMsg("Joylashuv ruxsati so'ralmoqda — «Ruxsat berish»ni tanlang...");
@@ -186,6 +196,39 @@ export default function CheckIn() {
     if (!showFace) return;
     const action = showFace;
     setCheckError(null);
+
+    const submit = (body: Record<string, unknown>) => {
+      setStatusMsg("Serverga yuborilmoqda...");
+      const mutation = action === "check-in" ? checkIn : checkOut;
+      mutation.mutate(body as never, {
+        onSuccess: (updated) => {
+          setStatusMsg("");
+          setShowFace(null);
+          setSuccess({ action, att: updated });
+        },
+        onError: (err: any) => {
+          setStatusMsg("");
+          // 4.1-band: modal ATAYLAB yopilmaydi — FaceCapture hali ochiq,
+          // xodim xabarni o'qib, kamerani darhol qayta sinab ko'rishi mumkin.
+          setCheckError(err?.message || "Xatolik yuz berdi. Qaytadan urinib ko'ring.");
+        },
+      });
+    };
+
+    // «Bez lokatsiya» xodimi: koordinata umuman olinmaydi. 0,0 yubormaymiz —
+    // server bayroqni ko'rib masofani tekshirmaydi, lekin 0,0 ma'lumotda
+    // "Atlantika okeanida check-in qildi" degan soxta iz qoldirardi.
+    if (skipLocation) {
+      submit({
+        latitude: null,
+        longitude: null,
+        face_descriptor: result.descriptor,
+        liveness: result.liveness ?? 0,
+        accuracy: null,
+      });
+      return;
+    }
+
     setStatusMsg("Joylashuv aniqlanmoqda...");
     // 3.6-band: GPS yuz tasdiqlashdan OLDIN emas, ENDI (yuborishdan darhol
     // oldin) olinadi. Model yuklanishi (~10s) + qayta urinishlar 2-3 daqiqagacha
@@ -194,8 +237,7 @@ export default function CheckIn() {
     // koordinata yuborilardi.
     getPosition()
       .then((pos) => {
-        setStatusMsg("Serverga yuborilmoqda...");
-        const body = {
+        submit({
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
           face_descriptor: result.descriptor,
@@ -204,20 +246,6 @@ export default function CheckIn() {
           // qilmasligi uchun eng PAST (0) qo'yiladi.
           liveness: result.liveness ?? 0,
           accuracy: pos.coords.accuracy ?? null,
-        };
-        const mutation = action === "check-in" ? checkIn : checkOut;
-        mutation.mutate(body, {
-          onSuccess: (updated) => {
-            setStatusMsg("");
-            setShowFace(null);
-            setSuccess({ action, att: updated });
-          },
-          onError: (err: any) => {
-            setStatusMsg("");
-            // 4.1-band: modal ATAYLAB yopilmaydi — FaceCapture hali ochiq,
-            // xodim xabarni o'qib, kamerani darhol qayta sinab ko'rishi mumkin.
-            setCheckError(err?.message || "Xatolik yuz berdi. Qaytadan urinib ko'ring.");
-          },
         });
       })
       .catch((e: any) => {
@@ -322,7 +350,11 @@ export default function CheckIn() {
 
           <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
             <ShieldCheck className="h-4 w-4" />
-            <span>GPS + yuz tasdiqlash (Face ID) bilan tekshiriladi.</span>
+            <span>
+              {skipLocation
+                ? "Yuz tasdiqlash (Face ID) bilan tekshiriladi — sizga joylashuv talab qilinmaydi."
+                : "GPS + yuz tasdiqlash (Face ID) bilan tekshiriladi."}
+            </span>
           </div>
         </CardContent>
       </Card>

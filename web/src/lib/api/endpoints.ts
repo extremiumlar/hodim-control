@@ -20,6 +20,7 @@ import type {
   Office,
   OperatorSummary,
   AttendanceEditorRow,
+  LocationExemptRow,
   OverrideAuditRow,
   OvertimeEntry,
   OvertimeProfile,
@@ -455,6 +456,13 @@ export const api = {
   setAttendanceEditor: (userId: number, granted: boolean, reason: string) =>
     apiFetch<{ user_id: number; can_edit_attendance: boolean }>(
       `/admin/users/${userId}/attendance-editor`,
+      { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
+    ),
+  // Joylashuvsiz («bez lokatsiya») check-in ruxsati.
+  listLocationExempt: () => apiFetch<LocationExemptRow[]>("/admin/location-exempt"),
+  setLocationExempt: (userId: number, granted: boolean, reason: string) =>
+    apiFetch<{ user_id: number; skip_location_check: boolean }>(
+      `/admin/users/${userId}/location-exempt`,
       { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
     ),
 };

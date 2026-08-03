@@ -91,8 +91,24 @@ def _hm_to_min(hm: str) -> int:
 
 
 async def _validate_location(
-    db: AsyncSession, lat: float, lng: float, accuracy: float | None = None
-) -> int:
+    db: AsyncSession, lat: float | None, lng: float | None, accuracy: float | None = None,
+    user: User | None = None,
+) -> int | None:
+    # «Bez lokatsiya» ruxsati (`User.skip_location_check`): doimiy ob'ektda
+    # yurmaydigan xodim (mobilograf, kuryer, ko'chma sotuv) istalgan joydan
+    # bosa oladi. GPS aniqligi ham tekshirilmaydi — chunki masofa baribir
+    # ishlatilmaydi. `None` qaytadi: "masofa o'lchanmadi" (0 EMAS — 0 "ofis
+    # markazida turibdi" degan soxta ma'no berardi).
+    # Face ID bu yerda BEKOR QILINMAYDI — u `_validate_face`da alohida.
+    if user is not None and user.skip_location_check:
+        return None
+
+    # Ruxsati YO'Q xodim koordinatasiz kelsa — bu eski frontend yoki qo'lda
+    # yasalgan so'rov. Jimgina o'tkazib yuborilsa, GPS tekshiruvini istalgan
+    # kishi `latitude: null` yuborib chetlab o'tardi.
+    if lat is None or lng is None:
+        raise CheckError("Joylashuv aniqlanmadi. GPS'ni yoqib qayta urinib ko'ring.")
+
     # GPS aniqligi — brauzer o'zi hisoblab yuboradi. Juda yomon o'qish (masalan
     # tarmoq/IP-asosidagi zaxira geolokatsiya, ba'zan 1000+ metr xato) ofis
     # radiusini ma'nosiz qiladi: xato tasodifan radius ichiga tushib qolishi mumkin.
@@ -376,8 +392,8 @@ async def collect_readiness(db: AsyncSession, date_from: date, date_to: date) ->
 async def perform_check_in(
     db: AsyncSession,
     user: User,
-    lat: float,
-    lng: float,
+    lat: float | None,
+    lng: float | None,
     descriptor: list[float] | None = None,
     liveness: float = 0.0,
     accuracy: float | None = None,
@@ -395,7 +411,7 @@ async def perform_check_in(
     is_working, start, end = await _effective_today(db, user, day)
 
     _validate_face(user, descriptor, liveness)
-    dist = await _validate_location(db, lat, lng, accuracy)
+    dist = await _validate_location(db, lat, lng, accuracy, user)
 
     # 5.1-band: tasdiqlangan sababli kun bo'lsa, kelgan bo'lsa ham kechikish
     # YOZILMAYDI. Ilgari `ExcusedDay` bu funksiyada IMPORT ham qilinmagan edi —
@@ -469,8 +485,8 @@ POST_MIDNIGHT_WINDOW_HOURS = 6
 async def perform_check_out(
     db: AsyncSession,
     user: User,
-    lat: float,
-    lng: float,
+    lat: float | None,
+    lng: float | None,
     descriptor: list[float] | None = None,
     liveness: float = 0.0,
     accuracy: float | None = None,
@@ -519,7 +535,7 @@ async def perform_check_out(
     excused = await is_excused_day(db, user.id, att.date)
 
     _validate_face(user, descriptor, liveness)
-    await _validate_location(db, lat, lng, accuracy)
+    await _validate_location(db, lat, lng, accuracy, user)
 
     check_out_time_utc = datetime.utcnow()
 
