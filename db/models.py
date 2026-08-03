@@ -850,6 +850,30 @@ class Attendance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AttendanceReminder(Base):
+    """«Keldim/Ketdim bosishni unutmang» eslatmasi YUBORILGANINING izi.
+
+    Nega alohida jadval kerak: eslatma tick'i har ~5 daqiqada ishlaydi, ya'ni
+    ish oynasi boshlanishiga 15 daqiqa qolganda TRIGGER shart bir necha marta
+    rost bo'ladi. Iz bo'lmasa xodim bitta ertalab 3-4 marta bir xil xabar
+    olardi va eslatmani butunlay o'chirib qo'yardi.
+
+    Nega `Attendance` yozuvining o'ziga bayroq qo'yilmadi: eslatma aynan
+    check-in HALI YO'Q paytda yuboriladi — o'sha payt `Attendance` qatori
+    umuman mavjud bo'lmasligi mumkin (xodim hech narsa bosmagan).
+
+    `kind`: "check_in" | "check_out" — ikkalasi bir kunda alohida yuboriladi."""
+
+    __tablename__ = "attendance_reminders"
+    __table_args__ = (UniqueConstraint("user_id", "date", "kind", name="uq_att_reminder_user_date_kind"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class FsmState(Base):
     """Bot FSM holati — cPanel (webhook) rejimida XOTIRA O'RNIGA bazada.
 

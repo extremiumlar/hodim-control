@@ -57,9 +57,14 @@ class Category:
     APPROVALS = "approvals"  # rahbarga: tasdiq kutilmoqda
     SALES_SIGNALS = "sales_signals"  # issiq lid, harakatsizlik
     DIGESTS = "digests"  # kunlik/haftalik/oylik xulosa
+    # «Keldim/Ketdim bosishni unutmang» — ish oynasi boshlanishi/tugashiga
+    # yaqin. Kuniga ko'pi bilan 2 marta (kelish + ketish), shuning uchun
+    # PLAN_REMINDERS'dan farqli o'laroq default YOQIQ.
+    ATTENDANCE_REMINDER = "attendance_reminder"
 
 
 CATEGORY_LABELS: dict[str, str] = {
+    Category.ATTENDANCE_REMINDER: "Keldim/Ketdim eslatmasi",
     Category.LATE_WARNING: "Kechikish ogohlantirishi",
     Category.TASKS: "Vazifalar",
     Category.DECISIONS: "Qaror natijasi",
@@ -73,7 +78,13 @@ CATEGORY_LABELS: dict[str, str] = {
 # Qolganlari (APPROVALS, SALES_SIGNALS, DIGESTS) guruh chatiga ham ketadi
 # yoki tarix sifatida kerak, shuning uchun Telegram doim qoladi.
 PERSONAL_CATEGORIES = frozenset(
-    {Category.LATE_WARNING, Category.TASKS, Category.DECISIONS, Category.PLAN_REMINDERS}
+    {
+        Category.LATE_WARNING,
+        Category.TASKS,
+        Category.DECISIONS,
+        Category.PLAN_REMINDERS,
+        Category.ATTENDANCE_REMINDER,
+    }
 )
 
 MANAGER_ROLES = frozenset({"hr", "rop", "boss", "dasturchi"})
@@ -82,6 +93,9 @@ MANAGER_ROLES = frozenset({"hr", "rop", "boss", "dasturchi"})
 # keladi va eng tez charchatadigan toifa. Digestlar ham o'chiq: uzun matn
 # push'da o'qilmaydi, Telegram/saytda yaxshiroq.
 _DEFAULTS_EMPLOYEE: dict[str, bool] = {
+    # Kuniga ko'pi bilan 2 marta va aynan jarimadan saqlaydigan eslatma —
+    # shuning uchun PLAN_REMINDERS'dan farqli o'laroq YOQIQ.
+    Category.ATTENDANCE_REMINDER: True,
     Category.LATE_WARNING: True,
     Category.TASKS: True,
     Category.DECISIONS: True,

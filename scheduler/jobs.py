@@ -126,6 +126,17 @@ async def calculate_monthly_bonus() -> None:
         logger.info("[BONUS OK] Oylik bonus muvaffaqiyatli hisoblandi: %s", body)
 
 
+async def attendance_reminder_tick() -> None:
+    """«Keldim/Ketdim bosishni unutmang» — ish oynasi boshlanishiga/tugashiga
+    yaqin qolganda bosmaganlarga eslatma. API dam kuni/sababli kun/allaqachon
+    bosgan holatlarni o'zi filtrlaydi va bir kunda bir marta yuboradi."""
+    body = await call_api(
+        "/attendance/reminder-tick", json={}, timeout=120, label="Davomat eslatmasi"
+    )
+    if body is not None and body.get("sent"):
+        logger.info("Davomat eslatmasi: %s ta yuborildi (nomzod %s)", body["sent"], body.get("candidates"))
+
+
 # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ─────────────────
 async def login_security_cleanup_tick() -> None:
     """Replay-himoya hash'lari (UsedTelegramLoginHash) va rate-limit urinish

@@ -6,9 +6,12 @@ import json
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     AttendanceManualUpdate,
@@ -45,9 +48,10 @@ from api.services.attendance_digest import (
 from api.notify import notify_user
 from api.services.push import Category
 from api.telegram_notify import inline_keyboard
-from api.timeutil import today_local
+from api.timeutil import TASHKENT_TZ, today_local
 from db.models import (
     Attendance,
+    AttendanceReminder,
     AttendanceStatus,
     AuditLog,
     FaceReregistrationRequest,
@@ -915,3 +919,135 @@ async def delete_attendance(
     await db.delete(att)
     await db.commit()
     return {"deleted": True}
+
+
+# ─────────────────────────────────────────────
+# «Keldim/Ketdim bosishni unutmang» eslatmasi (scheduler)
+# ─────────────────────────────────────────────
+
+
+class AttendanceReminderTick(BaseModel):
+    """Scheduler tick. `dry_run` — hech kimga YUBORMASDAN kimga ketishini
+    qaytaradi (sinov uchun; test.py real xodimga xabar yubormasligi kerak)."""
+
+    dry_run: bool = False
+
+
+@router.post("/reminder-tick", dependencies=[Depends(verify_bot_secret)])
+async def attendance_reminder_tick(
+    payload: AttendanceReminderTick, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Ish oynasi boshlanishiga/tugashiga yaqin qolganda «Keldim»/«Ketdim»
+    bosmaganlarga eslatma yuboradi.
+
+    NEGA KERAK: xodim bosishni unutsa, tizimda "kelmagan" bo'lib qoladi va bu
+    to'g'ridan-to'g'ri oylik jarimasiga aylanadi. Keyin uni qo'lda tuzatish
+    kerak bo'ladi (`/attendance/manual`) — eslatma o'sha ishning oldini oladi.
+
+    QAT'IY CHETLAB O'TILADI (aks holda eslatma bezor qiladi va ishonchni
+    yo'qotadi):
+      - dam kunidagilar (`_effective_today` -> is_working=False);
+      - tasdiqlangan sababli kundagilar (`is_excused_day`);
+      - allaqachon bosganlar;
+      - davomat kuzatilmaydigan rol (Boshliq);
+      - Telegram'ga ulanmaganlar (`telegram_id is None`).
+
+    TAKRORLANMASLIK: tick har ~5 daqiqada ishlaydi, ya'ni "N daqiqa qoldi"
+    sharti bir necha marta rost bo'ladi. `AttendanceReminder` jadvalidagi
+    UNIQUE(user_id, date, kind) yozuvi bir kunda bir marta yuborilishini
+    kafolatlaydi (poyga holatida ham — ikkinchi tick IntegrityError oladi).
+    """
+    # `_effective_today`/`_to_min` — ish oynasi qoidasining YAGONA manbai
+    # (hourly_plan). Circular importdan qochish uchun funksiya ichida.
+    from api.routers.hourly_plan import _effective_today, _to_min
+    from api.services.attendance import is_excused_day
+
+    before_start = settings.attendance_reminder_before_start_min
+    before_end = settings.attendance_reminder_before_end_min
+
+    now_local = datetime.now(TASHKENT_TZ)
+    day = today_local()
+    now_min = now_local.hour * 60 + now_local.minute
+
+    users = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(ATTENDANCE_TRACKED_ROLES),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+
+    already = {
+        (r.user_id, r.kind)
+        for r in await db.scalars(select(AttendanceReminder).where(AttendanceReminder.date == day))
+    }
+
+    planned: list[dict] = []
+    for user in users:
+        is_working, start, end = await _effective_today(db, user, day)
+        if not is_working:
+            continue  # dam kuni — eslatma ham, kechikish ham yo'q
+        if await is_excused_day(db, user.id, day):
+            continue  # sababli kun — kelishi shart emas
+
+        att = await db.scalar(
+            select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
+        )
+
+        # ── Kelish eslatmasi: ish boshlanishiga BEFORE daqiqa qolganda ──
+        if start and (att is None or att.check_in_time is None):
+            start_min = _to_min(start)
+            lo = start_min - before_start
+            # Yuqori chegara ATAYLAB `start_min` — ish boshlangandan KEYIN
+            # eslatma yubormaymiz: u paytda xodim allaqachon kechikkan va
+            # unga "unutmang" deyish kechikish faktini o'zgartirmaydi
+            # (kechikkanlar bilan `late_warnings` alohida ishlaydi).
+            if lo <= now_min < start_min and (user.id, "check_in") not in already:
+                planned.append({"user": user, "kind": "check_in", "at": start})
+
+        # ── Ketish eslatmasi: ish tugashiga BEFORE daqiqa qolganda ──
+        # Faqat «Keldim» bosgan, lekin «Ketdim» bosmaganlarga: umuman
+        # kelmagan odamga "ketishni unutmang" deyish ma'nosiz.
+        if end and att is not None and att.check_in_time is not None and att.check_out_time is None:
+            end_min = _to_min(end)
+            lo = end_min - before_end
+            # Bu yerda yuqori chegara YO'Q: ish tugagach ham «Ketdim» bosish
+            # mumkin va kerak (aks holda `worked_minutes` yozilmay qoladi).
+            if now_min >= lo and (user.id, "check_out") not in already:
+                planned.append({"user": user, "kind": "check_out", "at": end})
+
+    if payload.dry_run:
+        return {
+            "dry_run": True,
+            "planned": [
+                {"user_id": p["user"].id, "full_name": p["user"].full_name, "kind": p["kind"], "at": p["at"]}
+                for p in planned
+            ],
+        }
+
+    sent = 0
+    for p in planned:
+        user, kind = p["user"], p["kind"]
+        # Izni AVVAL yozamiz: yuborish sekin (Telegram+FCM) va shu orada
+        # keyingi tick kelib qolsa, ikkalasi ham yuborib yuborardi.
+        db.add(AttendanceReminder(user_id=user.id, date=day, kind=kind))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            continue  # boshqa tick ulgurdi — bu yerda jim o'tamiz
+
+        text = (
+            f"⏰ Ish vaqti {p['at']} da boshlanadi — «Keldim» bosishni unutmang."
+            if kind == "check_in"
+            else f"⏰ Ish vaqti {p['at']} da tugaydi — «Ketdim» bosishni unutmang."
+        )
+        res = await notify_user(
+            db, user, Category.ATTENDANCE_REMINDER, text, data={"path": "/check-in"}
+        )
+        if res["telegram"] or res["push"]:
+            sent += 1
+
+    return {"date": day.isoformat(), "candidates": len(planned), "sent": sent}

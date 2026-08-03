@@ -103,6 +103,12 @@ HOT_LEAD_POLL_MINUTES = 2
 # chegarani o'z vaqtida ilg'ash uchun soatlikdan (ai_watch) ancha tezroq.
 IDLE_WATCH_INTERVAL_MINUTES = 5
 
+# «Keldim/Ketdim bosishni unutmang» eslatmasi. Oldindan ogohlantirish oynasi
+# API tomonda (`attendance_reminder_before_start_min`, default 15 daqiqa) —
+# shu interval undan KICHIK bo'lishi kerak, aks holda oyna sakrab o'tilib,
+# eslatma umuman yuborilmay qolishi mumkin.
+ATTENDANCE_REMINDER_INTERVAL_MINUTES = 5
+
 # Telegram login xavfsizligi: replay-himoya hash'lari va rate-limit urinish
 # yozuvlarini tozalash chastotasi — vaqtinchalik jadvallar, shoshilinch emas.
 LOGIN_SECURITY_CLEANUP_INTERVAL_MINUTES = 60

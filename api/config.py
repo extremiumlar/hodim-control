@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # (masalan IP-asosidagi zaxira geolokatsiya, ba'zan 1000+ metr) o'qish rad etiladi —
     # aks holda ofisdan uzoqdagi kishi "aniqlik yo'q" bahonasida ham check-in qila oladi.
     attendance_max_gps_accuracy_m: int = 100
+    # «Keldim/Ketdim bosishni unutmang» eslatmasi: ish oynasi boshlanishiga/
+    # tugashiga shuncha daqiqa qolganda yuboriladi. Kelish uchun 15 daqiqa —
+    # xodim yo'lda bo'lsa ham ulguradi; ketish uchun 10 daqiqa — ish tugashiga
+    # yaqin, lekin hali ofisda.
+    attendance_reminder_before_start_min: int = 15
+    attendance_reminder_before_end_min: int = 10
 
     # Soatlik reja avtomatik eslatmasi — haqiqiy xodimlarga Telegram xabar yuboradi,
     # shuning uchun default O'CHIQ. Ishga tushirishga tayyor bo'lganda .env'da

@@ -128,6 +128,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_BONUS_DAY, hour=cfg.MONTHLY_BONUS_HOUR, minute=cfg.MONTHLY_BONUS_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # «Keldim/Ketdim bosishni unutmang» — ish oynasi chegarasiga yaqin
+        # qolganda. API o'zi filtrlaydi va kuniga bir marta yuboradi.
+        JobSpec(
+            "attendance_reminder", jobs.attendance_reminder_tick,
+            IntervalTrigger(minutes=cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
         # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ───────────
         # Eskirgan hash/urinish yozuvlarini tozalash — vaqtinchalik jadvallar
         JobSpec(

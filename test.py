@@ -3366,6 +3366,123 @@ def test_location_exempt_checkin() -> None:
         conn.close()
 
 
+def test_attendance_reminder() -> None:
+    """«Keldim/Ketdim bosishni unutmang» eslatmasi (D-bo'lim, 2026-08-03).
+
+    ⚠️ FAQAT `dry_run` ishlatiladi — real xodimga Telegram xabari KETMAYDI.
+    Sinov T- xodimlarning ish oynasini HOZIRGI vaqtga moslab qo'yadi, ya'ni
+    "ish boshlanishiga 15 daqiqa qoldi" holati sun'iy yaratiladi.
+
+    Tekshiriladi: (a) bosmagan -> ro'yxatga tushadi; (b) dam kunida ->
+    tushmaydi; (c) sababli kunda -> tushmaydi; (d) allaqachon bosgan ->
+    tushmaydi; (e) iz yozilgach takror tushmaydi."""
+    import httpx
+
+    from api.config import settings
+
+    print("\n" + "=" * 60)
+    print("DAVOMAT ESLATMASI («Keldim/Ketdim bosishni unutmang»)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    today = date.today().isoformat()
+    now = datetime.now(TZ)
+    # Ish boshlanishi = hozir + 10 daqiqa -> "15 daqiqa qoldi" oynasi ichida.
+    start_at = (now + timedelta(minutes=10)).strftime("%H:%M")
+    end_at = (now + timedelta(minutes=200)).strftime("%H:%M")
+
+    stale = [r[0] for r in cur.execute("select id from users where full_name like 'T-Rem%'").fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for t in ("attendance_reminders", "attendance", "work_schedule_override",
+                  "work_schedule_weekly", "excused_days"):
+            cur.execute(f"delete from {t} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", stale + stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    conn.commit()
+
+    def mk(tg: int, name: str) -> int:
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+            " values (?,?,'employee',1,1,datetime('now'))", (tg, name))
+        return cur.lastrowid
+
+    forgot_uid = mk(999905001, "T-Rem-Forgot")     # bosmagan -> eslatma KERAK
+    dayoff_uid = mk(999905002, "T-Rem-DayOff")     # dam kuni -> KERAK EMAS
+    excused_uid = mk(999905003, "T-Rem-Excused")   # sababli -> KERAK EMAS
+    done_uid = mk(999905004, "T-Rem-Done")         # allaqachon bosgan -> KERAK EMAS
+
+    for uid in (forgot_uid, excused_uid, done_uid):
+        cur.execute(
+            "insert into work_schedule_override (user_id, date, is_working, start_time, end_time, updated_at)"
+            " values (?,?,1,?,?,datetime('now'))", (uid, today, start_at, end_at))
+    # Dam kuni
+    cur.execute(
+        "insert into work_schedule_override (user_id, date, is_working, updated_at)"
+        " values (?,?,0,datetime('now'))", (dayoff_uid, today))
+    # Sababli kun (tasdiqlangan)
+    cur.execute(
+        "insert into excused_days (user_id, date, reason, status, created_at)"
+        " values (?,?,'T-sinov','approved',datetime('now'))", (excused_uid, today))
+    # Allaqachon «Keldim» bosgan
+    cur.execute(
+        "insert into attendance (user_id, date, check_in_time, late_minutes, early_leave_minutes,"
+        " worked_minutes, status, is_weekend, created_at, updated_at)"
+        " values (?,?,datetime('now'),0,0,0,'present',0,datetime('now'),datetime('now'))",
+        (done_uid, today))
+    conn.commit()
+
+    def cleanup_rem():
+        try:
+            conn2 = db()
+            c2 = conn2.cursor()
+            uids = [forgot_uid, dayoff_uid, excused_uid, done_uid]
+            qm = ",".join("?" * len(uids))
+            for t in ("attendance_reminders", "attendance", "work_schedule_override",
+                      "work_schedule_weekly", "excused_days"):
+                c2.execute(f"delete from {t} where user_id in ({qm})", uids)
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            conn2.commit()
+            conn2.close()
+        except Exception:
+            print("  Eslatma tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    try:
+        hdr = {"X-Bot-Secret": settings.bot_shared_secret}
+        with httpx.Client(timeout=30) as client:
+            r = client.post(f"{API_BASE}/attendance/reminder-tick", headers=hdr, json={"dry_run": True})
+            check("reminder-tick (dry_run) -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            planned = r.json().get("planned", []) if r.status_code == 200 else []
+            ids = {p["user_id"] for p in planned}
+
+            check("Bosmagan xodim ro'yxatda BOR", forgot_uid in ids, f"planned={sorted(ids)}")
+            check("Dam kunidagi YO'Q", dayoff_uid not in ids, f"planned={sorted(ids)}")
+            check("Sababli kundagi YO'Q", excused_uid not in ids, f"planned={sorted(ids)}")
+            check("Allaqachon bosgan YO'Q", done_uid not in ids, f"planned={sorted(ids)}")
+            check("Bosmagan uchun tur = check_in",
+                  any(p["user_id"] == forgot_uid and p["kind"] == "check_in" for p in planned),
+                  f"={[p for p in planned if p['user_id'] == forgot_uid]}")
+
+            # Iz yozilgan bo'lsa takror tushmasligi (real yuborishsiz — izni
+            # qo'lda yozamiz, chunki dry_run iz yozmaydi).
+            c = db()
+            c.execute(
+                "insert into attendance_reminders (user_id, date, kind, sent_at)"
+                " values (?,?,'check_in',datetime('now'))", (forgot_uid, today))
+            c.commit()
+            c.close()
+            r = client.post(f"{API_BASE}/attendance/reminder-tick", headers=hdr, json={"dry_run": True})
+            ids2 = {p["user_id"] for p in r.json().get("planned", [])} if r.status_code == 200 else set()
+            check("Iz yozilgach TAKROR tushmaydi", forgot_uid not in ids2, f"planned={sorted(ids2)}")
+    except Exception:
+        check("Davomat eslatmasi (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cleanup_rem()
+        conn.close()
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -3442,6 +3559,11 @@ def main() -> None:
         test_location_exempt_checkin()
     except Exception:
         print("Bez-lokatsiya check-in testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_attendance_reminder()
+    except Exception:
+        print("Davomat eslatmasi testida kutilmagan xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")

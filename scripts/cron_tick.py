@@ -109,6 +109,13 @@ def _due(now: datetime) -> list:
     # o'lchovda 4.7s va 2.0s chiqqani uchun lid skaneri kabi in-process
     # bajariladi (main() pastda) — Passenger'ning yagona ishchisi band bo'lmasin.
 
+    # «Keldim/Ketdim bosishni unutmang» — API dam kuni/sababli kun/allaqachon
+    # bosganlarni o'zi filtrlaydi va kuniga bir marta yuboradi (UNIQUE iz).
+    # Toq qoldiq (==1) ATAYLAB: yuqoridagi guruhlar juft daqiqalarda
+    # to'planadi, yagona Passenger ishchisi bir zumda to'lib qolmasin.
+    if m % cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES == 1:
+        add("/attendance/reminder-tick", json={}, timeout=120)
+
     # ── Soatlik ──
     if m == 0:
         add("/hourly-plan/send", timeout=60)         # soatlik reja (API ish oynasini tekshiradi)
