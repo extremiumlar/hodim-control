@@ -4096,6 +4096,63 @@ def test_visit_counting() -> None:
     except Exception:
         check("tashrif hisoblash testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
+    # ── Statistika builderlari: voqea-asosli Tashrif + snapshot fallback (2026-08-03) ──
+    from db.models import LeadStageDaily
+
+    OLD_DAY = date(2019, 3, 5)  # LeadEvent jurnalidan OLDINGI davr — fallback tekshiruvi
+
+    async def _run_builders():
+        from api.routers import stats as stats_router
+
+        async with async_session() as s:
+            await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
+            await s.execute(_delete(LeadStageDaily).where(LeadStageDaily.responsible_id >= 991000))
+            # Voqealar: DAY kuni 991001 uchun 2 ta haqiqiy kirish
+            s.add_all([
+                ev(L + 1, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 10, 9, 0), day_epoch),
+                ev(L + 2, "stage_change", 111, 990002, 991001, 991001, 991001, datetime(2020, 6, 10, 10, 0), day_epoch),
+            ])
+            # Snapshot esa shishgan: DAY kuni Tashrifda 5 lid "ko'ringan"
+            s.add_all([
+                LeadStageDaily(date=DAY, responsible_id=991001, responsible_name="T-Op991001",
+                               pipe_status_id=990001, stage_name="Tashrif", leads_count=5),
+                LeadStageDaily(date=DAY, responsible_id=991001, responsible_name="T-Op991001",
+                               pipe_status_id=111, stage_name="Boshqa", leads_count=2),
+                # Jurnal boshlanmagan eski kun — snapshot yagona manba bo'lib qolishi kerak
+                LeadStageDaily(date=OLD_DAY, responsible_id=991001, responsible_name="T-Op991001",
+                               pipe_status_id=990001, stage_name="Tashrif", leads_count=3),
+            ])
+            await s.commit()
+            try:
+                # Builderlar sozlamadagi haqiqiy Tashrif ID'lariga qaraydi — testda soxta
+                # ID'lar (990001/990002) ishlatilgani uchun vaqtincha almashtiramiz
+                orig = stats_router._visit_ids
+                stats_router._visit_ids = lambda: VISIT_IDS
+                day_out = await stats_router._build_lead_day(s, DAY, None)
+                old_out = await stats_router._build_lead_day(s, OLD_DAY, None)
+                month_out = await stats_router._build_lead_month(s, "2020-06", None)
+                stats_router._visit_ids = orig
+                return day_out, old_out, month_out
+            finally:
+                await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
+                await s.execute(_delete(LeadStageDaily).where(LeadStageDaily.responsible_id >= 991000))
+                await s.commit()
+
+    try:
+        day_out, old_out, month_out = _asyncio.run(_run_builders())
+        check("kunlik ko'rinish: Tashrif voqealardan (2, snapshot 5 emas)",
+              day_out.visits == 2, f"visits={day_out.visits}")
+        check("kunlik ko'rinish: operator krediti ham voqealardan",
+              any(o.responsible_id == 991001 and o.visits == 2 for o in day_out.operators),
+              f"ops={[(o.responsible_id, o.visits) for o in day_out.operators]}")
+        check("jurnal oldingi kun: snapshot fallback (3)",
+              old_out.visits == 3, f"visits={old_out.visits}")
+        check("oylik ko'rinish: DAY qatori voqea-asosli (2)",
+              any(d.date == DAY and d.visits == 2 for d in month_out.days),
+              f"days={[(str(d.date), d.visits) for d in month_out.days]}")
+    except Exception:
+        check("statistika builder testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
 
 if __name__ == "__main__":
     main()

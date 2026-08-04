@@ -172,11 +172,17 @@ def _due(now: datetime) -> list:
 
 
 def _lead_sync_due(now: datetime) -> bool:
-    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES (default 15 daqiqa —
-    :00/:15/:30/:45) va HAR KUNI 23:57 "muzlatish" (scheduler/main.py bilan bir
-    xil — avvalgi versiyada muzlatish xato ravishda faqat oyning oxirgi kuniga
-    bog'langan edi)."""
-    if now.minute % cfg.LEAD_SNAPSHOT_INTERVAL_MINUTES == 0:
+    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES da bir, va HAR KUNI
+    23:57 "muzlatish" (scheduler/main.py bilan bir xil — avvalgi versiyada
+    muzlatish xato ravishda faqat oyning oxirgi kuniga bog'langan edi).
+
+    Qoldiq 8 ATAYIN (2026-08-03): ==0 bo'lsa diff skani (m%5==0) bilan bir
+    daqiqaga to'planardi. Cron jarayoni ICHIDAGI to'qnashuvlar (issiq-lid m%2==0)
+    endi xavfsiz — hammasi bitta pacing orqali o'tadi (crm/uysot.py); asosiy
+    xavf BOSHQA jarayondagi (Passenger, toq daqiqalardagi /daily-results/sync)
+    CRM chaqiruvlari bilan ustma-ust tushish edi. 8 juft (toq guruhga tegmaydi)
+    va 5 ga bo'linmaydi (diff bilan kesishmaydi) — :08/:38."""
+    if now.minute % cfg.LEAD_SNAPSHOT_INTERVAL_MINUTES == 8:
         return True
     return now.hour == cfg.LEAD_SNAPSHOT_FREEZE_HOUR and now.minute == cfg.LEAD_SNAPSHOT_FREEZE_MINUTE
 
