@@ -331,10 +331,22 @@ async def main() -> None:
 
     jobs = _due(now)
     if jobs:
-        results = await asyncio.gather(
-            *(call_api(path, **kw) for path, kw in jobs), return_exceptions=True
-        )
-        fired = [p for (p, _), r in zip(jobs, results) if r is not None and not isinstance(r, Exception)]
+        # Passenger'da BITTA ishchi bor — hamma so'rov unda navbatga tushadi.
+        # Vaqt-sezgir daqiqalik ticklar (digest'lar) AVVAL, tez tugaydi (~1-2s);
+        # keyin qolganlari. Aks holda (jonli, 2026-08-04 15:23) toq daqiqada
+        # /daily-results/sync (Uysot pacing bilan ~30-40s) ishchini band qilib,
+        # /attendance/digest-tick 60s timeout'iga yetmay ReadTimeout berardi.
+        URGENT_PATHS = {"/stats/lead-stages/group-tick", "/attendance/digest-tick"}
+        urgent = [(p, kw) for p, kw in jobs if p in URGENT_PATHS]
+        rest = [(p, kw) for p, kw in jobs if p not in URGENT_PATHS]
+        results = []
+        for batch in (urgent, rest):
+            if batch:
+                results += await asyncio.gather(
+                    *(call_api(path, **kw) for path, kw in batch), return_exceptions=True
+                )
+        ordered = urgent + rest
+        fired = [p for (p, _), r in zip(ordered, results) if r is not None and not isinstance(r, Exception)]
         if fired:
             print(f"{now:%Y-%m-%d %H:%M} tik: {', '.join(fired)}")
 

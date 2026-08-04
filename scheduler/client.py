@@ -31,6 +31,12 @@ async def call_api(
             resp = await client.request(method, path, json=json)
             resp.raise_for_status()
             return resp.json()
+        except httpx.TimeoutException:
+            # Timeout — kutilgan turdagi vaqtinchalik holat (masalan Passenger'ning
+            # yagona ishchisi boshqa so'rov bilan band): to'liq traceback log'ni
+            # to'ldirardi (cron.log'da minglab qator) — bir qator kifoya.
+            logger.warning("%s timeout (%.0fs) — keyingi tick'da qayta uriniladi", label, timeout)
+            return None
         except httpx.HTTPError:
             logger.exception("%s xatosi", label)
             return None
