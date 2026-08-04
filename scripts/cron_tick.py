@@ -10,15 +10,17 @@ bo'lgan API endpointlarini chaqiradi — scheduler/main.py'dagi JOBS jadvali bil
 bir xil, lekin apscheduler o'rniga cron tik'iga bog'langan. Endpointlar
 X-Bot-Secret bilan himoyalangan (scheduler.client.call_api'dan foydalanadi).
 
-MUHIM ISTISNO — lid snapshoti (og'ir skaner) HTTP orqali EMAS, shu jarayonning
-O'ZIDA (in-process) bajariladi: butun CRM bazasini sahifalash ~5-7 daqiqa davom
-etadi, shared hosting gateway'i esa HTTP so'rovni ~180 soniyada o'ldiradi (jonli
-sinovda 182s da HTTP 500). Cron jarayoniga bunday limit yo'q. Parallel yozuvlar
-uchun db/base.py'da SQLite busy timeout 30s qilingan; ketma-ket ikki skan
-ustma-tushmasligi uchun lock fayl ishlatiladi.
+MUHIM ISTISNO — lid snapshoti va boshqa uzun ishlaydigan skanlar HTTP orqali
+EMAS, shu jarayonning O'ZIDA (in-process) bajariladi: shared hosting gateway'i
+HTTP so'rovni ~180 soniyada o'ldiradi (jonli sinovda 182s da HTTP 500), cron
+jarayoniga esa bunday limit yo'q. (Lid snapshoti 2026-08-03 dan lokal
+LeadEvent hisobiga o'tib ancha yengillashdi — CRM'ga faqat qo'ng'iroqlar skani
+qoldi — lekin Passenger'ning yagona ishchisini band qilmaslik uchun in-process
+yo'lda qoladi.) Parallel yozuvlar uchun db/base.py'da SQLite busy timeout 30s
+qilingan; ketma-ket ikki skan ustma-tushmasligi uchun lock fayl ishlatiladi.
 
-Eslatma: crm_sync ilgari 30 soniyada edi — cron minimal granularligi 1 daqiqa,
-shuning uchun daqiqada bir marta (8 xodimlik jamoa uchun yetarli)."""
+Eslatma: crm_sync cron granularligi tufayli bu rejimda har 2 daqiqada (m%2==1)
+— scheduler rejimidagi CRM_SYNC_INTERVAL_SECONDS=120 bilan mos."""
 import asyncio
 import sys
 from datetime import datetime, timedelta
@@ -33,9 +35,10 @@ from scheduler.client import call_api  # noqa: E402
 
 TZ = ZoneInfo(cfg.TIMEZONE)
 
-# Lid skaneri lock fayli — skan ~5-7 daqiqa, interval 30 daqiqa; CRM sekinlashib
-# (429 backoff) cho'zilib ketsa keyingi skan boshlanmasin. Eskirgan (25 daq+)
-# lock e'tiborga olinmaydi (jarayon o'lib qolgan bo'lishi mumkin).
+# Lid skaneri lock fayli — snapshot endi yengil (lidlar lokal hisobdan, CRM'ga
+# faqat qo'ng'iroqlar skani, odatda <1 daqiqa), lekin 429 cooldown'da cho'zilishi
+# mumkin — keyingi skan boshlanmasin. Eskirgan (25 daq+) lock e'tiborga
+# olinmaydi (jarayon o'lib qolgan bo'lishi mumkin).
 LEAD_SYNC_LOCK = ROOT / "logs" / "lead_sync.lock"
 LEAD_SYNC_LOCK_STALE_MINUTES = 25
 
@@ -172,8 +175,8 @@ def _due(now: datetime) -> list:
 
 
 def _lead_sync_due(now: datetime) -> bool:
-    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES (default 15 daqiqa —
-    :00/:15/:30/:45) va HAR KUNI 23:57 "muzlatish" (scheduler/main.py bilan bir
+    """Lid snapshoti vaqti: har LEAD_SNAPSHOT_INTERVAL_MINUTES (default 30 daqiqa —
+    :00/:30) va HAR KUNI 23:57 "muzlatish" (scheduler/main.py bilan bir
     xil — avvalgi versiyada muzlatish xato ravishda faqat oyning oxirgi kuniga
     bog'langan edi)."""
     if now.minute % cfg.LEAD_SNAPSHOT_INTERVAL_MINUTES == 0:

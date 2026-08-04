@@ -105,7 +105,7 @@ def _day_text(data: dict) -> str:
     lines.append("")
     lines.append(_last_updated_line(data.get("last_updated")))
     if d == datetime.now(TASHKENT_TZ).date():
-        # "Bugungi rejam" (soatlik reja) suhbatlar sonini har ~30 soniyada,
+        # "Bugungi rejam" (soatlik reja) suhbatlar sonini har ~2 daqiqada,
         # bu yerdagi son esa davriy snapshot (har ~30 daqiqada) yangilanadi —
         # shuning uchun bugungi kunda ikkalasi orasida ozgina farq normal.
         lines.append(

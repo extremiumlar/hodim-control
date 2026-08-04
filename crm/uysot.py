@@ -9,6 +9,7 @@ from crm.base import CRMAdapter, TASHKENT_TZ, day_bounds_unix
 from crm.config import (
     CRM_API_KEY,
     CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS,
+    CRM_UYSOT_MAX_REQUESTS_PER_MINUTE,
     CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
     CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
 )
@@ -31,16 +32,124 @@ MAX_ACTIVE_LEAD_SCAN_PAGES = 200
 # lekin bu chegaradan qisqa qo'ng'iroqlar.
 SHORT_CALL_SECONDS = 15
 
-# Fon (scheduler) lead breakdown skaneri uchun: butun bazani sahifalab o'qiydi.
-# Uysot rate limiti daqiqasiga 60 so'rov — 30s CRM sync ham shu endpointdan
-# foydalangani uchun ~40 so'rov/daqiqa'ga throttle qilamiz (zaxira qoldirib).
-MAX_LEAD_SCAN_PAGES = 400  # xavfsizlik chegarasi (hozir ~184 sahifa, o'sish uchun zaxira)
-REQUEST_THROTTLE_SECONDS = 1.5
+# To'liq baza skani (tungi reconcile) uchun xavfsizlik chegarasi
+# (hozir ~184 sahifa, o'sish uchun zaxira).
+MAX_LEAD_SCAN_PAGES = 400
+# 429 javobida (Retry-After sarlavhasi bo'lmasa) BUTUN jarayon shuncha kutadi —
+# Uysot limiti daqiqalik oynada, 60s kutish oyna yangilanishini kafolatlaydi.
 RATE_LIMIT_BACKOFF_SECONDS = 60
-# Vaqtinchalik tarmoq xatosi (DNS/timeout)da bitta sahifani qayta o'qish — uzoq
+MAX_RATE_LIMIT_RETRIES = 4
+# Ko'p-sahifali OG'IR skanlar (diff-engine, call backfill) sahifalari orasidagi
+# qo'shimcha pauza (~30 so'rov/daqiqa). Global byudjet (_SharedRateBudget)
+# JARAYON-ichi; production cPanel rejimida esa Uysot'ga IKKI jarayon chiqadi:
+# cron_tick.py (in-process skanlar) va Passenger API ishchisi (crm_sync, AI,
+# bot). Har biri o'z byudjetiga ega bo'lgani uchun og'ir skan o'z jarayonining
+# to'liq byudjetini yesa, ikkinchi jarayon bilan yig'indi 60/daqiqadan oshishi
+# mumkin edi — bu pauza skanga sekinroq "tayanch" tezlik berib, qo'shni
+# jarayonning yengil trafigiga joy qoldiradi. Yengil (bir-ikki sahifali)
+# yo'llar pauzasiz — ular faqat byudjet slotini oladi.
+SCAN_THROTTLE_SECONDS = 2.0
+# Vaqtinchalik tarmoq xatosi (DNS/timeout)da bitta so'rovni qayta urinish — uzoq
 # skaner bitta uzilishdan butunlay yiqilmasligi uchun.
 MAX_PAGE_RETRIES = 4
 TRANSIENT_RETRY_SECONDS = 5
+
+
+class _SharedRateBudget:
+    """Uysot'ning 60 so'rov/daqiqa limitini BARCHA iste'molchilar o'rtasida
+    bitta joyda taqsimlaydi (2026-08-03, production'dagi 429 bo'roniga javob).
+
+    Muammo: adapter har chaqiruvda yangidan yaratiladi va har skan O'Z
+    throttle'i bilan yurardi — lead snapshot (~40/daq) + diff-tick (~40/daq) +
+    CRM sync bir vaqtga tushganda jami limitdan oshib, yengil joblar 429
+    traceback bilan yiqilardi (429 bilan ishlashni faqat 2 ta uzun skan
+    bilardi). Yechim: modul-darajali YAGONA byudjet — har so'rov global
+    minimal-interval slotini oladi (asyncio.Lock FIFO — yengil job og'ir skan
+    sahifalari orasida adolatli galma-gal o'tadi, navbatsiz qolmaydi), 429
+    kelganda esa cooldown HAMMA so'rovlarga birdek qo'llanadi (joblararo
+    muvofiqlashgan backoff).
+
+    Bu JARAYON-ICHI mexanizm. Docker rejimida barcha Uysot chaqiruvlari yagona
+    API jarayonida (uvicorn bitta worker) — byudjet to'liq qamraydi. cPanel
+    cron rejimida esa ikki jarayon bor: cron_tick.py (in-process skanlar) va
+    Passenger API ishchisi — har biri O'Z byudjetiga ega, shuning uchun og'ir
+    skanlar qo'shimcha `SCAN_THROTTLE_SECONDS` bilan sekinlashtiriladi (yig'indi
+    60/daqiqadan oshmasin). API ko'p-worker qilinsa byudjetni worker soniga
+    bo'lish kerak bo'ladi."""
+
+    def __init__(self, per_minute: int) -> None:
+        self._min_interval = 60.0 / max(1, per_minute)
+        self._lock = asyncio.Lock()
+        self._next_slot = 0.0  # monotonic: keyingi so'rovga ruxsat vaqti
+        self._cooldown_until = 0.0  # 429'dan keyin hamma shu vaqtgacha kutadi
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            slot = max(self._next_slot, self._cooldown_until, now)
+            self._next_slot = slot + self._min_interval
+        delay = slot - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def start_cooldown(self, seconds: float) -> None:
+        until = time.monotonic() + seconds
+        self._cooldown_until = max(self._cooldown_until, until)
+        self._next_slot = max(self._next_slot, until)
+
+
+_RATE_BUDGET = _SharedRateBudget(CRM_UYSOT_MAX_REQUESTS_PER_MINUTE)
+
+
+def _retry_after_seconds(resp: httpx.Response) -> float:
+    """429 javobidagi Retry-After (sekund) — yo'q/nosog'lom bo'lsa default."""
+    try:
+        value = float(resp.headers.get("Retry-After", ""))
+    except ValueError:
+        return float(RATE_LIMIT_BACKOFF_SECONDS)
+    if 0 < value <= 600:
+        return value
+    return float(RATE_LIMIT_BACKOFF_SECONDS)
+
+
+async def _limited_request(
+    client: httpx.AsyncClient, method: str, path: str, *, json: dict | None = None
+) -> httpx.Response:
+    """Barcha Uysot HTTP so'rovlari uchun YAGONA kirish nuqtasi: global byudjet
+    slotini oladi; 429'da muvofiqlashgan cooldown bilan qayta urinadi (limitga
+    urilgan job endi traceback bilan yiqilmaydi — kutadi, boshqa joblar ham
+    o'sha cooldown'ni ko'radi); vaqtinchalik tarmoq xatosida ham qayta urinadi.
+    Boshqa statuslarni tekshirmaydi (masalan 404 semantikasi chaqiruvchida) —
+    retry'lar tugagan 429 ham chaqiruvchining `raise_for_status`iga qaytadi."""
+    rate_limited = 0
+    transient = 0
+    while True:
+        await _RATE_BUDGET.acquire()
+        try:
+            resp = await client.request(method, path, json=json)
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            transient += 1
+            if transient > MAX_PAGE_RETRIES:
+                raise
+            logger.warning(
+                "Uysot %s %s vaqtinchalik xato (%s) — %ss kutib qayta (%s/%s)",
+                method, path, type(exc).__name__, TRANSIENT_RETRY_SECONDS, transient, MAX_PAGE_RETRIES,
+            )
+            await asyncio.sleep(TRANSIENT_RETRY_SECONDS)
+            continue
+        if resp.status_code != 429:
+            return resp
+        rate_limited += 1
+        if rate_limited > MAX_RATE_LIMIT_RETRIES:
+            return resp
+        backoff = _retry_after_seconds(resp)
+        _RATE_BUDGET.start_cooldown(backoff)
+        logger.warning(
+            "Uysot rate limit (%s %s) — %ss global cooldown, qayta urinish %s/%s",
+            method, path, int(backoff), rate_limited, MAX_RATE_LIMIT_RETRIES,
+        )
+        # start_cooldown keyingi acquire'ni cooldown oxirigacha suradi —
+        # bu yerda alohida sleep shart emas.
 
 
 class UysotAdapter(CRMAdapter):
@@ -94,8 +203,8 @@ class UysotAdapter(CRMAdapter):
         page = 1
 
         while page <= MAX_PAGES_PER_SYNC:
-            resp = await client.post(
-                "/call-history/filter",
+            resp = await _limited_request(
+                client, "POST", "/call-history/filter",
                 json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
             )
             resp.raise_for_status()
@@ -140,8 +249,8 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
-                    resp = await client.post(
-                        "/call-history/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/call-history/filter",
                         json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
                     )
                     resp.raise_for_status()
@@ -195,8 +304,8 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC and remaining:
-                    resp = await client.post(
-                        "/call-history/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/call-history/filter",
                         json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
                     )
                     resp.raise_for_status()
@@ -256,7 +365,8 @@ class UysotAdapter(CRMAdapter):
         o'tishda day_from'dan eskirgan yozuvga yetguncha varaqlaydi.
 
         Qaytaradi: {employeeNum: {"YYYY-MM-DD": {soat: bucket}}}. Uzoq skaner —
-        rate-limit (429) da kutadi, sahifalar orasi throttle. CRM xatosida `None`."""
+        tezligini global so'rov byudjeti (`_limited_request`) tekislaydi.
+        CRM xatosida `None`."""
         if not CRM_API_KEY:
             return None
 
@@ -267,14 +377,10 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
                 while page <= MAX_LEAD_SCAN_PAGES:
-                    resp = await client.post(
-                        "/call-history/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/call-history/filter",
                         json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
                     )
-                    if resp.status_code == 429:
-                        logger.warning("Uysot rate limit (call backfill) — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
-                        await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
-                        continue
                     resp.raise_for_status()
                     body = resp.json().get("data") or {}
                     records = body.get("data") or []
@@ -303,7 +409,7 @@ class UysotAdapter(CRMAdapter):
                     if reached_older_record or page >= body.get("totalPages", page):
                         break
                     page += 1
-                    await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+                    await asyncio.sleep(SCAN_THROTTLE_SECONDS)
                 else:
                     logger.warning("Uysot call backfill %s sahifada to'xtatildi (xavfsizlik chegarasi)", MAX_LEAD_SCAN_PAGES)
             except httpx.HTTPError:
@@ -331,8 +437,8 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
-                    resp = await client.post(
-                        "/call-history/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/call-history/filter",
                         json={"page": page, "size": CALL_HISTORY_PAGE_SIZE},
                     )
                     resp.raise_for_status()
@@ -389,8 +495,8 @@ class UysotAdapter(CRMAdapter):
         page = 1
 
         while page <= MAX_PAGES_PER_SYNC:
-            resp = await client.post(
-                "/lead/filter",
+            resp = await _limited_request(
+                client, "POST", "/lead/filter",
                 json={
                     "page": page,
                     "size": LEAD_FILTER_PAGE_SIZE,
@@ -433,7 +539,7 @@ class UysotAdapter(CRMAdapter):
         if self._pipe_status_names is not None:
             return self._pipe_status_names
 
-        resp = await client.get("/pipe/all")
+        resp = await _limited_request(client, "GET", "/pipe/all")
         resp.raise_for_status()
         names: dict[int, str] = {}
         for pipe in resp.json().get("data") or []:
@@ -444,121 +550,21 @@ class UysotAdapter(CRMAdapter):
         return names
 
     async def _fetch_lead_page(self, client: httpx.AsyncClient, page: int, extra: dict | None = None) -> dict:
-        """Bitta `/lead/filter` sahifasini chidamli o'qiydi: 429 (rate limit)da
-        `RATE_LIMIT_BACKOFF_SECONDS` kutadi; vaqtinchalik tarmoq xatosida (DNS/timeout)
-        `TRANSIENT_RETRY_SECONDS` kutib `MAX_PAGE_RETRIES` martagacha qayta urinadi.
-        Butun skaner uzoq davom etgani uchun bitta vaqtinchalik uzilish hammasini
-        bekor qilmasligi kerak — shu sabab retry bu yerda. `extra` — qo'shimcha
-        so'rov maydonlari (masalan `start`/`finish` sana chegarasi)."""
-        attempt = 0
+        """Bitta `/lead/filter` sahifasi — 429/vaqtinchalik-xato chidamliligi
+        `_limited_request` ichida (butun skaner bitta uzilishdan yiqilmaydi).
+        `extra` — qo'shimcha so'rov maydonlari (masalan `start`/`finish` sana
+        chegarasi)."""
         body = {"page": page, "size": LEAD_FILTER_PAGE_SIZE, **(extra or {})}
-        while True:
-            try:
-                resp = await client.post(
-                    "/lead/filter",
-                    json=body,
-                )
-                if resp.status_code == 429:
-                    logger.warning("Uysot rate limit — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
-                    await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
-                    continue
-                resp.raise_for_status()
-                return resp.json().get("data") or {}
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                attempt += 1
-                if attempt > MAX_PAGE_RETRIES:
-                    raise
-                logger.warning(
-                    "Uysot sahifa %s vaqtinchalik xato (%s) — %ss kutib qayta (%s/%s)",
-                    page, type(exc).__name__, TRANSIENT_RETRY_SECONDS, attempt, MAX_PAGE_RETRIES,
-                )
-                await asyncio.sleep(TRANSIENT_RETRY_SECONDS)
+        resp = await _limited_request(client, "POST", "/lead/filter", json=body)
+        resp.raise_for_status()
+        return resp.json().get("data") or {}
 
-    async def _scan_day_lead_breakdown(
-        self, client: httpx.AsyncClient, day: date
-    ) -> dict[tuple[int, int], dict]:
-        """Shu kunda yangilangan (`updatedTimestamp`) barcha lidlarni operator×bosqich
-        kesimida sanaydi.
-
-        MUHIM: `/lead/filter` natijani lid ID'si bo'yicha (yaratilish tartibida)
-        qaytaradi, `updatedTimestamp` bo'yicha EMAS — shuning uchun "bugun tegilgan"
-        lidlar butun ro'yxat bo'ylab tarqoq. Server tomonda "updated bugun" filtri
-        ham yo'q (`start`/`finish` faqat yaratilgan sana bo'yicha). Demak butun bazani
-        to'liq skanerlash shart. Bu sekin (minglab lid ~ yuzlab sahifa), shuning uchun
-        bu metod faqat fon (scheduler) ishida chaqiriladi, bot bevosita chaqirmaydi."""
-        start_ts, end_ts = day_bounds_unix(day)
-        # (responsible_id, pipe_status_id) -> {"name": str, "count": int}
-        entries: dict[tuple[int, int], dict] = {}
-        page = 1
-        total_pages = None
-
-        while page <= MAX_LEAD_SCAN_PAGES:
-            body = await self._fetch_lead_page(client, page)
-            if total_pages is None:
-                total_pages = body.get("totalPages") or 1
-            records = body.get("data") or []
-            if not records:
-                break
-
-            for record in records:
-                ts = record.get("updatedTimestamp")
-                if ts is None or not (start_ts <= ts <= end_ts):
-                    continue
-                responsible_id = record.get("responsibleById")
-                status_id = record.get("pipeStatusId")
-                if responsible_id is None or status_id is None:
-                    continue
-                key = (responsible_id, status_id)
-                entry = entries.setdefault(
-                    key, {"name": record.get("responsibleBy") or str(responsible_id), "count": 0}
-                )
-                entry["count"] += 1
-
-            if page >= total_pages:
-                break
-            page += 1
-            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
-        else:
-            logger.warning(
-                "Uysot lead breakdown skaner %s sahifada to'xtadi (xavfsizlik chegarasi) — natija chala bo'lishi mumkin",
-                MAX_LEAD_SCAN_PAGES,
-            )
-
-        return entries
-
-    async def get_daily_lead_breakdown(self, day: date) -> list[dict] | None:
-        """Kunlik lid statistikasi operator×bosqich kesimida (fon snapshot uchun).
-        `None` — CRM'dan olib bo'lmadi (chaqiruvchi mavjud snapshot'ni saqlab qolsin).
-
-        Har element: {responsible_id, responsible_name, pipe_status_id, stage_name, count}.
-
-        Cheklov: hisob `updatedTimestamp` (oxirgi har qanday tahrir) ga asoslangan —
-        "bosqichga o'tish" voqeasi emas, shuning uchun taxminiy. Aniq hisob Uysot
-        lead-event API'si (X-Auth token) orqali keyingi bosqichda quriladi."""
-        if not CRM_API_KEY:
-            return None
-
-        # Skaner uzoq davom etadi (rate-limit throttle bilan bir necha daqiqa) —
-        # umumiy timeout kengroq, sahifa-so'rov timeouti alohida.
-        timeout = httpx.Timeout(30.0, read=30.0)
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=timeout) as client:
-            try:
-                entries = await self._scan_day_lead_breakdown(client, day)
-                names = await self._load_pipe_status_names(client)
-            except httpx.HTTPError:
-                logger.exception("Uysot'dan lead breakdown olishda xatolik (day=%s)", day)
-                return None
-
-        return [
-            {
-                "responsible_id": responsible_id,
-                "responsible_name": entry["name"],
-                "pipe_status_id": status_id,
-                "stage_name": names.get(status_id, f"Bosqich #{status_id}"),
-                "count": entry["count"],
-            }
-            for (responsible_id, status_id), entry in entries.items()
-        ]
+    # ESLATMA (2026-08-03): ilgari shu yerda `get_daily_lead_breakdown` bor edi —
+    # "bugun tegilgan lidlar" uchun BUTUN bazani (~184 sahifa) har 30 daqiqada
+    # skanerlaydigan eng katta so'rov-iste'molchi. LeadStageDaily endi lokal
+    # LeadEvent/CrmLeadState'dan hisoblanadi (api/routers/stats.py,
+    # `_local_lead_breakdown`) — diff-engine/webhook shu jadvallarni allaqachon
+    # to'ldiradi, qo'shimcha CRM skani ortiqcha edi.
 
     # ─── Diff-engine (kunlik statistika, api/services/lead_diff.py) ────────────
     async def _scan_active_leads(
@@ -591,7 +597,7 @@ class UysotAdapter(CRMAdapter):
             if page >= total_pages:
                 break
             page += 1
-            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+            await asyncio.sleep(SCAN_THROTTLE_SECONDS)
         else:
             logger.warning(
                 "Uysot faol-lidlar skaneri %s sahifada to'xtadi (xavfsizlik chegarasi) — "
@@ -627,7 +633,7 @@ class UysotAdapter(CRMAdapter):
             if page >= total_pages:
                 break
             page += 1
-            await asyncio.sleep(REQUEST_THROTTLE_SECONDS)
+            await asyncio.sleep(SCAN_THROTTLE_SECONDS)
         return records_out
 
     async def get_active_leads_snapshot(self, created_since_ts: int | None = None) -> list[dict] | None:
@@ -684,7 +690,6 @@ class UysotAdapter(CRMAdapter):
     # ya'ni ~32 sahifa) — "haqiqatan bo'sh" (True) hukmi to'liq skan talab qiladi.
     OPEN_LEAD_ENOUGH = 5
     MAX_OPEN_LEAD_PAGES = 60
-    OPEN_LEAD_THROTTLE_SECONDS = 0.4  # 60/min rate limitda 30s CRM sync bilan yonma-yon sig'ishi uchun
 
     async def count_open_leads(self, responsible_id: str) -> int | None:
         """Operatorga (`responsibleById`) biriktirilgan, "ochiq" bosqichlardagi
@@ -710,18 +715,14 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
                 while page <= self.MAX_OPEN_LEAD_PAGES:
-                    resp = await client.post(
-                        "/lead/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/lead/filter",
                         json={
                             "page": page,
                             "size": LEAD_FILTER_PAGE_SIZE,
                             "pipeStatusIds": CRM_UYSOT_OPEN_LEAD_PIPE_STATUS_IDS,
                         },
                     )
-                    if resp.status_code == 429:
-                        logger.warning("Uysot rate limit (ochiq lid sanovi) — %ss kutib qayta (sahifa %s)", RATE_LIMIT_BACKOFF_SECONDS, page)
-                        await asyncio.sleep(RATE_LIMIT_BACKOFF_SECONDS)
-                        continue
                     resp.raise_for_status()
                     body = resp.json().get("data") or {}
                     records = body.get("data") or []
@@ -735,7 +736,6 @@ class UysotAdapter(CRMAdapter):
                         completed = True
                         break
                     page += 1
-                    await asyncio.sleep(self.OPEN_LEAD_THROTTLE_SECONDS)
             except httpx.HTTPError:
                 logger.exception("Uysot'dan ochiq lidlarni sanashda xatolik (responsible_id=%s)", responsible_id)
                 return None
@@ -772,8 +772,8 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
-                    resp = await client.post(
-                        "/lead/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/lead/filter",
                         json={"page": page, "size": LEAD_FILTER_PAGE_SIZE, "start": ts_from, "finish": ts_to},
                     )
                     resp.raise_for_status()
@@ -810,7 +810,7 @@ class UysotAdapter(CRMAdapter):
 
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
             try:
-                resp = await client.get(f"/lead/{lead_id}")
+                resp = await _limited_request(client, "GET", f"/lead/{lead_id}")
                 if resp.status_code == 404:
                     return None
                 resp.raise_for_status()
@@ -860,8 +860,8 @@ class UysotAdapter(CRMAdapter):
         async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
-                    resp = await client.post(
-                        "/call-history/filter",
+                    resp = await _limited_request(
+                        client, "POST", "/call-history/filter",
                         json={"page": page, "size": CALL_HISTORY_PAGE_SIZE, "phoneSearch": phone},
                     )
                     resp.raise_for_status()

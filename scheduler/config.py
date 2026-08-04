@@ -27,25 +27,23 @@ ATTENDANCE_MORNING_MINUTE = 30
 ATTENDANCE_EVENING_HOUR = 22
 ATTENDANCE_EVENING_MINUTE = 0
 
-# CRM webhook o'rniga zaxira: deyarli real-vaqtli bo'lishi uchun tez-tez so'raladi.
-# amoCRM ulanganda API rate-limitga e'tibor bering (oraliqni kattalashtirish kerak
-# bo'lishi mumkin).
-CRM_SYNC_INTERVAL_SECONDS = 30
+# CRM webhook o'rniga zaxira: DailyResult (suhbat/tashrif) sinxroni. Har ishga
+# tushish bugungi BUTUN call-history'ni sahifalab o'qiydi (kun oxirida 10-15
+# sahifa) + tashrif-bosqich lidlarini — 30s intervalda bu yolg'iz o'zi Uysot'ning
+# 60 so'rov/daqiqa umumiy limitining uchdan birigacha yeyayotgan edi (2026-08-03,
+# 429 bo'roni tahlili). 120s ga tushirildi: bu ma'lumot bot/sayt "bugungi norma"
+# ko'rinishlarini boqadi — 2 daqiqalik kechikish sezilmaydi, byudjet esa 4
+# barobar tejaladi.
+CRM_SYNC_INTERVAL_SECONDS = 120
 
 # Lid statistikasi snapshoti (LeadStageDaily — haftalik/oylik digest va bot
-# "Lidlar statistikasi"ni ta'minlaydi): butun bazani sekin sahifalaydi (jonli
-# o'lchov, 2026-07-25: ~375s ≈ 6.25 daqiqa, vaqtinchalik CRM xatosi bilan ham).
-# Ilgari 30 daqiqa edi — bu qismlar 30-37 daqiqagacha eskirgan bo'lishi mumkin
-# edi. 15 daqiqaga tushirildi (~8.75 daqiqa zaxira bilan xavfsiz) — kechikish
-# ikki barobar kamaydi. TO'LIQ yechim (LeadEvent/CrmLeadState'ga o'tkazish)
-# alohida, kattaroq loyiha — bu faqat oraliq, arzon yaxshilash.
-#
-# 2026-07-27 QAYTA KO'RIB CHIQILDI (30 daqiqaga qaytarildi): jonli cPanel'da 15
-# daqiqalik interval + ~6.25 daqiqalik skan = vaqtning ~40%ida CPU band. Shared
-# hostingda (LVE CPU limiti, Passenger'da ATIGI 1 ta ishchi) bu butun akkauntni
-# sekinlashtirib, sayt/bot vaqti-vaqti bilan 25s+ timeout berardi. Egasi ongli
-# qaror qildi: "sekinroq bo'lsa ham ishlasin" — statistikaning 30 daqiqagacha
-# eskirishi, saytning umuman ochilmasligidan afzal.
+# "Lidlar statistikasi"ni ta'minlaydi). Tarix: bu job ilgari butun CRM bazasini
+# (~184 sahifa, jonli o'lchov 2026-07-25: ~375s) skanerlaydigan ENG KATTA
+# so'rov-iste'molchi edi; 2026-08-03 dan lid qismi LOKAL LeadEvent/CrmLeadState
+# hisobiga o'tkazildi (api/routers/stats.py) — endi CRM'ga faqat bugungi
+# qo'ng'iroqlar skani (`_snapshot_calls`, kun oxirida 10-15 sahifa) chiqadi.
+# Interval 30 daqiqada qoldirildi: qo'ng'iroq statistikasi uchun yetarli,
+# so'rov byudjetida esa katta zaxira beradi.
 LEAD_SNAPSHOT_INTERVAL_MINUTES = 30
 LEAD_SNAPSHOT_FREEZE_HOUR = 23  # kun yakunida oxirgi holatni "muzlatish"
 LEAD_SNAPSHOT_FREEZE_MINUTE = 57

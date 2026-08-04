@@ -17,10 +17,12 @@ uchun rejim endi DALILGA asoslangan:
     buzilgan) — polling o'z-o'zidan davom etadi va webhook tirilganda
     o'z-o'zidan to'xtaydi (qo'lda aralashuvsiz, ikkala yo'nalishda).
 
-QAMROV: faqat LID skanlari — diff-tick/reconcile (`lead_diff.py`), issiq-lid
-detect skani (`hot_lead.py`) va LeadStageDaily lid skani (`stats.py`).
-Qo'ng'iroq tarixi (call-history) skanlari BUNGA KIRMAYDI — webhook qo'ng'iroq
-ma'lumotini bermaydi, ular avvalgidek scheduler bilan ishlaydi."""
+QAMROV: faqat LID skanlari — diff-tick/reconcile (`lead_diff.py`) va issiq-lid
+detect skani (`hot_lead.py`). LeadStageDaily 2026-08-03 dan rejimdan qat'i
+nazar lokal LeadEvent'dan hisoblanadi (`stats.py`, `_local_lead_breakdown`) —
+CRM skani yo'q. Qo'ng'iroq tarixi (call-history) skanlari ham BUNGA KIRMAYDI —
+webhook qo'ng'iroq ma'lumotini bermaydi, ular avvalgidek scheduler bilan
+ishlaydi."""
 import logging
 import time
 from datetime import datetime, timedelta

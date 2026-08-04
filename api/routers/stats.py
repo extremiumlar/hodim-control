@@ -340,12 +340,19 @@ async def _local_lead_breakdown(db: AsyncSession, day: date) -> list[dict]:
     shu kuni haqiqiy voqea (`LeadEvent` — webhook yoki diff-engine yozgan) bo'lgan
     lidlar, ularning JORIY holati (`CrmLeadState`) bo'yicha guruhlanadi.
 
-    2026-08-01, webhook-only rejim: ilgari bu kesim uchun CRM'dan butun baza
-    (180+ sahifa) skanerlanardi. Semantik farq ONGLI: eski skan "bugun HAR QANDAY
-    tahrir ko'rgan lid"ni sanardi (teg qo'shish ham), bu esa "bugun HAQIQIY
-    voqea (yangi lid / bosqich / mas'ul o'zgarishi) bo'lgan lid"ni sanaydi —
-    loyihaning o'zi guruh digestini aynan shu aniqroq o'lchovga o'tkazgan
-    (lead_events.py), endi LeadStageDaily ham unga ergashadi."""
+    2026-08-01 da webhook-only rejim uchun kiritilgan, 2026-08-03 dan esa YAGONA
+    manba: ilgari polling rejimida bu kesim uchun CRM'dan butun baza (180+
+    sahifa) har 30 daqiqada skanerlanardi — 60 so'rov/daqiqa umumiy limitning
+    eng katta iste'molchisi bo'lib, boshqa joblarni 429'ga uloqtirardi. Diff-
+    engine (polling) yoki webhook LeadEvent'ni baribir yozadi — shu jurnaldan
+    hisoblash CRM'ga qo'shimcha so'rovsiz. Semantik farq ONGLI: eski skan
+    "bugun HAR QANDAY tahrir ko'rgan lid"ni sanardi (teg qo'shish ham), bu esa
+    "bugun HAQIQIY voqea (yangi lid / bosqich / mas'ul o'zgarishi) bo'lgan
+    lid"ni sanaydi — guruh digesti allaqachon shu aniqroq o'lchovda
+    (lead_events.py). Cheklov: eski (lookback oynasidan tashqari) lidning
+    o'zgarishini tez skan ko'rmaydi — uni tungi reconcile topadi va voqea
+    ertasi kunning kesimiga tushadi (kichik siljish, to'liq skan narxidan
+    arzon)."""
     day_start, day_end = local_range_utc_naive(day, day)
     touched_ids = select(LeadEvent.crm_lead_id).where(
         LeadEvent.detected_at >= day_start, LeadEvent.detected_at < day_end
@@ -371,26 +378,17 @@ async def _local_lead_breakdown(db: AsyncSession, day: date) -> list[dict]:
 async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
     """Bugungi kunning operator×bosqich (lidlar) va operator (qo'ng'iroqlar) kesimini
     bazaga yozadi. Qo'ng'iroqlar HAR DOIM CRM call-history'dan (webhook buni
-    bermaydi); lidlar — polling rejimida CRM skanidan, webhook-only rejimda
-    lokal LeadEvent/CrmLeadState'dan (CRM'ga so'rovsiz). CRM xatosida tegishli
-    qism yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
-    from api.services import crm_mode
-
+    bermaydi); lidlar — HAR DOIM lokal LeadEvent/CrmLeadState'dan (CRM'ga
+    so'rovsiz, `_local_lead_breakdown` izohiga qarang). CRM xatosida qo'ng'iroq
+    qismi yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
     adapter = get_crm_adapter(settings.crm_type)
     if not adapter:
         return {"synced": False, "reason": "CRM sozlanmagan"}
 
     today = today_local()
 
-    # Qo'ng'iroqlar (tez) — avval, chunki lid skaneri uzoq
     calls_rows = await _snapshot_calls(db, adapter, today)
-
-    if await crm_mode.lead_polling_active(db):
-        rows = await adapter.get_daily_lead_breakdown(today)
-    else:
-        rows = await _local_lead_breakdown(db, today)
-    if rows is None:
-        return {"synced": calls_rows >= 0, "reason": "Lidlarni CRM'dan olib bo'lmadi", "call_operators": calls_rows}
+    rows = await _local_lead_breakdown(db, today)
 
     await db.execute(delete(LeadStageDaily).where(LeadStageDaily.date == today))
     for row in rows:
@@ -411,9 +409,9 @@ async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
 @router.post("/lead-stages/sync", dependencies=[Depends(verify_bot_secret)])
 async def sync_lead_stages(db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan muntazam chaqiriladi — bugungi operator×bosqich kesimini
-    CRM'dan to'liq skanerlab bazaga yozadi (kun davomida holat yangilanib boradi,
-    oxirgi skaner kunning yakuniy holati bo'lib qoladi). Skaner sekin (rate-limitga
-    rioya qilib bir necha daqiqa), shuning uchun faqat fon ishida chaqiriladi."""
+    bazaga yozadi (kun davomida holat yangilanib boradi, oxirgi ishga tushish
+    kunning yakuniy holati bo'lib qoladi). Lidlar lokal LeadEvent'dan (CRM
+    so'rovsiz), CRM'ga faqat qo'ng'iroqlar skani (`_snapshot_calls`) chiqadi."""
     return await _snapshot_lead_breakdown(db)
 
 

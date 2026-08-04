@@ -73,6 +73,18 @@ FIRST_CALL_CHECKS_PER_TICK = 10
 MAX_PHONES_PER_LEAD_CHECK = 3
 # Shuncha soatdan keyin birinchi qo'ng'iroqni izlashni to'xtatamiz (eski lid).
 FIRST_CALL_GIVE_UP_HOURS = 72
+# QAYTA tekshirish lid yoshiga qarab siyraklashadi (2026-08-03, CRM so'rov
+# byudjeti): eskalatsiya oynasidagi yangi lid har tick tekshiriladi —
+# speed-to-lead o'lchovi va 5-daqiqalik eskalatsiya aniq qolsin; javobsiz
+# qolgan eski lidni esa 72 soat davomida har 2 daqiqada qayta so'rash CRM
+# byudjetini behuda yer edi (10 lid × 3 raqamgacha = 30 so'rov/tick). Har
+# qator: (lid yoshi shu chegaragacha, oxirgi tekshiruvdan keyin kutish).
+FIRST_CALL_RECHECK_SCHEDULE = [
+    (timedelta(minutes=30), timedelta(0)),  # yangi lid — har tick
+    (timedelta(hours=3), timedelta(minutes=10)),
+    (timedelta(hours=24), timedelta(minutes=30)),
+]
+FIRST_CALL_RECHECK_MAX_INTERVAL = timedelta(minutes=60)  # 24 soatdan eski lidlar
 # Qo'ng'iroq lid yaratilishidan OLDIN ham bo'lishi mumkin: MOI_ZVONKI kabi
 # manbalarda lid aynan qo'ng'iroqdan keyin avto-yaraladi (jonli misol: qo'ng'iroq
 # liddan 27s oldin — 13547494). Shu oynadagi oldingi qo'ng'iroq ham "qabul"
@@ -332,13 +344,28 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
     return {"new": len(results), "results": results}
 
 
+def _first_call_recheck_due(lead: HotLead, now_dt: datetime) -> bool:
+    """Bu lidni SHU tick'da qayta tekshirish kerakmi — yoshiga mos jadval
+    bo'yicha. Hali umuman tekshirilmagan lid har doim navbatda (eskalatsiya
+    `last_call_check_at`siz boshlanmaydi — kutib qolmasin)."""
+    if lead.last_call_check_at is None:
+        return True
+    since_last = now_dt - lead.last_call_check_at
+    age = now_dt - lead.detected_at
+    for age_limit, interval in FIRST_CALL_RECHECK_SCHEDULE:
+        if age <= age_limit:
+            return since_last >= interval
+    return since_last >= FIRST_CALL_RECHECK_MAX_INTERVAL
+
+
 async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
     adapter = _adapter()
     if adapter is None:
         return {"checked": 0}
 
-    cutoff = datetime.utcnow() - timedelta(hours=FIRST_CALL_GIVE_UP_HOURS)
-    pending = list(
+    now_dt = datetime.utcnow()
+    cutoff = now_dt - timedelta(hours=FIRST_CALL_GIVE_UP_HOURS)
+    open_pending = list(
         await db.scalars(
             select(HotLead)
             .where(
@@ -348,12 +375,17 @@ async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
                 HotLead.detected_at >= cutoff,
             )
             .order_by(HotLead.detected_at)
-            .limit(FIRST_CALL_CHECKS_PER_TICK)
         )
     )
+    # Navbat tartibi: avval hali BIR MARTA ham tekshirilmaganlar (eskalatsiya
+    # shunga bog'liq), keyin eng yangi lidlar (issiq — tezlik shu yerda muhim).
+    # Ilgari "eng eskisi birinchi, limit 10" edi — javobsiz eski backlog yangi
+    # lidlarning tekshiruvini ochlikda qoldira olardi.
+    due = [l for l in open_pending if _first_call_recheck_due(l, now_dt)]
+    due.sort(key=lambda l: (l.last_call_check_at is not None, -l.detected_at.timestamp()))
+    pending = due[:FIRST_CALL_CHECKS_PER_TICK]
 
     found = []
-    now_dt = datetime.utcnow()
     for lead in pending:
         # Mijozning BARCHA ma'lum raqamlari tekshiriladi — operator ikkinchi/
         # uchinchi raqamga qo'ng'iroq qilgan bo'lishi mumkin (faqat birinchisini

@@ -51,3 +51,11 @@ CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS = [
 # INTERVAL_MINUTES (5 daqiqa) ichiga bemalol sig'ishi uchun 30 kun tanlandi;
 # kattaroq qilsangiz interval ham kattalashtirilishi kerak (scheduler/config.py).
 CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS = int(os.getenv("CRM_UYSOT_LEAD_DIFF_LOOKBACK_DAYS", "30"))
+
+# Uysot API limiti daqiqasiga 60 so'rov va u BARCHA iste'molchilar (CRM sync,
+# diff-tick, snapshot, issiq lid, harakatsizlik nazorati, ...) uchun UMUMIY.
+# crm/uysot.py dagi markaziy byudjet barcha so'rovlarni shu tezlikkacha
+# tekislaydi — 60 dan pastroq default limitning o'zida zaxira qoldiradi
+# (boshqa integratsiya yoki qo'lda so'rovlar uchun). Uysot limitni o'zgartirsa
+# shu qiymatni moslang.
+CRM_UYSOT_MAX_REQUESTS_PER_MINUTE = int(os.getenv("CRM_UYSOT_MAX_REQUESTS_PER_MINUTE", "50"))

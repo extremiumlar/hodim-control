@@ -66,14 +66,6 @@ class CRMAdapter(ABC):
         `None`. Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
         return None
 
-    async def get_daily_lead_breakdown(self, day: date) -> list[dict] | None:
-        """Ixtiyoriy: shu kunda ishlangan (yangilangan) lidlarni operator×bosqich
-        kesimida sanaydi — har element {"responsible_id": int, "responsible_name": str,
-        "pipe_status_id": int, "stage_name": str, "count": int}. CRM'dan olib bo'lmasa
-        (xatolik) `None` — chaqiruvchi mavjud snapshot'ni ustidan yozmasligi kerak.
-        Qo'llab-quvvatlamaydigan adapterlar `None` qaytaradi."""
-        return None
-
     async def count_open_leads(self, responsible_id: str) -> int | None:
         """Ixtiyoriy (Operator AI sabab tekshiruvi uchun): operatorga biriktirilgan
         hali ishlanmagan ("ochiq"/yangi bosqichdagi) lidlar sonini qaytaradi —
