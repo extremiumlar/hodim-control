@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
+import LocationExemptCard from "@/components/LocationExemptCard";
 import PageHeader from "@/components/PageHeader";
 import { DateRangePicker } from "@/components/PeriodPicker";
 import StatCard from "@/components/StatCard";
@@ -520,6 +521,10 @@ export default function Attendance() {
   // xodim ham bo'lishi mumkin). Backend aynan shu qoidani tekshiradi.
   const canEdit =
     !!user && (["hr", "boss", "dasturchi"].includes(user.role) || user.can_edit_attendance);
+  // Joylashuv ruxsatini berish — ATAYLAB bayroqsiz, faqat ROL bo'yicha:
+  // `can_edit_attendance` egasi o'tmish yozuvini tuzatadi, GPS'ni butunlay
+  // chetlab o'tish huquqini TARQATA olmasligi kerak (backend ham shunday).
+  const canManageLocationExempt = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 7), "yyyy-MM-dd"));
   const [dateTo, setDateTo] = useState(format(new Date(), "yyyy-MM-dd"));
   const [deleting, setDeleting] = useState<AttendanceRow | null>(null);
@@ -772,6 +777,11 @@ export default function Attendance() {
           empty={{ text: "Tanlangan oraliqda yozuv yo'q" }}
         />
       </div>
+
+      {/* Joylashuv ruxsati — HR/Boshliq/Dasturchi. Davomat sahifasida turadi,
+          chunki aynan shu yerda "nega bu odam check-in qila olmayapti" savoli
+          tug'iladi; ilgari faqat Dasturchi rejimida edi va HR yeta olmasdi. */}
+      {canManageLocationExempt && <LocationExemptCard />}
 
       {canEdit && (
         <EditAttendanceDialog
