@@ -23,13 +23,13 @@ jimgina yoziladi, voqea YARATILMAYDI (aks holda mavjud minglab lidning
 barchasi "o'zgardi" deb hisoblanib spam/noto'g'ri statistika bo'lardi —
 `hot_lead.py`dagi bir xil naqsh)."""
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.timeutil import local_range_utc_naive
+from api.timeutil import TASHKENT_TZ, local_range_utc_naive
 from crm import get_crm_adapter
 from db.models import CrmLeadState, LeadEvent
 
@@ -318,6 +318,61 @@ async def daily_operator_breakdown(
             # (boshqa "Boshqa operatorlar" holatlari bilan bir xil naqsh).
             _bucket(ev.first_responsible_id, None)["visits"] += 1
     return agg, total_visits
+
+
+async def visit_stats_range(
+    db: AsyncSession, day_from: date, day_to: date, visit_pipe_status_ids: set[int] | None
+) -> dict:
+    """[day_from..day_to] (mahalliy kunlar) uchun tashrif seriyasi — bitta o'qish:
+    {
+      "daily_unique":      {date: int},        # tashkilot: Tashrifga KIRGAN noyob voqealar
+      "daily_by_operator": {date: {rid: int}}, # dual-kredit (digest qoidasi bilan bir xil)
+      "days_with_events":  set[date],          # umuman voqea bo'lgan kunlar
+    }
+    `days_with_events` fallback uchun: LeadEvent jurnali 2026-07-22 dan boshlangan —
+    undan oldingi (yoki tizim o'chiq bo'lgan) kunlarda voqea yo'q, lekin bu "tashrif
+    bo'lmagan" degani emas; chaqiruvchi bunday kunlar uchun eski snapshot hisobiga
+    qaytishi kerak. Kun `_event_effective_utc` bo'yicha olinadi (digest bilan mos)."""
+    range_start, _ = local_range_utc_naive(day_from, day_from)
+    _, range_end = local_range_utc_naive(day_to, day_to)
+    rows = await db.scalars(
+        select(LeadEvent).where(
+            LeadEvent.detected_at >= range_start,
+            LeadEvent.detected_at < range_end + timedelta(days=_DETECTION_LAG_DAYS),
+        )
+    )
+    visit_ids = visit_pipe_status_ids or set()
+
+    daily_unique: dict[date, int] = {}
+    daily_by_operator: dict[date, dict[int, int]] = {}
+    days_with_events: set[date] = set()
+    for ev in rows:
+        eff = _event_effective_utc(ev)
+        if not (range_start <= eff < range_end):
+            continue
+        local_day = eff.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ).date()
+        days_with_events.add(local_day)
+
+        is_new_visit = (
+            bool(visit_ids)
+            and ev.to_pipe_status_id in visit_ids
+            and ev.from_pipe_status_id not in visit_ids
+        )
+        if not is_new_visit:
+            continue
+        daily_unique[local_day] = daily_unique.get(local_day, 0) + 1
+        rid = ev.to_responsible_id
+        if rid is None:
+            continue
+        ops = daily_by_operator.setdefault(local_day, {})
+        ops[rid] = ops.get(rid, 0) + 1
+        if ev.first_responsible_id is not None and ev.first_responsible_id != rid:
+            ops[ev.first_responsible_id] = ops.get(ev.first_responsible_id, 0) + 1
+    return {
+        "daily_unique": daily_unique,
+        "daily_by_operator": daily_by_operator,
+        "days_with_events": days_with_events,
+    }
 
 
 async def last_diff_tick_at(db: AsyncSession) -> datetime | None:

@@ -54,7 +54,6 @@ SCAN_THROTTLE_SECONDS = 2.0
 MAX_PAGE_RETRIES = 4
 TRANSIENT_RETRY_SECONDS = 5
 
-
 class _SharedRateBudget:
     """Uysot'ning 60 so'rov/daqiqa limitini BARCHA iste'molchilar o'rtasida
     bitta joyda taqsimlaydi (2026-08-03, production'dagi 429 bo'roniga javob).
@@ -193,6 +192,18 @@ class UysotAdapter(CRMAdapter):
         # pipe_status_id -> bosqich nomi (/pipe/all dan, jarayon davomida bir marta olinadi)
         self._pipe_status_names: dict[int, str] | None = None
 
+    def _client(self, timeout=30) -> httpx.AsyncClient:
+        """Barcha Uysot so'rovlari uchun YAGONA klient fabrikasi. Pacing va 429
+        muvofiqlashuvi bu yerda EMAS — `_limited_request` (global
+        `_SharedRateBudget`) ichida; yangi so'rov joyi qo'shsangiz klientni shu
+        fabrikadan oling va so'rovni faqat `_limited_request` orqali yuboring —
+        aks holda u byudjetdan tashqarida qolib limitni buzadi."""
+        return httpx.AsyncClient(
+            base_url=UYSOT_BASE_URL,
+            headers=self.headers,
+            timeout=timeout,
+        )
+
     async def _load_day_call_counts(self, client: httpx.AsyncClient, day: date) -> dict[str, int]:
         day_key = day.isoformat()
         if day_key in self._day_cache:
@@ -246,7 +257,7 @@ class UysotAdapter(CRMAdapter):
         start_ts, end_ts = day_bounds_unix(day)
         breakdown: dict[str, dict] = {}
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        async with self._client(timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
                     resp = await _limited_request(
@@ -301,7 +312,7 @@ class UysotAdapter(CRMAdapter):
         found: dict[str, int] = {}
         remaining = set(employee_nums)
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC and remaining:
                     resp = await _limited_request(
@@ -374,7 +385,7 @@ class UysotAdapter(CRMAdapter):
         _, end_ts = day_bounds_unix(day_to)
         result: dict[str, dict] = {}
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        async with self._client(timeout=30) as client:
             try:
                 while page <= MAX_LEAD_SCAN_PAGES:
                     resp = await _limited_request(
@@ -434,7 +445,7 @@ class UysotAdapter(CRMAdapter):
         start_ts, end_ts = day_bounds_unix(day)
         result: dict[str, dict] = {}
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        async with self._client(timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
                     resp = await _limited_request(
@@ -643,7 +654,7 @@ class UysotAdapter(CRMAdapter):
             return None
 
         timeout = httpx.Timeout(30.0, read=30.0)
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=timeout) as client:
+        async with self._client(timeout=timeout) as client:
             try:
                 records = await self._scan_active_leads(client, created_since_ts)
                 if created_since_ts is not None:
@@ -712,7 +723,7 @@ class UysotAdapter(CRMAdapter):
         count = 0
         page = 1
         completed = False
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        async with self._client(timeout=30) as client:
             try:
                 while page <= self.MAX_OPEN_LEAD_PAGES:
                     resp = await _limited_request(
@@ -769,7 +780,7 @@ class UysotAdapter(CRMAdapter):
 
         leads: list[dict] = []
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=30) as client:
+        async with self._client(timeout=30) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
                     resp = await _limited_request(
@@ -808,7 +819,7 @@ class UysotAdapter(CRMAdapter):
         if not CRM_API_KEY:
             return None
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 resp = await _limited_request(client, "GET", f"/lead/{lead_id}")
                 if resp.status_code == 404:
@@ -857,7 +868,7 @@ class UysotAdapter(CRMAdapter):
 
         earliest: int | None = None
         page = 1
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 while page <= MAX_PAGES_PER_SYNC:
                     resp = await _limited_request(
@@ -896,7 +907,7 @@ class UysotAdapter(CRMAdapter):
         if (not user.crm_external_id and not user.crm_visit_external_id) or not CRM_API_KEY:
             return {"conversations": 0, "visits": 0}
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 counts = await self._load_day_call_counts(client, day)
                 visits_by_id = await self._load_day_visits(client, day)
@@ -933,7 +944,7 @@ class UysotAdapter(CRMAdapter):
         if not targets:
             return out
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 counts = await self._load_day_call_counts(client, day)
                 visits_by_id = await self._load_day_visits(client, day)
@@ -961,7 +972,7 @@ class UysotAdapter(CRMAdapter):
         if not CRM_API_KEY:
             return {}
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 return await self._load_day_call_counts(client, day)
             except httpx.HTTPError:
@@ -975,7 +986,7 @@ class UysotAdapter(CRMAdapter):
         if not CRM_API_KEY:
             return []
 
-        async with httpx.AsyncClient(base_url=UYSOT_BASE_URL, headers=self.headers, timeout=20) as client:
+        async with self._client(timeout=20) as client:
             try:
                 entries = await self._load_day_visits(client, day)
             except httpx.HTTPError:

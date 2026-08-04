@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, metrics_for
+from api.services import lead_diff
 from api.services.daily_digest import send_daily_digest
+from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_IDS
 from api.schemas import (
     LeadOperatorRow,
     LeadStageDayOut,
@@ -378,16 +380,21 @@ async def _local_lead_breakdown(db: AsyncSession, day: date) -> list[dict]:
 async def _snapshot_lead_breakdown(db: AsyncSession) -> dict:
     """Bugungi kunning operator×bosqich (lidlar) va operator (qo'ng'iroqlar) kesimini
     bazaga yozadi. Qo'ng'iroqlar HAR DOIM CRM call-history'dan (webhook buni
-    bermaydi); lidlar — HAR DOIM lokal LeadEvent/CrmLeadState'dan (CRM'ga
-    so'rovsiz, `_local_lead_breakdown` izohiga qarang). CRM xatosida qo'ng'iroq
-    qismi yozilmaydi (mavjud snapshot saqlanib qoladi). Faqat fon ishida."""
+    bermaydi); lidlar — HAR DOIM lokal LeadEvent/CrmLeadState'dan (CRM'ga so'rovsiz).
+
+    2026-08-03: polling rejimidagi CRM to'liq skani (get_daily_lead_breakdown,
+    180+ sahifa har 30 daqiqada) OLIB TASHLANDI — u umumiy 60 so'rov/daqiqa
+    limitini yeb, issiq-lid va qo'ng'iroq skanlarini 429 ga surar edi; ustiga
+    "bugun HAR QANDAY tahrir ko'rgan lid" semantikasi Tashrif sonini shishirardi
+    (jonli misol: 14 ko'rinardi, haqiqiy kirgan 3 ta). Diff-engine baribir har
+    5 daqiqada yangilab turadi — lokal kesim yetarli va aniqroq."""
     adapter = get_crm_adapter(settings.crm_type)
-    if not adapter:
-        return {"synced": False, "reason": "CRM sozlanmagan"}
 
     today = today_local()
 
-    calls_rows = await _snapshot_calls(db, adapter, today)
+    # Qo'ng'iroqlar (CRM call-history) — adapter bo'lsagina; lid qismi CRM'siz ham ishlaydi
+    calls_rows = await _snapshot_calls(db, adapter, today) if adapter else -1
+
     rows = await _local_lead_breakdown(db, today)
 
     await db.execute(delete(LeadStageDaily).where(LeadStageDaily.date == today))
@@ -425,6 +432,19 @@ async def _last_updated_for(db: AsyncSession, day_from: date, day_to: date):
 
 def _is_visit_name(stage_name: str) -> bool:
     return stage_name.strip().lower() == VISIT_STAGE_NAME
+
+
+def _visit_ids() -> set[int]:
+    """Tashrif bosqich ID'lari (bir nechta voronka bo'lishi mumkin)."""
+    return set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS)
+
+
+# 2026-08-03: bot/web statistikadagi "Tashriflar" soni endi LeadEvent'dan —
+# guruh digesti bilan BIR XIL qoida: tashkilot = Tashrifga KIRGAN noyob voqealar,
+# operator = dual-kredit (yopgan + olib kelgan). Eski snapshot-hisob ("bugun
+# tahrirlangan va hozir Tashrifda turgan lidlar") shishirardi (14 vs haqiqiy 3).
+# LeadEvent jurnali boshlanmagan (2026-07-22 gacha) yoki tizim o'chiq bo'lgan
+# kunlar uchun eski snapshot hisobiga qaytiladi (tarix nolga tushib qolmasin).
 
 
 async def _build_lead_month(
@@ -471,15 +491,38 @@ async def _build_lead_month(
     call_rows = (await db.execute(call_q)).all()
     calls_by_day = {d: int(c) for d, c in call_rows}
 
-    days = [
-        LeadStageDaySummary(date=d, calls=calls_by_day.get(d, 0), total=int(total), visits=int(visits))
-        for d, total, visits in lead_rows
-    ]
+    # Tashrif — voqea-asosli (digest qoidasi); voqeasiz kunlar snapshotdan qoladi
+    vstats = (
+        await lead_diff.visit_stats_range(db, month_start, last_day, _visit_ids())
+        if month_start <= today
+        else {"daily_unique": {}, "daily_by_operator": {}, "days_with_events": set()}
+    )
+
+    def _event_visits(d: date) -> int | None:
+        """Voqea-asosli tashrif soni; jurnal qamramagan kun uchun None (fallback)."""
+        if d not in vstats["days_with_events"]:
+            return None
+        if responsible_id is not None:
+            return vstats["daily_by_operator"].get(d, {}).get(responsible_id, 0)
+        return vstats["daily_unique"].get(d, 0)
+
+    days = []
+    for d, total, visits in lead_rows:
+        ev = _event_visits(d)
+        days.append(LeadStageDaySummary(
+            date=d, calls=calls_by_day.get(d, 0), total=int(total),
+            visits=int(visits) if ev is None else ev,
+        ))
     # Faqat qo'ng'iroq bo'lgan (lid snapshotisiz) kunlar ham ko'rinsin
     lead_days = {d.date for d in days}
     for d, c in calls_by_day.items():
         if d not in lead_days:
-            days.append(LeadStageDaySummary(date=d, calls=c, total=0, visits=0))
+            days.append(LeadStageDaySummary(date=d, calls=c, total=0, visits=_event_visits(d) or 0))
+    # Snapshot ham, qo'ng'iroq ham yo'q, lekin tashrif-voqeasi bor kun yo'qolmasin
+    covered = lead_days | set(calls_by_day)
+    for d in sorted(vstats["daily_unique"]):
+        if d not in covered and (ev := _event_visits(d)):
+            days.append(LeadStageDaySummary(date=d, calls=0, total=0, visits=ev))
     days.sort(key=lambda x: x.date)
 
     return LeadStageMonthOut(
@@ -503,6 +546,12 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
         call_q = call_q.where(OperatorCallsDaily.responsible_id == responsible_id)
     records = list(await db.scalars(base))
     call_records = list(await db.scalars(call_q))
+
+    # Tashrif — voqea-asosli (digest bilan bir xil); jurnal qamramagan kun uchun
+    # eski snapshot hisobi qoladi (yuqoridagi izohga qarang).
+    vstats = await lead_diff.visit_stats_range(db, day, day, _visit_ids())
+    has_events = day in vstats["days_with_events"]
+    ev_ops: dict[int, int] = vstats["daily_by_operator"].get(day, {})
 
     # Bosqichlarni nom bo'yicha birlashtiramiz.
     stage_agg: dict[str, int] = {}
@@ -538,6 +587,14 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
             a["cout"] += c.calls_out
             if not a.get("name"):
                 a["name"] = c.responsible_name
+        if has_events:
+            # Voqea-asosli kreditlar snapshot taxminini almashtiradi; faqat
+            # tashrif krediti bilan ro'yxatga kirgan odam ham ko'rinsin
+            for rid_, a in op_agg.items():
+                a["visits"] = ev_ops.get(rid_, 0)
+            for rid_, v in ev_ops.items():
+                if rid_ not in op_agg:
+                    op_agg[rid_] = {"name": str(rid_), "total": 0, "visits": v, "cin": 0, "cout": 0}
         operators = [
             LeadOperatorRow(
                 responsible_id=rid,
@@ -551,13 +608,23 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
             for rid, a in sorted(op_agg.items(), key=lambda x: -(x[1]["cin"] + x[1]["cout"] + x[1]["total"]))
         ]
 
+    snapshot_visits = sum(r.leads_count for r in records if _is_visit_name(r.stage_name))
+    if has_events:
+        day_visits = (
+            ev_ops.get(responsible_id, 0)
+            if responsible_id is not None
+            else vstats["daily_unique"].get(day, 0)
+        )
+    else:
+        day_visits = snapshot_visits
+
     return LeadStageDayOut(
         date=day,
         calls=calls_in + calls_out,
         calls_in=calls_in,
         calls_out=calls_out,
         total=sum(r.leads_count for r in records),
-        visits=sum(r.leads_count for r in records if _is_visit_name(r.stage_name)),
+        visits=day_visits,
         stages=stages,
         operators=operators,
         responsible_id=responsible_id,
