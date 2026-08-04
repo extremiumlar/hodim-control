@@ -3366,7 +3366,28 @@ def test_location_exempt_checkin() -> None:
                 f"{API_BASE}/admin/users/{bound_uid}/location-exempt", headers=auth(free_t),
                 json={"granted": True, "override_reason": "T-sinov: ruxsatsiz"},
             )
-            check("Dasturchi bo'lmagan ruxsat bera OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+            check("Oddiy xodim ruxsat bera OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            # 5. HR ham bera oladi (2026-08-04: egasi "hr va dasturchi
+            #    foydalanishi uchun" dedi — ilgari faqat Dasturchi edi va HR
+            #    ko'chma xodimni o'zi belgilay olmasdi).
+            c = db()
+            hr_row = c.execute(
+                "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+            c.close()
+            if hr_row:
+                hr_t = token_for(hr_row[0], "hr")
+                r = client.post(
+                    f"{API_BASE}/admin/users/{bound_uid}/location-exempt", headers=auth(hr_t),
+                    json={"granted": False, "override_reason": "T-sinov: HR olib qo'ydi"},
+                )
+                check("HR ruxsatni boshqara oladi -> 200", r.status_code == 200,
+                      f"kod={r.status_code} {r.text[:120]}")
+                r = client.get(f"{API_BASE}/admin/location-exempt", headers=auth(hr_t))
+                check("HR ruxsat ro'yxatini ko'ra oladi -> 200", r.status_code == 200,
+                      f"kod={r.status_code}")
+            else:
+                check("HR hisobi topildi", False, "bazada hr roli yo'q")
     except Exception:
         check("Bez-lokatsiya check-in (umumiy)", False, traceback.format_exc(limit=2).strip())
     finally:

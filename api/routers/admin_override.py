@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_dasturchi
+from api.deps import get_current_user, get_db, require_dasturchi
 from api.schemas import (
     AdminAttendanceEditorGrant,
     AdminAttendanceManualUpdate,
@@ -617,9 +617,26 @@ async def set_attendance_editor(
     return {"user_id": user_id, "can_edit_attendance": payload.granted}
 
 
+def _require_location_exempt_manage(actor: User = Depends(get_current_user)) -> User:
+    """Joylashuv ruxsatini kim boshqaradi — HR/Boshliq/Dasturchi.
+
+    NEGA `require_dasturchi` EMAS: bu `/admin/*` ostidagi yagona istisno.
+    Ruxsatni amalda beradigan odam — HR (kim ko'chma ishlashini u biladi),
+    Dasturchi rejimidan so'rab o'tirish keraksiz to'siq edi. Egasining aniq
+    talabi: "hr va dasturchi foydalanishi uchun".
+
+    Qamrov `ATTENDANCE_EDIT_ROLES` bilan bir xil — ikkalasi ham davomat
+    haqiqatini o'zgartiradigan huquq, ular turli qamrovda bo'lsa chalkash
+    bo'lardi.
+    """
+    if actor.role in (Role.hr.value, Role.boss.value, Role.dasturchi.value):
+        return actor
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+
+
 @router.get("/location-exempt")
 async def list_location_exempt(
-    _: User = Depends(require_dasturchi), db: AsyncSession = Depends(get_db)
+    _: User = Depends(_require_location_exempt_manage), db: AsyncSession = Depends(get_db)
 ) -> list[dict]:
     """Joylashuvsiz («bez lokatsiya») check-in ruxsati berilgan xodimlar."""
     rows = list(
@@ -634,10 +651,10 @@ async def list_location_exempt(
 async def set_location_exempt(
     user_id: int,
     payload: AdminAttendanceEditorGrant,
-    actor: User = Depends(require_dasturchi),
+    actor: User = Depends(_require_location_exempt_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Joylashuvsiz check-in ruxsatini beradi/olib qo'yadi (faqat Dasturchi).
+    """Joylashuvsiz check-in ruxsatini beradi/olib qo'yadi (HR/Boshliq/Dasturchi).
 
     Ruxsat berilgan xodim «Keldim»/«Ketdim»ni ISTALGAN joydan bosa oladi —
     ofis radiusi va GPS aniqligi tekshirilmaydi. Face ID esa BEKOR
