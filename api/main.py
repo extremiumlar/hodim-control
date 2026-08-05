@@ -14,7 +14,7 @@ from api.routers import (
     auto_plan,
     bonuses,
     busy_period,
-    crm_health,
+    system_health,
     daily_results,
     excused_days,
     hot_lead,
@@ -90,7 +90,7 @@ app.include_router(playbook.router)
 app.include_router(sales_ai.router)
 app.include_router(push.router)
 app.include_router(uysot_webhook.router)
-app.include_router(crm_health.router)
+app.include_router(system_health.router)
 
 # cPanel deploy: bot shu API ichida webhook orqali ishlaydi. Faqat yoqilganda
 # ulanadi — shunda bot/ paketi import qilinadi (Docker api image'da bot/ yo'q,
@@ -115,4 +115,26 @@ async def root() -> dict:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok"}
+    """Sog'lik tekshiruvi — autentifikatsiyasiz (tashqi kuzatuvchi uchun).
+
+    `cron_age_seconds` — cron oxirgi marta TO'LIQ o'tganidan beri necha soniya
+    (`scripts/cron_tick.py` har sikl oxirida `logs/cron_heartbeat` yozadi).
+    NEGA MUHIM: tizim qo'riqchisi cron ICHIDA yashaydi, ya'ni cron o'lsa
+    qo'riqchi ham o'ladi. Tashqi kuzatuvchi (GitHub Actions,
+    `.github/workflows/watchdog.yml`) shu yoshni tekshiradi — server yoki cron
+    butunlay o'lsa ham ogohlantirish keladi.
+
+    Maxfiy ma'lumot qaytarmaydi (faqat holat va yosh), shuning uchun ochiq."""
+    from datetime import datetime
+    from pathlib import Path
+
+    cron_age: int | None = None
+    try:
+        beat = Path(__file__).resolve().parent.parent / "logs" / "cron_heartbeat"
+        if beat.exists():
+            last = datetime.fromisoformat(beat.read_text(encoding="utf-8").strip())
+            cron_age = int((datetime.now(last.tzinfo) - last).total_seconds())
+    except (OSError, ValueError):
+        cron_age = None  # heartbeat o'qilmadi — tashqi kuzatuvchi buni "noma'lum" deb ko'radi
+
+    return {"status": "ok", "cron_age_seconds": cron_age}

@@ -13,6 +13,11 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
     late: { text: "Kechikdi", cls: "bg-rose-100 text-rose-700" },
     absent: { text: "Kelmadi", cls: "bg-slate-200 text-slate-600" },
     weekend: { text: "Dam olish", cls: "bg-blue-100 text-blue-700" },
+    // 5.1-band statusi — sababli kunda kelgan/kelmagan (kechikish yozilmaydi).
+    excused: { text: "Sababli", cls: "bg-sky-100 text-sky-700" },
+    // UX-A2 virtual holatlari (matritsa kataklari uchun):
+    pending: { text: "Kutilmoqda", cls: "bg-slate-100 text-slate-500" },
+    future: { text: "Kelajak", cls: "bg-slate-100 text-slate-400" },
   },
   task: {
     pending: { text: "Kutilmoqda", cls: "bg-blue-100 text-blue-700" },

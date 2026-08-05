@@ -3,7 +3,10 @@ import type {
   AdminRecord,
   Attendance,
   AttendanceDashboard,
+  AttendanceMatrix,
   AttendanceReadiness,
+  FaceReregRequest,
+  MyAttendanceHistory,
   AuditLog,
   Bonus,
   DailyResult,
@@ -70,10 +73,45 @@ export const api = {
     ).toString();
     return apiFetch<Attendance[]>(`/attendance${q ? `?${q}` : ""}`);
   },
-  attendanceEmployeeSummary: (days = 30) =>
-    apiFetch<EmployeeAttendanceSummary[]>(`/attendance/employee-summary?days=${days}`),
-  attendanceLateStats: (days = 30) =>
-    apiFetch<LateStatRow[]>(`/attendance/late-stats?days=${days}`),
+  // UX-A4: `days` oynasi YOKI aniq davr (kalendar oy) — ikkalasiga bitta imzo.
+  attendanceEmployeeSummary: (period: { days?: number; date_from?: string; date_to?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(period).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+    ).toString();
+    return apiFetch<EmployeeAttendanceSummary[]>(`/attendance/employee-summary${q ? `?${q}` : ""}`);
+  },
+  attendanceLateStats: (period: { days?: number; date_from?: string; date_to?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(period).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
+    ).toString();
+    return apiFetch<LateStatRow[]>(`/attendance/late-stats${q ? `?${q}` : ""}`);
+  },
+  // UX-A2: oylik matritsa (rahbar). `userId` — bitta xodim (profil sahifasi).
+  attendanceMatrix: (month?: string, userId?: number) => {
+    const q = new URLSearchParams();
+    if (month) q.set("month", month);
+    if (userId != null) q.set("user_id", String(userId));
+    const s = q.toString();
+    return apiFetch<AttendanceMatrix>(`/attendance/matrix${s ? `?${s}` : ""}`);
+  },
+  // UX-A3: xodimning O'Z oylik tarixi.
+  myAttendanceHistory: (month?: string) =>
+    apiFetch<MyAttendanceHistory>(`/attendance/me/history${month ? `?month=${month}` : ""}`),
+  // UX-A5: kelmagan xodimga bot/push eslatma (kuniga 2 ta limit).
+  remindAttendance: (userId: number) =>
+    apiFetch<{ sent: boolean; sent_today: number }>(`/attendance/remind/${userId}`, {
+      method: "POST",
+    }),
+  // UX-A6: yuz qayta-ro'yxat so'rovlari (web).
+  listFaceRereg: (statusFilter?: string) =>
+    apiFetch<FaceReregRequest[]>(
+      `/attendance/face-reregistration${statusFilter ? `?status_filter=${statusFilter}` : ""}`
+    ),
+  decideFaceReregWeb: (itemId: number, decision: "approved" | "rejected") =>
+    apiFetch<FaceReregRequest>(`/attendance/face-reregistration/${itemId}/decide-web`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    }),
   deleteAttendance: (attendanceId: number) =>
     apiFetch<{ deleted: boolean }>(`/attendance/${attendanceId}`, { method: "DELETE" }),
   // HR/Boshliq (va shaxsan ruxsat berilganlar) qo'lda tuzatishi — Face ID/GPS
@@ -265,6 +303,9 @@ export const api = {
       month ? `/stats/web/operator-summary?month=${month}` : `/stats/web/operator-summary?period=${period}`
     ),
   getWeeklySchedule: (userId: number) => apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`),
+  // UX-A7: barcha kuzatiladigan xodimlarning haftalik jadvali (Umumiy ko'rinish).
+  allWeekSchedules: (start?: string) =>
+    apiFetch<WorkWeek[]>(`/work-schedule/all/week${start ? `?start=${start}` : ""}`),
   setWeeklySchedule: (userId: number, days: WorkDayEntry[]) =>
     apiFetch<WorkWeekly>(`/work-schedule/${userId}/weekly`, { method: "PUT", body: JSON.stringify({ days }) }),
   listScheduleOverrides: (userId: number, dateFrom?: string, dateTo?: string) => {

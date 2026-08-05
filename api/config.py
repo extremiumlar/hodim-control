@@ -106,7 +106,19 @@ class Settings(BaseSettings):
     # Uysot'ning vaqtinchalik nosozligi) yolg'on signal bermaydi.
     crm_health_stale_hours: float = 2.0
     # Uzilish davom etsa takroriy ogohlantirish oralig'i (shovqin nazorati).
+    # BARCHA tekshiruvlar uchun umumiy.
     crm_health_realert_hours: float = 6.0
+
+    # Zaxira nusxa qo'riqchisi: kunlik `backup_db.sh` ishlayaptimi.
+    # 26 soat — kunlik job (03:30) + kechikish uchun zaxira oyna.
+    backup_watchdog_enabled: bool = True
+    backup_stale_hours: float = 26.0
+
+    # Davomat qo'riqchisi: ish kunida shu soatdan keyin BIRORTA ham check-in
+    # bo'lmasa — Face ID/davomat oqimi buzilgan. Yakshanba tekshirilmaydi.
+    # Chegara ataylab NOL: "kam keldi" emas, "umuman ishlamadi" ushlanadi.
+    attendance_watchdog_enabled: bool = True
+    attendance_check_hour: int = 11
 
     # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
     # Bo'sh — endpoint o'chiq (404). Tasodifiy uzun qiymat qo'ying:

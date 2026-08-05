@@ -20,9 +20,15 @@ export const qk = {
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
-  attendanceSummary: (days: number) => ["attendance", "summary", days] as const,
-  attendanceLateStats: (days: number) => ["attendance", "late-stats", days] as const,
+  attendanceSummary: (period?: object) => ["attendance", "summary", period ?? {}] as const,
+  attendanceLateStats: (period?: object) => ["attendance", "late-stats", period ?? {}] as const,
   attendanceReadiness: (params?: object) => ["attendance", "readiness", params ?? {}] as const,
+  attendanceMatrix: (month?: string, userId?: number) =>
+    ["attendance", "matrix", month ?? "current", userId ?? null] as const,
+  myAttendanceHistory: (month?: string) =>
+    ["attendance", "me", "history", month ?? "current"] as const,
+  faceRereg: (statusFilter?: string) => ["face-rereg", statusFilter ?? "all"] as const,
+  allWeekSchedules: (start?: string) => ["work-schedule", "all", start ?? "current"] as const,
   offices: ["offices"] as const,
   users: (role?: string, includeInactive?: boolean) =>
     ["users", role ?? "all", !!includeInactive] as const,
@@ -110,18 +116,79 @@ export const useAttendanceList = (
 // yangilanmasdi — rahbar sahifani qo'lda "Yangilash" bosmasa, ro'yxat eskirib
 // qolardi. 30 soniyada bir avtomatik yangilanadi (sahifa faol bo'lgandagina —
 // react-query'ning o'z default xatti-harakati, fon rejimida so'rov ketmaydi).
-export const useAttendanceDashboard = () =>
+// UX-B: `enabled=false` — boshqa tab ochiq bo'lsa jonli so'rovlar TO'XTAYDI.
+export const useAttendanceDashboard = (enabled = true) =>
   useQuery({
     queryKey: qk.attendanceDashboard,
     queryFn: api.attendanceDashboard,
     refetchInterval: 30_000,
+    enabled,
   });
 
-export const useAttendanceEmployeeSummary = (days = 30) =>
-  useQuery({ queryKey: qk.attendanceSummary(days), queryFn: () => api.attendanceEmployeeSummary(days) });
+// UX-A4: `days` YOKI aniq davr (date_from/date_to) — Hisobot tabi ikkalasini
+// bitta boshqaruvdan uzatadi.
+export type AttendancePeriod = { days?: number; date_from?: string; date_to?: string };
 
-export const useAttendanceLateStats = (days = 30) =>
-  useQuery({ queryKey: qk.attendanceLateStats(days), queryFn: () => api.attendanceLateStats(days) });
+export const useAttendanceEmployeeSummary = (period: AttendancePeriod = { days: 30 }, enabled = true) =>
+  useQuery({
+    queryKey: qk.attendanceSummary(period),
+    queryFn: () => api.attendanceEmployeeSummary(period),
+    enabled,
+  });
+
+export const useAttendanceLateStats = (period: AttendancePeriod = { days: 30 }, enabled = true) =>
+  useQuery({
+    queryKey: qk.attendanceLateStats(period),
+    queryFn: () => api.attendanceLateStats(period),
+    enabled,
+  });
+
+// UX-A2: oylik matritsa. keepPreviousData — oy almashtirilganda jadval
+// "sakramaydi", eski oy xira ko'rinib turadi.
+export const useAttendanceMatrix = (month?: string, userId?: number, enabled = true) =>
+  useQuery({
+    queryKey: qk.attendanceMatrix(month, userId),
+    queryFn: () => api.attendanceMatrix(month, userId),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+
+// UX-A3: xodimning o'z oylik tarixi.
+export const useMyAttendanceHistory = (month?: string) =>
+  useQuery({
+    queryKey: qk.myAttendanceHistory(month),
+    queryFn: () => api.myAttendanceHistory(month),
+    placeholderData: keepPreviousData,
+  });
+
+// UX-A5: eslatma — dashboard ro'yxatlari yangilanmaydi (kelmagan hamon
+// kelmagan), shuning uchun invalidatsiya YO'Q; natija toast bilan bildiriladi.
+export const useRemindAttendance = () =>
+  useApiMutation((userId: number) => api.remindAttendance(userId));
+
+// UX-A6: yuz so'rovlari (web).
+export const useFaceReregList = (statusFilter?: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.faceRereg(statusFilter),
+    queryFn: () => api.listFaceRereg(statusFilter),
+    enabled,
+  });
+
+export const useDecideFaceReregWeb = () =>
+  useApiMutation(
+    ({ itemId, decision }: { itemId: number; decision: "approved" | "rejected" }) =>
+      api.decideFaceReregWeb(itemId, decision),
+    [["face-rereg"], ["users"]]
+  );
+
+// UX-A7: umumiy ish jadvali.
+export const useAllWeekSchedules = (start?: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.allWeekSchedules(start),
+    queryFn: () => api.allWeekSchedules(start),
+    placeholderData: keepPreviousData,
+    enabled,
+  });
 
 export const useAttendanceReadiness = (
   params: { date_from?: string; date_to?: string } = {},

@@ -1,0 +1,109 @@
+# Tashqi "o'lik odam kaliti" — server yoki cron BUTUNLAY o'lganini aniqlaydi.
+#
+# NEGA KERAK: ichki qo'riqchi (api/services/system_health.py) cron ICHIDA
+# yashaydi. Cron o'lsa yoki server o'chsa — qo'riqchi ham o'ladi va jimlik
+# davom etadi (aynan shu tuzoq 2026-08-04 da 27 soatlik ko'rlikka olib keldi).
+# Bu ish oqimi GitHub serverlarida, bizning infratuzilmadan TASHQARIDA
+# ishlaydi — shuning uchun server butunlay yiqilsa ham xabar beradi.
+#
+# XABAR IKKI KANALDA:
+#   1. Telegram — repo secrets'da WATCHDOG_BOT_TOKEN va WATCHDOG_CHAT_ID
+#      bo'lsa. Sozlanmagan bo'lsa bu qadam jimgina o'tkazib yuboriladi.
+#   2. Ish oqimining o'zi XATO bilan tugaydi — GitHub repo egasiga standart
+#      "workflow failed" xatini yuboradi (sekret sozlanmagan bo'lsa ham
+#      ogohlantirish yo'qolmaydi).
+name: Tashqi qo'riqchi
+
+on:
+  schedule:
+    # Har 30 daqiqada. DIQQAT: GitHub'ning bepul jadvali kechikishi mumkin
+    # (bir necha daqiqa) — bu bizga muhim emas, chegara 15 daqiqa emas,
+    # butunlay o'lganini aniqlash.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}  # qo'lda ishga tushirish (sinov uchun)
+
+# Bir vaqtda bitta tekshiruv yetarli
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Serverni tekshirish
+        id: probe
+        run: |
+          set -uo pipefail
+          URL="https://nuriddin-building.uz/api/health"
+          # Cron har daqiqa ishlaydi; 20 daqiqa jim bo'lsa o'lgan deb hisoblaymiz
+          # (bir necha tik o'tkazib yuborilishi normal, 20 daqiqa emas).
+          MAX_CRON_AGE=1200
+
+          BODY=$(curl -sS --max-time 30 --retry 2 --retry-delay 10 -w '\n%{http_code}' "$URL" || echo -e "\n000")
+          CODE=$(echo "$BODY" | tail -1)
+          JSON=$(echo "$BODY" | sed '$d')
+
+          echo "kod=$CODE"
+          echo "javob=$JSON"
+
+          if [ "$CODE" != "200" ]; then
+            echo "reason=Server javob bermayapti (HTTP $CODE)" >> "$GITHUB_OUTPUT"
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          AGE=$(echo "$JSON" | sed -n 's/.*"cron_age_seconds":[[:space:]]*\([0-9]*\).*/\1/p')
+          if [ -z "$AGE" ]; then
+            # null yoki maydon yo'q — heartbeat o'qilmadi (eski versiya yoki
+            # fayl yozilmayapti). Bu ham diqqatga loyiq holat.
+            echo "reason=Cron heartbeat o'qilmadi (javob: $JSON)" >> "$GITHUB_OUTPUT"
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Cron yoshi: ${AGE}s (chegara ${MAX_CRON_AGE}s)"
+          if [ "$AGE" -gt "$MAX_CRON_AGE" ]; then
+            MIN=$((AGE / 60))
+            echo "reason=Cron ${MIN} daqiqadan beri ishlamayapti" >> "$GITHUB_OUTPUT"
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "failed=0" >> "$GITHUB_OUTPUT"
+          echo "Hammasi joyida."
+
+      - name: Telegram'ga ogohlantirish
+        if: steps.probe.outputs.failed == '1'
+        env:
+          TOKEN: ${{ secrets.WATCHDOG_BOT_TOKEN }}
+          CHAT: ${{ secrets.WATCHDOG_CHAT_ID }}
+        run: |
+          # Sekretlar sozlanmagan bo'lsa jimgina o'tamiz — ogohlantirish
+          # baribir yo'qolmaydi: keyingi qadam ish oqimini XATO bilan tugatadi
+          # va GitHub repo egasiga xat yuboradi.
+          if [ -z "${TOKEN:-}" ] || [ -z "${CHAT:-}" ]; then
+            echo "Telegram sekretlari sozlanmagan — bu qadam o'tkazib yuborildi."
+            exit 0
+          fi
+          TEXT="🚨 <b>Tizim javob bermayapti</b>
+
+          ${{ steps.probe.outputs.reason }}
+
+          Bu xabar GitHub serverlaridan yuborildi — ya'ni bizning server yoki
+          cron butunlay o'chgan bo'lishi mumkin (ichki qo'riqchi bunday holatda
+          xabar bera olmaydi).
+
+          Tekshirish: cPanel ochilyaptimi, crontab joyidami."
+          curl -sS --max-time 30 \
+            "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text=${TEXT}" > /dev/null
+
+      - name: Natijani belgilash
+        if: steps.probe.outputs.failed == '1'
+        run: |
+          echo "::error::${{ steps.probe.outputs.reason }}"
+          exit 1

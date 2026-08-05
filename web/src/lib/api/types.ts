@@ -125,6 +125,89 @@ export interface AttendanceDashboard {
   }[];
   /** Bugun dam olishdagi xodimlar — «kelmadi» bilan aralashib ketmasligi uchun. */
   on_day_off: { user_id: number; full_name: string }[];
+  /** UX-A1: bugun ishlashi kerak-u, hali kelmaganlar — ISMLAR bilan. */
+  not_come: {
+    user_id: number;
+    full_name: string;
+    schedule_start: string;
+    telegram_linked: boolean;
+  }[];
+  /** Bugun tasdiqlangan sababli kunda bo'lganlar (kutilmayapti). */
+  excused_today: { user_id: number; full_name: string }[];
+  /** Bugun kelib, allaqachon ketganlar. */
+  left: {
+    user_id: number;
+    full_name: string;
+    check_in_time: string;
+    check_out_time: string;
+    worked_minutes: number;
+  }[];
+}
+
+// ── UX-A2/A3: oylik matritsa va xodim tarixi ──
+
+export type MatrixCellStatus =
+  | "present"
+  | "late"
+  | "absent"
+  | "weekend"
+  | "excused"
+  | "pending"
+  | "future";
+
+export interface MatrixCell {
+  date: string;
+  status: MatrixCellStatus;
+  late_minutes: number;
+  /** Mahalliy "HH:MM" — backend TZ'ni o'zi hisoblab beradi. */
+  check_in: string | null;
+  check_out: string | null;
+  worked_minutes: number;
+  schedule_start: string | null;
+  schedule_end: string | null;
+  note: string | null;
+  /** auto_closed | manual | no_checkout */
+  flags: string[];
+}
+
+export interface MatrixTotals {
+  present_days: number;
+  late_count: number;
+  late_minutes: number;
+  absent_days: number;
+  excused_days: number;
+  worked_minutes: number;
+  worked_hours: number;
+}
+
+export interface MatrixEmployee {
+  user_id: number;
+  full_name: string;
+  cells: MatrixCell[];
+  totals: MatrixTotals;
+}
+
+export interface AttendanceMatrix {
+  month: string;
+  today: string;
+  days: string[];
+  employees: MatrixEmployee[];
+}
+
+export interface MyAttendanceHistory {
+  month: string;
+  today: string;
+  days: MatrixCell[];
+  totals: MatrixTotals;
+}
+
+/** Yuzni qayta ro'yxatdan o'tkazish so'rovi (UX-A6 — webdan hal qilinadi). */
+export interface FaceReregRequest {
+  id: number;
+  user_id: number;
+  user_full_name: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
 }
 
 export interface EmployeeAttendanceSummary {

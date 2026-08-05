@@ -112,7 +112,7 @@ def _due(now: datetime) -> list:
     # guruhiga qo'shilmasin, yagona Passenger ishchisi bir zumda to'lmasin).
     # Chegara 2 soat bo'lgani uchun yarim soatlik tekshiruv yetarli.
     if m % 30 == 17:
-        add("/crm-health/tick", json={}, timeout=60)
+        add("/system-health/tick", json={}, timeout=60)
     # DIQQAT: lid snapshoti (/stats/lead-stages/sync) bu ro'yxatda YO'Q — u og'ir
     # (~5-7 daqiqa) va gateway HTTP limitiga sig'maydi; _lead_sync_due + in-process
     # yo'l bilan bajariladi (pastda).
@@ -371,6 +371,27 @@ async def main() -> None:
         await _run_lead_diff_inprocess(now, full=False)
     if _lead_diff_reconcile_due(now):
         await _run_lead_diff_inprocess(now, full=True)
+
+    _write_heartbeat(now)
+
+
+def _write_heartbeat(now: datetime) -> None:
+    """Cron TIRIK ekanining izi — `/health` shu faylni o'qib "cron necha
+    soniya oldin ishlagan"ni tashqariga bildiradi.
+
+    NEGA KERAK: tizim qo'riqchisi (`system_health.py`) cron ICHIDA yashaydi —
+    cron o'lsa qo'riqchi ham o'ladi va jimlik davom etadi. Tashqi kuzatuvchi
+    (GitHub Actions, `.github/workflows/watchdog.yml`) `/health`ni so'rab shu
+    yoshni tekshiradi: ya'ni server yoki cron butunlay o'lsa ham xabar keladi.
+
+    Sikl OXIRIDA yoziladi — ya'ni "cron boshlandi" emas, "cron TO'LIQ o'tdi"
+    degan ma'noni beradi (o'rtada osilib qolgan tik heartbeat qoldirmaydi.)"""
+    try:
+        path = ROOT / "logs" / "cron_heartbeat"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(now.isoformat(), encoding="utf-8")
+    except OSError as exc:  # noqa: BLE001 — heartbeat cron'ni yiqitmasin
+        print(f"{now:%Y-%m-%d %H:%M} heartbeat yozilmadi: {exc}")
 
 
 if __name__ == "__main__":

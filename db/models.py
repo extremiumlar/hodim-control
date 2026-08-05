@@ -1516,30 +1516,33 @@ class CrmWebhookLog(Base):
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
-class CrmHealthState(Base):
-    """CRM aloqasi qo'riqchisining holati (yagona qator, id=1).
+class SystemHealthState(Base):
+    """Tizim sog'ligi qo'riqchisining holati — HAR TEKSHIRUV uchun bitta qator.
 
     NEGA KERAK: 2026-08-04 16:45 da Uysot Open API tokeni bekor qilindi va tizim
     27 soat davomida JIMGINA ko'r bo'lib qoldi — lid saralash, issiq-lid xabari,
     tashrif statistikasi va harakatsizlik nazorati to'xtadi, lekin buni hech kim
-    bilmadi (xato faqat cron log'ida edi). Qo'riqchi shu holatni aniqlab guruhga
-    ogohlantirish yuboradi.
+    bilmadi (xato faqat cron log'ida edi). Qo'riqchi shunday holatlarni aniqlab
+    guruhga ogohlantiradi (`api/services/system_health.py`).
+
+    `check` — tekshiruv nomi: `crm` | `backup` | `attendance` (kelajakda yana
+    qo'shilishi mumkin). Har biri MUSTAQIL holatga ega: biri ogohlantirsa
+    boshqasining takrorlanish qo'riqchisi susmaydi.
 
     DIQQAT — holat NEGA bazada: production cPanel CRON rejimida ishlaydi, ya'ni
     har daqiqa YANGI python jarayoni ko'tariladi. Modul darajasidagi o'zgaruvchi
     saqlanmaydi, shuning uchun "allaqachon ogohlantirdikmi" qo'riqchisi faqat
     bazada bo'lishi mumkin."""
 
-    __tablename__ = "crm_health_state"
+    __tablename__ = "system_health_state"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
-    # True — hozir "aloqa yo'q" holatidamiz (tiklanganda False bo'ladi va
-    # guruhga "tiklandi" xabari ketadi)
+    check: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # True — hozir "nosoz" holatidamiz (tiklanganda False bo'ladi va guruhga
+    # "tiklandi" xabari ketadi)
     alerting: Mapped[bool] = mapped_column(Boolean, default=False)
     # Oxirgi ogohlantirish vaqti — takroriy xabar oralig'i shu asosda hisoblanadi
     last_alert_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Ogohlantirish yuborilgan paytdagi "ma'lumot oxirgi marta kelgan" vaqt —
-    # takroriy xabarda "qancha vaqtdan beri" ni to'g'ri ko'rsatish uchun
+    # Ogohlantirish yuborilgan paytdagi "signal oxirgi marta yangilangan" vaqt
     stale_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

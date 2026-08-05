@@ -72,17 +72,17 @@ async def snapshot_lead_stages() -> None:
         logger.info("Lid statistikasi snapshot'i: %s", body)
 
 
-async def crm_health_tick() -> None:
-    """CRM aloqasi qo'riqchisi: CRM'dan ma'lumot kelmay qolsa (token bekor
-    qilindi, Uysot javob bermayapti, webhook noto'g'ri manzilga ketyapti)
-    guruhga ogohlantirish yuboradi. Aloqa tiklanganda «tiklandi» xabari."""
-    body = await call_api("/crm-health/tick", json={}, timeout=60, label="CRM aloqasi qo'riqchisi")
-    if body is None or body.get("disabled"):
+async def system_health_tick() -> None:
+    """Tizim sog'ligi qo'riqchisi: jimgina ishlamay qolgan qismlarni (CRM
+    aloqasi, kunlik zaxira nusxa, davomat oqimi) aniqlab guruhga ogohlantiradi.
+    Tiklanganda «tiklandi» xabari."""
+    body = await call_api("/system-health/tick", json={}, timeout=60, label="Tizim qo'riqchisi")
+    if body is None:
         return
     if body.get("alerted"):
-        logger.warning("CRM aloqasi uzilgan — guruhga ogohlantirish yuborildi: %s", body)
-    elif body.get("recovered"):
-        logger.info("CRM aloqasi tiklandi: %s", body)
+        logger.warning("Qo'riqchi ogohlantirdi: %s", body["alerted"])
+    if body.get("recovered"):
+        logger.info("Qo'riqchi: tiklandi — %s", body["recovered"])
 
 
 async def lead_diff_tick() -> None:
