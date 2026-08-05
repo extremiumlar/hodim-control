@@ -1305,6 +1305,235 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("5.11 audit tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        # ═══════════ UX-A bosqichi (DAVOMAT_UX_PROMPT.md) ═══════════
+
+        print("\n-- UX-A2/A3: oylik matritsa va xodim tarixi --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444801,'T-Matrix','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            mx_uid = cur.lastrowid
+            # Jadval: Du-Sha ish (09:00-18:00), Yak dam — 2020-yanvar butunlay
+            # nazorat ostida (real bugunga bog'liq emas).
+            for wd in range(7):
+                cur.execute(
+                    "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                    " values (?,?,?,?,?,datetime('now'))",
+                    (mx_uid, wd, 1 if wd < 6 else 0,
+                     "09:00" if wd < 6 else None, "18:00" if wd < 6 else None))
+            # 2020-01-02 (Pa): kechikish yozuvi; 01-03 (Ju): yozuvsiz -> virtual absent;
+            # 01-04 (Sh): sababli (yozuvsiz); 01-05 (Ya): dam.
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, late_minutes,"
+                " early_leave_minutes, worked_minutes, status, is_weekend, created_at, updated_at)"
+                " values (?, '2020-01-02', '2020-01-02 04:15:00', 15, 0, 460, 'late', 0,"
+                " datetime('now'), datetime('now'))", (mx_uid,))
+            cur.execute(
+                "insert into excused_days (user_id, date, reason, status, created_at)"
+                " values (?, '2020-01-04', 'T-sinov', 'approved', datetime('now'))", (mx_uid,))
+            conn.commit()
+
+            r = client.get(f"{API_BASE}/attendance/matrix?month=2020-01&user_id={mx_uid}",
+                           headers=auth(boss_t))
+            check("A2: matrix -> 200", r.status_code == 200, f"kod={r.status_code}")
+            body = r.json() if r.status_code == 200 else {}
+            emp = (body.get("employees") or [{}])[0]
+            cells = {c["date"]: c for c in emp.get("cells", [])}
+            check("A2: yozuvli kun -> late (+vaqt mahalliy)",
+                  cells.get("2020-01-02", {}).get("status") == "late"
+                  and cells.get("2020-01-02", {}).get("check_in") == "09:15",
+                  str(cells.get("2020-01-02")))
+            check("A2: yozuvsiz o'tgan ish kuni -> absent (virtual)",
+                  cells.get("2020-01-03", {}).get("status") == "absent", str(cells.get("2020-01-03")))
+            check("A2: sababli kun (yozuvsiz) -> excused",
+                  cells.get("2020-01-04", {}).get("status") == "excused", str(cells.get("2020-01-04")))
+            check("A2: dam kuni -> weekend",
+                  cells.get("2020-01-05", {}).get("status") == "weekend", str(cells.get("2020-01-05")))
+            tot = emp.get("totals", {})
+            check("A2: totals (late 1/15, excused 1)",
+                  tot.get("late_count") == 1 and tot.get("late_minutes") == 15
+                  and tot.get("excused_days") == 1, str(tot))
+            check("A2: user_id filtri faqat bitta xodim qaytardi",
+                  len(body.get("employees", [])) == 1)
+
+            # Joriy oy: bugun (ish kuni, yozuvsiz) -> pending; ertaga -> future.
+            r2 = client.get(f"{API_BASE}/attendance/matrix?user_id={mx_uid}", headers=auth(boss_t))
+            cells2 = {c["date"]: c for c in (r2.json().get("employees") or [{}])[0].get("cells", [])}
+            today_iso2 = date.today().isoformat()
+            check("A2: bugungi yozuvsiz ish kuni -> pending",
+                  cells2.get(today_iso2, {}).get("status") == "pending",
+                  str(cells2.get(today_iso2)))
+            tomorrow = date.today() + timedelta(days=1)
+            if tomorrow.month == date.today().month:
+                exp = "weekend" if tomorrow.weekday() == 6 else "future"
+                check("A2: ertangi kun -> future/weekend",
+                      cells2.get(tomorrow.isoformat(), {}).get("status") == exp,
+                      str(cells2.get(tomorrow.isoformat())))
+
+            # A3: xodim o'z tarixini oladi
+            mx_tok = token_for(mx_uid, "employee")
+            r3 = client.get(f"{API_BASE}/attendance/me/history?month=2020-01", headers=auth(mx_tok))
+            check("A3: me/history -> 200", r3.status_code == 200, f"kod={r3.status_code}")
+            days3 = {c["date"]: c for c in r3.json().get("days", [])}
+            check("A3: xodim kalendari matritsa bilan bir xil (late kuni)",
+                  days3.get("2020-01-02", {}).get("status") == "late"
+                  and days3.get("2020-01-02", {}).get("schedule_start") == "09:00",
+                  str(days3.get("2020-01-02")))
+            r4 = client.get(f"{API_BASE}/attendance/me/history?month=2020-13", headers=auth(mx_tok))
+            check("A3: noto'g'ri oy -> 400", r4.status_code == 400, f"kod={r4.status_code}")
+            r5 = client.get(f"{API_BASE}/attendance/matrix", headers=auth(mx_tok))
+            check("A2: oddiy xodimga matrix -> 403", r5.status_code == 403, f"kod={r5.status_code}")
+
+            # A4: aniq davr parametrlari
+            r6 = client.get(
+                f"{API_BASE}/attendance/employee-summary?date_from=2020-01-01&date_to=2020-01-31",
+                headers=auth(boss_t))
+            row6 = next((x for x in r6.json() if x["user_id"] == mx_uid), None)
+            check("A4: employee-summary aniq davr bilan", row6 is not None and row6["late_minutes"] == 15,
+                  str(row6))
+            r7 = client.get(
+                f"{API_BASE}/attendance/late-stats?date_from=2020-01-01&date_to=2020-01-31",
+                headers=auth(boss_t))
+            check("A4: late-stats aniq davr bilan",
+                  any(x["user_id"] == mx_uid for x in r7.json()), f"{len(r7.json())} qator")
+            r8 = client.get(f"{API_BASE}/attendance/late-stats?date_from=2020-01-01",
+                            headers=auth(boss_t))
+            check("A4: faqat bitta sana parametri -> 400", r8.status_code == 400, f"kod={r8.status_code}")
+
+            cur.execute("delete from attendance where user_id=?", (mx_uid,))
+            cur.execute("delete from excused_days where user_id=?", (mx_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (mx_uid,))
+            cur.execute("delete from users where id=?", (mx_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("UX-A2/A3 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- UX-A1: dashboard kelmaganlar ismlari --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444802,'T-NotCome','employee',1,1,datetime('now'))")
+            nc_uid = cur.lastrowid
+            wd = date.today().weekday()
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'08:30','18:00',datetime('now'))", (nc_uid, wd))
+            conn.commit()
+
+            r = client.get(f"{API_BASE}/attendance/dashboard", headers=auth(boss_t))
+            body = r.json() if r.status_code == 200 else {}
+            row = next((x for x in body.get("not_come", []) if x["user_id"] == nc_uid), None)
+            check("A1: kelmagan xodim not_come ro'yxatida (jadval vaqti bilan)",
+                  row is not None and row["schedule_start"] == "08:30", str(row))
+            check("A1: left ro'yxati mavjud", "left" in body)
+
+            # Sababli kun tasdiqlansa -> not_come'dan chiqib excused_today'ga o'tadi
+            cur.execute(
+                "insert into excused_days (user_id, date, reason, status, created_at)"
+                " values (?, ?, 'T-sinov', 'approved', datetime('now'))",
+                (nc_uid, date.today().isoformat()))
+            conn.commit()
+            r2 = client.get(f"{API_BASE}/attendance/dashboard", headers=auth(boss_t))
+            b2 = r2.json()
+            check("A1: sababli xodim not_come'da EMAS, excused_today'da BOR",
+                  not any(x["user_id"] == nc_uid for x in b2.get("not_come", []))
+                  and any(x["user_id"] == nc_uid for x in b2.get("excused_today", [])),
+                  f"not_come={len(b2.get('not_come', []))}, excused={len(b2.get('excused_today', []))}")
+
+            # UX-A5: eslatma — fake telegramga yetkazib bo'lmaydi -> 400;
+            # 2 ta audit izi bo'lsa -> 429; oddiy xodimga -> 403.
+            cur.execute("delete from excused_days where user_id=?", (nc_uid,))
+            conn.commit()
+            r3 = client.post(f"{API_BASE}/attendance/remind/{nc_uid}", headers=auth(boss_t))
+            check("A5: yetkazib bo'lmasa -> 400 (fake telegram)", r3.status_code == 400,
+                  f"kod={r3.status_code} {r3.text[:120]}")
+            for _ in range(2):
+                cur.execute(
+                    "insert into audit_logs (actor_id, action, target_user_id, created_at)"
+                    " values (1, 'attendance_reminder_sent', ?, datetime('now'))", (nc_uid,))
+            conn.commit()
+            r4 = client.post(f"{API_BASE}/attendance/remind/{nc_uid}", headers=auth(boss_t))
+            check("A5: kuniga 2 tadan keyin -> 429", r4.status_code == 429, f"kod={r4.status_code}")
+            emp_tok = token_for(nc_uid, "employee")
+            r5 = client.post(f"{API_BASE}/attendance/remind/{nc_uid}", headers=auth(emp_tok))
+            check("A5: oddiy xodim eslata olmaydi -> 403", r5.status_code == 403, f"kod={r5.status_code}")
+
+            cur.execute("delete from audit_logs where target_user_id=?", (nc_uid,))
+            cur.execute("delete from work_schedule_weekly where user_id=?", (nc_uid,))
+            cur.execute("delete from users where id=?", (nc_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("UX-A1/A5 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- UX-A6: yuz so'rovini webdan hal qilish --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " face_descriptor, face_registered_at, created_at) values"
+                " (999444803,'T-ReregWeb','employee',1,1,?,datetime('now'),datetime('now'))",
+                (json.dumps(FACE),))
+            rw_uid = cur.lastrowid
+            new_face = json.dumps([0.9] * 128)
+            cur.execute(
+                "insert into face_reregistration_requests (user_id, new_descriptor, status, created_at)"
+                " values (?, ?, 'pending', datetime('now'))", (rw_uid, new_face))
+            req_id = cur.lastrowid
+            conn.commit()
+
+            emp_tok = token_for(rw_uid, "employee")
+            r = client.post(f"{API_BASE}/attendance/face-reregistration/{req_id}/decide-web",
+                            headers=auth(emp_tok), json={"decision": "approved"})
+            check("A6: oddiy xodim -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            mgr = find_manager_id()
+            mgr_tok = token_for(mgr[0], mgr[1])
+            r2 = client.post(f"{API_BASE}/attendance/face-reregistration/{req_id}/decide-web",
+                             headers=auth(mgr_tok), json={"decision": "approved"})
+            check("A6: rahbar webdan tasdiqlaydi -> 200", r2.status_code == 200,
+                  f"kod={r2.status_code} {r2.text[:150]}")
+            saved = conn.execute("select face_descriptor from users where id=?", (rw_uid,)).fetchone()[0]
+            check("A6: descriptor yangilandi", json.loads(saved) == [0.9] * 128)
+            r3 = client.post(f"{API_BASE}/attendance/face-reregistration/{req_id}/decide-web",
+                             headers=auth(mgr_tok), json={"decision": "rejected"})
+            check("A6: qayta qaror -> 400 (idempotent)", r3.status_code == 400, f"kod={r3.status_code}")
+
+            cur.execute("delete from face_reregistration_requests where user_id=?", (rw_uid,))
+            cur.execute("delete from audit_logs where target_user_id=?", (rw_uid,))
+            cur.execute("delete from users where id=?", (rw_uid,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("UX-A6 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
+        print("\n-- UX-A7: umumiy ish jadvali (JWT) --")
+        try:
+            mgr = find_manager_id()
+            mgr_tok = token_for(mgr[0], mgr[1])
+            r = client.get(f"{API_BASE}/work-schedule/all/week", headers=auth(mgr_tok))
+            check("A7: rahbar umumiy jadvalni oladi -> 200",
+                  r.status_code == 200 and isinstance(r.json(), list),
+                  f"kod={r.status_code}, {len(r.json()) if r.status_code == 200 else '-'} xodim")
+            conn = db()
+            emp_row = conn.execute(
+                "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+            conn.close()
+            if emp_row:
+                emp_tok = token_for(emp_row[0], "employee")
+                r2 = client.get(f"{API_BASE}/work-schedule/all/week", headers=auth(emp_tok))
+                check("A7: oddiy xodimga -> 403", r2.status_code == 403, f"kod={r2.status_code}")
+        except Exception:
+            check("UX-A7 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
 
 def test_payroll_engine() -> None:
     """Bosqich 2: `api/services/payroll.py` hisoblash yadrosi — HTTP orqali

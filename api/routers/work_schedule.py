@@ -417,22 +417,14 @@ async def my_week_web(
     return await _effective_week(db, user, start or today_local())
 
 
-@router.get("/{telegram_id}/all/week", response_model=list[WorkWeekOut], dependencies=[Depends(verify_bot_secret)])
-async def all_week(
-    telegram_id: int, start: date | None = None, db: AsyncSession = Depends(get_db)
-) -> list[WorkWeekOut]:
-    """Rahbar uchun: davomat kuzatiladigan barcha faol xodimlarning (Boshliqdan
-    tashqari — ATTENDANCE_TRACKED_ROLES) haftalik jadvali. Jadval davomat
-    kechikishini hisoblashda ishlatilgani uchun ro'yxat davomat qamrovi bilan
-    bir xil bo'lishi shart.
+async def _all_week_payload(db: AsyncSession, start: date | None) -> list[WorkWeekOut]:
+    """Barcha kuzatiladigan xodimlarning haftalik jadvali — bot va web (UX-A7)
+    endpointlari uchun YAGONA manba.
 
     3.5-band: ilgari har xodim uchun `_effective_week` alohida chaqirilardi —
     2 ta so'rov (weekly + override) xodimlar soniga ko'paytirilardi (N+1).
-    `digest_tick` har daqiqa ishlagani uchun bu sezilarli yuk edi. Endi hamma
-    xodim uchun weekly/override BITTA so'rovda olinib, lug'atga solinadi."""
-    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
-    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
+    Endi hamma xodim uchun weekly/override BITTA so'rovda olinib, lug'atga
+    solinadi."""
     users = list(
         await db.scalars(
             select(User)
@@ -463,3 +455,27 @@ async def all_week(
         )
     }
     return [_build_week(u, weekly, overrides, week_start) for u in users]
+
+
+@router.get("/all/week", response_model=list[WorkWeekOut])
+async def all_week_web(
+    start: date | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> list[WorkWeekOut]:
+    """UX-A7: web «Umumiy jadval» ko'rinishi (JWT). Bot varianti bilan bitta
+    ichki funksiya. Marshrut to'qnashuvi yo'q: `/{user_id}/weekly` ikkinchi
+    segmenti «weekly», `/{telegram_id}/all/week` esa 3 segmentli."""
+    return await _all_week_payload(db, start)
+
+
+@router.get("/{telegram_id}/all/week", response_model=list[WorkWeekOut], dependencies=[Depends(verify_bot_secret)])
+async def all_week(
+    telegram_id: int, start: date | None = None, db: AsyncSession = Depends(get_db)
+) -> list[WorkWeekOut]:
+    """Rahbar uchun (bot): davomat kuzatiladigan barcha faol xodimlarning
+    (Boshliqdan tashqari — ATTENDANCE_TRACKED_ROLES) haftalik jadvali."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal faqat rahbarlar uchun")
+    return await _all_week_payload(db, start)

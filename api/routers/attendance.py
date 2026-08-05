@@ -45,10 +45,12 @@ from api.services.attendance_digest import (
     get_digest_config,
     send_attendance_digest,
 )
+from api.services.attendance_month import build_month_cells, parse_month
 from api.notify import notify_user
+from api.routers.hourly_plan import DEFAULT_START
 from api.services.push import Category
 from api.telegram_notify import inline_keyboard
-from api.timeutil import TASHKENT_TZ, today_local
+from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from db.models import (
     Attendance,
     AttendanceReminder,
@@ -116,6 +118,31 @@ async def my_today(
         select(Attendance).where(Attendance.user_id == user.id, Attendance.date == today_local())
     )
     return _att_out(att, user.full_name) if att else None
+
+
+@router.get("/me/history")
+async def my_history(
+    month: str | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """UX-A3: xodimning O'Z oylik davomat tarixi — kalendar kataklari + jami.
+
+    Ilgari xodim o'z tarixini UMUMAN ko'ra olmasdi (`/me/today` xolos): "shu oy
+    nechi marta kechikdim, qaysi kunlar?" degan savolga javob faqat rahbarda
+    yoki jarima kelganda ma'lum bo'lardi. Har kim FAQAT o'zinikini oladi —
+    `user_id` parametri ATAYLAB yo'q."""
+    try:
+        first, last = parse_month(month)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Oy formati «YYYY-MM» bo'lishi kerak")
+    data = await build_month_cells(db, [user], first, last)
+    return {
+        "month": first.strftime("%Y-%m"),
+        "today": today_local().isoformat(),
+        "days": data[user.id]["cells"],
+        "totals": data[user.id]["totals"],
+    }
 
 
 @router.post("/me/check-in", response_model=AttendanceOut)
@@ -221,35 +248,31 @@ async def register_face(
     return RegisterFaceOut(status="pending_approval", user=UserOut.model_validate(user))
 
 
-@router.post("/face-reregistration/{item_id}/decide", response_model=FaceReregOut, dependencies=[Depends(verify_bot_secret)])
-async def decide_face_rereregistration(
-    item_id: int, payload: FaceReregDecide, db: AsyncSession = Depends(get_db)
+async def _apply_face_rereg_decision(
+    db: AsyncSession, item_id: int, decider: User, decision: str
 ) -> FaceReregOut:
-    """Bot orqali HR/rahbar qaytadan ro'yxatdan o'tish so'rovini tasdiqlaydi/rad
-    etadi. Tasdiqlansa — ENDI ham boshqa xodim yuziga o'xshab ketmasligi qayta
-    tekshiriladi (so'rov yaratilgandan keyin boshqa birov shu orada ro'yxatdan
-    o'tgan bo'lishi mumkin)."""
+    """Yuzni qayta ro'yxatdan o'tkazish so'roviga qaror — YAGONA mantiq (UX-A6).
+
+    Ikki chaqiruvchi: bot (X-Bot-Secret, telegram_id bilan) va web (JWT).
+    Ilgari faqat bot endpointi bor edi — HR botdagi xabarni o'tkazib yuborsa
+    so'rov osilib qolar, webda esa faqat RO'YXAT ko'rinardi (tugmasiz)."""
     item = await db.get(FaceReregistrationRequest, item_id)
     if not item:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "So'rov topilmadi")
     if item.status != FaceReregStatus.pending.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu so'rov allaqachon hal qilingan")
-
-    decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
-    if not decider or not decider.is_active or decider.role not in MANAGER_ROLES:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
-    if payload.decision not in (FaceReregStatus.approved.value, FaceReregStatus.rejected.value):
+    if decision not in (FaceReregStatus.approved.value, FaceReregStatus.rejected.value):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noto'g'ri qaror")
 
     target = await db.get(User, item.user_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
 
-    item.status = payload.decision
+    item.status = decision
     item.decided_by = decider.id
     item.decided_at = datetime.utcnow()
 
-    if payload.decision == FaceReregStatus.approved.value:
+    if decision == FaceReregStatus.approved.value:
         new_descriptor = json.loads(item.new_descriptor)
         dup = await find_similar_face(db, new_descriptor, exclude_user_id=target.id)
         if dup is not None:
@@ -301,6 +324,41 @@ async def decide_face_rereregistration(
         id=item.id, user_id=item.user_id, user_full_name=target.full_name,
         status=item.status, created_at=item.created_at,
     )
+
+
+@router.post("/face-reregistration/{item_id}/decide", response_model=FaceReregOut, dependencies=[Depends(verify_bot_secret)])
+async def decide_face_rereregistration(
+    item_id: int, payload: FaceReregDecide, db: AsyncSession = Depends(get_db)
+) -> FaceReregOut:
+    """Bot orqali HR/rahbar qaytadan ro'yxatdan o'tish so'rovini tasdiqlaydi/rad
+    etadi. Tasdiqlansa — ENDI ham boshqa xodim yuziga o'xshab ketmasligi qayta
+    tekshiriladi (so'rov yaratilgandan keyin boshqa birov shu orada ro'yxatdan
+    o'tgan bo'lishi mumkin)."""
+    decider = await db.scalar(select(User).where(User.telegram_id == payload.decider_telegram_id))
+    if not decider or not decider.is_active or decider.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    return await _apply_face_rereg_decision(db, item_id, decider, payload.decision)
+
+
+class FaceReregDecideWeb(BaseModel):
+    """Web (JWT) varianti — qaror qiluvchi tokenning o'zidan olinadi."""
+
+    decision: str  # approved | rejected
+
+
+@router.post("/face-reregistration/{item_id}/decide-web", response_model=FaceReregOut)
+async def decide_face_rereg_web(
+    item_id: int,
+    payload: FaceReregDecideWeb,
+    actor: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FaceReregOut:
+    """UX-A6: yuz so'rovini WEBDAN hal qilish (Sozlamalar tabi). Qamrov —
+    davomat tuzatish rollari (hr/boss/dasturchi): yuzni almashtirish ham
+    xuddi shunday kadrlar qarori."""
+    if actor.role not in ATTENDANCE_EDIT_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    return await _apply_face_rereg_decision(db, item_id, actor, payload.decision)
 
 
 @router.get("/face-reregistration", response_model=list[FaceReregOut])
@@ -462,13 +520,13 @@ async def dashboard(
     # so'rov bilan olinadi, qoida esa ayni o'sha: override > weekly > default
     # (jadval belgilanmaganda dushanba-juma ish kuni).
     overrides_by_user = {
-        o.user_id: o.is_working
+        o.user_id: o
         for o in await db.scalars(
             select(WorkScheduleOverride).where(WorkScheduleOverride.date == today)
         )
     }
     weekly_by_user = {
-        w.user_id: w.is_working
+        w.user_id: w
         for w in await db.scalars(
             select(WorkScheduleWeekly).where(WorkScheduleWeekly.weekday == today.weekday())
         )
@@ -476,16 +534,71 @@ async def dashboard(
     default_working = today.weekday() < 5
 
     def _works_today(u: User) -> bool:
-        return bool(overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_working)))
+        row = overrides_by_user.get(u.id) or weekly_by_user.get(u.id)
+        if row is not None:
+            return bool(row.is_working)
+        return default_working
+
+    def _start_today(u: User) -> str:
+        """Bugungi jadval boshlanishi ("Kelmagan" ro'yxatida ko'rsatiladi)."""
+        row = overrides_by_user.get(u.id) or weekly_by_user.get(u.id)
+        if row is not None and row.is_working and row.start_time:
+            return row.start_time
+        return DEFAULT_START
 
     working_today = sum(1 for u in employees if _works_today(u))
     not_checked_in = max(0, working_today - checked_in_today)
 
-    # Bugun DAM OLISHDAGILAR — alohida ro'yxat. Ilgari ular hech qayerda
-    # ko'rinmasdi: `working_today`dan tushib qolar, `not_checked_in`ga ham
-    # kirmas edi (to'g'ri — jarima ham olmaydi), lekin rahbar ekranida
-    # "bugun 5 kishi ishlaydi, 8 xodim bor" degan javobsiz farq qolardi.
-    # Hisob-kitobga TA'SIR QILMAYDI — faqat ko'rinish.
+    # UX-A1: "Kelmagan: 2" degan quruq son o'rniga ISMLAR — rahbarning ertalabki
+    # asosiy savoli "kim kelmadi?" shu ro'yxat bilan javob topadi. Tasdiqlangan
+    # sababli kunlilar `not_come`ga KIRMAYDI (ular kutilmayapti) — alohida
+    # `excused_today` ro'yxatida.
+    excused_ids = {
+        e.user_id
+        for e in await db.scalars(
+            select(ExcusedDay).where(
+                ExcusedDay.date == today, ExcusedDay.status == ExcusedStatus.approved.value
+            )
+        )
+    }
+    checked_ids = {a.user_id for a, _ in today_rows if a.check_in_time is not None}
+    not_come = sorted(
+        (
+            {
+                "user_id": u.id,
+                "full_name": u.full_name,
+                "schedule_start": _start_today(u),
+                "telegram_linked": u.telegram_id is not None,
+            }
+            for u in employees
+            if _works_today(u) and u.id not in checked_ids and u.id not in excused_ids
+        ),
+        key=lambda r: r["full_name"],
+    )
+    excused_today = sorted(
+        (
+            {"user_id": u.id, "full_name": u.full_name}
+            for u in employees
+            if _works_today(u) and u.id not in checked_ids and u.id in excused_ids
+        ),
+        key=lambda r: r["full_name"],
+    )
+    left = [
+        {
+            "user_id": a.user_id,
+            "full_name": name,
+            "check_in_time": a.check_in_time,
+            "check_out_time": a.check_out_time,
+            "worked_minutes": a.worked_minutes,
+        }
+        for a, name in sorted(
+            (r for r in today_rows if r[0].check_out_time is not None),
+            key=lambda r: r[0].check_out_time,
+            reverse=True,
+        )
+    ]
+
+    # Bugun DAM OLISHDAGILAR — alohida ro'yxat. Hisob-kitobga TA'SIR QILMAYDI.
     on_day_off = sorted(
         ({"user_id": u.id, "full_name": u.full_name} for u in employees if not _works_today(u)),
         key=lambda r: r["full_name"],
@@ -541,17 +654,151 @@ async def dashboard(
         "in_office": in_office,
         "recent": recent,
         "on_day_off": on_day_off,
+        # UX-A1 qo'shimchalari — eski frontend bu maydonlarni bilmaydi, e'tiborsiz
+        # qoldiradi (orqaga moslik buzilmaydi).
+        "not_come": not_come,
+        "excused_today": excused_today,
+        "left": left,
     }
+
+
+@router.post("/remind/{user_id}")
+async def remind_employee(
+    user_id: int,
+    actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """UX-A5: "Bugun" tabidagi «Eslatish» tugmasi — kelmagan xodimga bot/push
+    orqali shaxsiy eslatma. Ilgari rahbar faqat digestni kutar yoki qo'lda
+    telefon qilardi.
+
+    Spam himoyasi: bitta xodimga kuniga ko'pi bilan 2 ta (AuditLog'dagi
+    `attendance_reminder_sent` yozuvlari sanaladi — yangi jadval kerak emas,
+    iz baribir auditda qolishi kerak edi)."""
+    target = await db.get(User, user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    if target.role not in ATTENDANCE_TRACKED_ROLES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu rol uchun davomat kuzatuvi yoqilmagan")
+
+    today = today_local()
+    att = await db.scalar(
+        select(Attendance).where(Attendance.user_id == user_id, Attendance.date == today)
+    )
+    if att is not None and att.check_in_time is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim allaqachon «Keldim» qilgan")
+
+    day_start, day_end = local_range_utc_naive(today, today)
+    sent_today = await db.scalar(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.action == "attendance_reminder_sent",
+            AuditLog.target_user_id == user_id,
+            AuditLog.created_at >= day_start,
+            AuditLog.created_at < day_end,
+        )
+    )
+    if (sent_today or 0) >= 2:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, "Bugun allaqachon 2 marta eslatilgan"
+        )
+
+    # Bugungi jadval boshlanishini eslatma matnida ko'rsatamiz.
+    from api.routers.hourly_plan import _effective_today  # circular importdan qochish
+
+    _, sched_start, _ = await _effective_today(db, target, today)
+    result = await notify_user(
+        db,
+        target,
+        Category.ATTENDANCE_REMINDER,
+        f"⏰ Siz hali «Keldim» qilmadingiz (jadvalingiz: {sched_start}).\n"
+        "Sabab bo'lsa botdan «Sababli kun so'rash»ni bosing.",
+        data={"path": "/check-in"},
+    )
+    if not (result.get("push") or result.get("telegram")):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Xodimga yetkazib bo'lmadi — u Telegram botga ulanmagan va push yoqmagan",
+        )
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="attendance_reminder_sent",
+            target_user_id=target.id,
+            before=None,
+            after={"schedule_start": sched_start, "manual": True},
+        )
+    )
+    await db.commit()
+    return {"sent": True, "sent_today": (sent_today or 0) + 1}
+
+
+@router.get("/matrix")
+async def attendance_matrix(
+    month: str | None = None,
+    user_id: int | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """UX-A2: oylik davomat matritsasi — qatorlar xodimlar, ustunlar kunlar.
+
+    300-qatorlik flat "Yozuvlar" ro'yxati oylik manzarani bermasdi; bu endpoint
+    butun oyni BITTA so'rovda beradi va yozuvsiz kunlarning ma'nosini (kelmagan /
+    dam / sababli / kelajak) jadval bilan birlashtirib hal qiladi — frontend
+    buni o'zi qura olmasdi. `user_id` filtri — xodim profili sahifasi bitta
+    qatorni olishi uchun (alohida endpoint o'rniga)."""
+    try:
+        first, last = parse_month(month)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Oy formati «YYYY-MM» bo'lishi kerak")
+
+    q = select(User).where(User.is_active.is_(True), User.role.in_(ATTENDANCE_TRACKED_ROLES))
+    if user_id is not None:
+        q = q.where(User.id == user_id)
+    users = sorted(await db.scalars(q), key=lambda u: u.full_name)
+    data = await build_month_cells(db, users, first, last)
+    return {
+        "month": first.strftime("%Y-%m"),
+        "today": today_local().isoformat(),
+        "days": [(first + timedelta(days=i)).isoformat() for i in range((last - first).days + 1)],
+        "employees": [
+            {"user_id": u.id, "full_name": u.full_name, **data[u.id]} for u in users
+        ],
+    }
+
+
+def _resolve_period(
+    days: int, date_from: str | None, date_to: str | None
+) -> tuple[date, date]:
+    """UX-A4: `days` oynasi YOKI aniq davr — ikkala hisobot endpointi uchun bitta
+    qoida. `date_from`/`date_to` berilsa ular ustun (kalendar oyni so'rash mumkin
+    bo'ladi); berilmasa hozirgidek "oxirgi N kun" (4.6-band semantikasi)."""
+    try:
+        start = date.fromisoformat(date_from) if date_from else None
+        end = date.fromisoformat(date_to) if date_to else None
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sana formati «YYYY-MM-DD» bo'lishi kerak")
+    if start and end:
+        if end < start:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "«date_to» «date_from» dan oldin bo'lmasin")
+        return start, end
+    if start or end:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "date_from va date_to birga berilishi kerak"
+        )
+    today = today_local()
+    return today - timedelta(days=days - 1), today
 
 
 @router.get("/employee-summary", response_model=list[EmployeeAttendanceSummary])
 async def employee_summary(
-    days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
+    days: int = 30,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
 ) -> list[EmployeeAttendanceSummary]:
-    # 4.6-band: `days=30` sifatida so'ralganda bu aslida 31 kunni qamrab olardi
-    # (`>=` filtri bilan birga [bugun-30 .. bugun] oralig'i — 31 ta sana).
-    # "Oxirgi N kun" bugungi kunni ham qo'shib N ta sana bo'lishi kerak.
-    since = today_local() - timedelta(days=days - 1)
+    since, until = _resolve_period(days, date_from, date_to)
     # OUTER JOIN — hech qachon check-in qilmagan xodim ham natijaga kirsin
     # (0 kun, 0 daqiqa bilan). DIQQAT: sana filtri JOIN shartiga (ON) qo'yilgan,
     # WHERE'ga EMAS — WHERE'da bo'lsa NULL qatorlarni kesib, LEFT JOIN yana
@@ -567,7 +814,14 @@ async def employee_summary(
             func.coalesce(func.sum(Attendance.worked_minutes), 0).label("worked_minutes"),
         )
         .select_from(User)
-        .outerjoin(Attendance, and_(Attendance.user_id == User.id, Attendance.date >= since))
+        .outerjoin(
+            Attendance,
+            and_(
+                Attendance.user_id == User.id,
+                Attendance.date >= since,
+                Attendance.date <= until,
+            ),
+        )
         # Boshliqdan tashqari hamma (ATTENDANCE_TRACKED_ROLES) — dashboard va
         # guruh digesti bilan bir xil qoida.
         .where(User.role.in_(ATTENDANCE_TRACKED_ROLES), User.is_active.is_(True))
@@ -588,18 +842,19 @@ async def employee_summary(
     ]
 
 
-async def _late_stats_data(db: AsyncSession, days: int) -> list[LateStatRow]:
+async def _late_stats_data(
+    db: AsyncSession, days: int, date_from: str | None = None, date_to: str | None = None
+) -> list[LateStatRow]:
     """Kechikish statistikasi ma'lumoti — web (JWT) va bot (X-Bot-Secret)
-    endpointlari uchun YAGONA manba. days=0 — faqat bugun."""
-    # 4.6-band: `days=30` sifatida so'ralganda bu aslida 31 kunni qamrab olardi
-    # (`>=` filtri bilan birga [bugun-30 .. bugun] oralig'i — 31 ta sana).
-    # "Oxirgi N kun" bugungi kunni ham qo'shib N ta sana bo'lishi kerak.
-    since = today_local() - timedelta(days=days - 1)
+    endpointlari uchun YAGONA manba. days=0 — faqat bugun; UX-A4: aniq davr
+    (`date_from`/`date_to`) berilsa u ustun."""
+    since, until = _resolve_period(days, date_from, date_to)
     rows = await db.execute(
         select(Attendance.user_id, User.full_name, Attendance.date, Attendance.late_minutes)
         .join(User, Attendance.user_id == User.id)
         .where(
             Attendance.date >= since,
+            Attendance.date <= until,
             Attendance.late_minutes > 0,
             User.role.in_(ATTENDANCE_TRACKED_ROLES),
         )
@@ -632,13 +887,18 @@ async def _late_stats_data(db: AsyncSession, days: int) -> list[LateStatRow]:
 
 @router.get("/late-stats", response_model=list[LateStatRow])
 async def late_stats(
-    days: int = 30, _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
+    days: int = 30,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    _actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
 ) -> list[LateStatRow]:
     """Har bir xodimning kechikish statistikasi — kunma-kun (faqat kechikkan kunlar).
-    Davr: oxirgi `days` kun. employee-summary bilan bir xil qoida: ATTENDANCE_TRACKED_ROLES
+    Davr: oxirgi `days` kun YOKI aniq `date_from`/`date_to` (UX-A4 — kalendar oy).
+    employee-summary bilan bir xil qoida: ATTENDANCE_TRACKED_ROLES
     (Boshliqdan tashqari hamma — HR/ROP/dasturchi ham kiradi, faqat Boshliq yo'q).
     Jami kechikish bo'yicha kamayish tartibida."""
-    return await _late_stats_data(db, days)
+    return await _late_stats_data(db, days, date_from, date_to)
 
 
 @router.get(
