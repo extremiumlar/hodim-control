@@ -31,6 +31,7 @@ from db.models import (
     AttendanceDigestConfig,
     ExcusedDay,
     ExcusedStatus,
+    Role,
     User,
     WorkScheduleOverride,
     WorkScheduleWeekly,
@@ -175,7 +176,13 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
 
 
 def build_morning_text(data: dict) -> str:
-    """Ertalabki digest — hozirgi holat (kim keldi/kechikdi/hali yo'q)."""
+    """Ertalabki digest — hozirgi holat: keldi / kelmadi / kech keldi.
+
+    Egasining 2026-08-04 talabi: «o'z vaqtida keldi» kerak emas. Ilgari ro'yxat
+    to'rtga bo'lingan edi (erta keldi / o'z vaqtida / kechikdi / hali kelmadi)
+    va uzun chiqardi. Endi UCH toifa: erta kelgan ham, aniq vaqtida kelgan ham
+    bitta «Keldi» ro'yxatida — rahbarga muhimi kim keldi, kim kechikdi, kim yo'q.
+    """
     now_hm = datetime.now(TASHKENT_TZ).strftime("%H:%M")
     present, late = data["present"], data["late"]
     late_ids = {u.id for u, _ in late}
@@ -188,31 +195,20 @@ def build_morning_text(data: dict) -> str:
         f"keldi: <b>{len(present)}</b> · kelmadi: <b>{len(data['absent'])}</b>",
     ]
 
-    early_in = data["early_in"]
-    early_ids = {u.id for u, _, _ in early_in}
-
-    if early_in:
-        lines += ["", f"🌟 <b>Erta keldi ({len(early_in)}):</b>"]
-        lines += [
-            f"  • {_name(u)} — {_fmt_local(a.check_in_time)} ({mins} daq erta)"
-            for u, a, mins in early_in
-        ]
-
-    exact = [(u, a) for u, a in on_time if u.id not in early_ids]
-    if exact:
-        lines += ["", f"✅ <b>O'z vaqtida ({len(exact)}):</b>"]
-        lines += [f"  • {_name(u)} — {_fmt_local(a.check_in_time)}" for u, a in exact]
+    if on_time:
+        lines += ["", f"✅ <b>Keldi ({len(on_time)}):</b>"]
+        lines += [f"  • {_name(u)} — {_fmt_local(a.check_in_time)}" for u, a in on_time]
 
     if late:
         total = sum(a.late_minutes for _, a in late)
-        lines += ["", f"⏰ <b>Kechikdi ({len(late)}) — jami {total} daq:</b>"]
+        lines += ["", f"⏰ <b>Kech keldi ({len(late)}) — jami {total} daq:</b>"]
         lines += [
             f"  • {_name(u)} — {_fmt_local(a.check_in_time)} (+{a.late_minutes} daq)"
             for u, a in late
         ]
 
     if data["absent"]:
-        lines += ["", f"❌ <b>Hali kelmadi ({len(data['absent'])}):</b>"]
+        lines += ["", f"❌ <b>Kelmadi ({len(data['absent'])}):</b>"]
         lines += [f"  • {_name(u)}" for u in data["absent"]]
 
     if data["excused"]:
@@ -222,8 +218,23 @@ def build_morning_text(data: dict) -> str:
     return "\n".join(lines)
 
 
+# Dasturchi ish joyida bo'lsa ham check-in qilmasligi mumkin (u serverxonada
+# yoki texnik ish bilan band). Egasining talabi: kechqurun uni "kelmadi" deb
+# emas, "ofisda" deb ko'rsatish. ROLGA bog'langan, ISMGA emas — ism o'zgarsa
+# qoida jim buzilmasin (egasi 2026-08-04 da shu variantni tanladi).
+OFFICE_ASSUMED_ROLE = Role.dasturchi.value
+OFFICE_ASSUMED_AFTER_HM = "18:00"
+
+
 def build_evening_text(data: dict) -> str:
-    """Kechki digest — kun yakuni (ish vaqti, kechikish, chiqmaganlar)."""
+    """Kechki digest — kun yakuni.
+
+    Egasining 2026-08-04 talabi bo'yicha ketish qismi kelish qismi bilan bir
+    xil uch toifaga keltirildi: <b>ketdi / ketmadi / erta ketdi</b>. «Kech
+    ketganlar» (ortiqcha ishlaganlar) va «erta kelganlar» ro'yxatlari olib
+    tashlandi — ular saytda baribir ko'rinadi, guruhdagi xabar esa qisqa
+    bo'lishi kerak.
+    """
     present, late = data["present"], data["late"]
     lines = [
         f"🌙 <b>Kunlik davomat yakuni</b> — {_fmt_date(data['day'])}",
@@ -234,43 +245,55 @@ def build_evening_text(data: dict) -> str:
 
     if late:
         total = sum(a.late_minutes for _, a in late)
-        lines += ["", f"⏰ <b>Kech kelganlar ({len(late)}) — jami {total} daq:</b>"]
+        lines += ["", f"⏰ <b>Kech keldi ({len(late)}) — jami {total} daq:</b>"]
         lines += [f"  • {_name(u)} +{a.late_minutes} daq ({_fmt_local(a.check_in_time)})"
                   for u, a in late]
 
-    if data["early_in"]:
-        lines += ["", f"🌟 <b>Erta kelganlar ({len(data['early_in'])}):</b>"]
-        lines += [f"  • {_name(u)} {mins} daq erta ({_fmt_local(a.check_in_time)})"
-                  for u, a, mins in data["early_in"]]
+    # ── Ketish: ketdi / erta ketdi / ketmadi ──
+    early_out_ids = {u.id for u, _, _ in data["early_out"]}
+    no_checkout_ids = {u.id for u, _ in data["no_checkout"]}
+    left_ok = [
+        (u, a) for u, a in present
+        if a.check_out_time is not None and u.id not in early_out_ids
+    ]
+
+    if left_ok:
+        lines += ["", f"✅ <b>Ketdi ({len(left_ok)}):</b>"]
+        for u, a in left_ok:
+            worked = f"{round(a.worked_minutes / 60, 1)} soat" if a.worked_minutes else "—"
+            lines.append(f"  • {_name(u)} — {_fmt_local(a.check_out_time)} ({worked})")
 
     if data["early_out"]:
-        lines += ["", f"🏃 <b>Erta ketganlar ({len(data['early_out'])}):</b>"]
+        lines += ["", f"🏃 <b>Erta ketdi ({len(data['early_out'])}):</b>"]
         lines += [f"  • {_name(u)} {mins} daq erta ({_fmt_local(a.check_out_time)})"
                   for u, a, mins in data["early_out"]]
 
-    if data["late_out"]:
-        lines += ["", f"🌜 <b>Kech ketganlar ({len(data['late_out'])}):</b>"]
-        lines += [f"  • {_name(u)} +{mins} daq ortiqcha ({_fmt_local(a.check_out_time)})"
-                  for u, a, mins in data["late_out"]]
-
-    if present:
-        lines += ["", "🕐 <b>Ish vaqti:</b>"]
-        for u, a in present:
-            worked = f"{round(a.worked_minutes / 60, 1)} soat" if a.worked_minutes else "—"
-            out = _fmt_local(a.check_out_time) if a.check_out_time else "chiqmadi"
-            lines.append(f"  • {_name(u)} — {_fmt_local(a.check_in_time)} → {out} ({worked})")
-
     if data["no_checkout"]:
-        lines += ["", f"🚪 <b>«Ketdim» bosmaganlar ({len(data['no_checkout'])}):</b> " +
+        lines += ["", f"🚪 <b>Ketmadi — «Ketdim» bosilmagan ({len(no_checkout_ids)}):</b> " +
                   ", ".join(_name(u) for u, _ in data["no_checkout"])]
 
     if data["absent"]:
-        lines += ["", f"❌ <b>Kelmaganlar ({len(data['absent'])}):</b> " +
+        lines += ["", f"❌ <b>Kelmadi ({len(data['absent'])}):</b> " +
                   ", ".join(_name(u) for u in data["absent"])]
 
     if data["excused"]:
         lines += ["", f"🏖 <b>Sababli ({len(data['excused'])}):</b> " +
                   ", ".join(_name(u) for u in data["excused"])]
+
+    # ── Dasturchi: check-in yo'q bo'lsa "ofisda" deb izohlanadi ──
+    # `expected` ichidan qidiramiz: dam kunida yoki sababli kunda bu satr
+    # chiqmasligi kerak (u paytda u haqiqatan yo'q).
+    checked_in_ids = {u.id for u, _ in present}
+    office = [
+        u for u in data["expected"]
+        if u.role == OFFICE_ASSUMED_ROLE and u.id not in checked_in_ids
+    ]
+    if office:
+        lines += [""]
+        lines += [
+            f"🖥 {_name(u)} {OFFICE_ASSUMED_AFTER_HM} da o'tmadi demak u officeda."
+            for u in office
+        ]
 
     return "\n".join(lines)
 

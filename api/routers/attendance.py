@@ -968,8 +968,8 @@ class AttendanceReminderTick(BaseModel):
 async def attendance_reminder_tick(
     payload: AttendanceReminderTick, db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Ish oynasi boshlanishiga/tugashiga yaqin qolganda «Keldim»/«Ketdim»
-    bosmaganlarga eslatma yuboradi.
+    """Ish oynasi boshlanishiga/tugashiga 10 daqiqa, 5 daqiqa qolganda va AYNI
+    VAQTIDA «Keldim»/«Ketdim» bosmaganlarga eslatma yuboradi.
 
     NEGA KERAK: xodim bosishni unutsa, tizimda "kelmagan" bo'lib qoladi va bu
     to'g'ridan-to'g'ri oylik jarimasiga aylanadi. Keyin uni qo'lda tuzatish
@@ -983,18 +983,28 @@ async def attendance_reminder_tick(
       - davomat kuzatilmaydigan rol (Boshliq);
       - Telegram'ga ulanmaganlar (`telegram_id is None`).
 
-    TAKRORLANMASLIK: tick har ~5 daqiqada ishlaydi, ya'ni "N daqiqa qoldi"
-    sharti bir necha marta rost bo'ladi. `AttendanceReminder` jadvalidagi
-    UNIQUE(user_id, date, kind) yozuvi bir kunda bir marta yuborilishini
-    kafolatlaydi (poyga holatida ham — ikkinchi tick IntegrityError oladi).
+    TAKRORLANMASLIK: tick har daqiqada ishlaydi, ya'ni "N daqiqa qoldi" sharti
+    bir necha marta rost bo'ladi. `AttendanceReminder` jadvalidagi
+    UNIQUE(user_id, date, kind) yozuvi HAR NUQTA bir kunda bir marta
+    yuborilishini kafolatlaydi (poyga holatida ham — ikkinchi tick
+    IntegrityError oladi). `kind` = "check_in_10" / "check_out_0" ko'rinishida.
+
+    BITTA TICK'DA BITTA NUQTA: tsikl birinchi mos kelgan nuqtada to'xtaydi.
+    Aks holda cron uzoq to'xtab qolgach, xodimga uchala xabar ketma-ket
+    kelib, "10 daqiqa qoldi" va "boshlandi" bir vaqtda tushardi.
     """
     # `_effective_today`/`_to_min` — ish oynasi qoidasining YAGONA manbai
     # (hourly_plan). Circular importdan qochish uchun funksiya ichida.
     from api.routers.hourly_plan import _effective_today, _to_min
     from api.services.attendance import is_excused_day
 
-    before_start = settings.attendance_reminder_before_start_min
-    before_end = settings.attendance_reminder_before_end_min
+    # Nuqtalar KAMAYISH tartibida ("10,5,0"): pastdagi tsikl birinchi mos
+    # kelganida to'xtaydi, ya'ni eng uzoq nuqta birinchi tekshirilishi kerak.
+    offsets = sorted(
+        {int(x) for x in settings.attendance_reminder_offsets_min.split(",") if x.strip()},
+        reverse=True,
+    )
+    before_catchup = settings.attendance_reminder_catchup_min
 
     now_local = datetime.now(TASHKENT_TZ)
     day = today_local()
@@ -1027,27 +1037,31 @@ async def attendance_reminder_tick(
             select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
         )
 
-        # ── Kelish eslatmasi: ish boshlanishiga BEFORE daqiqa qolganda ──
+        # ── Kelish eslatmasi: 10 daq, 5 daq qolganda va AYNI VAQTIDA ──
         if start and (att is None or att.check_in_time is None):
-            start_min = _to_min(start)
-            lo = start_min - before_start
-            # Yuqori chegara ATAYLAB `start_min` — ish boshlangandan KEYIN
-            # eslatma yubormaymiz: u paytda xodim allaqachon kechikkan va
-            # unga "unutmang" deyish kechikish faktini o'zgartirmaydi
-            # (kechikkanlar bilan `late_warnings` alohida ishlaydi).
-            if lo <= now_min < start_min and (user.id, "check_in") not in already:
-                planned.append({"user": user, "kind": "check_in", "at": start})
+            delta = _to_min(start) - now_min  # ish boshlanishigacha qolgan daqiqa
+            for off in offsets:
+                # `off - catchup <= delta <= off`: cron bir-ikki daqiqaga
+                # kechiksa ham eslatma tushib qolmaydi. Yuqori chegara `off`
+                # — aks holda 10 daqiqalik eslatma 12 daqiqa qolganda kelib,
+                # matndagi "10 daqiqa" yolg'on bo'lardi.
+                if off - before_catchup <= delta <= off and (user.id, f"check_in_{off}") not in already:
+                    planned.append({"user": user, "kind": f"check_in_{off}", "at": start, "off": off})
+                    break  # bitta tick'da bitta nuqta — ketma-ket yubormaymiz
 
-        # ── Ketish eslatmasi: ish tugashiga BEFORE daqiqa qolganda ──
-        # Faqat «Keldim» bosgan, lekin «Ketdim» bosmaganlarga: umuman
-        # kelmagan odamga "ketishni unutmang" deyish ma'nosiz.
+        # ── Ketish eslatmasi: faqat «Keldim» bosgan, «Ketdim» bosmaganlarga ──
+        # Umuman kelmagan odamga "ketishni unutmang" deyish ma'nosiz.
         if end and att is not None and att.check_in_time is not None and att.check_out_time is None:
-            end_min = _to_min(end)
-            lo = end_min - before_end
-            # Bu yerda yuqori chegara YO'Q: ish tugagach ham «Ketdim» bosish
-            # mumkin va kerak (aks holda `worked_minutes` yozilmay qoladi).
-            if now_min >= lo and (user.id, "check_out") not in already:
-                planned.append({"user": user, "kind": "check_out", "at": end})
+            delta = _to_min(end) - now_min
+            for off in offsets:
+                # 0-nuqtada pastki chegara YO'Q: ish tugagach ham «Ketdim»
+                # bosish mumkin va kerak (aks holda `worked_minutes` yozilmay
+                # qoladi), shuning uchun kechikkan tick ham yuboraveradi.
+                lo = None if off == 0 else off - before_catchup
+                hit = delta <= off if lo is None else lo <= delta <= off
+                if hit and (user.id, f"check_out_{off}") not in already:
+                    planned.append({"user": user, "kind": f"check_out_{off}", "at": end, "off": off})
+                    break
 
     if payload.dry_run:
         return {
@@ -1070,11 +1084,21 @@ async def attendance_reminder_tick(
             await db.rollback()
             continue  # boshqa tick ulgurdi — bu yerda jim o'tamiz
 
-        text = (
-            f"⏰ Ish vaqti {p['at']} da boshlanadi — «Keldim» bosishni unutmang."
-            if kind == "check_in"
-            else f"⏰ Ish vaqti {p['at']} da tugaydi — «Ketdim» bosishni unutmang."
-        )
+        # Matn nuqtaga qarab farq qiladi: uchta bir xil xabar kelsa xodim
+        # ularni o'qimay qo'yadi. 0-nuqtada "qoldi" emas, "boshlandi/tugadi".
+        off, arriving = p["off"], kind.startswith("check_in")
+        if off == 0:
+            text = (
+                f"🔔 Ish vaqti boshlandi ({p['at']}) — «Keldim» ni bosing."
+                if arriving
+                else f"🔔 Ish vaqti tugadi ({p['at']}) — «Ketdim» ni bosing."
+            )
+        else:
+            text = (
+                f"⏰ {off} daqiqadan keyin ish boshlanadi ({p['at']}) — «Keldim» bosishni unutmang."
+                if arriving
+                else f"⏰ {off} daqiqadan keyin ish tugaydi ({p['at']}) — «Ketdim» bosishni unutmang."
+            )
         res = await notify_user(
             db, user, Category.ATTENDANCE_REMINDER, text, data={"path": "/check-in"}
         )

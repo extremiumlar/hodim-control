@@ -112,12 +112,18 @@ class Settings(BaseSettings):
     # (masalan IP-asosidagi zaxira geolokatsiya, ba'zan 1000+ metr) o'qish rad etiladi —
     # aks holda ofisdan uzoqdagi kishi "aniqlik yo'q" bahonasida ham check-in qila oladi.
     attendance_max_gps_accuracy_m: int = 100
-    # «Keldim/Ketdim bosishni unutmang» eslatmasi: ish oynasi boshlanishiga/
-    # tugashiga shuncha daqiqa qolganda yuboriladi. Kelish uchun 15 daqiqa —
-    # xodim yo'lda bo'lsa ham ulguradi; ketish uchun 10 daqiqa — ish tugashiga
-    # yaqin, lekin hali ofisda.
-    attendance_reminder_before_start_min: int = 15
-    attendance_reminder_before_end_min: int = 10
+    # «Keldim/Ketdim bosishni unutmang» eslatmasi UCH marta yuboriladi: ish
+    # oynasi boshlanishiga/tugashiga 10 daqiqa, 5 daqiqa qolganda va AYNI
+    # VAQTIDA (0). Egasining talabi (2026-08-04) — bitta eslatma yetarli
+    # bo'lmayotgan edi.
+    #
+    # Vergul bilan, KAMAYISH tartibida. Har bir nuqta bir kunda bir marta
+    # yuboriladi (`attendance_reminders` jadvalidagi iz bilan).
+    attendance_reminder_offsets_min: str = "10,5,0"
+    # Cron bir-ikki daqiqaga kechiksa (restart, band host) eslatma butunlay
+    # tushib qolmasin: shu tolerans ichida hamon yuboriladi. Katta qilinsa
+    # «10 daqiqa qoldi» xabari 6 daqiqa qolganda kelib, yolg'on bo'lardi.
+    attendance_reminder_catchup_min: int = 2
 
     # Soatlik reja avtomatik eslatmasi — haqiqiy xodimlarga Telegram xabar yuboradi,
     # shuning uchun default O'CHIQ. Ishga tushirishga tayyor bo'lganda .env'da

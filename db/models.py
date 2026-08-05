@@ -886,7 +886,10 @@ class AttendanceReminder(Base):
     check-in HALI YO'Q paytda yuboriladi — o'sha payt `Attendance` qatori
     umuman mavjud bo'lmasligi mumkin (xodim hech narsa bosmagan).
 
-    `kind`: "check_in" | "check_out" — ikkalasi bir kunda alohida yuboriladi."""
+    `kind`: "<check_in|check_out>_<offset>" — masalan "check_in_10",
+    "check_out_0". Offset = ish oynasigacha qolgan daqiqa (10 / 5 / 0), ya'ni
+    bir kunda bir xodimga oltita alohida iz tushishi mumkin. Ilgari faqat
+    "check_in"/"check_out" edi va bitta eslatma yuborilardi."""
 
     __tablename__ = "attendance_reminders"
     __table_args__ = (UniqueConstraint("user_id", "date", "kind", name="uq_att_reminder_user_date_kind"),)
@@ -894,7 +897,9 @@ class AttendanceReminder(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
-    kind: Mapped[str] = mapped_column(String(10))
+    # 20: "check_out_10" 12 belgi — eski String(10) ga SIG'MASDI (PostgreSQL
+    # varchar uzunligini qat'iy tekshiradi, SQLite esa jimgina qabul qiladi).
+    kind: Mapped[str] = mapped_column(String(20))
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -1155,10 +1160,13 @@ class AttendanceDigestConfig(Base):
     __tablename__ = "attendance_digest_config"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
-    morning_hour: Mapped[int] = mapped_column(Integer, default=9)
-    morning_minute: Mapped[int] = mapped_column(Integer, default=30)
+    # 10:05 va 22:30 — egasining talabi (2026-08-04). Ilgari 09:30 / 22:00 edi.
+    # DIQQAT: kechki vaqt shunchaki xabar emas — `write_absent_records` va
+    # tushuntirish xatlari ham AYNI shu nuqtada ishga tushadi ("kun tugadi").
+    morning_hour: Mapped[int] = mapped_column(Integer, default=10)
+    morning_minute: Mapped[int] = mapped_column(Integer, default=5)
     evening_hour: Mapped[int] = mapped_column(Integer, default=22)
-    evening_minute: Mapped[int] = mapped_column(Integer, default=0)
+    evening_minute: Mapped[int] = mapped_column(Integer, default=30)
     morning_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     evening_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     morning_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)

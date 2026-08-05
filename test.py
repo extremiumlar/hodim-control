@@ -3560,21 +3560,28 @@ def test_attendance_reminder() -> None:
             check("Dam kunidagi YO'Q", dayoff_uid not in ids, f"planned={sorted(ids)}")
             check("Sababli kundagi YO'Q", excused_uid not in ids, f"planned={sorted(ids)}")
             check("Allaqachon bosgan YO'Q", done_uid not in ids, f"planned={sorted(ids)}")
-            check("Bosmagan uchun tur = check_in",
-                  any(p["user_id"] == forgot_uid and p["kind"] == "check_in" for p in planned),
-                  f"={[p for p in planned if p['user_id'] == forgot_uid]}")
+            # Ish boshlanishi hozir+10 daqiqa qilib qo'yilgan -> AYNAN 10
+            # daqiqalik nuqta tushishi kerak (5 va 0 hali emas).
+            mine = [p for p in planned if p["user_id"] == forgot_uid]
+            check("Bosmagan uchun tur = check_in_10",
+                  any(p["kind"] == "check_in_10" for p in mine), f"={mine}")
+            check("5 va 0 nuqtalari HALI tushmadi",
+                  not any(p["kind"] in ("check_in_5", "check_in_0") for p in mine), f"={mine}")
+            check("Bitta tick'da bitta nuqta", len(mine) <= 1, f"={mine}")
 
-            # Iz yozilgan bo'lsa takror tushmasligi (real yuborishsiz — izni
-            # qo'lda yozamiz, chunki dry_run iz yozmaydi).
+            # Iz yozilgan bo'lsa o'sha nuqta takror tushmasligi (real
+            # yuborishsiz — izni qo'lda yozamiz, chunki dry_run iz yozmaydi).
             c = db()
             c.execute(
                 "insert into attendance_reminders (user_id, date, kind, sent_at)"
-                " values (?,?,'check_in',datetime('now'))", (forgot_uid, today))
+                " values (?,?,'check_in_10',datetime('now'))", (forgot_uid, today))
             c.commit()
             c.close()
             r = client.post(f"{API_BASE}/attendance/reminder-tick", headers=hdr, json={"dry_run": True})
-            ids2 = {p["user_id"] for p in r.json().get("planned", [])} if r.status_code == 200 else set()
-            check("Iz yozilgach TAKROR tushmaydi", forgot_uid not in ids2, f"planned={sorted(ids2)}")
+            planned2 = r.json().get("planned", []) if r.status_code == 200 else []
+            mine2 = [p for p in planned2 if p["user_id"] == forgot_uid]
+            check("Iz yozilgach o'sha nuqta TAKROR tushmaydi",
+                  not any(p["kind"] == "check_in_10" for p in mine2), f"={mine2}")
     except Exception:
         check("Davomat eslatmasi (umumiy)", False, traceback.format_exc(limit=2).strip())
     finally:
