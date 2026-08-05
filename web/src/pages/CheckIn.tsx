@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { CheckCircle2, LogIn, LogOut, MapPin, ShieldCheck } from "lucide-react";
+import { Check, CheckCircle2, LogIn, LogOut, MapPin, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import LateStatusCard from "@/components/LateStatusCard";
 import PushEnableCard from "@/components/PushEnableCard";
+import MyHistoryCard from "@/components/attendance/MyHistoryCard";
+import TodayScheduleChip from "@/components/attendance/TodayScheduleChip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,7 +17,7 @@ import {
   useRegisterMyFace,
 } from "@/lib/queries";
 import { type LiveResult } from "@/lib/face";
-import { fmtLocalTime as fmtTime, translateGeoError } from "@/lib/utils";
+import { cn, fmtLocalTime as fmtTime, translateGeoError } from "@/lib/utils";
 
 // FaceCapture ATAYLAB lazy: u @vladmandic/face-api ni tortadi (~340 KB
 // siqilgan holda). Tab-bar qo'shilgach /check-in xodimning KIRISH sahifasi
@@ -39,6 +41,45 @@ function FaceCaptureFallback() {
 }
 
 type Action = "check-in" | "check-out";
+
+/**
+ * UX-D3: yuz tasdiqlash modalidagi qadam ko'rsatkichi — model yuklanayotgan
+ * ~10 soniyada xodim "qotib qoldimi?" deb o'ylamasligi uchun qayerdaligini
+ * ko'rsatib turadi. `done` — o'tilgan qadamlar soni (ular ✓ bilan).
+ */
+function StepIndicator({ steps, current }: { steps: string[]; current: number }) {
+  return (
+    <div className="mb-3 flex items-center gap-1.5 text-[11px] font-medium">
+      {steps.map((label, i) => {
+        const done = i < current;
+        const activeStep = i === current;
+        return (
+          <div key={label} className="flex min-w-0 items-center gap-1.5">
+            {i > 0 && <span className="h-px w-3 shrink-0 bg-slate-200" />}
+            <span
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                done && "bg-emerald-100 text-emerald-700",
+                activeStep && "bg-primary text-primary-foreground",
+                !done && !activeStep && "bg-slate-100 text-slate-400"
+              )}
+            >
+              {done ? <Check className="h-3 w-3" /> : i + 1}
+            </span>
+            <span
+              className={cn(
+                "truncate",
+                activeStep ? "text-slate-800" : done ? "text-emerald-700" : "text-slate-400"
+              )}
+            >
+              {label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function getPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
@@ -276,7 +317,10 @@ export default function CheckIn() {
   const hasCheckOut = !!att?.check_out_time;
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
+    <div className="mx-auto max-w-lg space-y-4">
+      {/* UX-D1: bugungi jadval — kechikish "kutilmagan" bo'lmasin */}
+      <TodayScheduleChip />
+
       <Card>
         <CardContent className="p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -367,6 +411,9 @@ export default function CheckIn() {
 
       <LateStatusCard />
 
+      {/* UX-D2: xodimning o'z oylik tarixi — ilgari umuman yo'q edi */}
+      <MyHistoryCard />
+
       {user?.has_face && !showRegister && (
         <div className="text-center">
           <button onClick={() => setShowRegister(true)} className="text-sm text-primary hover:underline">
@@ -412,7 +459,7 @@ export default function CheckIn() {
           <div
             className="flex h-full w-full flex-col overflow-y-auto bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg sm:rounded-2xl sm:p-5 sm:shadow-2xl"
           >
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-semibold">
                 Yuz tasdiqlash ({showFace === "check-in" ? "Keldim" : "Ketdim"})
               </h3>
@@ -427,6 +474,17 @@ export default function CheckIn() {
                 ✕
               </button>
             </div>
+            {/* UX-D3: qadam ko'rsatkichi. Joylashuv ruxsati modal ochilishidan
+                OLDIN olinadi (startCheck), ya'ni modal ichida u doim ✓;
+                skipLocation xodimida bu qadam umuman ko'rinmaydi. */}
+            <StepIndicator
+              steps={
+                skipLocation
+                  ? ["Yuz tasdiqlash", "Yuborish"]
+                  : ["Joylashuv", "Yuz tasdiqlash", "Yuborish"]
+              }
+              current={(skipLocation ? 0 : 1) + (statusMsg ? 1 : 0)}
+            />
             {checkError && (
               <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
                 {checkError}
