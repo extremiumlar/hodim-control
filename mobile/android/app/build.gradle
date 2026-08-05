@@ -133,6 +133,14 @@ android {
             // Play Store'ga qo'ymaymiz. Ba'zi ROM'lar (MIUI, One UI) yon
             // o'rnatishda v1 (JAR) imzoni tekshiradi, faqat v2 bo'lsa
             // "ilova o'rnatilmadi" beradi. Uchtasini ham yozamiz.
+            //
+            // ⚠️ `enableV1Signing true` YETARLI EMAS: `minSdk = 24` bo'lgani
+            // uchun apksigner v1'ni "ortiqcha" deb hisoblab jimgina tushirib
+            // qoldiradi (v1 faqat Android 7.0 dan PASTDA kerak, biz esa 24 dan
+            // boshlaymiz). Natijada 1.4.1 gacha chiqarilgan APK'lar v2+v3
+            // bilan imzolangan — buni `apksigner verify -v` ko'rsatadi.
+            // Shuning uchun pastda `forceV1Sign` vazifasi APK'ni qayta
+            // imzolaydi va v1'ni MAJBURAN yoqadi.
             enableV1Signing true
             enableV2Signing true
             enableV3Signing true
@@ -222,3 +230,53 @@ if (file('google-services.json').exists()) {
 } else {
     logger.lifecycle("google-services.json topilmadi — push (FCM) O'CHIQ holatda quriladi")
 }
+
+// ── v1 (JAR) imzoni MAJBURAN yoqish ──
+//
+// NEGA KERAK: `signingConfigs.release.enableV1Signing true` qo'yilgan bo'lsa
+// ham, `minSdk = 24` bo'lgani uchun apksigner v1'ni ortiqcha deb hisoblab
+// tashlab ketadi (v1 faqat Android 7.0 dan pastda kerak). Biz esa APK'ni
+// qo'lda tarqatamiz va ba'zi ROM'lar (MIUI, One UI) yon o'rnatishda hali ham
+// JAR imzoni tekshiradi — shuning uchun uni majburan yozamiz.
+//
+// `--min-sdk-version 24` ATAYLAB uzatiladi: busiz apksigner manifestdagi
+// qiymatni o'qib, yana o'sha xulosaga kelib v1'ni tushirib qoldirardi.
+//
+// Parollar `gradle.properties` dan Gradle orqali olinadi — bu yerda hech
+// qanday sekret matn ko'rinishida turmaydi.
+tasks.register("forceV1Sign", Exec) {
+    description = "Release APK'ni v1+v2+v3 bilan qayta imzolaydi (minSdk>=24 tuzog'i)."
+    // `Exec` tipi ATAYLAB: Gradle 9 da oddiy vazifa ichidagi `exec { }` olib
+    // tashlangan ("Could not find method exec()"). Buyruq `doFirst` da
+    // quriladi — SDK yo'li va APK faqat build tugagach ma'lum bo'ladi.
+    doFirst {
+        def apk = file("${buildDir}/outputs/apk/release/app-release.apk")
+        if (!apk.exists()) {
+            throw new GradleException("APK topilmadi: ${apk}")
+        }
+        def isWindows = System.getProperty("os.name").toLowerCase().contains("windows")
+        def exe = isWindows ? "apksigner.bat" : "apksigner"
+        // Eng yangi build-tools nusxasini olamiz — aniq versiyaga bog'lanib
+        // qolsak, SDK yangilanganda build jim yiqilardi.
+        def btDir = new File(android.sdkDirectory, "build-tools")
+        def tool = btDir.listFiles()?.findAll { new File(it, exe).exists() }
+                        ?.sort { it.name }?.last()
+        if (tool == null) {
+            throw new GradleException("apksigner topilmadi: ${btDir}")
+        }
+        commandLine new File(tool, exe).absolutePath, "sign",
+            "--ks", HODIMLAR_RELEASE_STORE_FILE,
+            "--ks-pass", "pass:${HODIMLAR_RELEASE_STORE_PASSWORD}",
+            "--ks-key-alias", HODIMLAR_RELEASE_KEY_ALIAS,
+            "--key-pass", "pass:${HODIMLAR_RELEASE_KEY_PASSWORD}",
+            "--v1-signing-enabled", "true",
+            "--v2-signing-enabled", "true",
+            "--v3-signing-enabled", "true",
+            "--min-sdk-version", "24",
+            apk.absolutePath
+    }
+    doLast {
+        logger.lifecycle("v1+v2+v3 imzo qo'yildi: app-release.apk")
+    }
+}
+tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy("forceV1Sign") }
