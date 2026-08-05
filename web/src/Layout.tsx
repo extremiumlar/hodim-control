@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "./lib/auth";
+import { useExcusedDays, useExplanations } from "./lib/queries";
 import { cn } from "./lib/utils";
 import { BRAND_NAME } from "./lib/brand";
 import { sectionTitle, splitSections } from "./lib/employeeNav";
@@ -133,10 +134,13 @@ function SidebarLink({
   item,
   collapsed,
   onNavigate,
+  badge = 0,
 }: {
   item: NavItem;
   collapsed: boolean;
   onNavigate?: () => void;
+  /** UX-G1: kutilayotgan ishlar soni (masalan sababli kun so'rovlari). */
+  badge?: number;
 }) {
   const Icon = item.icon;
   const link = (
@@ -146,7 +150,7 @@ function SidebarLink({
       onClick={onNavigate}
       className={({ isActive }) =>
         cn(
-          "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+          "relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
           collapsed && "justify-center px-2",
           isActive
             ? "bg-primary text-primary-foreground"
@@ -156,6 +160,15 @@ function SidebarLink({
     >
       <Icon className="h-4 w-4 shrink-0" />
       {!collapsed && <span className="truncate">{item.label}</span>}
+      {badge > 0 &&
+        (collapsed ? (
+          // Yig'iq sidebar'da joy yo'q — kichik nuqta yetadi.
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-amber-500" />
+        ) : (
+          <span className="ml-auto rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold leading-none text-amber-700">
+            {badge}
+          </span>
+        ))}
     </NavLink>
   );
   if (!collapsed) return link;
@@ -174,6 +187,7 @@ function SidebarNav({
   canEditFinePolicy,
   isDasturchi,
   onNavigate,
+  badges = {},
 }: {
   collapsed: boolean;
   canManagePositions: boolean;
@@ -181,6 +195,8 @@ function SidebarNav({
   canEditFinePolicy: boolean;
   isDasturchi: boolean;
   onNavigate?: () => void;
+  /** UX-G1: yo'l -> kutilayotgan ishlar soni. */
+  badges?: Record<string, number>;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -203,7 +219,13 @@ function SidebarNav({
               )}
               <div className="space-y-0.5">
                 {items.map((item) => (
-                  <SidebarLink key={item.to} item={item} collapsed={collapsed} onNavigate={onNavigate} />
+                  <SidebarLink
+                    key={item.to}
+                    item={item}
+                    collapsed={collapsed}
+                    onNavigate={onNavigate}
+                    badge={badges[item.to] ?? 0}
+                  />
                 ))}
               </div>
             </div>
@@ -280,6 +302,15 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // UX-G1: «Sababli kunlar» bandida kutilayotgan ishlar soni — HR sahifaga
+  // kirmasa ham so'rov kelganini sezsin. Faqat rahbarda so'raladi (enabled);
+  // 60s staleTime — sidebar har renderda so'rov yubormaydi.
+  const pendingExcused = useExcusedDays("pending", isManager);
+  const answeredExplanations = useExplanations("answered", isManager);
+  const excusedBadge =
+    (pendingExcused.data?.length ?? 0) + (answeredExplanations.data?.length ?? 0);
+  const navBadges = { "/excused-days": excusedBadge };
+
   useEffect(() => {
     localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");
   }, [collapsed]);
@@ -355,6 +386,7 @@ export default function Layout() {
             canManagePayroll={canManagePayroll}
             canEditFinePolicy={canEditFinePolicy}
             isDasturchi={isDasturchi}
+            badges={navBadges}
           />
         </aside>
 
@@ -377,9 +409,10 @@ export default function Layout() {
                     collapsed={false}
                     canManagePositions={canManagePositions}
                     canManagePayroll={canManagePayroll}
-            canEditFinePolicy={canEditFinePolicy}
+                    canEditFinePolicy={canEditFinePolicy}
                     isDasturchi={isDasturchi}
                     onNavigate={() => setMobileOpen(false)}
+                    badges={navBadges}
                   />
                 </div>
               </SheetContent>

@@ -321,8 +321,16 @@ export const useCancelTask = () => useApiMutation((taskId: number) => api.cancel
 export const useDeleteTask = () => useApiMutation((taskId: number) => api.deleteTask(taskId), [["tasks"]]);
 
 // ─── Sababli kunlar ───
-export const useExcusedDays = (statusFilter?: string) =>
-  useQuery({ queryKey: qk.excusedDays(statusFilter), queryFn: () => api.listExcusedDays(statusFilter) });
+// UX-G1: `enabled` — sidebar badge'i uchun Layout ham chaqiradi (faqat rahbarda);
+// staleTime 60s — badge har renderda so'rov yubormasin (qaror mutatsiyalari
+// baribir invalidate qiladi, ya'ni sahifada yangilik kechikmaydi).
+export const useExcusedDays = (statusFilter?: string, enabled = true) =>
+  useQuery({
+    queryKey: qk.excusedDays(statusFilter),
+    queryFn: () => api.listExcusedDays(statusFilter),
+    enabled,
+    staleTime: 60_000,
+  });
 
 export const useDecideExcusedDay = () =>
   useApiMutation(
@@ -660,10 +668,12 @@ export const useSetAttendanceEditor = () =>
     [qk.attendanceEditors, ["users"], qk.adminAudit]
   );
 
-export const useExplanations = (statusFilter?: string) =>
+export const useExplanations = (statusFilter?: string, enabled = true) =>
   useQuery({
     queryKey: qk.explanations(statusFilter),
     queryFn: () => api.listExplanations(statusFilter),
+    enabled,
+    staleTime: 60_000,
   });
 
 // Qabul qilinsa ExcusedDay yaratiladi va davomat qayta hisoblanadi —
