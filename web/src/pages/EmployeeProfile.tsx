@@ -16,6 +16,7 @@ import {
 import { type ColumnDef } from "@tanstack/react-table";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
+import EmployeeAttendanceCard from "@/components/attendance/EmployeeAttendanceCard";
 import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -358,6 +359,10 @@ export default function EmployeeProfile() {
               )}
             </CardContent>
           </Card>
+
+          {/* UX-C: davomat kalendari — ilgari profilda davomat UMUMAN yo'q edi,
+              rahbar xodim bilan gaplashishdan oldin tarixini ko'ra olmasdi. */}
+          <EmployeeAttendanceCard userId={userId} />
 
           <div>
             <h3 className="mb-2 font-semibold">Kunlik natijalar tarixi</h3>

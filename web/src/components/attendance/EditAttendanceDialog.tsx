@@ -42,26 +42,36 @@ function toHm(iso: string | null): string {
   return iso ? fmtLocalTime(iso) : "";
 }
 
+/** Matritsa katagidan ochilganda uzatiladigan tayyor kontekst. */
+export interface EditPreset {
+  userId: number;
+  userName: string;
+  date: string; // yyyy-MM-dd
+  checkIn: string | null; // "HH:MM" (mahalliy)
+  checkOut: string | null;
+  note: string | null;
+}
+
 export default function EditAttendanceDialog({
   open,
   row,
   onClose,
   silent = false,
-  presetUserId,
-  presetDate,
+  preset,
 }: {
   open: boolean;
-  /** null — yangi yozuv rejimi. */
+  /** null — yangi yozuv rejimi (yoki `preset` bilan matritsa katagi rejimi). */
   row: AttendanceRow | null;
   onClose: () => void;
   /** Dasturchi rejimi: AUDITSIZ endpoint, sabab so'ralmaydi (hech qayerga
       yozilmaydi). Egasining aniq talabi — "auditlarga tushmasdan". */
   silent?: boolean;
-  /** Matritsa katagidan ochilganda — xodim/sana oldindan to'ldirilgan bo'ladi. */
-  presetUserId?: number;
-  presetDate?: string;
+  /** Matritsa katagidan ochilganda — xodim/sana/vaqtlar tayyor keladi va
+      xodim/sana tanlagichlari KO'RSATILMAYDI (backend yozuv bo'lmasa o'zi
+      yaratadi, ya'ni "tahrirlash" va "yaratish" bitta so'rov). */
+  preset?: EditPreset | null;
 }) {
-  const creating = row === null;
+  const creating = row === null && !preset;
   const [checkIn, setCheckIn] = useState("");
   const [checkOut, setCheckOut] = useState("");
   const [note, setNote] = useState("");
@@ -82,13 +92,13 @@ export default function EditAttendanceDialog({
   // qolib ketardi.
   useEffect(() => {
     if (!open) return;
-    setCheckIn(toHm(row?.check_in_time ?? null));
-    setCheckOut(toHm(row?.check_out_time ?? null));
-    setNote(row?.note ?? "");
+    setCheckIn(preset ? (preset.checkIn ?? "") : toHm(row?.check_in_time ?? null));
+    setCheckOut(preset ? (preset.checkOut ?? "") : toHm(row?.check_out_time ?? null));
+    setNote((preset ? preset.note : row?.note) ?? "");
     setReason("");
-    setNewUserId(presetUserId != null ? String(presetUserId) : "");
-    setNewDate(presetDate ?? format(new Date(), "yyyy-MM-dd"));
-  }, [row, open, presetUserId, presetDate]);
+    setNewUserId("");
+    setNewDate(format(new Date(), "yyyy-MM-dd"));
+  }, [row, open, preset]);
 
   // Jim rejimda sabab umuman so'ralmaydi — u hech qayerga yozilmaydi,
   // ya'ni majburlash faqat ortiqcha qadam bo'lardi.
@@ -98,15 +108,17 @@ export default function EditAttendanceDialog({
   // Yangi yozuvda xodim va sana majburiy — ularsiz nimaga yozilishi noma'lum.
   const targetMissing = creating && (!newUserId || !newDate);
 
+  const title = preset
+    ? `${preset.userName} — ${format(new Date(preset.date), "dd.MM.yyyy")}`
+    : creating
+      ? "Yangi davomat yozuvi"
+      : `${row?.user_full_name} — ${row ? format(new Date(row.date), "dd.MM.yyyy") : ""}`;
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {creating
-              ? "Yangi davomat yozuvi"
-              : `${row?.user_full_name} — ${row ? format(new Date(row.date), "dd.MM.yyyy") : ""}`}
-          </DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             Face ID/GPS ishlamagan yoki xodim bosishni unutgan kunni tuzatish — yozuv
             bo'lmasa yangisi ochiladi. Kechikish va ishlangan vaqt ish jadvali bo'yicha
@@ -223,8 +235,8 @@ export default function EditAttendanceDialog({
               targetMissing || reasonTooShort || invalidOrder || outWithoutIn || mutation.isPending
             }
             onClick={() => {
-              const targetId = row ? row.user_id : Number(newUserId);
-              const targetDay = row ? row.date : newDate;
+              const targetId = preset ? preset.userId : row ? row.user_id : Number(newUserId);
+              const targetDay = preset ? preset.date : row ? row.date : newDate;
               if (!targetId || !targetDay) return;
               mutation.mutate(
                 {
