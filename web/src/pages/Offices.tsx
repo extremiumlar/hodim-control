@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type Office } from "@/lib/api";
+import OfficeMap from "@/components/attendance/OfficeMap";
 import { useCreateOffice, useDeleteOffice, useOffices, useUpdateOffice } from "@/lib/queries";
 import { translateGeoError } from "@/lib/utils";
 
@@ -118,11 +119,35 @@ export default function Offices() {
 
   const err = form.formState.errors;
 
+  // UX-F: formadagi qiymatlar xaritada jonli ko'rinadi (marker + punktir doira).
+  const watchLat = form.watch("latitude");
+  const watchLng = form.watch("longitude");
+  const watchRadius = form.watch("radius_meters");
+  const toNum = (v: unknown): number | null =>
+    v === "" || v == null || Number.isNaN(Number(v)) ? null : Number(v);
+  const formLat = toNum(watchLat);
+  const formLng = toNum(watchLng);
+  const formRadius = toNum(watchRadius) ?? 150;
+
   return (
     <div className="max-w-3xl space-y-6">
       <PageHeader
         title="Ofislar (davomat GPS)"
         description="Xodim «Keldim/Ketdim» qilganda joylashuvi shu ofislardan biriga (radius ichida) tushishi shart."
+      />
+
+      {/* UX-F: xarita — bosish/sudrash koordinatani formaga yozadi, radius
+          doirasi jonli o'zgaradi. */}
+      <OfficeMap
+        offices={query.data ?? []}
+        editingId={editingId}
+        formLat={formLat}
+        formLng={formLng}
+        formRadius={formRadius}
+        onPick={(lat, lng) => {
+          form.setValue("latitude", Number(lat.toFixed(6)), { shouldValidate: true });
+          form.setValue("longitude", Number(lng.toFixed(6)), { shouldValidate: true });
+        }}
       />
 
       {/* Forma */}
