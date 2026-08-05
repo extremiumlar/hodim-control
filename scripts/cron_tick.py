@@ -108,6 +108,11 @@ def _due(now: datetime) -> list:
     if m % 15 == 0:
         add("/tasks/mark-overdue")
         add("/auto-plan/snapshot", timeout=120)      # AI actual (o'chiqda no-op)
+    # CRM aloqasi qo'riqchisi — 17-daqiqa qoldig'i ATAYIN (yuqoridagi m%15
+    # guruhiga qo'shilmasin, yagona Passenger ishchisi bir zumda to'lmasin).
+    # Chegara 2 soat bo'lgani uchun yarim soatlik tekshiruv yetarli.
+    if m % 30 == 17:
+        add("/crm-health/tick", json={}, timeout=60)
     # DIQQAT: lid snapshoti (/stats/lead-stages/sync) bu ro'yxatda YO'Q — u og'ir
     # (~5-7 daqiqa) va gateway HTTP limitiga sig'maydi; _lead_sync_due + in-process
     # yo'l bilan bajariladi (pastda).

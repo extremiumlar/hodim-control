@@ -14,6 +14,7 @@ from api.routers import (
     auto_plan,
     bonuses,
     busy_period,
+    crm_health,
     daily_results,
     excused_days,
     hot_lead,
@@ -89,6 +90,7 @@ app.include_router(playbook.router)
 app.include_router(sales_ai.router)
 app.include_router(push.router)
 app.include_router(uysot_webhook.router)
+app.include_router(crm_health.router)
 
 # cPanel deploy: bot shu API ichida webhook orqali ishlaydi. Faqat yoqilganda
 # ulanadi — shunda bot/ paketi import qilinadi (Docker api image'da bot/ yo'q,

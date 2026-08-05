@@ -109,6 +109,12 @@ def _build_jobs() -> list[JobSpec]:
             _cron(hour=cfg.LEAD_SNAPSHOT_FREEZE_HOUR, minute=cfg.LEAD_SNAPSHOT_FREEZE_MINUTE),
             max_instances=1, misfire_grace_time=cfg.MISFIRE_GRACE_SHORT, coalesce=True,
         ),
+        # CRM aloqasi qo'riqchisi — ma'lumot kelmay qolsa guruhga ogohlantirish
+        # (chegara 2 soat, shuning uchun yarim soatlik tekshiruv yetarli)
+        JobSpec(
+            "crm_health_tick", jobs.crm_health_tick, IntervalTrigger(minutes=30),
+            max_instances=1, coalesce=True,
+        ),
         # Diff-engine — lidlarning HAQIQIY o'zgarishini kuzatuvchi tez skan
         # (chegaralangan, guruh digesti shundan o'qiydi — deyarli real-vaqtli)
         JobSpec(

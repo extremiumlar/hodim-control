@@ -96,6 +96,18 @@ class Settings(BaseSettings):
     # (api/services/crm_mode.py) — lid oqimi hech qachon butunlay o'chmaydi.
     crm_lead_polling_enabled: bool = False
 
+    # ── CRM aloqasi qo'riqchisi (api/services/crm_health.py) ──
+    # 2026-08-04 da Uysot tokeni bekor qilindi va tizim 27 soat JIMGINA ko'r
+    # bo'lib qoldi (xato faqat cron log'ida edi). Qo'riqchi shu holatni aniqlab
+    # guruhga ogohlantiradi. Default YOQIQ — jimgina ko'rlik takrorlanmasin.
+    crm_health_watchdog_enabled: bool = True
+    # CRM'dan ma'lumot shuncha soat kelmasa — aloqa uzilgan deb hisoblanadi.
+    # 2 soat: polling har 5 daqiqada ishlaydi, ya'ni qisqa uzilish (deploy,
+    # Uysot'ning vaqtinchalik nosozligi) yolg'on signal bermaydi.
+    crm_health_stale_hours: float = 2.0
+    # Uzilish davom etsa takroriy ogohlantirish oralig'i (shovqin nazorati).
+    crm_health_realert_hours: float = 6.0
+
     # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
     # Bo'sh — endpoint o'chiq (404). Tasodifiy uzun qiymat qo'ying:
     # python3 -c "import secrets;print(secrets.token_urlsafe(32))"
