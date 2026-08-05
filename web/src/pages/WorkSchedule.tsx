@@ -1,10 +1,26 @@
+/**
+ * Ish jadvali — ikki tab (UX-E):
+ *   «Umumiy»      — barcha xodimlar bir jadvalda (J1); jadvalsizlar oshkor (J4);
+ *   «Bitta xodim» — mavjud tahrirlash UI (tezkor sozlash, haftalik, override)
+ *                   + boshqa xodimdan NUSXALASH (J2) + override ro'yxati
+ *                   filtri (J3).
+ */
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
-import { Trash2 } from "lucide-react";
+import { format, subDays } from "date-fns";
+import { Copy, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import ScheduleOverviewTab from "@/components/attendance/ScheduleOverviewTab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,7 +30,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type WorkDayEntry } from "@/lib/api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api, type WorkDayEntry } from "@/lib/api";
 import {
   useDeleteScheduleOverride,
   useScheduleOverrides,
@@ -36,9 +53,86 @@ function emptyWeek(): WorkDayEntry[] {
   }));
 }
 
-export default function WorkSchedule() {
+/** J2: boshqa xodimning haftalik andozasini FORMAGA yuklash (saqlamasdan). */
+function CopyScheduleDialog({
+  open,
+  onClose,
+  excludeId,
+  onLoaded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  excludeId: number | null;
+  onLoaded: (days: WorkDayEntry[], fromName: string) => void;
+}) {
   const usersQuery = useUsers();
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [sourceId, setSourceId] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) setSourceId("");
+  }, [open]);
+
+  const candidates = (usersQuery.data ?? []).filter((u) => u.id !== excludeId);
+
+  async function load() {
+    if (!sourceId) return;
+    setLoading(true);
+    try {
+      const data = await api.getWeeklySchedule(Number(sourceId));
+      const days = [...data.days].sort((a, b) => a.weekday - b.weekday);
+      onLoaded(days, data.user_full_name);
+      onClose();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Jadvalni yuklab bo'lmadi");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Jadvalni nusxalash</DialogTitle>
+          <DialogDescription>
+            Tanlangan xodimning haftalik andozasi FORMAGA yuklanadi — ko'rib chiqib
+            «Saqlash»ni o'zingiz bosasiz (avtomatik saqlanmaydi).
+          </DialogDescription>
+        </DialogHeader>
+        <Select value={sourceId} onValueChange={setSourceId}>
+          <SelectTrigger>
+            <SelectValue placeholder="Kimdan nusxa olamiz?" />
+          </SelectTrigger>
+          <SelectContent>
+            {candidates.map((u) => (
+              <SelectItem key={u.id} value={String(u.id)}>
+                {u.full_name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Bekor qilish
+          </Button>
+          <Button onClick={load} disabled={!sourceId || loading}>
+            {loading ? "Yuklanmoqda..." : "Yuklash"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SingleEmployeeEditor({
+  selectedId,
+  onSelectUser,
+}: {
+  selectedId: number | null;
+  onSelectUser: (id: number) => void;
+}) {
+  const usersQuery = useUsers();
   const [week, setWeek] = useState<WorkDayEntry[]>(emptyWeek());
 
   // Yangi override formasi
@@ -49,19 +143,21 @@ export default function WorkSchedule() {
   const [ovNote, setOvNote] = useState("");
 
   // Tezkor sozlash: bitta ish vaqti + dam kunlari → barcha ish kunlariga qo'llanadi
-  // (avval har bir kunga alohida vaqt kiritish kerak edi — 7 marta).
   const [quickStart, setQuickStart] = useState("09:00");
   const [quickEnd, setQuickEnd] = useState("18:00");
-  const [restDays, setRestDays] = useState<number[]>([6]); // default: yakshanba
+  const [restDays, setRestDays] = useState<number[]>([6]);
 
-  useEffect(() => {
-    if (usersQuery.data?.length && selectedId == null) {
-      setSelectedId(usersQuery.data[0].id);
-    }
-  }, [usersQuery.data, selectedId]);
+  const [copyOpen, setCopyOpen] = useState(false);
+  // J3: override ro'yxati default oxirgi 30 kun + kelajak; hammasi — tugma bilan.
+  const [showAllOverrides, setShowAllOverrides] = useState(false);
 
   const weeklyQuery = useWeeklySchedule(selectedId ?? 0, selectedId != null);
-  const overridesQuery = useScheduleOverrides(selectedId ?? 0, undefined, undefined, selectedId != null);
+  const overridesQuery = useScheduleOverrides(
+    selectedId ?? 0,
+    showAllOverrides ? undefined : format(subDays(new Date(), 30), "yyyy-MM-dd"),
+    undefined,
+    selectedId != null
+  );
   const saveWeekly = useSetWeeklySchedule();
   const saveOverride = useSetScheduleOverride();
   const deleteOverride = useDeleteScheduleOverride();
@@ -70,9 +166,6 @@ export default function WorkSchedule() {
     if (weeklyQuery.data) {
       const days = [...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday);
       setWeek(days);
-      // Tezkor sozlash maydonlarini xodimning joriy jadvalidan to'ldiramiz —
-      // shunda rahbar "nima o'rnatilgan"ini darhol ko'radi va faqat kerakli
-      // joyini o'zgartiradi.
       setRestDays(days.filter((d) => !d.is_working).map((d) => d.weekday));
       const firstWorking = days.find((d) => d.is_working && d.start_time && d.end_time);
       if (firstWorking) {
@@ -82,12 +175,7 @@ export default function WorkSchedule() {
     }
   }, [weeklyQuery.data]);
 
-  // 3.7-band: xodim almashtirilganda `weeklyQuery` yangi ma'lumotni olib
-  // kelguncha `week` eski xodimning (allaqachon tahrirlangan bo'lishi mumkin)
-  // holatida qolib ketardi. Tez "Saqlash" bosilsa — YANGI xodimga ESKI (yoki
-  // hatto boshqa xodimning) jadvali yozilib ketardi. Ikki himoya:
-  // (1) `isDirty` — saqlanmagan o'zgarish bo'lsa xodim almashtirishda ogohlantirish;
-  // (2) yuklanish/qayta yuklanish paytida (`isFetching`) forma bloklanadi.
+  // 3.7-band: saqlanmagan o'zgarish bilan xodim almashtirishdan himoya.
   const isDirty = useMemo(() => {
     if (!weeklyQuery.data) return false;
     const original = [...weeklyQuery.data.days].sort((a, b) => a.weekday - b.weekday);
@@ -103,15 +191,13 @@ export default function WorkSchedule() {
     ) {
       return;
     }
-    setSelectedId(id);
+    onSelectUser(id);
   }
 
   function toggleRestDay(wd: number) {
     setRestDays((prev) => (prev.includes(wd) ? prev.filter((d) => d !== wd) : [...prev, wd]));
   }
 
-  /** Tezkor sozlash: bitta vaqtni BARCHA ish kunlariga qo'llaydi, tanlangan
-   *  kunlarni dam kuni qiladi va darhol saqlaydi. */
   function onApplyQuick() {
     if (selectedId == null) return;
     if (quickStart >= quickEnd) {
@@ -170,9 +256,7 @@ export default function WorkSchedule() {
 
   function onAddOverride() {
     if (selectedId == null) return;
-    // 4.7-band: haftalik andozada bu tekshiruv bor edi, aniq sana
-    // o'zgartirishida esa yo'q — backend rad etadi, lekin xodim buni
-    // saqlashga urinib ko'rmaguncha bilmasdi.
+    // 4.7-band: start<end tekshiruvi override formasida ham.
     if (ovWorking && ovStart >= ovEnd) {
       toast.error("Tugash vaqti boshlanishdan kechroq bo'lishi kerak");
       return;
@@ -199,7 +283,7 @@ export default function WorkSchedule() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Ish jadvali">
+      <div className="flex flex-wrap items-center gap-2">
         <Select
           value={selectedId != null ? String(selectedId) : ""}
           onValueChange={(v) => trySelectUser(Number(v))}
@@ -215,9 +299,9 @@ export default function WorkSchedule() {
             ))}
           </SelectContent>
         </Select>
-      </PageHeader>
+      </div>
 
-      {/* Tezkor sozlash — bitta vaqt barcha ish kunlariga + dam kunlari */}
+      {/* Tezkor sozlash */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Tezkor sozlash</CardTitle>
@@ -289,7 +373,19 @@ export default function WorkSchedule() {
         {/* Haftalik andoza */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Haftalik andoza (har hafta takrorlanadi)</CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base">Haftalik andoza (har hafta takrorlanadi)</CardTitle>
+              {/* J2: yangi xodimga jadvalni qo'lda qayta terish o'rniga nusxalash */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCopyOpen(true)}
+                disabled={selectedId == null}
+              >
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+                Nusxalash…
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {weeklyQuery.isLoading || weeklyQuery.isFetching ? (
@@ -340,6 +436,9 @@ export default function WorkSchedule() {
             >
               {saveWeekly.isPending ? "Saqlanmoqda..." : "Haftalik jadvalni saqlash"}
             </Button>
+            {isDirty && (
+              <p className="mt-2 text-xs text-amber-600">Saqlanmagan o'zgarishlar bor.</p>
+            )}
           </CardContent>
         </Card>
 
@@ -400,7 +499,11 @@ export default function WorkSchedule() {
               {overridesQuery.isLoading ? (
                 <Skeleton className="h-16 w-full" />
               ) : overridesQuery.data?.length === 0 ? (
-                <p className="text-sm text-slate-400">O'zgartirishlar yo'q.</p>
+                <p className="text-sm text-slate-400">
+                  {showAllOverrides
+                    ? "O'zgartirishlar yo'q."
+                    : "Oxirgi 30 kun va kelajakda o'zgartirish yo'q."}
+                </p>
               ) : (
                 overridesQuery.data?.map((o) => (
                   <div
@@ -435,10 +538,64 @@ export default function WorkSchedule() {
                   </div>
                 ))
               )}
+              {/* J3: eski o'zgartirishlar default yashirin — ro'yxat cheksiz o'smasin */}
+              <button
+                type="button"
+                className="pt-1 text-xs text-primary hover:underline"
+                onClick={() => setShowAllOverrides((v) => !v)}
+              >
+                {showAllOverrides ? "Faqat so'nggilarini ko'rsatish" : "Hammasini ko'rsatish"}
+              </button>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      <CopyScheduleDialog
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        excludeId={selectedId}
+        onLoaded={(days, fromName) => {
+          setWeek(days);
+          setRestDays(days.filter((d) => !d.is_working).map((d) => d.weekday));
+          toast.success(`${fromName} jadvali yuklandi — ko'rib chiqib «Saqlash»ni bosing.`);
+        }}
+      />
+    </div>
+  );
+}
+
+export default function WorkSchedule() {
+  const usersQuery = useUsers();
+  const [tab, setTab] = useState<"umumiy" | "bitta">("umumiy");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (usersQuery.data?.length && selectedId == null) {
+      setSelectedId(usersQuery.data[0].id);
+    }
+  }, [usersQuery.data, selectedId]);
+
+  return (
+    <div className="space-y-4">
+      <PageHeader title="Ish jadvali" />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "umumiy" | "bitta")}>
+        <TabsList>
+          <TabsTrigger value="umumiy">Umumiy</TabsTrigger>
+          <TabsTrigger value="bitta">Bitta xodim</TabsTrigger>
+        </TabsList>
+        <TabsContent value="umumiy" className="mt-4">
+          <ScheduleOverviewTab
+            onPick={(id) => {
+              setSelectedId(id);
+              setTab("bitta");
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="bitta" className="mt-4">
+          <SingleEmployeeEditor selectedId={selectedId} onSelectUser={setSelectedId} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
