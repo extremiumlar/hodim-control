@@ -107,8 +107,8 @@ android {
         // KO'RSATA OLMAYDI. Natijada ilovadan kirish umuman ishlamay qolgan.
         // versionCode HAR BIR tarqatilgan APK'da oshirilishi kerak: ba'zi
         // o'rnatuvchilar bir xil versionCode ustiga o'rnatishni rad etadi.
-        versionCode 6
-        versionName "1.4.1"
+        versionCode 7
+        versionName "1.4.2"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

@@ -24,13 +24,26 @@ import EmbeddedWeb, { Message, styles, useWebPhase } from "../components/Embedde
 // Layout'SIZ marshrut (web/src/App.tsx) — ilovaning o'z paneli bor.
 const CHECKIN_PATH = "/embed/check-in";
 
+/**
+ * Kamera va joylashuv ruxsatini so'raydi.
+ *
+ * FAQAT KAMERA MAJBURIY. Ilgari ikkalasi ham talab qilinardi va joylashuvni
+ * rad etgan xodim shu ekranda to'xtab qolardi — lekin serverda «joylashuvsiz
+ * check-in» ruxsati bor xodimlar bo'ladi (mobilograf, kuryer), ular uchun bu
+ * to'siq mutlaqo asossiz edi: ilova ularni saytga umuman qo'ymasdi.
+ *
+ * Joylashuv rad etilsa sahifa baribir ochiladi va qaror SERVERDA chiqadi:
+ * ruxsati bor xodim o'tadi, ruxsati yo'q xodim aniq xato oladi («Joylashuv
+ * aniqlanmadi. GPS'ni yoqib qayta urinib ko'ring»). Ya'ni ruxsat qoidasi
+ * yagona joyda — backendda — qoladi, ilovada takrorlanmaydi.
+ */
 async function requestPermissions(): Promise<boolean> {
   if (Platform.OS !== "android") return true;
   const camera = PermissionsAndroid.PERMISSIONS.CAMERA;
   const fine = PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION;
   const res = await PermissionsAndroid.requestMultiple([camera, fine]);
-  const granted = PermissionsAndroid.RESULTS.GRANTED;
-  return res[camera] === granted && res[fine] === granted;
+  // Joylashuv natijasi ATAYLAB tekshirilmaydi — yuqoridagi izohga qarang.
+  return res[camera] === PermissionsAndroid.RESULTS.GRANTED;
 }
 
 export default function CheckInScreen() {
@@ -51,10 +64,10 @@ export default function CheckInScreen() {
   if (phase.kind === "no-permission") {
     return (
       <Message
-        title="Kamera va joylashuv ruxsati kerak"
+        title="Kamera ruxsati kerak"
         body={
-          "Keldim/Ketdim uchun yuzni tekshirish (kamera) va ofisga yaqinligini " +
-          "aniqlash (joylashuv) shart. Ruxsatni sozlamalardan yoqing."
+          "Keldim/Ketdim uchun yuzni tekshirish shart — kamerasiz bu ishlamaydi. " +
+          "Ruxsatni sozlamalardan yoqing."
         }
         actionLabel="Sozlamalarni ochish"
         onAction={() => void Linking.openSettings()}
