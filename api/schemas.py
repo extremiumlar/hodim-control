@@ -172,13 +172,36 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class AppLoginStartRequest(BaseModel):
+    # Kirish qaysi klientdan boshlangani. "mobile" (standart — eski ilova
+    # versiyalari body yubormaydi) → kod ilova ekranida ko'rsatiladi;
+    # "web" → kod sayt sahifasida KO'RINMAYDI, bot ochilganda foydalanuvchining
+    # mobil ilovasiga push bilan yuboriladi (`AppLoginToken.code_delivery`).
+    client: str = "mobile"
+
+
 class AppLoginStartOut(BaseModel):
     login_token: str
     deep_link: str
     expires_at: datetime
     # Ilova ekranida KO'RSATILADI, foydalanuvchi esa uni botga yozadi.
     # `db/models.py: AppLoginToken.pairing_code` izohiga qarang.
+    # Saytga ham qaytariladi, lekin sayt uni FAQAT push imkonsiz bo'lgan
+    # zaxira holatda ko'rsatadi (poll'dagi `code_delivery` "screen" bo'lsa).
     pairing_code: str
+
+
+class AppLoginRequestCodeIn(BaseModel):
+    login_token: str
+    telegram_id: int
+
+
+class AppLoginRequestCodeOut(BaseModel):
+    # sent — kod mobil ilovaga push bilan ketdi;
+    # screen — kod kirish ekranida ko'rsatilgan (mobil ilova oqimi);
+    # screen_fallback — push qurilma topilmadi, kod endi SAYTDA ko'rsatiladi;
+    # no_account | invalid — hisob yo'q / token yaroqsiz-eskirgan.
+    status: str
 
 
 class AppLoginConfirmRequest(BaseModel):
@@ -203,6 +226,10 @@ class AppLoginPollRequest(BaseModel):
 class AppLoginPollOut(BaseModel):
     status: str  # pending | confirmed | expired
     token: TokenOut | None = None
+    # "pending" holatida kod hozir qayerdan yetkazilayotgani (screen | push).
+    # Sayt shu maydonga qarab zaxira holatni biladi: push qurilma topilmay
+    # qiymat "screen"ga tushsa, kodni sahifada o'zi ko'rsatadi.
+    code_delivery: str | None = None
 
 
 class TelegramStartRequest(BaseModel):

@@ -57,6 +57,10 @@ const CHANNELS: { id: string; name: string }[] = [
   { id: "approvals", name: "Tasdiq kutilmoqda" },
   { id: "sales_signals", name: "Sotuv signallari" },
   { id: "digests", name: "Kunlik/haftalik xulosa" },
+  // Saytga kirishda botga yoziladigan 4 raqamli kod (api/services/push.py:
+  // send_login_code). Eski APK'larda bu kanal yo'q — Android xabarni standart
+  // kanalga tashlaydi, baribir ko'rinadi.
+  { id: "login_code", name: "Saytga kirish kodi" },
 ];
 
 async function ensureChannels(): Promise<void> {

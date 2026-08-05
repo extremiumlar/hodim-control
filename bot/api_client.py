@@ -51,6 +51,19 @@ async def telegram_start(telegram_id: int, invite_token: str | None) -> dict:
     return resp.json()
 
 
+async def request_app_login_code(login_token: str, telegram_id: int) -> dict:
+    """Deep-link ochilgan zahoti kod yetkazishni so'raydi. Sayt oqimida server
+    kodni foydalanuvchining MOBIL ILOVASIGA push bilan yuboradi; qurilma
+    topilmasa "screen_fallback" qaytadi va kod sayt sahifasida ochiladi.
+    Javob `status`: sent | screen | screen_fallback | no_account | invalid."""
+    resp = await _get_client().post(
+        "/auth/app-login/request-code",
+        json={"login_token": login_token, "telegram_id": telegram_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def confirm_app_login(login_token: str, telegram_id: int, pairing_code: str) -> dict:
     """Ilova kirishini tasdiqlaydi. `pairing_code` — foydalanuvchi ILOVA
     ekranidan o'qib botga yozgan 4 raqamli kod. Uni tekshirish SERVERDA

@@ -44,12 +44,53 @@ async def _handle_app_login(message: Message, login_token: str, state: FSMContex
     yozadi. Ilovani ochmagan qurbonning yozadigan narsasi yo'q — hujum
     to'xtaydi. (Variantli tugmalar yetarli emas edi: ilovani ko'rmagan odam
     ham taxmin qilib bosishi mumkin.)"""
+    # Kod yetkazishni serverdan so'raymiz: sayt oqimida kod shu chaqiruvda
+    # foydalanuvchining MOBIL ILOVASIGA push bilan ketadi (sayt sahifasida
+    # ko'rinmaydi — 2026-08-05 talabi), mobil ilova oqimida esa ilova uni
+    # allaqachon o'z ekranida ko'rsatib turibdi.
+    result = await api_client.request_app_login_code(login_token, message.from_user.id)
+    status = result.get("status")
+
+    if status in ("invalid", "no_account"):
+        user = await api_client.get_user_by_telegram(message.from_user.id)
+        keyboard = menu_for_user(user) if user else None
+        if status == "no_account":
+            await message.answer(
+                "Sizning hisobingiz topilmadi yoki kirish ruxsatingiz yo'q. "
+                "Administratorga murojaat qiling.",
+                reply_markup=keyboard,
+            )
+        else:
+            await message.answer(
+                "Havola yaroqsiz yoki muddati o'tgan. Sayt yoki ilovada "
+                "qaytadan urinib ko'ring.",
+                reply_markup=keyboard,
+            )
+        return
+
+    if status == "sent":
+        where_line = (
+            "📲 <b>4 raqamli kod mobil ilovangizga yuborildi</b> — "
+            "bildirishnomani ochib, undagi kodni shu yerga yozing.\n"
+            "Kod kelmasa, sayt sahifasidagi «Qaytadan» tugmasini bosing."
+        )
+    elif status == "screen_fallback":
+        where_line = (
+            "Mobil ilovangiz topilmadi, shuning uchun <b>4 raqamli kod "
+            "sayt sahifasida ko'rsatildi</b> — o'shani shu yerga yozing."
+        )
+    else:  # screen — mobil ilova oqimi
+        where_line = (
+            "Kirish ekranida <b>4 raqamli kod</b> ko'rsatilgan — "
+            "o'shani shu yerga yozing."
+        )
+
     await state.set_state(AppLoginFSM.waiting_code)
     await state.update_data(app_login_token=login_token)
     await message.answer(
-        "🔐 <b>Mobil ilovaga kirish so'ralmoqda.</b>\n\n"
-        "Ilova ekranida <b>4 raqamli kod</b> ko'rsatilgan — o'shani shu yerga yozing.\n\n"
-        "⚠️ Agar siz ilovada kirishni boshlamagan bo'lsangiz, bu havolani "
+        "🔐 <b>Saytga yoki mobil ilovaga kirish so'ralmoqda.</b>\n\n"
+        f"{where_line}\n\n"
+        "⚠️ Agar siz o'zingiz kirishni boshlamagan bo'lsangiz, bu havolani "
         "kimdir sizga yuborgan bo'lishi mumkin. Unday holda <b>hech narsa "
         "yozmang</b> va «Bekor qilish»ni bosing.",
         reply_markup=cancel_menu(),
@@ -61,7 +102,7 @@ async def cancel_app_login(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = await api_client.get_user_by_telegram(message.from_user.id)
     await message.answer(
-        "Bekor qilindi. Ilovaga kirish tasdiqlanmadi.",
+        "Bekor qilindi. Kirish tasdiqlanmadi.",
         reply_markup=menu_for_user(user) if user else None,
     )
 
@@ -90,7 +131,7 @@ async def receive_app_login_code(message: Message, state: FSMContext) -> None:
         left = result.get("attempts_left")
         await message.answer(
             f"❌ Kod noto'g'ri. Yana {left} ta urinish qoldi.\n"
-            "Ilova ekranidagi 4 raqamli kodni tekshirib qayta yozing."
+            "Kirish ekranidagi (sayt yoki ilova) 4 raqamli kodni tekshirib qayta yozing."
         )
         return
 
@@ -99,17 +140,19 @@ async def receive_app_login_code(message: Message, state: FSMContext) -> None:
     keyboard = menu_for_user(user) if user else None
 
     if status == "ok":
-        await message.answer("✅ Mobil ilovaga kirish tasdiqlandi. Ilovaga qayting.", reply_markup=keyboard)
+        await message.answer(
+            "✅ Kirish tasdiqlandi. Sayt sahifasiga yoki ilovaga qayting.", reply_markup=keyboard
+        )
     elif status == "no_account":
         await message.answer(
-            "Sizning hisobingiz topilmadi yoki ilovaga kirish ruxsatingiz yo'q. "
+            "Sizning hisobingiz topilmadi yoki kirish ruxsatingiz yo'q. "
             "Administratorga murojaat qiling.",
             reply_markup=keyboard,
         )
     else:
         await message.answer(
             "Havola yaroqsiz yoki muddati o'tgan (yoki kod juda ko'p marta "
-            "noto'g'ri kiritildi). Ilovada qaytadan urinib ko'ring.",
+            "noto'g'ri kiritildi). Sayt yoki ilovada qaytadan urinib ko'ring.",
             reply_markup=keyboard,
         )
 

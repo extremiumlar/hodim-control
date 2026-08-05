@@ -15,11 +15,15 @@ from api.schemas import (
     AppLoginConfirmRequest,
     AppLoginPollOut,
     AppLoginPollRequest,
+    AppLoginRequestCodeIn,
+    AppLoginRequestCodeOut,
     AppLoginStartOut,
+    AppLoginStartRequest,
     DevLoginRequest,
     TokenOut,
     UserOut,
 )
+from api.services.push import send_login_code
 from api.security import create_access_token, verify_telegram_login
 from db.models import AppLoginStatus, AppLoginToken, LoginAttempt, Role, User, UsedTelegramLoginHash
 
@@ -112,19 +116,33 @@ async def bot_token(payload: DevLoginRequest, db: AsyncSession = Depends(get_db)
     # istalgan kishi cheksiz token/qator yasab, bazani shishira olardi.
     dependencies=[Depends(rate_limit("app-login-start", 10, 900))],
 )
-async def app_login_start(db: AsyncSession = Depends(get_db)) -> AppLoginStartOut:
-    """Mobil ilova ekrani ochilganda chaqiradi: yangi bir martalik token yaratadi
-    va foydalanuvchi botga o'tishi uchun deep-link qaytaradi (4.1-band).
+async def app_login_start(
+    payload: AppLoginStartRequest | None = None, db: AsyncSession = Depends(get_db)
+) -> AppLoginStartOut:
+    """Mobil ilova yoki sayt kirish ekrani ochilganda chaqiradi: yangi bir
+    martalik token yaratadi va foydalanuvchi botga o'tishi uchun deep-link
+    qaytaradi (4.1-band).
 
-    Bilan birga JUFTLIK KODI yaratiladi — ilova uni ekranda ko'rsatadi,
-    foydalanuvchi esa botga yozadi. Sababi
-    `db/models.py: AppLoginToken.pairing_code` izohida."""
+    Bilan birga JUFTLIK KODI yaratiladi. Yetkazish kliyentga bog'liq:
+    mobil ilova (body'siz — eski versiyalar ham shu) kodni O'Z EKRANIDA
+    ko'rsatadi; sayt esa `client: "web"` yuboradi va kod bot ochilganda
+    foydalanuvchining mobil ilovasiga PUSH bilan boradi
+    (`/app-login/request-code`). Sababi
+    `db/models.py: AppLoginToken.pairing_code` va `code_delivery` izohlarida."""
     token = secrets.token_urlsafe(32)
     # 4 raqam — yozish oson, taxmin qilish esa 3 urinish chegarasi bilan
     # amalda imkonsiz (0.03%). `secrets` — tasodifiylik bashorat qilinmasin.
     pairing_code = f"{secrets.randbelow(10000):04d}"
+    code_delivery = "push" if payload and payload.client == "web" else "screen"
     expires_at = datetime.utcnow() + timedelta(minutes=APP_LOGIN_TOKEN_TTL_MINUTES)
-    db.add(AppLoginToken(token=token, expires_at=expires_at, pairing_code=pairing_code))
+    db.add(
+        AppLoginToken(
+            token=token,
+            expires_at=expires_at,
+            pairing_code=pairing_code,
+            code_delivery=code_delivery,
+        )
+    )
     await db.commit()
 
     bot_username = settings.telegram_login_bot_username
@@ -135,6 +153,46 @@ async def app_login_start(db: AsyncSession = Depends(get_db)) -> AppLoginStartOu
         expires_at=expires_at,
         pairing_code=pairing_code,
     )
+
+
+@router.post(
+    "/app-login/request-code",
+    response_model=AppLoginRequestCodeOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def app_login_request_code(
+    payload: AppLoginRequestCodeIn, db: AsyncSession = Depends(get_db)
+) -> AppLoginRequestCodeOut:
+    """Bot `/start applogin_<token>` qabul qilgan zahoti chaqiradi — kod
+    qayerdan yetkazilishini hal qiladi va kerak bo'lsa yuboradi.
+
+    Sayt oqimida (`code_delivery="push"`) kod foydalanuvchining mobil
+    ilovasiga push bilan ketadi — SHU YERDA, chunki foydalanuvchi kimligi
+    (telegram_id) faqat bot ochilganda ma'lum bo'ladi (`/app-login/start`
+    autentifikatsiyasiz, u paytda kimga yuborishni bilib bo'lmaydi).
+
+    Push qurilma topilmasa token "screen" rejimiga tushiriladi — sayt poll
+    orqali buni ko'rib kodni sahifada o'zi ko'rsatadi. Aks holda mobil
+    ilovasiz foydalanuvchi (masalan, ilova o'rnatmagan rahbar) saytga umuman
+    kira olmay qolardi."""
+    row = await db.scalar(select(AppLoginToken).where(AppLoginToken.token == payload.login_token))
+    if not row or row.status != AppLoginStatus.pending.value or row.expires_at < datetime.utcnow():
+        return AppLoginRequestCodeOut(status="invalid")
+
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if not user or not user.is_active or user.role not in SITE_ROLES:
+        return AppLoginRequestCodeOut(status="no_account")
+
+    if row.code_delivery != "push":
+        return AppLoginRequestCodeOut(status="screen")
+
+    sent = await send_login_code(db, user, row.pairing_code)
+    if sent > 0:
+        return AppLoginRequestCodeOut(status="sent")
+
+    row.code_delivery = "screen"
+    await db.commit()
+    return AppLoginRequestCodeOut(status="screen_fallback")
 
 
 @router.post(
@@ -201,7 +259,7 @@ async def app_login_poll(
         return AppLoginPollOut(status="expired")
 
     if row.status == AppLoginStatus.pending.value:
-        return AppLoginPollOut(status="pending")
+        return AppLoginPollOut(status="pending", code_delivery=row.code_delivery)
 
     user = await db.scalar(select(User).where(User.telegram_id == row.telegram_id))
     if not user or not user.is_active or user.role not in SITE_ROLES:

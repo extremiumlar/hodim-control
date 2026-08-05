@@ -25,7 +25,18 @@ export default function Login() {
   const widgetRef = useRef<HTMLDivElement>(null);
   const [devTelegramId, setDevTelegramId] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
-  const [botLogin, setBotLogin] = useState<{ token: string; deepLink: string } | null>(null);
+  // pairingCode — foydalanuvchi BOTGA yozadigan 4 raqamli kod. Asosiy yo'lda
+  // u sahifada KO'RINMAYDI: bot ochilganda server kodni foydalanuvchining
+  // MOBIL ILOVASIGA push bilan yuboradi (2026-08-05 talabi). showCode faqat
+  // zaxira holatda true bo'ladi — push qurilma topilmasa (poll'dagi
+  // code_delivery "screen"ga tushsa) kod shu yerda ochiladi, aks holda
+  // ilovasiz foydalanuvchi saytga umuman kira olmay qolardi.
+  const [botLogin, setBotLogin] = useState<{
+    token: string;
+    deepLink: string;
+    pairingCode: string;
+    showCode: boolean;
+  } | null>(null);
   const [botStarting, setBotStarting] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -70,6 +81,11 @@ export default function Login() {
         if (res.status === "confirmed" && res.token) {
           stopPolling();
           loginWithToken(res.token.access_token, res.token.user);
+        } else if (res.status === "pending" && res.code_delivery === "screen") {
+          // Push qurilma topilmadi — server kodni "screen" rejimiga tushirdi,
+          // endi uni sahifada ko'rsatamiz (funksional yangilash: checkOnce
+          // yopilmasida botLogin eskirgan bo'lishi mumkin).
+          setBotLogin((prev) => (prev && !prev.showCode ? { ...prev, showCode: true } : prev));
         } else if (res.status === "expired") {
           stopPolling();
           setBotLogin(null);
@@ -87,11 +103,23 @@ export default function Login() {
   const startBotLogin = async () => {
     stopPolling();
     setBotStarting(true);
+    // Bot AVTOMATIK ochilishi uchun yangi oynani klik gestining o'zida
+    // SINXRON ochamiz (bo'sh holda), manzilni token kelgach yozamiz —
+    // await'dan keyin window.open chaqirilsa popup-bloker to'sib qo'yadi.
+    // Yangi oynada ochish shart: shu sahifa tirik qolib poll davom etadi.
+    const botWindow = window.open("", "_blank");
     try {
-      const { login_token, deep_link } = await api.appLoginStart();
-      setBotLogin({ token: login_token, deepLink: deep_link });
+      const { login_token, deep_link, pairing_code } = await api.appLoginStart();
+      setBotLogin({
+        token: login_token,
+        deepLink: deep_link,
+        pairingCode: pairing_code,
+        showCode: false,
+      });
+      if (botWindow) botWindow.location.href = deep_link;
       pollTimer.current = setInterval(() => void checkOnce(login_token), POLL_INTERVAL_MS);
     } catch (e) {
+      botWindow?.close();
       toast.error(e instanceof Error ? e.message : "Kirishni boshlab bo'lmadi");
     } finally {
       setBotStarting(false);
@@ -145,12 +173,30 @@ export default function Login() {
           {botLogin ? (
             <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-left">
               <p className="text-sm text-slate-700">
-                <span className="font-semibold">1.</span> Pastdagi tugmani bosib botga o'ting
+                <span className="font-semibold">1.</span> Telegram bot avtomatik ochiladi
+                (ochilmasa pastdagi tugmani bosing)
                 <br />
-                <span className="font-semibold">2.</span> Botda «Tasdiqlash»ni bosing
+                <span className="font-semibold">2.</span> Mobil ilovangizga kelgan 4 raqamli
+                kodni botga yozing
                 <br />
                 <span className="font-semibold">3.</span> Shu sahifaga qaytsangiz — kirgan bo'lasiz
               </p>
+              {/* Zaxira: push qurilma topilmaganda server kodni "screen"
+                  rejimiga tushiradi va kod shu yerda ochiladi — aks holda
+                  mobil ilovasiz foydalanuvchi saytga kira olmay qolardi. */}
+              {botLogin.showCode && (
+                <div className="rounded-lg border border-blue-300 bg-white py-3 text-center">
+                  <p className="px-3 text-xs font-semibold text-blue-800">
+                    Mobil ilovangiz topilmadi — botga shu kodni yozing
+                  </p>
+                  <p className="text-4xl font-bold tracking-[0.5em] text-blue-900 [text-indent:0.5em]">
+                    {botLogin.pairingCode}
+                  </p>
+                  <p className="mt-1 px-3 text-xs text-slate-500">
+                    Kodni hech kimga aytmang — u faqat shu oynaga kirish uchun.
+                  </p>
+                </div>
+              )}
               {/* Oddiy havola, window.open EMAS: (1) popup-blokerga tushmaydi,
                   (2) target=_blank bilan sayt TIRIK qoladi va poll davom etadi.
                   O'sha oynada ochilsa, sahifa Telegram'ga o'tib ketib poll

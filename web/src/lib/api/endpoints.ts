@@ -213,13 +213,21 @@ export const api = {
   // saytga HECH KIM kira olmasdi. Bu yo'lda faqat BOT kerak: xodim botda
   // tasdiqlaydi, sayt poll qilib tokenni oladi. Mexanizm mobil ilovada
   // allaqachon ishlaydi (mobile/app/login.tsx) — endpointlar bir xil.
+  // `client: "web"` — kod sayt sahifasida KO'RSATILMAYDI: bot ochilganda
+  // server uni foydalanuvchining mobil ilovasiga push bilan yuboradi.
+  // `pairing_code` baribir qaytadi — push qurilma topilmasa (poll'dagi
+  // `code_delivery` "screen"ga tushsa) sahifa uni zaxira sifatida ko'rsatadi.
   appLoginStart: () =>
-    apiFetch<{ login_token: string; deep_link: string; expires_at: string }>(
+    apiFetch<{ login_token: string; deep_link: string; expires_at: string; pairing_code: string }>(
       "/auth/app-login/start",
-      { method: "POST" }
+      { method: "POST", body: JSON.stringify({ client: "web" }) }
     ),
   appLoginPoll: (loginToken: string) =>
-    apiFetch<{ status: "pending" | "confirmed" | "expired"; token: { access_token: string; user: User } | null }>(
+    apiFetch<{
+      status: "pending" | "confirmed" | "expired";
+      token: { access_token: string; user: User } | null;
+      code_delivery: "screen" | "push" | null;
+    }>(
       "/auth/app-login/poll",
       { method: "POST", body: JSON.stringify({ login_token: loginToken }) }
     ),

@@ -171,6 +171,41 @@ async def should_skip_telegram(db: AsyncSession, user: User, category: str, sent
     return token is not None
 
 
+async def send_login_code(db: AsyncSession, user: User, code: str) -> int:
+    """Saytga kirish juftlik kodini xodimning barcha faol qurilmalariga yuboradi.
+
+    `send_push`dan farqi — toifa sozlamalari va tinch soatlar ATAYLAB chetlab
+    o'tiladi: bu odatiy bildirishnoma emas, autentifikatsiya bosqichi.
+    Foydalanuvchi ayni daqiqada botda kod kutib turibdi — kod kelmasa login
+    umuman yakunlanmaydi, shuning uchun uni sozlama bilan o'chirib bo'lmasligi
+    kerak.
+
+    `login_code` kanali eski APK'larda yaratilmagan — Android bunday xabarni
+    standart (fallback) kanalga tashlaydi, xabar baribir ko'rinadi.
+    """
+    tokens = await active_tokens(db, user.id)
+    if not tokens:
+        return 0
+
+    sent = 0
+    for row in tokens:
+        status = await _send_one(
+            row.token,
+            "login_code",
+            f"Saytga kirish kodi: {code}",
+            "Shu kodni botga yozing. Kirishni SIZ boshlamagan bo'lsangiz, "
+            "kodni hech kimga bermang va botga yozmang.",
+            None,
+            quiet=False,
+        )
+        if status == "ok":
+            sent += 1
+        elif status == "unregistered":
+            row.is_active = False
+    await db.commit()
+    return sent
+
+
 async def send_push(
     db: AsyncSession,
     user: User,

@@ -305,6 +305,16 @@ class AppLoginToken(Base):
     # Noto'g'ri urinishlar. Kod qisqa (4 raqam) — cheklovsiz bo'lsa taxmin
     # qilib topish mumkin. Chegaraga yetganda token butunlay kuyadi.
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # Kod foydalanuvchiga QAYERDAN yetadi:
+    #   screen — kirish boshlangan ekranning o'zida (mobil ilova o'z login
+    #            ekranida ko'rsatadi — asl oqim);
+    #   push   — SAYTDAN boshlangan kirish: bot deep-link ochilganda kod
+    #            foydalanuvchining mobil ilovasiga push bilan yuboriladi
+    #            (2026-08-05 talabi — saytda kod ko'rinmasin, faqat ilovada).
+    # Push yuborib bo'lmasa (qurilma yo'q) qiymat "screen"ga tushiriladi va
+    # sayt kodni o'zi ko'rsatadi (poll javobidagi shu maydon orqali biladi) —
+    # aks holda mobil ilovasiz foydalanuvchi saytga umuman kira olmay qolardi.
+    code_delivery: Mapped[str] = mapped_column(String(10), default="screen")
 
 
 class UsedTelegramLoginHash(Base):
