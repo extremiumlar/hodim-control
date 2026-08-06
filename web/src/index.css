@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* SuccessScreen'ning 6s avto-yopilish chizig'i (animate-[shrink_6s_...]) */
+@keyframes shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+
 /* shadcn/ui palitra (slate neytrallar + indigo brend rangi).
    --primary = indigo-600 (#4f46e5) — mavjud bg-indigo-600 bilan uyg'un. */
 @layer base {

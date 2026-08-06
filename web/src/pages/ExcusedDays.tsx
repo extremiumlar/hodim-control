@@ -95,6 +95,15 @@ function MarkExcusedForm() {
   const [userId, setUserId] = useState<string>("");
   const [day, setDay] = useState(format(new Date(), "yyyy-MM-dd"));
   const [reason, setReason] = useState("");
+  // UX2-qoldiq #3: 40 kishilik oddiy Select o'rniga QIDIRUVLI tanlagich —
+  // HR ism yozib darhol topadi (skroll qilib o'tirmaydi).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selectedName =
+    usersQuery.data?.find((u) => String(u.id) === userId)?.full_name ?? "";
+  const filteredUsers = (usersQuery.data ?? []).filter((u) =>
+    u.full_name.toLowerCase().includes(search.trim().toLowerCase())
+  );
 
   function onSubmit() {
     if (!userId) {
@@ -125,20 +134,40 @@ function MarkExcusedForm() {
         {/* Bu yerda kiritilgan yozuv SO'ROV emas — darhol tasdiqlangan holda
             yoziladi (kirituvchi allaqachon qaror chiqarishga vakolatli). */}
         <div className="flex flex-wrap items-end gap-3">
-          <div>
+          <div className="relative">
             <div className="mb-1 text-xs font-medium text-slate-500">Xodim</div>
-            <Select value={userId} onValueChange={setUserId}>
-              <SelectTrigger className="min-w-[220px]">
-                <SelectValue placeholder="Xodim tanlang" />
-              </SelectTrigger>
-              <SelectContent>
-                {usersQuery.data?.map((u) => (
-                  <SelectItem key={u.id} value={String(u.id)}>
-                    {u.full_name}
-                  </SelectItem>
+            <Input
+              className="min-w-[220px]"
+              placeholder="Xodim ismini yozing..."
+              value={pickerOpen ? search : selectedName}
+              onFocus={() => {
+                setPickerOpen(true);
+                setSearch("");
+              }}
+              onBlur={() => setTimeout(() => setPickerOpen(false), 150)}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {pickerOpen && (
+              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                {filteredUsers.map((u) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+                    // onMouseDown — blur'dan OLDIN ishlashi uchun (click kech qolardi)
+                    onMouseDown={() => {
+                      setUserId(String(u.id));
+                      setPickerOpen(false);
+                    }}
+                  >
+                    {u.full_name.trim()}
+                  </button>
                 ))}
-              </SelectContent>
-            </Select>
+                {filteredUsers.length === 0 && (
+                  <div className="px-3 py-1.5 text-sm text-slate-400">Topilmadi</div>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <div className="mb-1 text-xs font-medium text-slate-500">Sana</div>

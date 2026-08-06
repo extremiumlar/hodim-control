@@ -10,11 +10,15 @@ from api.config import settings
 JWT_ALGORITHM = "HS256"
 
 
-def create_access_token(user_id: int, role: str) -> str:
+def create_access_token(user_id: int, role: str, expires_minutes: int | None = None) -> str:
+    """`expires_minutes` — UX2-qoldiq #13: mobil ilova WebView'iga 30 kunlik
+    token o'rniga QISQA muddatli nusxa kiritiladi (token WebView localStorage'ida
+    turadi — sizib chiqsa ham zarar oynasi bir necha daqiqa bo'ladi)."""
     payload = {
         "sub": str(user_id),
         "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes),
+        "exp": datetime.now(timezone.utc)
+        + timedelta(minutes=expires_minutes or settings.jwt_expire_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
 

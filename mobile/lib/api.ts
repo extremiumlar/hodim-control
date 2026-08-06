@@ -106,6 +106,15 @@ export function getMe(): Promise<UserOut> {
   return request("/users/me");
 }
 
+/**
+ * UX2-qoldiq #13: WebView uchun QISQA muddatli (30 daq) token. Asosiy 30
+ * kunlik JWT SecureStore'da qoladi; WebView localStorage'iga faqat shu
+ * qisqa nusxa kiritiladi — sizib chiqsa ham zarar oynasi kichik.
+ */
+export function issueWebviewToken(): Promise<{ access_token: string; expires_in_minutes: number }> {
+  return request("/auth/webview-token", { method: "POST" });
+}
+
 // ── Push bildirishnomalar ──
 
 export interface PushSettings {

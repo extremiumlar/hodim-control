@@ -937,6 +937,25 @@ async def attendance_dashboard_bot(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def pending_excused_bot(telegram_id: int) -> list[dict] | None:
+    """UX2: kutilayotgan sababli kun so'rovlari — HR xabarni o'tkazib yuborsa
+    botdan topsin. Ruxsat yo'q — None."""
+    resp = await _get_client().get(f"/excused-days/pending-bot/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def pending_face_rereg_bot(telegram_id: int) -> list[dict] | None:
+    """UX2: kutilayotgan yuz qayta-ro'yxat so'rovlari (rahbarlar)."""
+    resp = await _get_client().get(f"/attendance/face-reregistration/pending-bot/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_attendance_digest_time(telegram_id: int) -> dict | None:
     """Davomat digesti vaqtlari (rahbarlar). Ruxsat yo'q — None."""
     resp = await _get_client().get(f"/attendance/digest-time/{telegram_id}")

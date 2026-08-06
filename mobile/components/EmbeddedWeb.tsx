@@ -25,7 +25,7 @@ import {
 } from "react-native";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 
-import { getStoredToken } from "../lib/api";
+import { getStoredToken, issueWebviewToken } from "../lib/api";
 import { WEB_BASE_URL } from "../lib/config";
 
 /** Sahifa yo'liga `embed=1` qo'shadi (yo'lda allaqachon `?` bo'lishi mumkin). */
@@ -89,7 +89,24 @@ export function useWebPhase(extraCheck?: () => Promise<boolean>): {
       return;
     }
     const token = await getStoredToken();
-    setPhase(token ? { kind: "ready", token } : { kind: "no-token" });
+    if (!token) {
+      setPhase({ kind: "no-token" });
+      return;
+    }
+    // UX2-qoldiq #13: WebView'ga 30 kunlik JWT emas, QISQA muddatli (30 daq)
+    // nusxa kiritiladi. Almashtirish muvaffaqiyatsiz bo'lsa (server eski,
+    // vaqtinchalik 5xx) — eski xatti-harakat saqlanadi (asosiy token),
+    // aks holda check-in butunlay ishlamay qolardi. 401 — sessiya tugagan.
+    try {
+      const short = await issueWebviewToken();
+      setPhase({ kind: "ready", token: short.access_token });
+    } catch (e: any) {
+      if (e && typeof e.status === "number" && e.status === 401) {
+        setPhase({ kind: "no-token" });
+      } else {
+        setPhase({ kind: "ready", token });
+      }
+    }
     // extraCheck ataylab bog'liqlikda emas: chaqiruvchi uni har renderda
     // qayta yaratsa, bu effekt cheksiz aylanardi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,14 +138,36 @@ export default function EmbeddedWeb({
   const [loadError, setLoadError] = useState(false);
   const webRef = useRef<WebView>(null);
 
-  // Android "orqaga": ekrandan chiqadi. Usiz ilova butunlay yopilib ketardi.
+  // UX2-qoldiq #11: Face ID modali (yoki boshqa modal) ochiq bo'lsa, Android
+  // «orqaga» avval MODALNI yopadi — butun davomat ekranini emas. Sayt modal
+  // holatini postMessage bilan bildiradi, biz esa «orqaga»da sahifaga
+  // 'native-back' hodisasini yuboramiz (sayt uni ushlab modalni yopadi).
+  const modalOpenRef = useRef(false);
+
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (modalOpenRef.current) {
+        webRef.current?.injectJavaScript(
+          "window.dispatchEvent(new Event('native-back'));true;"
+        );
+        return true;
+      }
       router.back();
       return true;
     });
     return () => sub.remove();
   }, []);
+
+  // UX2-qoldiq #9: sayt osilib qolsa spinner 20 soniyadan keyin xato
+  // ekraniga aylanadi — ilgari cheksiz aylanaverardi.
+  useEffect(() => {
+    if (!pageLoading) return;
+    const t = setTimeout(() => {
+      setPageLoading(false);
+      setLoadError(true);
+    }, 20000);
+    return () => clearTimeout(t);
+  }, [pageLoading]);
 
   // Sayt JWT'ni localStorage["access_token"]dan o'qiydi (web/src/lib/auth.tsx) —
   // sahifa skriptlari ishga tushishidan OLDIN yozamiz, aks holda /login ga
@@ -233,6 +272,15 @@ export default function EmbeddedWeb({
         // yuklamaydi, shuning uchun butunlay to'xtatamiz.
         onFileDownload={() => undefined}
         onLoadEnd={() => setPageLoading(false)}
+        // #11: sayt modal ochiq/yopiqligini bildiradi (web CheckIn.tsx)
+        onMessage={(e) => {
+          try {
+            const msg = JSON.parse(e.nativeEvent.data);
+            if (msg && msg.type === "modal") modalOpenRef.current = !!msg.open;
+          } catch {
+            // begona xabar — e'tiborsiz
+          }
+        }}
         // UX2-MC4: tarmoq/HTTP xatolarida o'zbekcha ekran + «Qayta urinish».
         onError={() => {
           setPageLoading(false);

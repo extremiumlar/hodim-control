@@ -417,6 +417,9 @@ async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
     2.1'ning 6 soatlik oynasi allaqachon yopilgan bo'ladi, ikkalasi to'qnashmaydi).
     Yopilish vaqti — o'sha kunning ish jadvali TUGASH vaqti; topilmasa (jadval
     yo'q) standart 9 soatlik ish kuni taxmin qilinadi."""
+    from api.notify import notify_user  # circular importdan qochish (yuqoridagi naqsh)
+    from api.services.push import Category
+
     today = today or today_local()
     rows = list(
         await db.scalars(
@@ -459,6 +462,24 @@ async def auto_close_unclosed_checkouts(db: AsyncSession, today=None) -> int:
         note = f"⚠️ {AUTO_CLOSED_MARK} — xodim «Ketdim» bosmagan."
         att.note = f"{att.note} {note}" if att.note else note
         closed += 1
+
+        # UX2-qoldiq #8: xodimga SHAXSAN bildiriladi — ilgari kun jimgina
+        # taxminiy yopilar, xodim ishlagan vaqti taxminiy yozilganini
+        # bilmasdi (faqat guruh digestida umumiy ro'yxat chiqardi).
+        if user.telegram_id:
+            out_local = check_out_utc.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+            try:
+                await notify_user(
+                    db,
+                    user,
+                    Category.ATTENDANCE_REMINDER,
+                    f"ℹ️ {att.date} kuni «Ketdim» bosilmagani uchun kuningiz avtomatik "
+                    f"~{out_local:%H:%M} da yopildi — ishlangan vaqt taxminiy yozildi. "
+                    "Vaqt noto'g'ri bo'lsa rahbaringizga ayting (tuzata oladi).",
+                    data={"path": "/check-in"},
+                )
+            except Exception:  # noqa: BLE001 — xabar bezak, yopish oqimini to'xtatmasin
+                pass
     if closed:
         await db.commit()
     return closed

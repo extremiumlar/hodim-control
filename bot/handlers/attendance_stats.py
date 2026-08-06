@@ -90,7 +90,10 @@ async def _kb(days: int, *, status_view: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=("✅ " if status_view else "") + "👥 Bugungi holat",
                 callback_data="attstat:status",
-            )
+            ),
+            # UX2-qoldiq #4/#5: xabari yo'qolgan kutilayotgan so'rovlar
+            # (sababli kun + yuz qayta-ro'yxat) endi botdan topiladi.
+            InlineKeyboardButton(text="📥 So'rovlar", callback_data="attstat:pending"),
         ]
     )
     if await group_registry.get_group_ids("main"):
@@ -159,6 +162,71 @@ async def show_attendance_stats(message: Message, state: FSMContext) -> None:
     for i, chunk in enumerate(chunks):
         is_last = i == len(chunks) - 1
         await message.answer(chunk, reply_markup=await _kb(days) if is_last else None)
+
+
+@router.callback_query(F.data == "attstat:pending")
+async def show_pending_requests(callback: CallbackQuery) -> None:
+    """UX2-qoldiq #4/#5: kutilayotgan sababli kun + yuz qayta-ro'yxat
+    so'rovlari — har biri o'zining MAVJUD qaror tugmalari bilan
+    (excused_decide / face_rereg_decide callbacklarini excused.py allaqachon
+    ushlaydi — yangi qaror mantig'i yozilmadi)."""
+    try:
+        excused = await api_client.pending_excused_bot(callback.from_user.id)
+        rereg = await api_client.pending_face_rereg_bot(callback.from_user.id)
+    except Exception:
+        await callback.answer("So'rovlarni olishda xatolik yuz berdi.", show_alert=True)
+        return
+    # excused None — DECIDE_ROLES emas (masalan ROP); rereg esa MANAGER_ROLES.
+    if excused is None and rereg is None:
+        await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
+        return
+
+    total = len(excused or []) + len(rereg or [])
+    if total == 0:
+        await callback.answer("Kutilayotgan so'rov yo'q ✅", show_alert=True)
+        return
+
+    await callback.answer(f"{total} ta so'rov — pastga yuborildi.")
+    for item in excused or []:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Tasdiqlayman", callback_data=f"excused_decide:{item['id']}:approved"
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Rad etaman", callback_data=f"excused_decide:{item['id']}:rejected"
+                    ),
+                ]
+            ]
+        )
+        await callback.message.answer(
+            "🙋 <b>Sababli kun so'rovi</b>\n"
+            f"Xodim: {html.escape(item['user_full_name'].strip())}\n"
+            f"Sana: {item['date']}\n"
+            f"Sabab: {html.escape(item['reason'])}",
+            reply_markup=kb,
+        )
+    for item in rereg or []:
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Tasdiqlayman",
+                        callback_data=f"face_rereg_decide:{item['id']}:approved",
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Rad etaman",
+                        callback_data=f"face_rereg_decide:{item['id']}:rejected",
+                    ),
+                ]
+            ]
+        )
+        await callback.message.answer(
+            "📸 <b>Yuzni qayta ro'yxatdan o'tkazish so'rovi</b>\n"
+            f"Xodim: {html.escape(item['user_full_name'].strip())}",
+            reply_markup=kb,
+        )
 
 
 @router.callback_query(F.data == "attstat:status")
@@ -288,6 +356,27 @@ def _fmt_cfg(cfg: dict) -> str:
     )
 
 
+def _digest_time_kb() -> InlineKeyboardMarkup:
+    """UX2-qoldiq #7: tez-tez ishlatiladigan vaqtlar tugma bilan — Boshliq
+    endi buyruq sintaksisini yodlab yozishi shart emas (matnli yo'l ham
+    ishlashda davom etadi)."""
+    def row(kind: str, values: list[str]) -> list[InlineKeyboardButton]:
+        return [
+            InlineKeyboardButton(text=v, callback_data=f"digesttime:{kind}:{v}") for v in values
+        ]
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="— Ertalabki —", callback_data="digesttime:noop:-")],
+            row("morning", ["08:30", "09:00", "09:30", "10:00"]),
+            row("morning", ["on", "off"]),
+            [InlineKeyboardButton(text="— Kechki —", callback_data="digesttime:noop:-")],
+            row("evening", ["21:00", "21:30", "22:00", "22:30"]),
+            row("evening", ["on", "off"]),
+        ]
+    )
+
+
 @router.message(Command("davomat_vaqt"))
 async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
     """Davomat digesti vaqtini ko'rish/o'zgartirish. Argumentsiz — joriy holat."""
@@ -304,7 +393,7 @@ async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
 
     args = (command.args or "").split()
     if not args:
-        await message.reply(_fmt_cfg(cfg))
+        await message.reply(_fmt_cfg(cfg), reply_markup=_digest_time_kb())
         return
 
     kind = _KIND_WORDS.get(args[0].lower())
@@ -339,3 +428,37 @@ async def cmd_davomat_vaqt(message: Message, command: CommandObject) -> None:
         await message.reply("Vaqtni faqat Boshliq o'zgartira oladi.")
         return
     await message.reply("✅ Saqlandi.\n\n" + _fmt_cfg(updated))
+
+
+@router.callback_query(F.data.startswith("digesttime:"))
+async def digest_time_button(callback: CallbackQuery) -> None:
+    """UX2-qoldiq #7: /davomat_vaqt inline tugmalari."""
+    _, kind, value = callback.data.split(":", 2)
+    if kind == "noop":
+        await callback.answer()
+        return
+
+    try:
+        if value in ("on", "off"):
+            updated = await api_client.set_attendance_digest_time(
+                callback.from_user.id, kind, enabled=(value == "on")
+            )
+        else:
+            hh, mm = value.split(":")
+            updated = await api_client.set_attendance_digest_time(
+                callback.from_user.id, kind, hour=int(hh), minute=int(mm)
+            )
+    except Exception:
+        await callback.answer("Saqlashda xatolik yuz berdi.", show_alert=True)
+        return
+
+    if updated is None:
+        await callback.answer("Vaqtni faqat Boshliq o'zgartira oladi.", show_alert=True)
+        return
+    try:
+        await callback.message.edit_text(
+            "✅ Saqlandi.\n\n" + _fmt_cfg(updated), reply_markup=_digest_time_kb()
+        )
+    except Exception:
+        pass  # "message is not modified"
+    await callback.answer("Saqlandi.")

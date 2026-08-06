@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, rate_limit, verify_bot_secret
+from api.deps import get_current_user, get_db, rate_limit, verify_bot_secret
 from api.schemas import (
     AppLoginConfirmOut,
     AppLoginConfirmRequest,
@@ -48,6 +48,28 @@ SITE_ROLES = {r.value for r in Role}
 async def _issue_token(user: User) -> TokenOut:
     token = create_access_token(user.id, user.role)
     return TokenOut(access_token=token, user=UserOut.model_validate(user))
+
+
+# UX2-qoldiq #13: WebView tokeni atigi shu muddat yashaydi — ilova uni har
+# ochilishda yangidan oladi. 30 daqiqa: eng uzun stsenariy (yuz ro'yxati +
+# sekin tarmoq) uchun ham bemalol yetadi.
+WEBVIEW_TOKEN_TTL_MINUTES = 30
+
+
+@router.post("/webview-token")
+async def issue_webview_token(user: User = Depends(get_current_user)) -> dict:
+    """Mobil ilova WebView'i uchun QISQA muddatli token (30 daq).
+
+    Ilova 30 kunlik asosiy JWT'ni SecureStore'da saqlaydi, lekin WebView
+    localStorage'iga endi uni emas, shu qisqa nusxani kiritadi — WebView
+    orqali token sizib chiqsa ham (masalan kelajakdagi XSS), zarar oynasi
+    bir necha daqiqa bilan cheklanadi (audit B3-5 / P15)."""
+    return {
+        "access_token": create_access_token(
+            user.id, user.role, expires_minutes=WEBVIEW_TOKEN_TTL_MINUTES
+        ),
+        "expires_in_minutes": WEBVIEW_TOKEN_TTL_MINUTES,
+    }
 
 
 @router.post(

@@ -1646,8 +1646,43 @@ def run_tests(ctx: dict) -> None:
                              json={"telegram_id": 999444807, "reason": "x"})
             check("W4: 1-belgili sabab -> 422", r4.status_code == 422, f"kod={r4.status_code}")
 
+            # Qoldiq #4/#5: kutilayotgan so'rovlar ro'yxatlari (bot)
+            cur.execute(
+                "insert into excused_days (user_id, date, reason, status, created_at)"
+                " values (?, date('now','+3 days'), 'T-kutish', 'pending', datetime('now'))",
+                (emp_uid,))
+            cur.execute(
+                "insert into face_reregistration_requests (user_id, new_descriptor, status, created_at)"
+                " values (?, ?, 'pending', datetime('now'))", (emp_uid, json.dumps([0.5] * 128)))
+            conn.commit()
+            r5 = client.get(f"{API_BASE}/excused-days/pending-bot/999444806", headers=bot_h)
+            names5 = [x["user_full_name"] for x in (r5.json() if r5.status_code == 200 else [])]
+            check("Q4: pending-bot (sababli) rahbarga -> 200 + T-BotEmp bor",
+                  r5.status_code == 200 and "T-BotEmp" in names5, f"kod={r5.status_code} {names5[:5]}")
+            r6 = client.get(f"{API_BASE}/excused-days/pending-bot/999444807", headers=bot_h)
+            check("Q4: pending-bot xodimga -> 403", r6.status_code == 403, f"kod={r6.status_code}")
+            r7 = client.get(f"{API_BASE}/attendance/face-reregistration/pending-bot/999444806", headers=bot_h)
+            names7 = [x["user_full_name"] for x in (r7.json() if r7.status_code == 200 else [])]
+            check("Q5: pending-bot (yuz) rahbarga -> 200 + T-BotEmp bor",
+                  r7.status_code == 200 and "T-BotEmp" in names7, f"kod={r7.status_code} {names7[:5]}")
+
+            # Qoldiq #13: qisqa muddatli WebView tokeni
+            emp_jwt = token_for(emp_uid, "employee")
+            r8 = client.post(f"{API_BASE}/auth/webview-token", headers=auth(emp_jwt))
+            wb = r8.json() if r8.status_code == 200 else {}
+            check("Q13: webview-token -> 200 + 30 daq",
+                  r8.status_code == 200 and wb.get("expires_in_minutes") == 30,
+                  f"kod={r8.status_code}")
+            if wb.get("access_token"):
+                r9 = client.get(f"{API_BASE}/users/me", headers=auth(wb["access_token"]))
+                check("Q13: webview-token bilan /users/me ishlaydi",
+                      r9.status_code == 200 and r9.json().get("id") == emp_uid,
+                      f"kod={r9.status_code}")
+
             for u in (mgr_uid, emp_uid):
                 cur.execute("delete from attendance where user_id=?", (u,))
+                cur.execute("delete from excused_days where user_id=?", (u,))
+                cur.execute("delete from face_reregistration_requests where user_id=?", (u,))
                 cur.execute("delete from users where id=?", (u,))
             conn.commit()
             conn.close()

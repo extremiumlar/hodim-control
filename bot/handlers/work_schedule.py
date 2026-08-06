@@ -48,15 +48,19 @@ def _week_text(data: dict, title: str) -> str:
     return "\n".join(lines)
 
 
-def _week_nav(prefix: str, week_start: date) -> InlineKeyboardMarkup:
+def _week_nav(prefix: str, week_start: date, *, is_manager: bool = False) -> InlineKeyboardMarkup:
     prev_ = (week_start - timedelta(days=7)).isoformat()
     next_ = (week_start + timedelta(days=7)).isoformat()
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="‹ Oldingi hafta", callback_data=f"{prefix}:{prev_}"),
-            InlineKeyboardButton(text="Keyingi hafta ›", callback_data=f"{prefix}:{next_}"),
-        ]]
-    )
+    rows = [[
+        InlineKeyboardButton(text="‹ Oldingi hafta", callback_data=f"{prefix}:{prev_}"),
+        InlineKeyboardButton(text="Keyingi hafta ›", callback_data=f"{prefix}:{next_}"),
+    ]]
+    # UX2-qoldiq #6: rahbar o'z jadvalidan jamoa ko'rinishiga qaytadi
+    if is_manager:
+        rows.append(
+            [InlineKeyboardButton(text="👥 Jamoa jadvali", callback_data=f"wsched:all:{_today().isoformat()}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _roster_text(rows: list[dict], target: date) -> str:
@@ -82,10 +86,20 @@ def _roster_nav(target: date) -> InlineKeyboardMarkup:
     prev_ = (target - timedelta(days=1)).isoformat()
     next_ = (target + timedelta(days=1)).isoformat()
     return InlineKeyboardMarkup(
-        inline_keyboard=[[
-            InlineKeyboardButton(text="‹ Oldingi kun", callback_data=f"wsched:all:{prev_}"),
-            InlineKeyboardButton(text="Keyingi kun ›", callback_data=f"wsched:all:{next_}"),
-        ]]
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="‹ Oldingi kun", callback_data=f"wsched:all:{prev_}"),
+                InlineKeyboardButton(text="Keyingi kun ›", callback_data=f"wsched:all:{next_}"),
+            ],
+            # UX2-qoldiq #6: rahbarning O'ZI ham davomati kuzatiladigan xodim —
+            # o'z haftalik jadvaliga botdan yo'l ilgari umuman yo'q edi.
+            [
+                InlineKeyboardButton(
+                    text="🙍 Mening jadvalim",
+                    callback_data=f"wsched:me:{_week_start(_today()).isoformat()}",
+                )
+            ],
+        ]
     )
 
 
@@ -125,9 +139,13 @@ async def nav_my_week(callback: CallbackQuery) -> None:
     if data is None:
         await callback.message.answer(NO_SCHEDULE)
         return
+    user = await api_client.get_user_by_telegram(callback.from_user.id)
+    is_manager = bool(user and user.get("role") in MANAGER_ROLES)
     await callback.message.edit_text(
         _week_text(data, "Ish jadvalim"),
-        reply_markup=_week_nav("wsched:me", date.fromisoformat(data["days"][0]["date"])),
+        reply_markup=_week_nav(
+            "wsched:me", date.fromisoformat(data["days"][0]["date"]), is_manager=is_manager
+        ),
     )
 
 

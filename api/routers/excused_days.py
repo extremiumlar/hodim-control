@@ -296,6 +296,28 @@ async def list_excused_days(
 DECIDE_ROLES = {Role.hr.value, Role.boss.value, Role.dasturchi.value}
 
 
+@router.get(
+    "/pending-bot/{telegram_id}",
+    response_model=list[ExcusedDayOut],
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def pending_excused_days_bot(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[ExcusedDayOut]:
+    """UX2-qoldiq #4: HR botdagi xabarni o'tkazib yuborsa, kutilayotgan
+    so'rovlarni endi botning o'zidan topadi (ilgari yagona yo'l — Telegram
+    tarixini varaqlash yoki sayt edi)."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or not actor.is_active or actor.role not in DECIDE_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu bo'lim faqat HR/Boshliq/Dasturchi uchun")
+    items = list(
+        await db.scalars(
+            select(ExcusedDay)
+            .where(ExcusedDay.status == ExcusedStatus.pending.value)
+            .order_by(ExcusedDay.created_at.asc())
+        )
+    )
+    return await _to_out_many(items, db)
+
+
 async def _decide_excused_day(
     db: AsyncSession, item: ExcusedDay, decider: User, decision: str, override_reason: str | None
 ) -> ExcusedDayOut:

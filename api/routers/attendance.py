@@ -361,6 +361,37 @@ async def decide_face_rereg_web(
     return await _apply_face_rereg_decision(db, item_id, actor, payload.decision)
 
 
+@router.get(
+    "/face-reregistration/pending-bot/{telegram_id}",
+    response_model=list[FaceReregOut],
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def pending_face_rereg_bot(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> list[FaceReregOut]:
+    """UX2-qoldiq #5: kutilayotgan yuz qayta-ro'yxat so'rovlari — bot uchun
+    (xabar yo'qolsa xodim yuzsiz qolib ketardi; endi botdan topiladi)."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu bo'lim faqat rahbarlar uchun")
+    items = list(
+        await db.scalars(
+            select(FaceReregistrationRequest)
+            .where(FaceReregistrationRequest.status == "pending")
+            .order_by(FaceReregistrationRequest.created_at.asc())
+        )
+    )
+    user_ids = {i.user_id for i in items}
+    names = {u.id: u.full_name for u in await db.scalars(select(User).where(User.id.in_(user_ids)))}
+    return [
+        FaceReregOut(
+            id=i.id, user_id=i.user_id, user_full_name=names.get(i.user_id, "?"),
+            status=i.status, created_at=i.created_at,
+        )
+        for i in items
+    ]
+
+
 @router.get("/face-reregistration", response_model=list[FaceReregOut])
 async def list_face_reregistrations(
     status_filter: str | None = None,

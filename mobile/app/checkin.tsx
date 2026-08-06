@@ -17,12 +17,26 @@
  * bir xil (token inject, orqaga paneli, tashqi havola himoyasi).
  */
 import { router } from "expo-router";
-import { ActivityIndicator, Linking, PermissionsAndroid, Platform, Text, View } from "react-native";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Linking,
+  PermissionsAndroid,
+  Platform,
+  Pressable,
+  Text,
+  View,
+} from "react-native";
 
 import EmbeddedWeb, { Message, styles, useWebPhase } from "../components/EmbeddedWeb";
 
 // Layout'SIZ marshrut (web/src/App.tsx) — ilovaning o'z paneli bor.
 const CHECKIN_PATH = "/embed/check-in";
+
+// UX2-qoldiq #10: joylashuv rad etilganini modul darajasida eslab qolamiz —
+// requestPermissions useWebPhase ichida chaqiriladi va natijaning joylashuv
+// qismini komponentga boshqa yo'l bilan yetkaza olmaydi.
+let locationDenied = false;
 
 /**
  * Kamera va joylashuv ruxsatini so'raydi.
@@ -42,7 +56,10 @@ async function requestPermissions(): Promise<boolean> {
   const camera = PermissionsAndroid.PERMISSIONS.CAMERA;
   const fine = PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION;
   const res = await PermissionsAndroid.requestMultiple([camera, fine]);
-  // Joylashuv natijasi ATAYLAB tekshirilmaydi — yuqoridagi izohga qarang.
+  // Joylashuv natijasi sahifani BLOKLAMAYDI (yuqoridagi izoh) — lekin #10:
+  // rad etilganini eslab, ekranda doimiy ogohlantirish chizig'i ko'rsatamiz
+  // (ilgari faqat yo'qolib ketadigan toast bor edi).
+  locationDenied = res[fine] !== PermissionsAndroid.RESULTS.GRANTED;
   return res[camera] === PermissionsAndroid.RESULTS.GRANTED;
 }
 
@@ -88,5 +105,39 @@ export default function CheckInScreen() {
 
   // media — kamera oqimi foydalanuvchi bosishini kutmasdan ishga tushsin
   // (Face ID avtomatik boshlanadi) va sahifa navigator.geolocation ishlatadi.
-  return <EmbeddedWeb path={CHECKIN_PATH} title="Davomat" token={phase.token} media />;
+  return (
+    <View style={styles.flex}>
+      {locationDenied && <LocationBanner />}
+      <EmbeddedWeb path={CHECKIN_PATH} title="Davomat" token={phase.token} media />
+    </View>
+  );
+}
+
+/** #10: joylashuv rad etilgan xodimga DOIMIY ko'rsatma (toast yo'qolib ketardi). */
+function LocationBanner() {
+  const [hidden, setHidden] = useState(false);
+  if (hidden) return null;
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: "#fef3c7",
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        paddingTop: 44,
+      }}
+    >
+      <Text style={{ flex: 1, fontSize: 12, color: "#92400e" }}>
+        Joylashuv ruxsati berilmagan — «Keldim» GPS'siz o'tmasligi mumkin.
+      </Text>
+      <Pressable onPress={() => void Linking.openSettings()}>
+        <Text style={{ fontSize: 12, fontWeight: "700", color: "#92400e" }}>Sozlamalar</Text>
+      </Pressable>
+      <Pressable onPress={() => setHidden(true)} hitSlop={8}>
+        <Text style={{ fontSize: 14, color: "#92400e" }}>✕</Text>
+      </Pressable>
+    </View>
+  );
 }

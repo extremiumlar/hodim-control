@@ -125,6 +125,9 @@ export default function MatrixTab({
     null
   );
   const [editPreset, setEditPreset] = useState<EditPreset | null>(null);
+  // UX2-qoldiq #2: «Yozuv qo'shish» endi matritsa ustida ham — ilgari faqat
+  // akkordeon ichida 9 bosish chuqurlikda edi.
+  const [addOpen, setAddOpen] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
   const [recordsOpen, setRecordsOpen] = useState(false);
   // A11: qidiruv/filtr/saralash
@@ -327,6 +330,16 @@ export default function MatrixTab({
           >
             saralashni tozalash
           </button>
+        )}
+        {canEdit && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-8"
+            onClick={() => setAddOpen(true)}
+          >
+            + Yozuv qo'shish
+          </Button>
         )}
       </div>
 
@@ -626,10 +639,13 @@ export default function MatrixTab({
           (mutation ["attendance"] kalitini invalidatsiya qiladi). */}
       {canEdit && (
         <EditAttendanceDialog
-          open={editPreset !== null}
+          open={editPreset !== null || addOpen}
           row={null}
           preset={editPreset}
-          onClose={() => setEditPreset(null)}
+          onClose={() => {
+            setEditPreset(null);
+            setAddOpen(false);
+          }}
           silent={isDasturchi}
         />
       )}

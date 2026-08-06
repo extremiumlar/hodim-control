@@ -130,7 +130,11 @@ function fmtDateUz(d: Date): string {
   return `${UZ_WEEKDAYS[d.getDay()]}, ${d.getDate()}-${UZ_MONTHS[d.getMonth()]}`;
 }
 
-/** Muvaffaqiyatli check-in/outdan keyingi yashil tasdiq ekrani. */
+/** Muvaffaqiyatli check-in/outdan keyingi yashil tasdiq ekrani.
+ *
+ * UX2-qoldiq #1: endi 6 soniyada O'ZI yopiladi (pastda kamayuvchi chiziq) va
+ * Android «orqaga»/ESC ham yopadi (ilgari oddiy fixed div edi — «orqaga»
+ * butun sahifadan chiqarib yuborardi). */
 function SuccessScreen({
   action,
   att,
@@ -141,10 +145,31 @@ function SuccessScreen({
   onClose: () => void;
 }) {
   const isIn = action === "check-in";
+
+  useEffect(() => {
+    const t = setTimeout(onClose, 6000);
+    // ESC / Android «orqaga» (history) — ekranni yopadi, sahifadan chiqarmaydi.
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onPop = () => onClose();
+    window.addEventListener("keydown", onKey);
+    window.history.pushState({ success: true }, "");
+    window.addEventListener("popstate", onPop);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("popstate", onPop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // overflow-y-auto — landscape'da (masalan 640x360) ikonka+sarlavha+3 qator+
   // tugma 312px ga sig'masligi mumkin; «Yopish» tugmasiga yetish shart.
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-emerald-600 p-6">
+      {/* 6s avto-yopilish ko'rsatkichi */}
+      <div className="absolute left-0 top-0 h-1 w-full bg-white/20">
+        <div className="h-full animate-[shrink_6s_linear_forwards] bg-white/70" />
+      </div>
       <div className="w-full max-w-sm text-center text-white">
         <CheckCircle2 className="mx-auto mb-4 h-20 w-20" />
         <h2 className="text-2xl font-bold">{isIn ? "Keldingiz!" : "Ketdingiz!"}</h2>
@@ -245,6 +270,25 @@ export default function CheckIn() {
   // YOPILMAYDI, shuning uchun xodim butun GPS/kamera oqimini qaytadan
   // boshlamay (FaceCapture hali ochiq), DARHOL qayta urinishi mumkin.
   const [checkError, setCheckError] = useState<string | null>(null);
+
+  // UX2-qoldiq #11 (mobil ilova WebView'i uchun): modal holati nativ tomonga
+  // bildiriladi — Android «orqaga» avval MODALNI yopsin, butun ekranni emas.
+  const anyModalOpen = showFace !== null || showRegister || success !== null;
+  useEffect(() => {
+    const rn = (window as any).ReactNativeWebView;
+    rn?.postMessage(JSON.stringify({ type: "modal", open: anyModalOpen }));
+  }, [anyModalOpen]);
+
+  useEffect(() => {
+    const onNativeBack = () => {
+      setShowFace(null);
+      setShowRegister(false);
+      setSuccess(null);
+      setStatusMsg("");
+    };
+    window.addEventListener("native-back", onNativeBack);
+    return () => window.removeEventListener("native-back", onNativeBack);
+  }, []);
 
   const att = todayQuery.data ?? null;
   const busy = checkIn.isPending || checkOut.isPending;
