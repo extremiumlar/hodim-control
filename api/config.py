@@ -120,6 +120,12 @@ class Settings(BaseSettings):
     attendance_watchdog_enabled: bool = True
     attendance_check_hour: int = 11
 
+    # Qo'riqchi xabarlari FAQAT Dasturchiga shaxsiy xabar sifatida boradi
+    # (egasining qarori 2026-08-05: bu texnik xabarlar sotuv guruhiga kerak
+    # emas). `true` — guruhga ham NUSXA yuboriladi. Dasturchi topilmasa
+    # xabar baribir guruhga tushadi (qo'riqchi jimgina ko'r bo'lib qolmasin).
+    watchdog_also_notify_group: bool = False
+
     # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
     # Bo'sh — endpoint o'chiq (404). Tasodifiy uzun qiymat qo'ying:
     # python3 -c "import secrets;print(secrets.token_urlsafe(32))"

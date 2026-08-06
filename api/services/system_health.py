@@ -42,7 +42,9 @@ from db.models import (
     CrmLeadState,
     CrmWebhookLog,
     MonitoredGroup,
+    Role,
     SystemHealthState,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,16 +83,54 @@ async def _state(db: AsyncSession, check: str) -> SystemHealthState:
     return row
 
 
-async def _main_group_chat_id(db: AsyncSession) -> int | None:
-    """Ogohlantirish manzili: dasturchi botdan biriktirgan "main" guruh
-    (issiq-lid eskalatsiyasi va kunlik digest bilan bir xil kanal). Guruh
-    biriktirilmagan bo'lsa .env dagi asosiy guruhga tushadi."""
-    chat_id = await db.scalar(
+async def _alert_recipients(db: AsyncSession) -> list[int]:
+    """Ogohlantirish kimga boradi.
+
+    EGASINING QARORI (2026-08-05): bu xabarlar TEXNIK — «token o'lgan»,
+    «zaxira olinmayapti» kabi. Ular sotuv guruhiga kerak emas va shovqin
+    qiladi, shuning uchun FAQAT DASTURCHIGA shaxsiy xabar sifatida boradi.
+
+    ZAXIRA YO'L: dasturchi topilmasa (roli o'zgargan, telegram_id yo'q,
+    hisob o'chirilgan) xabar guruhga tushadi. Sabab: qo'riqchining o'zi
+    jimgina ko'r bo'lib qolishi — aynan biz kurashayotgan nosozlik turi;
+    noto'g'ri manzilga borgan ogohlantirish umuman bormaganidan yaxshi.
+    Bu holat log'ga ANIQ yoziladi. Guruhga ham NUSXA kerak bo'lsa:
+    `WATCHDOG_ALSO_NOTIFY_GROUP=true`."""
+    rows = await db.scalars(
+        select(User.telegram_id).where(
+            User.role == Role.dasturchi.value,
+            User.is_active == True,  # noqa: E712
+            User.telegram_id.isnot(None),
+        )
+    )
+    recipients = [tid for tid in rows if tid]
+
+    group_id = await db.scalar(
         select(MonitoredGroup.chat_id).where(
             MonitoredGroup.purpose == "main", MonitoredGroup.is_active == True  # noqa: E712
         )
-    )
-    return chat_id or (settings.telegram_group_chat_id or None)
+    ) or (settings.telegram_group_chat_id or None)
+
+    if not recipients:
+        logger.error(
+            "Qo'riqchi: DASTURCHI topilmadi (rol/telegram_id/is_active) — "
+            "ogohlantirish zaxira yo'l bilan guruhga yuborilmoqda."
+        )
+        return [group_id] if group_id else []
+
+    if settings.watchdog_also_notify_group and group_id:
+        recipients.append(group_id)
+    return recipients
+
+
+async def _send_all(recipients: list[int], text: str) -> None:
+    """Har manzilga alohida yuboradi — biri xato bersa (bot bloklangan,
+    chat topilmadi) qolganlari baribir oladi."""
+    for chat_id in recipients:
+        try:
+            await send_message(chat_id, text)
+        except Exception:  # noqa: BLE001 — bitta manzil qo'riqchini yiqitmasin
+            logger.exception("Qo'riqchi xabarini yuborishda xato (chat_id=%s)", chat_id)
 
 
 def _human_gap(delta: timedelta) -> str:
@@ -346,7 +386,7 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
     Bitta tekshiruv xato bersa (kutilmagan istisno) qolganlari baribir
     ishlaydi — qo'riqchining o'zi bitta nosozlikdan yiqilmasin."""
     now = datetime.utcnow()
-    chat_id = await _main_group_chat_id(db)
+    recipients = await _alert_recipients(db)
     realert_after = timedelta(hours=settings.crm_health_realert_hours)
 
     out: dict = {"ok": True, "dry_run": dry_run, "checks": {}, "alerted": [], "recovered": []}
@@ -373,8 +413,7 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
                 text = res.recovery_text or (
                     f"🟢 <b>{_LABELS.get(name, name)} tiklandi</b>"
                 )
-                if chat_id:
-                    await send_message(chat_id, text)
+                await _send_all(recipients, text)
                 state.alerting = False
                 state.last_alert_at = None
                 state.stale_since = None
@@ -391,12 +430,12 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
 
         out["alerted"].append(name)
         if not dry_run:
-            if chat_id and res.alert_text:
-                await send_message(chat_id, res.alert_text)
-            elif not chat_id:
+            if recipients and res.alert_text:
+                await _send_all(recipients, res.alert_text)
+            elif not recipients:
                 logger.error(
-                    "Qo'riqchi '%s' ogohlantirmoqchi, lekin guruh topilmadi "
-                    "(MonitoredGroup 'main' yoki TELEGRAM_GROUP_CHAT_ID).", name
+                    "Qo'riqchi '%s' ogohlantirmoqchi, lekin MANZIL YO'Q — "
+                    "dasturchi ham, guruh ham topilmadi.", name
                 )
             if not state.alerting:
                 state.stale_since = res.stale_since
