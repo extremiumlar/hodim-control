@@ -86,16 +86,15 @@ async def _state(db: AsyncSession, check: str) -> SystemHealthState:
 async def _alert_recipients(db: AsyncSession) -> list[int]:
     """Ogohlantirish kimga boradi.
 
-    EGASINING QARORI (2026-08-05): bu xabarlar TEXNIK — «token o'lgan»,
+    EGASINING QARORI (2026-08-06): bu xabarlar TEXNIK — «token o'lgan»,
     «zaxira olinmayapti» kabi. Ular sotuv guruhiga kerak emas va shovqin
     qiladi, shuning uchun FAQAT DASTURCHIGA shaxsiy xabar sifatida boradi.
 
-    ZAXIRA YO'L: dasturchi topilmasa (roli o'zgargan, telegram_id yo'q,
-    hisob o'chirilgan) xabar guruhga tushadi. Sabab: qo'riqchining o'zi
-    jimgina ko'r bo'lib qolishi — aynan biz kurashayotgan nosozlik turi;
-    noto'g'ri manzilga borgan ogohlantirish umuman bormaganidan yaxshi.
-    Bu holat log'ga ANIQ yoziladi. Guruhga ham NUSXA kerak bo'lsa:
-    `WATCHDOG_ALSO_NOTIFY_GROUP=true`."""
+    DASTURCHI TOPILMASA — HECH KIMGA YUBORILMAYDI (egasining aniq talabi:
+    guruhga zaxira yo'l KERAK EMAS). Bunday holat log'ga ERROR bilan
+    yoziladi va tashqi qo'riqchi (GitHub Actions) baribir server/cron
+    holatini mustaqil kuzatib turadi. Guruhga NUSXA kerak bo'lsa —
+    ixtiyoriy: `WATCHDOG_ALSO_NOTIFY_GROUP=true`."""
     rows = await db.scalars(
         select(User.telegram_id).where(
             User.role == Role.dasturchi.value,
@@ -105,21 +104,22 @@ async def _alert_recipients(db: AsyncSession) -> list[int]:
     )
     recipients = [tid for tid in rows if tid]
 
-    group_id = await db.scalar(
-        select(MonitoredGroup.chat_id).where(
-            MonitoredGroup.purpose == "main", MonitoredGroup.is_active == True  # noqa: E712
-        )
-    ) or (settings.telegram_group_chat_id or None)
-
     if not recipients:
         logger.error(
             "Qo'riqchi: DASTURCHI topilmadi (rol/telegram_id/is_active) — "
-            "ogohlantirish zaxira yo'l bilan guruhga yuborilmoqda."
+            "ogohlantirish HECH KIMGA yuborilmadi. Foydalanuvchilar ro'yxatida "
+            "rol=dasturchi va telegram_id to'ldirilganini tekshiring."
         )
-        return [group_id] if group_id else []
+        return []
 
-    if settings.watchdog_also_notify_group and group_id:
-        recipients.append(group_id)
+    if settings.watchdog_also_notify_group:
+        group_id = await db.scalar(
+            select(MonitoredGroup.chat_id).where(
+                MonitoredGroup.purpose == "main", MonitoredGroup.is_active == True  # noqa: E712
+            )
+        ) or (settings.telegram_group_chat_id or None)
+        if group_id:
+            recipients.append(group_id)
     return recipients
 
 

@@ -121,9 +121,9 @@ class Settings(BaseSettings):
     attendance_check_hour: int = 11
 
     # Qo'riqchi xabarlari FAQAT Dasturchiga shaxsiy xabar sifatida boradi
-    # (egasining qarori 2026-08-05: bu texnik xabarlar sotuv guruhiga kerak
-    # emas). `true` — guruhga ham NUSXA yuboriladi. Dasturchi topilmasa
-    # xabar baribir guruhga tushadi (qo'riqchi jimgina ko'r bo'lib qolmasin).
+    # (egasining qarori 2026-08-06: bu texnik xabarlar sotuv guruhiga kerak
+    # emas). Dasturchi topilmasa HECH KIMGA yuborilmaydi — faqat log'ga ERROR.
+    # `true` — guruhga ham NUSXA yuboriladi (ixtiyoriy).
     watchdog_also_notify_group: bool = False
 
     # Tashqi chatbot uchun bilim bazasi dataseti (GET /knowledge/dataset?key=...).
