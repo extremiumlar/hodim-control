@@ -50,6 +50,10 @@ Notifications.setNotificationHandler({
  * Android xabarni standart kanalga tashlaydi va ovoz sozlamasi ishlamaydi.
  */
 const CHANNELS: { id: string; name: string }[] = [
+  // UX2-MC2: backend `attendance_reminder` kanalini yuboradi (api/services/
+  // push.py) — ro'yxatda yo'q edi, Android standart kanalga tashlab, tinch
+  // soat/ovoz boshqaruvi ishlamasdi.
+  { id: "attendance_reminder", name: "Keldim/Ketdim eslatmasi" },
   { id: "late_warning", name: "Kechikish ogohlantirishi" },
   { id: "tasks", name: "Vazifalar" },
   { id: "decisions", name: "Qaror natijasi" },
@@ -137,10 +141,16 @@ export function pathFromNotification(
     | Record<string, unknown>
     | undefined;
   const path = data?.path;
+  if (typeof path !== "string") return null;
+  // UX2-MC1: davomat push'i ("Keldim bosishni unutmang") backendda
+  // `path: "/check-in"` bilan keladi — bu ilovada NATIV /checkin ekraniga
+  // (kamera/GPS ruxsatlari bilan) mos. Ilgari oq ro'yxatda yo'q edi va
+  // bildirishnoma bosilganda HECH NARSA ochilmasdi — push amalda davomatga
+  // ulanmagan edi.
+  if (path === "/check-in") return "/check-in";
   // `view.tsx` bilan BIR XIL oq ro'yxat: bildirishnoma yo'li ham oxir-oqibat
   // WebView'da (JWT kiritilgan holda) ochiladi, shuning uchun tekshiruv ham
-  // bir xil qattiqlikda bo'lishi kerak. Backend hozir aynan shu yo'llarni
-  // yuboradi (`api/notify.py`), ya'ni bu hech narsani buzmaydi.
-  if (typeof path !== "string" || !isAllowedWebPath(path)) return null;
+  // bir xil qattiqlikda bo'lishi kerak.
+  if (!isAllowedWebPath(path)) return null;
   return path;
 }

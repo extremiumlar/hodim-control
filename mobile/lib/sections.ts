@@ -161,9 +161,24 @@ export const CHECKIN_WEB_PATH = "/embed/check-in";
  * Shuning uchun aniq moslik (exact match) bilan tekshiramiz. Yangi bo'lim
  * qo'shilsa — u `SECTIONS`ga qo'shiladi va bu ro'yxatga AVTOMAT tushadi.
  */
+/**
+ * UX2-MC1: backend push'lari yuboradigan, lekin `SECTIONS`da bo'lmagan
+ * yo'llar. Rahbar push'lari (sababli so'rov, davomat, oylik) ilgari oq
+ * ro'yxatdan o'tmay, bildirishnoma bosilганda HECH NARSA ochilmasdi.
+ * Bular saytning Layout'li sahifalari — WebView'da bemalol ochiladi.
+ */
+const NOTIFICATION_EXTRA_PATHS: readonly string[] = [
+  "/statistics",
+  "/excused-days",
+  "/payroll",
+  "/attendance",
+  "/me/tasks",
+];
+
 const ALLOWED_WEB_PATHS: ReadonlySet<string> = new Set<string>([
   CHECKIN_WEB_PATH,
   ...SECTIONS.map((s) => s.webPath).filter((p): p is string => typeof p === "string"),
+  ...NOTIFICATION_EXTRA_PATHS,
 ]);
 
 /**

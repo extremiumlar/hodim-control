@@ -42,7 +42,7 @@ def _build_target():
         from fastapi.staticfiles import StaticFiles
         from starlette.exceptions import HTTPException as StarletteHTTPException
 
-        # Face ID modellari (~4.4 MB siqilgan holda) uchun kesh muddati.
+        # Face ID modellari (~6.8 MB — recognition shard1/2 + landmark + tiny) kesh muddati.
         # /assets/*.js ga LiteSpeed KENGAYTMA bo'yicha max-age qo'yadi, model
         # shard fayllarida esa kengaytma YO'Q (face_recognition_model-shard1)
         # — shuning uchun ularga hech qanday Cache-Control tushmaydi va kesh

@@ -115,6 +115,10 @@ export default function EmbeddedWeb({
   media?: boolean;
 }) {
   const [pageLoading, setPageLoading] = useState(true);
+  // UX2-MC4: tarmoq xatosi endi ishlov ko'radi — ilgari Android'ning
+  // inglizcha tizim xato sahifasi yoki oq ekran ko'rinardi (aynan ofis
+  // eshigi oldida, zaif tarmoqda).
+  const [loadError, setLoadError] = useState(false);
   const webRef = useRef<WebView>(null);
 
   // Android "orqaga": ekrandan chiqadi. Usiz ilova butunlay yopilib ketardi.
@@ -229,6 +233,31 @@ export default function EmbeddedWeb({
         // yuklamaydi, shuning uchun butunlay to'xtatamiz.
         onFileDownload={() => undefined}
         onLoadEnd={() => setPageLoading(false)}
+        // UX2-MC4: tarmoq/HTTP xatolarida o'zbekcha ekran + «Qayta urinish».
+        onError={() => {
+          setPageLoading(false);
+          setLoadError(true);
+        }}
+        onHttpError={(e) => {
+          // 5xx — server yotibdi; 4xx sahifa o'zi ko'rsatadi (masalan 404 SPA
+          // fallback bilan index.html qaytaradi, xato emas).
+          if (e.nativeEvent.statusCode >= 500) {
+            setPageLoading(false);
+            setLoadError(true);
+          }
+        }}
+        // UX2-MC5: sayt tokeni eskirib /login'ga yo'naltirsa — saytning
+        // ikkinchi (chalkash) login sahifasi o'rniga ilovaning o'z kirish
+        // ekrani ochiladi.
+        onNavigationStateChange={(nav) => {
+          try {
+            if (new URL(nav.url).pathname === "/login") {
+              router.replace("/login" as never);
+            }
+          } catch {
+            // parse bo'lmasa e'tiborsiz
+          }
+        }}
         mediaPlaybackRequiresUserAction={!media}
         allowsInlineMediaPlayback={media}
         geolocationEnabled={media}
@@ -237,10 +266,25 @@ export default function EmbeddedWeb({
         style={styles.flex}
       />
 
-      {pageLoading && (
+      {pageLoading && !loadError && (
         <View style={styles.overlay}>
           <ActivityIndicator size="large" />
           <Text style={styles.hint}>Yuklanmoqda...</Text>
+        </View>
+      )}
+
+      {loadError && (
+        <View style={styles.overlay}>
+          <Message
+            title="Sahifa ochilmadi"
+            body="Internet aloqasi yo'q yoki server javob bermayapti. Tarmoqni tekshirib, qayta urinib ko'ring."
+            actionLabel="Qayta urinish"
+            onAction={() => {
+              setLoadError(false);
+              setPageLoading(true);
+              webRef.current?.reload();
+            }}
+          />
         </View>
       )}
     </View>

@@ -50,7 +50,20 @@ export interface EditPreset {
   checkIn: string | null; // "HH:MM" (mahalliy)
   checkOut: string | null;
   note: string | null;
+  /** UX2-B10: kun jadvali — HR "09:15" yozayotib bu kun 10:00 smena ekanini
+      ko'rsin (kechikish jonli hisoblanadi). */
+  scheduleStart?: string | null;
+  scheduleEnd?: string | null;
 }
+
+/** UX2-B9: tez-tez uchraydigan tuzatish sabablari — 10 kun tuzatayotgan HR
+    har safar jumla yozib o'tirmasin. */
+const REASON_PRESETS = [
+  "Face ID ishlamadi",
+  "Telefon internetsiz edi",
+  "Bosishni unutgan",
+  "Ofisdan tashqarida ish",
+];
 
 export default function EditAttendanceDialog({
   open,
@@ -169,6 +182,30 @@ export default function EditAttendanceDialog({
             </div>
           )}
 
+          {/* B10: kun jadvali konteksti + kiritilgan vaqtdan jonli kechikish */}
+          {preset?.scheduleStart && (
+            <p className="-mb-2 text-xs text-slate-500">
+              Bu kun jadvali:{" "}
+              <b className="tabular-nums">
+                {preset.scheduleStart}–{preset.scheduleEnd ?? "?"}
+              </b>
+              {checkIn && checkIn > preset.scheduleStart && (
+                <span className="ml-1.5 font-medium text-amber-700">
+                  → kechikish ~
+                  {(() => {
+                    const [sh, sm] = preset.scheduleStart!.split(":").map(Number);
+                    const [ch, cm] = checkIn.split(":").map(Number);
+                    return ch * 60 + cm - (sh * 60 + sm);
+                  })()}{" "}
+                  daq
+                </span>
+              )}
+              {checkIn && checkIn <= preset.scheduleStart && (
+                <span className="ml-1.5 font-medium text-emerald-700">→ kechikish yo'q</span>
+              )}
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="att-in">Keldim</Label>
@@ -209,6 +246,24 @@ export default function EditAttendanceDialog({
               <Label htmlFor="att-reason">
                 Sabab <span className="text-rose-600">*</span>
               </Label>
+              {/* B9: tez tanlash chiplari */}
+              <div className="flex flex-wrap gap-1.5">
+                {REASON_PRESETS.map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={
+                      "rounded-full border px-2 py-0.5 text-xs transition-colors " +
+                      (reason === r
+                        ? "border-primary/60 bg-primary/10 text-primary"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100")
+                    }
+                    onClick={() => setReason(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
               <Input
                 id="att-reason"
                 value={reason}

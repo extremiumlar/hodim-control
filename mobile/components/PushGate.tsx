@@ -17,6 +17,12 @@ import { useAuth } from "../lib/auth";
 import { pathFromNotification, registerForPush } from "../lib/push";
 
 function openFromPath(path: string) {
+  // UX2-MC1: davomat push'i nativ /checkin ekraniga boradi (kamera/GPS
+  // ruxsatlari o'sha yerda so'raladi); qolganlari WebView'da ochiladi.
+  if (path === "/check-in") {
+    router.push("/checkin" as never);
+    return;
+  }
   router.push({ pathname: "/view", params: { path, title: "Bildirishnoma" } } as never);
 }
 

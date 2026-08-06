@@ -122,7 +122,7 @@ export default function FaceCapture({
       .then(() => setModelsReady(true))
       .catch((e) =>
         setModelLoadError(
-          "Yuz aniqlash modelini yuklab bo'lmadi (internet yoki CDN muammosi). " +
+          "Yuz aniqlash modelini yuklab bo'lmadi (internet aloqasini tekshiring). " +
             (e?.message || e)
         )
       );

@@ -136,7 +136,12 @@ export default function App() {
           path="/embed/check-in"
           element={
             <ProtectedRoute>
-              <CheckIn />
+              {/* UX2-MC6: Layout'siz marshrutda chekka yo'q edi — kartalar
+                  telefon chetiga yopishib turardi (/view bo'limlari chekkali,
+                  eng muhim ekran esa chekkasi yo'q bo'lib qolgan edi). */}
+              <div className="px-4 py-4">
+                <CheckIn />
+              </div>
             </ProtectedRoute>
           }
         />

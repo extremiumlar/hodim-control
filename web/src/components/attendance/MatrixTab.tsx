@@ -606,6 +606,8 @@ export default function MatrixTab({
                         checkIn: cellDialog.cell.check_in,
                         checkOut: cellDialog.cell.check_out,
                         note: cellDialog.cell.note,
+                        scheduleStart: cellDialog.cell.schedule_start,
+                        scheduleEnd: cellDialog.cell.schedule_end,
                       });
                       setCellDialog(null);
                     }}
@@ -647,6 +649,8 @@ export default function MatrixTab({
                   checkIn: cell.check_in,
                   checkOut: cell.check_out,
                   note: cell.note,
+                  scheduleStart: cell.schedule_start,
+                  scheduleEnd: cell.schedule_end,
                 });
               }
             : undefined

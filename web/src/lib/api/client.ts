@@ -22,7 +22,14 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const resp = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  // UX2-MC7: tarmoq uzilganda fetch inglizcha "Failed to fetch" bilan
+  // yiqilardi va xodim aynan check-in lahzasida tushunarsiz xato ko'rardi.
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  } catch {
+    throw new ApiError(0, "Internet aloqasi yo'q. Tarmoqni tekshirib qayta urinib ko'ring.");
+  }
 
   if (!resp.ok) {
     let detail = resp.statusText;

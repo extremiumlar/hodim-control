@@ -23,10 +23,33 @@ import { cn, fmtLocalTime as fmtTime, translateGeoError } from "@/lib/utils";
 // siqilgan holda). Tab-bar qo'shilgach /check-in xodimning KIRISH sahifasi
 // bo'lib qoldi (HomeIndex shu yerga yo'naltiradi, PWA start_url ham shu) —
 // ya'ni faqat jadvalini ko'rmoqchi bo'lgan xodim ham yuz kutubxonasini
-// yuklardi. Endi u faqat kamera oqimi boshlanganda keladi, o'sha paytda
-// baribir modellar (~4.4 MB) yuklanadi va spinner ko'rsatiladi.
+// yuklardi. Endi u faqat kamera oqimi boshlanganda keladi.
 // `LiveResult` — TIP importi, u kompilyatsiyada yo'qoladi va chunk tortmaydi.
 const FaceCapture = lazy(() => import("@/components/FaceCapture"));
+
+// UX2-MC3: modellar (~6.8 MB) ilgari FAQAT «Keldim» bosilgach yuklanardi —
+// zaif tarmoqda xodim telefonni yuziga tutib 30-60 soniya kutardi. Endi sahifa
+// ochilgach BO'SH VAQTDA chunk + modellar oldindan yuklab qo'yiladi (30 kunlik
+// keshga tushadi); tugma bosilganda hammasi tayyor bo'ladi. Xatolar jim
+// yutiladi — prefetch muvaffaqiyatsiz bo'lsa, eski (bosilganda yuklash) yo'l
+// o'z-o'zidan ishlayveradi.
+let modelsPrefetched = false;
+function prefetchFaceModels() {
+  if (modelsPrefetched) return;
+  modelsPrefetched = true;
+  const run = () =>
+    import("@/components/FaceCapture")
+      .then(() => import("@/lib/face"))
+      .then((m) => m.loadModels())
+      .catch(() => {
+        modelsPrefetched = false; // keyingi urinishga ruxsat
+      });
+  if ("requestIdleCallback" in window) {
+    (window as any).requestIdleCallback(run, { timeout: 5000 });
+  } else {
+    setTimeout(run, 1500);
+  }
+}
 
 /** Lazy FaceCapture yuklanguncha — video idishi bilan bir xil o'lchamda. */
 function FaceCaptureFallback() {
@@ -207,6 +230,11 @@ export default function CheckIn() {
   // UX2-W2: tarix kalendari endi akkordeonda — sahifa qisqaradi va uning
   // so'rovi faqat ochilganda ketadi (check-in lahzasida tarmoq band emas).
   const [historyOpen, setHistoryOpen] = useState(false);
+
+  // UX2-MC3: Face ID modellari bo'sh vaqtda oldindan yuklab qo'yiladi.
+  useEffect(() => {
+    prefetchFaceModels();
+  }, []);
 
   const [statusMsg, setStatusMsg] = useState("");
   const [showFace, setShowFace] = useState<null | Action>(null);
