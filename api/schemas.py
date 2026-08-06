@@ -308,7 +308,8 @@ class ExcusedDayCreate(BaseModel):
     # chunki `date: date | None = None` ko'rinishida class tanasi avval `date=None`
     # defaultni saqlab, keyin anotatsiyani baholaydi — tip nomi maydon nomiga to'qnashadi.)
     date: dt.date | None = None
-    reason: str
+    # UX2-C10: bo'sh yoki "." kabi sabab HR'ga borib o'tirmasin
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ExcusedDayMeCreate(BaseModel):
@@ -317,7 +318,7 @@ class ExcusedDayMeCreate(BaseModel):
     ni qayta ishlatib bo'lmaydi, chunki unda `telegram_id` majburiy."""
 
     date: dt.date | None = None
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ExcusedDayOut(BaseModel):
@@ -350,7 +351,7 @@ class ExcusedDayForUserCreate(BaseModel):
 
     user_id: int
     date: dt.date | None = None
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ExcusedDayForUserBotCreate(BaseModel):
@@ -360,7 +361,7 @@ class ExcusedDayForUserBotCreate(BaseModel):
     manager_telegram_id: int
     target_user_id: int
     date: dt.date | None = None
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ExcusedDayDecideMe(BaseModel):
@@ -521,6 +522,11 @@ class MyStatsOut(BaseModel):
     tasks_done: int
     tasks_total: int
     excused_days: int  # shu oyda tasdiqlangan sababli kunlar
+    # UX2-W4 (C9): davomat bloki — xodim jarimaga ta'sir qiladigan raqamlarni
+    # endi botdan ham ko'radi (ilgari faqat «Mening oyligim» ostida 3 bosishda).
+    attendance_present_days: int = 0  # shu oyda kelgan kunlar
+    attendance_late_minutes: int = 0  # shu oyda jami kechikish (daqiqa)
+    attendance_absent_days: int = 0  # shu oyda yozilgan «kelmadi» kunlar
 
 
 class LeadStageRow(BaseModel):

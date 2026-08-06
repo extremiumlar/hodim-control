@@ -98,6 +98,20 @@ async def show_my_stats(message: Message, state: FSMContext) -> None:
     if stats.get("excused_days"):
         lines.append(f"<b>Sababli kunlar:</b> {stats['excused_days']} kun")
 
+    # UX2-C9: davomat bloki — jarimaga ta'sir qiladigan raqamlar endi shu
+    # yerda (ilgari faqat «Mening oyligim» ostidagi inline tugmada, 3 bosish).
+    att_present = stats.get("attendance_present_days", 0)
+    att_late = stats.get("attendance_late_minutes", 0)
+    att_absent = stats.get("attendance_absent_days", 0)
+    if att_present or att_late or att_absent:
+        lines.append("")
+        lines.append("<b>Davomat (shu oy):</b>")
+        lines.append(f"  Kelgan: {att_present} kun")
+        if att_late:
+            lines.append(f"  Kechikish: {att_late} daq")
+        if att_absent:
+            lines.append(f"  Kelmagan: {att_absent} kun")
+
     await message.answer("\n".join(lines))
 
 

@@ -927,6 +927,16 @@ async def attendance_late_stats(telegram_id: int, days: int = 7) -> list[dict] |
     return resp.json()
 
 
+async def attendance_dashboard_bot(telegram_id: int) -> dict | None:
+    """UX2-W4 (C5): bugungi jonli davomat holati (web dashboard bilan bir xil
+    hisob) — faqat rahbarlar; ruxsat yo'q bo'lsa None."""
+    resp = await _get_client().get(f"/attendance/dashboard-bot/{telegram_id}")
+    if resp.status_code == 403:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_attendance_digest_time(telegram_id: int) -> dict | None:
     """Davomat digesti vaqtlari (rahbarlar). Ruxsat yo'q — None."""
     resp = await _get_client().get(f"/attendance/digest-time/{telegram_id}")

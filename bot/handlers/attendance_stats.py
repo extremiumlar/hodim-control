@@ -74,19 +74,71 @@ def format_late_stats(rows: list[dict], days: int) -> str:
     return "\n".join(lines)
 
 
-async def _kb(days: int) -> InlineKeyboardMarkup:
+async def _kb(days: int, *, status_view: bool = False) -> InlineKeyboardMarkup:
     period_row = [
         InlineKeyboardButton(
-            text=("✅ " if d == days else "") + label, callback_data=f"attstat:show:{d}"
+            text=("✅ " if d == days and not status_view else "") + label,
+            callback_data=f"attstat:show:{d}",
         )
         for d, label in PERIODS
     ]
     rows = [period_row]
+    # UX2-C5: «Bugungi holat» — kim keldi/kelmadi/kechikdi ISMLAR bilan;
+    # ilgari bu ma'lumot botda umuman yo'q edi (faqat saytda).
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=("✅ " if status_view else "") + "👥 Bugungi holat",
+                callback_data="attstat:status",
+            )
+        ]
+    )
     if await group_registry.get_group_ids("main"):
         rows.append(
             [InlineKeyboardButton(text="📤 Guruhga yuborish", callback_data=f"attstat:send:{days}")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_today_status(dash: dict) -> str:
+    """«Bugungi holat» matni — web «Bugun» tabining bot ko'rinishi."""
+    s = dash.get("summary", {})
+    lines = [
+        f"👥 <b>Bugungi davomat</b> ({dash.get('today', '')})",
+        "",
+        f"Keldi: <b>{s.get('checked_in_today', 0)}/{s.get('working_today', 0)}</b>"
+        f" · Hozir ofisda: {s.get('present_now', 0)}"
+        f" · Ketdi: {s.get('left_today', 0)}",
+    ]
+    not_come = dash.get("not_come", [])
+    if not_come:
+        lines.append("")
+        lines.append(f"❌ <b>Kelmagan ({len(not_come)}):</b>")
+        for p in not_come:
+            lines.append(
+                f"  • {html.escape(p['full_name'].strip())} (jadval {p.get('schedule_start', '—')})"
+            )
+    late_list = dash.get("late_list", [])
+    if late_list:
+        lines.append("")
+        lines.append(f"⏱ <b>Kechikdi ({len(late_list)}):</b>")
+        for p in late_list:
+            lines.append(f"  • {html.escape(p['user_name'].strip())} +{p['late_minutes']} daq")
+    excused = dash.get("excused_today", [])
+    if excused:
+        lines.append("")
+        lines.append(
+            "🌿 Sababli: " + ", ".join(html.escape(p["full_name"].strip()) for p in excused)
+        )
+    day_off = dash.get("on_day_off", [])
+    if day_off:
+        lines.append(
+            "🌙 Dam olishda: " + ", ".join(html.escape(p["full_name"].strip()) for p in day_off)
+        )
+    if not not_come and not late_list:
+        lines.append("")
+        lines.append("✅ Hamma o'z vaqtida keldi!")
+    return "\n".join(lines)
 
 
 @router.message(F.text == BTN_ATTENDANCE_STATS)
@@ -101,12 +153,40 @@ async def show_attendance_stats(message: Message, state: FSMContext) -> None:
         await message.answer("⚠️ Statistikani olishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
         return
     if rows is None:
-        await message.answer("Bu bo'lim faqat rahbarlar (HR/ROP/Boshliq) uchun.")
+        await message.answer("Bu bo'lim faqat rahbarlar (HR/ROP/Boshliq/Dasturchi) uchun.")
         return
     chunks = _split_for_telegram(format_late_stats(rows, days))
     for i, chunk in enumerate(chunks):
         is_last = i == len(chunks) - 1
         await message.answer(chunk, reply_markup=await _kb(days) if is_last else None)
+
+
+@router.callback_query(F.data == "attstat:status")
+async def show_today_status(callback: CallbackQuery) -> None:
+    """UX2-C5: «Bugungi holat» — kim keldi/kelmadi/kechikdi (ismlar bilan)."""
+    try:
+        dash = await api_client.attendance_dashboard_bot(callback.from_user.id)
+    except Exception:
+        await callback.answer("Holatni olishda xatolik yuz berdi.", show_alert=True)
+        return
+    if dash is None:
+        await callback.answer("Faqat rahbarlar uchun.", show_alert=True)
+        return
+
+    chunks = _split_for_telegram(format_today_status(dash))
+    try:
+        if len(chunks) == 1:
+            await callback.message.edit_text(chunks[0], reply_markup=await _kb(7, status_view=True))
+        else:
+            await callback.message.edit_text(chunks[0])
+    except Exception:
+        pass  # "message is not modified" — e'tiborsiz
+    for i, extra in enumerate(chunks[1:]):
+        is_last = i == len(chunks) - 2
+        await callback.message.answer(
+            extra, reply_markup=await _kb(7, status_view=True) if is_last else None
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("attstat:show:"))
@@ -166,7 +246,9 @@ async def send_to_group(callback: CallbackQuery) -> None:
         return
     main_chat_ids = await group_registry.get_group_ids("main")
     if not main_chat_ids:
-        await callback.answer("Guruh sozlanmagan (/guruh_biriktir main).", show_alert=True)
+        await callback.answer(
+            "Guruh sozlanmagan — GURUH ICHIDA /guruh_biriktir main deb yozing.", show_alert=True
+        )
         return
 
     chunks = _split_for_telegram(format_late_stats(rows, days))

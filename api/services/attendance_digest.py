@@ -290,8 +290,10 @@ def build_evening_text(data: dict) -> str:
     ]
     if office:
         lines += [""]
+        # UX2-C12: guruhga har kuni chiqadigan satr — to'g'ri o'zbekcha bo'lsin
         lines += [
-            f"🖥 {_name(u)} {OFFICE_ASSUMED_AFTER_HM} da o'tmadi demak u officeda."
+            f"🖥 {_name(u)} — «Keldim» bosmagan, {OFFICE_ASSUMED_AFTER_HM} dan keyin "
+            "ofisda deb hisoblanadi."
             for u in office
         ]
 

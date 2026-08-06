@@ -55,6 +55,11 @@ async def main() -> None:
             allowed_updates=allowed_update_types(dp),
             drop_pending_updates=False,
         )
+        # UX2-C8: webhook rejimida dp.startup ishlamaydi — "/" menyusi shu
+        # yerda o'rnatiladi (bir marta yetadi, Telegram saqlab qoladi).
+        from bot.setup import setup_bot_commands
+
+        await setup_bot_commands(bot)
         print(f"Webhook o'rnatildi:\n  {url}")
         print("Sekret X-Telegram-Bot-Api-Secret-Token sarlavhasida uzatiladi (URL'da emas).")
         print("Endi Telegram update'lari shu manzilga keladi.")

@@ -2,11 +2,11 @@ import html
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
 from bot.config import FRONTEND_URL
-from bot.keyboards import BTN_KPI, BTN_NORM, BTN_PANEL, BTN_TASKS
+from bot.keyboards import BTN_CHECKIN, BTN_KPI, BTN_NORM, BTN_PANEL, BTN_TASKS
 
 router = Router(name="menu")
 
@@ -66,6 +66,22 @@ async def show_kpi(message: Message, state: FSMContext) -> None:
     await message.answer(
         f"💰 So'nggi hisoblangan davr: <b>{bonus['period']}</b>.\n"
         "Bonus tafsiloti uchun saytga kiring (Panelim tugmasi)."
+    )
+
+
+@router.message(F.text == BTN_CHECKIN)
+async def show_checkin(message: Message, state: FSMContext) -> None:
+    """UX2-W4 (C1): «Keldim/Ketdim» — davomat sahifasiga to'g'ridan-to'g'ri
+    havola. Ilgari bot «Keldim»ni bosing» deb yozar, lekin BOSADIGAN JOY
+    bermasdi — xodim saytni o'zi topib ochishi kerak edi."""
+    await state.clear()
+    await message.answer(
+        "Davomat sahifasi — GPS + Face ID bilan «Keldim»/«Ketdim» shu yerda:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Keldim / Ketdim sahifasi", url=f"{FRONTEND_URL}/check-in")]
+            ]
+        ),
     )
 
 

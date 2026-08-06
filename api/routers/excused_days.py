@@ -340,10 +340,20 @@ async def _decide_excused_day(
 
     employee = await db.get(User, item.user_id)
     if employee and employee.telegram_id:
-        verdict = "✅ tasdiqlandi" if item.status == ExcusedStatus.approved.value else "❌ rad etildi"
+        # UX2-C11: xabar endi sababni va kim qaror qilganini aytadi; rad
+        # etilganda keyingi qadam ham — ilgari xodim nima qilishni bilmasdi
+        # (qayta so'rash MUMKIN edi, lekin hech qayerda aytilmagan).
+        approved = item.status == ExcusedStatus.approved.value
+        verdict = "✅ tasdiqlandi" if approved else "❌ rad etildi"
+        tail = (
+            ""
+            if approved
+            else "\nSababni aniqlashtirib qayta so'rov yuborishingiz mumkin."
+        )
         await notify_user(
             db, employee, Category.DECISIONS,
-            f"Sababli kun so'rovingiz ({item.date}) {verdict}.",
+            f"Sababli kun so'rovingiz ({item.date} — {html.escape(item.reason)}) "
+            f"{verdict} ({decider.full_name}).{tail}",
             data={"path": "/me/excused"},
         )
 

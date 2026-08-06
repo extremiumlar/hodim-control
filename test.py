@@ -1588,6 +1588,72 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("UX2-W1 tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- UX2-W4: bot dashboard + statistika davomat bloki + validatsiya --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as f:
+                secret = next(
+                    (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")),
+                    "",
+                )
+            bot_h = {"X-Bot-Secret": secret}
+
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444806,'T-BotMgr','hr',1,1,datetime('now'))")
+            mgr_uid = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444807,'T-BotEmp','employee',1,1,datetime('now'))")
+            emp_uid = cur.lastrowid
+            # T-BotEmp'ga shu oyda davomat: 1 kelgan kun (20 daq kechikish) + 1 absent
+            first_day = date.today().replace(day=1).isoformat()
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, check_out_time, status,"
+                " late_minutes, early_leave_minutes, worked_minutes, created_at, updated_at)"
+                " values (?,?,datetime('now','-30 hours'),datetime('now','-22 hours'),'late',20,0,480,"
+                " datetime('now'),datetime('now'))", (emp_uid, first_day))
+            if date.today().day >= 2:
+                second_day = date.today().replace(day=2).isoformat()
+                cur.execute(
+                    "insert into attendance (user_id, date, status, late_minutes,"
+                    " early_leave_minutes, worked_minutes, created_at, updated_at)"
+                    " values (?,?,'absent',0,0,0,datetime('now'),datetime('now'))",
+                    (emp_uid, second_day))
+            conn.commit()
+
+            # C5: dashboard-bot — rahbar 200, xodim 403
+            r = client.get(f"{API_BASE}/attendance/dashboard-bot/999444806", headers=bot_h)
+            check("W4: dashboard-bot rahbarga -> 200 + summary/late_list",
+                  r.status_code == 200 and "summary" in r.json() and "late_list" in r.json(),
+                  f"kod={r.status_code}")
+            r2 = client.get(f"{API_BASE}/attendance/dashboard-bot/999444807", headers=bot_h)
+            check("W4: dashboard-bot xodimga -> 403", r2.status_code == 403, f"kod={r2.status_code}")
+
+            # C9: statistikada davomat bloki
+            r3 = client.get(f"{API_BASE}/stats/my/999444807", headers=bot_h)
+            b3 = r3.json() if r3.status_code == 200 else {}
+            expected_absent = 1 if date.today().day >= 2 else 0
+            check("W4: my-stats davomat maydonlari (1 kelgan, 20 daq, absent)",
+                  b3.get("attendance_present_days") == 1
+                  and b3.get("attendance_late_minutes") == 20
+                  and b3.get("attendance_absent_days") == expected_absent,
+                  str({k: v for k, v in b3.items() if k.startswith("attendance")}))
+
+            # C10: sabab juda qisqa -> 422 (schema min_length)
+            r4 = client.post(f"{API_BASE}/excused-days", headers=bot_h,
+                             json={"telegram_id": 999444807, "reason": "x"})
+            check("W4: 1-belgili sabab -> 422", r4.status_code == 422, f"kod={r4.status_code}")
+
+            for u in (mgr_uid, emp_uid):
+                cur.execute("delete from attendance where user_id=?", (u,))
+                cur.execute("delete from users where id=?", (u,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("UX2-W4 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
         print("\n-- UX-A6: yuz so'rovini webdan hal qilish --")
         try:
             conn = db()

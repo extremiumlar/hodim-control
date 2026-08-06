@@ -23,6 +23,8 @@ from api.schemas import (
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from crm import get_crm_adapter
 from db.models import (
+    Attendance,
+    AttendanceStatus,
     CrmLeadState,
     DailyResult,
     DailyResultSource,
@@ -189,6 +191,23 @@ async def _my_stats_for_user(db: AsyncSession, user: User) -> MyStatsOut:
         )
     ) or 0
 
+    # UX2-W4 (C9): shu oy davomati — kelgan kunlar, jami kechikish, kelmadi.
+    att_rows = (
+        await db.execute(
+            select(
+                func.count(Attendance.id).filter(Attendance.check_in_time.isnot(None)),
+                func.coalesce(func.sum(Attendance.late_minutes), 0),
+                func.count(Attendance.id).filter(
+                    Attendance.status == AttendanceStatus.absent.value
+                ),
+            ).where(
+                Attendance.user_id == user.id,
+                Attendance.date >= month_start,
+                Attendance.date <= today,
+            )
+        )
+    ).one()
+
     return MyStatsOut(
         period=today.strftime("%Y-%m"),
         today=await today_metric_rows(db, user),
@@ -197,6 +216,9 @@ async def _my_stats_for_user(db: AsyncSession, user: User) -> MyStatsOut:
         tasks_done=tasks_done,
         tasks_total=tasks_total,
         excused_days=excused_days,
+        attendance_present_days=int(att_rows[0] or 0),
+        attendance_late_minutes=int(att_rows[1] or 0),
+        attendance_absent_days=int(att_rows[2] or 0),
     )
 
 

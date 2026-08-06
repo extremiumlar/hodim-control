@@ -29,8 +29,23 @@ BTN_ANKETA = "📝 Anketa"
 BTN_KNOWLEDGE = "📚 Bilim bazasi"
 BTN_SALES_AI = "🤖 Sotuv AI"
 BTN_CANCEL = "❌ Bekor qilish"
+# UX2-W4 (C1): xodim davomatga botdan bir bosishda yetsin — ilgari bot
+# «Keldim»ni bosing» der, lekin bosadigan joy BERMASdi.
+BTN_CHECKIN = "✅ Keldim / Ketdim"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
+
+# UX2-W4 (C3): FSM holatida turgan foydalanuvchi menyu tugmasini bossa, tugma
+# matni "sabab" sifatida HR'ga ketib qolardi. Har bir matn-kutuvchi handler
+# `~F.text.in_(ALL_MENU_BUTTONS)` filtri bilan himoyalanadi.
+ALL_MENU_BUTTONS = frozenset({
+    BTN_TASKS, BTN_NORM, BTN_KPI, BTN_PAYROLL, BTN_PANEL, BTN_EXCUSED,
+    BTN_ASSIGN_TASK, BTN_MY_STATS, BTN_GLOBAL_STATS, BTN_ATTENDANCE_STATS,
+    BTN_LEAD_STATS, BTN_SCHEDULE, BTN_HOURLY_PLAN, BTN_HOURLY_PLAN_CONTROL,
+    BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
+    BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
+    BTN_SALES_AI, BTN_CHECKIN,
+})
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
 # bo'lsa) — barcha tugmalar ko'rinadi (orqaga moslik).
@@ -55,6 +70,13 @@ def main_menu(
     show_lead_stats = role in MANAGER_ROLES or bool(sales_metrics)
 
     rows: list[list[KeyboardButton]] = []
+
+    # UX2-C1: davomat kuzatiladigan har kimga (Boshliqdan tashqari) —
+    # «Keldim/Ketdim» sahifasiga to'g'ridan-to'g'ri yo'l. Eng tepada, chunki
+    # bu kuniga 2 marta bosiladigan eng muhim tugma.
+    if role != "boss":
+        rows.append([KeyboardButton(text=BTN_CHECKIN)])
+
     if flags.get("tasks"):
         rows.append([KeyboardButton(text=BTN_TASKS)])
 

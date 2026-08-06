@@ -8,7 +8,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_CANCEL, BTN_EXCUSED, BTN_MARK_EXCUSED, cancel_menu, menu_for_user
+from bot.keyboards import (
+    ALL_MENU_BUTTONS,
+    BTN_CANCEL,
+    BTN_EXCUSED,
+    BTN_MARK_EXCUSED,
+    cancel_menu,
+    menu_for_user,
+)
 
 router = Router(name="excused")
 
@@ -34,13 +41,35 @@ class ExplanationFSM(StatesGroup):
     waiting_text = State()
 
 
-def _date_kb() -> InlineKeyboardMarkup:
+# UX2-W4: sana oynasi — o'tmish/kelajakka cheksiz sana kiritib bo'lmasin
+# (1990 yoki 2030 kabi xato terishlar HR'ga borib o'tirmasin).
+MAX_DATE_RANGE_DAYS = 60
+
+
+def _date_in_range(day: date) -> bool:
+    return abs((day - date.today()).days) <= MAX_DATE_RANGE_DAYS
+
+
+def _resolve_choice(choice: str) -> date:
+    if choice == "yesterday":
+        return date.today() - timedelta(days=1)
+    if choice == "tomorrow":
+        return date.today() + timedelta(days=1)
+    return date.today()
+
+
+def _date_kb(prefix: str = "excused_date") -> InlineKeyboardMarkup:
+    # UX2-C4: «Kecha» — eng ko'p uchraydigan holat ("kecha kasal edim") uchun
+    # endi sanani qo'lda terish shart emas. C(B4): bekor qilish ham shu yerda —
+    # ilgari birinchi bosqichda chiqishning klaviaturadagi yo'li yo'q edi.
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Bugun", callback_data="excused_date:today"),
-                InlineKeyboardButton(text="Ertaga", callback_data="excused_date:tomorrow"),
-            ]
+                InlineKeyboardButton(text="Kecha", callback_data=f"{prefix}:yesterday"),
+                InlineKeyboardButton(text="Bugun", callback_data=f"{prefix}:today"),
+                InlineKeyboardButton(text="Ertaga", callback_data=f"{prefix}:tomorrow"),
+            ],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="excused_cancel")],
         ]
     )
 
@@ -69,10 +98,18 @@ async def cancel_excused_request(message: Message, state: FSMContext) -> None:
     await message.answer("Bekor qilindi.", reply_markup=menu_for_user(user))
 
 
+@router.callback_query(F.data == "excused_cancel")
+async def cancel_excused_inline(callback: CallbackQuery, state: FSMContext) -> None:
+    """Inline «Bekor qilish» — sana bosqichida ham chiqish yo'li bo'lsin (B4)."""
+    await state.clear()
+    await callback.message.edit_text("Bekor qilindi.")
+    await callback.answer()
+
+
 @router.callback_query(StateFilter(ExcusedDayFSM.waiting_for_date), F.data.startswith("excused_date:"))
 async def pick_excused_date(callback: CallbackQuery, state: FSMContext) -> None:
     choice = callback.data.split(":", 1)[1]
-    day = date.today() if choice == "today" else date.today() + timedelta(days=1)
+    day = _resolve_choice(choice)
     await state.update_data(excused_date=day.isoformat())
     await state.set_state(ExcusedDayFSM.waiting_for_reason)
     await callback.message.edit_text(f"Tanlandi: {day.isoformat()}.")
@@ -83,7 +120,7 @@ async def pick_excused_date(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@router.message(StateFilter(ExcusedDayFSM.waiting_for_date))
+@router.message(StateFilter(ExcusedDayFSM.waiting_for_date), ~F.text.in_(ALL_MENU_BUTTONS))
 async def receive_excused_date_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     try:
@@ -95,6 +132,13 @@ async def receive_excused_date_text(message: Message, state: FSMContext) -> None
             reply_markup=_date_kb(),
         )
         return
+    if not _date_in_range(day):
+        await message.answer(
+            f"Sana bugundan ko'pi bilan {MAX_DATE_RANGE_DAYS} kun farq qilishi mumkin — "
+            "tekshirib qayta yozing.",
+            reply_markup=_date_kb(),
+        )
+        return
     await state.update_data(excused_date=day.isoformat())
     await state.set_state(ExcusedDayFSM.waiting_for_reason)
     await message.answer(
@@ -103,9 +147,13 @@ async def receive_excused_date_text(message: Message, state: FSMContext) -> None
     )
 
 
-@router.message(StateFilter(ExcusedDayFSM.waiting_for_reason))
+@router.message(StateFilter(ExcusedDayFSM.waiting_for_reason), ~F.text.in_(ALL_MENU_BUTTONS))
 async def receive_excused_reason(message: Message, state: FSMContext) -> None:
     reason = (message.text or "").strip()
+    if len(reason) < 3:
+        # Holat SAQLANADI — bo'sh/"." kabi sabab HR'ga borib o'tirmasin (C10).
+        await message.answer("Juda qisqa — sababni to'liqroq yozing.", reply_markup=cancel_menu())
+        return
     data = await state.get_data()
     excused_date = data.get("excused_date")
     await state.clear()
@@ -138,14 +186,7 @@ async def receive_excused_reason(message: Message, state: FSMContext) -> None:
 
 
 def _mark_excused_date_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Bugun", callback_data="mark_excused_date:today"),
-                InlineKeyboardButton(text="Ertaga", callback_data="mark_excused_date:tomorrow"),
-            ]
-        ]
-    )
+    return _date_kb(prefix="mark_excused_date")
 
 
 @router.message(F.text == BTN_MARK_EXCUSED)
@@ -197,7 +238,7 @@ async def choose_mark_excused_target(callback: CallbackQuery, state: FSMContext)
 @router.callback_query(StateFilter(MarkExcusedFSM.choosing_date), F.data.startswith("mark_excused_date:"))
 async def pick_mark_excused_date(callback: CallbackQuery, state: FSMContext) -> None:
     choice = callback.data.split(":", 1)[1]
-    day = date.today() if choice == "today" else date.today() + timedelta(days=1)
+    day = _resolve_choice(choice)
     await state.update_data(excused_date=day.isoformat())
     await state.set_state(MarkExcusedFSM.entering_reason)
     await callback.message.edit_text(f"Tanlandi: {day.isoformat()}.")
@@ -205,7 +246,7 @@ async def pick_mark_excused_date(callback: CallbackQuery, state: FSMContext) -> 
     await callback.answer()
 
 
-@router.message(StateFilter(MarkExcusedFSM.choosing_date))
+@router.message(StateFilter(MarkExcusedFSM.choosing_date), ~F.text.in_(ALL_MENU_BUTTONS))
 async def receive_mark_excused_date_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     try:
@@ -217,14 +258,24 @@ async def receive_mark_excused_date_text(message: Message, state: FSMContext) ->
             reply_markup=_mark_excused_date_kb(),
         )
         return
+    if not _date_in_range(day):
+        await message.answer(
+            f"Sana bugundan ko'pi bilan {MAX_DATE_RANGE_DAYS} kun farq qilishi mumkin — "
+            "tekshirib qayta yozing.",
+            reply_markup=_mark_excused_date_kb(),
+        )
+        return
     await state.update_data(excused_date=day.isoformat())
     await state.set_state(MarkExcusedFSM.entering_reason)
     await message.answer("Endi sababni yozib yuboring:", reply_markup=cancel_menu())
 
 
-@router.message(StateFilter(MarkExcusedFSM.entering_reason), F.text)
+@router.message(StateFilter(MarkExcusedFSM.entering_reason), F.text, ~F.text.in_(ALL_MENU_BUTTONS))
 async def receive_mark_excused_reason(message: Message, state: FSMContext) -> None:
     reason = (message.text or "").strip()
+    if len(reason) < 3:
+        await message.answer("Juda qisqa — sababni to'liqroq yozing.", reply_markup=cancel_menu())
+        return
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     excused_date = data.get("excused_date")
@@ -257,8 +308,10 @@ async def receive_mark_excused_reason(message: Message, state: FSMContext) -> No
     )
 
 
-@router.message(StateFilter(MarkExcusedFSM.entering_reason))
+@router.message(StateFilter(MarkExcusedFSM.entering_reason), ~F.text)
 async def non_text_mark_excused_reason(message: Message) -> None:
+    # ~F.text — faqat matn bo'lmagan xabarlar (rasm/stiker); menyu tugmasi
+    # matni bu yerda YUTILMAY, o'z handleriga o'tib ketadi (C3).
     await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
 
 
@@ -287,7 +340,7 @@ async def cancel_explanation(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(StateFilter(ExplanationFSM.waiting_text), F.text)
+@router.message(StateFilter(ExplanationFSM.waiting_text), F.text, ~F.text.in_(ALL_MENU_BUTTONS))
 async def receive_explanation(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
     data = await state.get_data()
@@ -326,7 +379,7 @@ async def receive_explanation(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(StateFilter(ExplanationFSM.waiting_text))
+@router.message(StateFilter(ExplanationFSM.waiting_text), ~F.text)
 async def non_text_explanation(message: Message) -> None:
     await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
 

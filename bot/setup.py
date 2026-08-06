@@ -46,11 +46,37 @@ def build_bot() -> Bot:
     return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
 
+async def setup_bot_commands(bot: Bot) -> None:
+    """UX2-W4 (C8): Telegram'ning "/" menyusi — ilgari umuman sozlanmagan edi,
+    /davomat_vaqt kabi buyruqlar faqat hujjatdan bilinardi. Polling'da
+    dp.startup orqali, webhook'da scripts/set_webhook.py orqali chaqiriladi
+    (ikkalasida ham bir marta yetadi — Telegram saqlab qoladi)."""
+    from aiogram.types import BotCommand
+
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Bosh menyu"),
+            BotCommand(command="statistika", description="Kunlik digest (guruhda, rahbar)"),
+            BotCommand(command="davomat_vaqt", description="Davomat digesti vaqti (rahbar)"),
+            BotCommand(command="guruhlar", description="Bot guruhlari ro'yxati (rahbar)"),
+        ]
+    )
+
+
 def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     """`storage` berilmasa MemoryStorage (polling — bitta doimiy jarayon).
     cPanel webhook rejimida api/routers/bot_webhook.py bazaviy storage beradi —
     Passenger ishchilari almashganda FSM holati yo'qolmasligi uchun."""
     dp = Dispatcher(storage=storage or MemoryStorage())
+
+    # Polling rejimida start_polling boshlanishida "/" menyusi o'rnatiladi
+    # (webhook rejimi uchun scripts/set_webhook.py xuddi shu funksiyani chaqiradi).
+    @dp.startup()
+    async def _set_commands() -> None:
+        try:
+            await setup_bot_commands(bot)
+        except Exception:
+            logger.exception("Bot buyruqlar menyusini o'rnatib bo'lmadi")
 
     # menu/stats routerlari FSM oqimlaridan (norms, assign_task) OLDIN turadi:
     # asosiy menyu tugmasi bosilganda u FSMning "istalgan matn" bosqichiga

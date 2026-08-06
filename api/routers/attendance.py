@@ -487,6 +487,20 @@ async def list_attendance(
 async def dashboard(
     _actor: User = Depends(_require_manager), db: AsyncSession = Depends(get_db)
 ) -> dict:
+    return await _dashboard_payload(db)
+
+
+@router.get("/dashboard-bot/{telegram_id}", dependencies=[Depends(verify_bot_secret)])
+async def dashboard_bot(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict:
+    """UX2-W4 (C5): «Bugungi holat» bot tabi — web dashboard bilan AYNAN bir
+    xil hisob (late-stats-bot naqshi: X-Bot-Secret + rahbar-rol tekshiruvi)."""
+    actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if not actor or not actor.is_active or actor.role not in MANAGER_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu bo'lim faqat rahbarlar uchun")
+    return await _dashboard_payload(db)
+
+
+async def _dashboard_payload(db: AsyncSession) -> dict:
     today = today_local()
     month_start = today.replace(day=1)
 
