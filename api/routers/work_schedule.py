@@ -23,6 +23,17 @@ router = APIRouter(prefix="/work-schedule", tags=["work-schedule"])
 
 MANAGER_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
 
+# HR kimning ish jadvali/dam kunini belgilay oladi.
+#
+# Dasturchi ATAYLAB shu ro'yxatda (egasining 2026-08-05 talabi): u ham
+# davomati kuzatiladigan xodim — kelib-ketishi yoziladi, kechki digestda
+# ko'rinadi — ya'ni uning ish grafigi va dam kunini ham kimdir yuritishi
+# kerak. Ilgari buni faqat Dasturchining o'zi yoki Boshliq qila olardi.
+#
+# Boshliq va ROP bu yerda YO'Q: ular HR'dan yuqori/yon turadi, ularning
+# grafigini HR belgilashi tashkiliy jihatdan noto'g'ri bo'lardi.
+HR_SCHEDULE_TARGET_ROLES = (Role.employee.value, Role.dasturchi.value)
+
 
 def _require_manager(user: User = Depends(get_current_user)) -> User:
     if user.role not in MANAGER_ROLES:
@@ -38,10 +49,11 @@ async def _get_user_or_404(db: AsyncSession, user_id: int) -> User:
 
 
 async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: User) -> User:
-    """Boshliq/Dasturchi — hammaga. HR — BARCHA faol 'Xodim' rolidagilarga
-    (ish jadvali/dam kuni norma bilan bir xil tor lavozim-qamrovda EMAS — HR
-    odatda kimning qachon ishlashi/dam olishini bilishi kerak, position.
-    managed_by_roles'ga qarab cheklash bu yerda foydasiz to'siq bo'lardi).
+    """Boshliq/Dasturchi — hammaga. HR — BARCHA faol 'Xodim' VA 'Dasturchi'
+    rolidagilarga (ish jadvali/dam kuni norma bilan bir xil tor lavozim-
+    qamrovda EMAS — HR odatda kimning qachon ishlashi/dam olishini bilishi
+    kerak, position.managed_by_roles'ga qarab cheklash bu yerda foydasiz
+    to'siq bo'lardi).
     ROP hamon can_manage_norms bilan cheklangan (faqat o'z jamoasi/lavozimi)."""
     from api.routers.norms import can_manage_norms  # circular importdan qochish
 
@@ -49,7 +61,7 @@ async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: Use
     if actor.role in (Role.boss.value, Role.dasturchi.value):
         return user
     if actor.role == Role.hr.value:
-        if user.role == Role.employee.value and user.is_active:
+        if user.role in HR_SCHEDULE_TARGET_ROLES and user.is_active:
             return user
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
     if not can_manage_norms(actor, user):

@@ -432,6 +432,18 @@ def run_tests(ctx: dict) -> None:
                 " values (?, ?, 'T-sinov', 'approved', datetime('now'))", (excused_uid, today.isoformat()))
             conn.commit()
 
+            # ⚠️ JONLI MA'LUMOT HIMOYASI: write_absent_records BUGUN uchun
+            # chaqiriladi va u HAQIQIY xodimlarga ham (hali check-in qilmagan
+            # bo'lsa) absent yozadi — kun hali tugamagan bo'lsa bu YOLG'ON
+            # yozuv bo'lib qoladi va matritsada "Kutilmoqda" o'rniga "Kelmadi"
+            # ko'rinadi. Chaqiruvdan OLDINGI id'larni eslab, test yaratganlarini
+            # (T-lardan tashqari haqiqiylarni ham) oxirida O'CHIRAMIZ.
+            before_ids = {
+                r[0] for r in conn.execute(
+                    "select id from attendance where date=?", (today.isoformat(),)
+                ).fetchall()
+            }
+
             async def _run_absent():
                 async with _async_session() as s:
                     return await _write_absent(s, today)
@@ -471,6 +483,19 @@ def run_tests(ctx: dict) -> None:
             names2 = [x["full_name"].strip() for x in r.json()]
             check("1.2: hech qachon kelmagan xodim employee-summary'da bor",
                   "T-Umuman-Yoq" in names2, f"{len(names2)} kishi ro'yxatda")
+
+            # Test yaratgan BARCHA bugungi absent yozuvlarini o'chiramiz —
+            # haqiqiy xodimlarnikini ham (kun tugagach kechki tick ularni
+            # o'zi qayta yozadi, hech narsa yo'qolmaydi).
+            after_rows = conn.execute(
+                "select id from attendance where date=?", (today.isoformat(),)
+            ).fetchall()
+            new_ids = [r[0] for r in after_rows if r[0] not in before_ids]
+            if new_ids:
+                cur2.execute(
+                    "delete from attendance where id in (%s)" % ",".join("?" * len(new_ids)),
+                    new_ids,
+                )
 
             for u in (ghost_uid, excused_uid, noop_uid):
                 cur2.execute("delete from attendance where user_id=?", (u,))
@@ -3229,13 +3254,19 @@ def test_hr_wide_employee_access() -> None:
         "insert into users (telegram_id, full_name, role, manager_id, bot_started, is_active, created_at)"
         " values (999901003,'T-HrWide-Emp',?,?,1,1,datetime('now'))", ("employee", rop_uid))
     emp_uid = cur.lastrowid
+    # Dasturchi roli — egasining 2026-08-05 talabi: HR uning ham ish grafigi
+    # va dam kunini belgilay olsin (ilgari 403 edi).
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999901004,'T-HrWide-Dev','dasturchi',1,1,datetime('now'))")
+    dev_uid = cur.lastrowid
     conn.commit()
 
     def cleanup_hw():
         try:
             conn2 = db()
             c2 = conn2.cursor()
-            uids = [hr_uid, rop_uid, emp_uid]
+            uids = [hr_uid, rop_uid, emp_uid, dev_uid]
             qm = ",".join("?" * len(uids))
             c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
             c2.execute(f"delete from work_schedule_weekly where user_id in ({qm})", uids)
@@ -3281,6 +3312,33 @@ def test_hr_wide_employee_access() -> None:
 
             r = client.get(f"{API_BASE}/work-schedule/{hr_uid}/weekly", headers=auth(hr_t))
             check("HR boshqa HR/ROP/Boshliq jadvaliga TEGA OLMAYDI (o'ziga ham) -> 403",
+                  r.status_code == 403, f"kod={r.status_code}")
+
+            # ── Dasturchi: HR endi uning grafigini ham yuritadi ──
+            r = client.get(f"{API_BASE}/work-schedule/{dev_uid}/weekly", headers=auth(hr_t))
+            check("HR DASTURCHI jadvalini ko'radi -> 200 (ilgari 403)",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.put(
+                f"{API_BASE}/work-schedule/{dev_uid}/weekly", headers=auth(hr_t),
+                json={"days": [
+                    {"weekday": wd, "is_working": wd < 5, "start_time": "09:00" if wd < 5 else None,
+                     "end_time": "18:00" if wd < 5 else None}
+                    for wd in range(7)
+                ]},
+            )
+            check("HR DASTURCHI jadvalini o'zgartira oladi -> 200",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.put(
+                f"{API_BASE}/work-schedule/{dev_uid}/override", headers=auth(hr_t),
+                json={"date": "2020-06-07", "is_working": False, "note": "T-sinov: dasturchi dam kuni"},
+            )
+            check("HR DASTURCHIGA dam kuni belgilay oladi -> 200",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+
+            r = client.get(f"{API_BASE}/work-schedule/{rop_uid}/weekly", headers=auth(hr_t))
+            check("ROP jadvali HR uchun HAMON yopiq -> 403 (qamrov kengaymadi)",
                   r.status_code == 403, f"kod={r.status_code}")
 
             # ── Sababli kun: HR/Boshliq/Dasturchi xodim nomidan darhol belgilaydi ──
