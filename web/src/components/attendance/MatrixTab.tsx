@@ -51,13 +51,16 @@ function wdIndex(iso: string): number {
 
 const EXCUSE_PRESETS = ["Kasallik", "Oilaviy holat", "Ta'til", "Xizmat safari"];
 
-/** Katak «bo'sh»mi — bosganda ko'rsatadigan hech narsasi yo'q. */
+/** Katak «bo'sh»mi — bosganda ko'rsatadigan ham, tuzatadigan ham hech narsa yo'q.
+ *
+ * DIQQAT (regressiya tarixi): bir vaqt bu yerga `weekend` ham kirgan edi va
+ * DAM OLISH kunini tuzatish butunlay imkonsiz bo'lib qolgandi — holbuki
+ * xodim shanba kuni chiqib «Keldim» bosmagan bo'lsa, aynan o'sha katakni
+ * bosib vaqt kiritish kerak. Endi faqat KELAJAK kunlar o'lik (ular uchun
+ * yozuv yaratishning ma'nosi yo'q — backend ham bugundan keyingi sanani
+ * qabul qilmaydi). */
 function isInert(cell: MatrixCell): boolean {
-  return (
-    (cell.status === "future" || cell.status === "weekend") &&
-    !cell.check_in &&
-    cell.flags.length === 0
-  );
+  return cell.status === "future" && !cell.check_in && cell.flags.length === 0;
 }
 
 /** Bitta matritsa katagi — 26px kvadrat, holat rangi + qisqa mazmun. */
@@ -545,6 +548,16 @@ export default function MatrixTab({
                 </DialogTitle>
               </DialogHeader>
               <CellDetail cell={cellDialog.cell} />
+
+              {/* Dam olish kuni ham tuzatiladi — xodim o'sha kuni chiqqan
+                  bo'lishi mumkin (aks holda bu vaqt hech qayerda yozilmay
+                  qolardi). */}
+              {cellDialog.cell.status === "weekend" && canEdit && (
+                <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  Bu kun jadval bo'yicha dam olish. Xodim baribir ishlagan bo'lsa —
+                  «Tahrirlash» bilan kelgan/ketgan vaqtini kiriting.
+                </p>
+              )}
 
               {/* A6: kelmagan kun uchun — sababli qilish (shu yerda) */}
               {canEdit && cellDialog.cell.status === "absent" && (

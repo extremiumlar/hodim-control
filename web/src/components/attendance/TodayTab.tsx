@@ -8,8 +8,20 @@
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Bell, BellRing, CalendarCheck, CalendarOff, Hourglass, UserX, Users } from "lucide-react";
+import {
+  Bell,
+  BellRing,
+  CalendarCheck,
+  CalendarOff,
+  Hourglass,
+  Pencil,
+  UserX,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
+import EditAttendanceDialog, {
+  type EditPreset,
+} from "@/components/attendance/EditAttendanceDialog";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +59,10 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
   // A5: «Sababli» dialogi — xodim va sana ma'lum, faqat sabab so'raladi.
   const [excuseFor, setExcuseFor] = useState<{ userId: number; name: string } | null>(null);
   const [excuseReason, setExcuseReason] = useState("");
+  // Bugungi vaqtni SHU YERDA tuzatish — rahbar «Oylik jadval» tabiga o'tib,
+  // katak qidirib o'tirmasin (eng ko'p so'raladigan amal: xodim noto'g'ri
+  // vaqtda bosgan yoki umuman bosmagan bugungi kunni to'g'rilash).
+  const [editPreset, setEditPreset] = useState<EditPreset | null>(null);
 
   if (dashQuery.isLoading) {
     return (
@@ -86,6 +102,40 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
   const attendedPct = s.working_today > 0 ? Math.round((s.checked_in_today / s.working_today) * 100) : 0;
   const lateList = dash.late_list ?? [];
   const remindable = dash.not_come.filter((p) => p.telegram_linked).length;
+
+  /** Bugungi qatorlarda ko'rinadigan kichik «✎ tuzatish» tugmasi. */
+  function EditBtn({
+    userId,
+    userName,
+    checkIn,
+    checkOut,
+  }: {
+    userId: number;
+    userName: string;
+    checkIn: string | null;
+    checkOut: string | null;
+  }) {
+    if (!canEdit || !dash) return null;
+    return (
+      <button
+        type="button"
+        title="Vaqtni qo'lda tuzatish"
+        className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-primary"
+        onClick={() =>
+          setEditPreset({
+            userId,
+            userName,
+            date: dash.today,
+            checkIn: checkIn ? fmtTime(checkIn) : null,
+            checkOut: checkOut ? fmtTime(checkOut) : null,
+            note: null,
+          })
+        }
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </button>
+    );
+  }
 
   function submitExcuse() {
     if (!excuseFor) return;
@@ -250,6 +300,14 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
                           Sababli
                         </Button>
                       )}
+                      {/* Xodim aslida kelgan-u, «Keldim» bosmagan bo'lsa —
+                          vaqtni shu yerda qo'lda kiritish. */}
+                      <EditBtn
+                        userId={p.user_id}
+                        userName={p.full_name}
+                        checkIn={null}
+                        checkOut={null}
+                      />
                     </span>
                   </li>
                 ))}
@@ -302,9 +360,15 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
                       {nm(p.user_name)}
                       {p.left && <span className="ml-1.5 text-xs text-slate-400">· ketgan</span>}
                     </Link>
-                    <span className="shrink-0 tabular-nums text-slate-500">
+                    <span className="flex shrink-0 items-center gap-1 tabular-nums text-slate-500">
                       {fmtTime(p.check_in_time)}
-                      <span className="ml-1.5 font-semibold text-rose-600">+{p.late_minutes} daq</span>
+                      <span className="font-semibold text-rose-600">+{p.late_minutes} daq</span>
+                      <EditBtn
+                        userId={p.user_id}
+                        userName={p.user_name}
+                        checkIn={p.check_in_time}
+                        checkOut={null}
+                      />
                     </span>
                   </li>
                 ))}
@@ -333,11 +397,17 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
                     >
                       {nm(p.user_name)}
                     </Link>
-                    <span className="shrink-0 tabular-nums text-slate-500">
+                    <span className="flex shrink-0 items-center gap-1 tabular-nums text-slate-500">
                       {fmtTime(p.check_in_time)}
                       {p.late_minutes > 0 && (
-                        <span className="ml-1.5 font-semibold text-rose-600">+{p.late_minutes}</span>
+                        <span className="font-semibold text-rose-600">+{p.late_minutes}</span>
                       )}
+                      <EditBtn
+                        userId={p.user_id}
+                        userName={p.user_name}
+                        checkIn={p.check_in_time}
+                        checkOut={null}
+                      />
                     </span>
                   </li>
                 ))}
@@ -360,9 +430,15 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
                       >
                         {nm(p.full_name)}
                       </Link>
-                      <span className="shrink-0 tabular-nums text-xs text-slate-500">
+                      <span className="flex shrink-0 items-center gap-1 tabular-nums text-xs text-slate-500">
                         {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)} ·{" "}
                         {Math.round((p.worked_minutes / 60) * 10) / 10} st
+                        <EditBtn
+                          userId={p.user_id}
+                          userName={p.full_name}
+                          checkIn={p.check_in_time}
+                          checkOut={p.check_out_time}
+                        />
                       </span>
                     </li>
                   ))}
@@ -428,6 +504,17 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
           )}
         </CardContent>
       </Card>
+
+      {/* Bugungi vaqtni qo'lda tuzatish — «Oylik jadval» tabidagi bilan
+          AYNAN bir xil dialog (yagona komponent, bitta mantiq). */}
+      {canEdit && (
+        <EditAttendanceDialog
+          open={editPreset !== null}
+          row={null}
+          preset={editPreset}
+          onClose={() => setEditPreset(null)}
+        />
+      )}
 
       {/* A5: «Sababli» dialogi — xodim/sana ma'lum, faqat sabab. */}
       <Dialog
