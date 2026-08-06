@@ -34,8 +34,11 @@ export default function TodayScheduleChip() {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 text-sm font-semibold text-indigo-800">
       <Clock className="h-4 w-4 shrink-0" />
+      {/* source="unset" kunlarda API start/end ni null qaytaradi, lekin
+          check-in mantiqida standart 09:00–18:00 amal qiladi — "Bugun: –"
+          bo'lib qolmasligi uchun o'sha standartni ko'rsatamiz. */}
       <span className="tabular-nums">
-        Bugun: {today.start_time}–{today.end_time}
+        Bugun: {today.start_time ?? "09:00"}–{today.end_time ?? "18:00"}
       </span>
       {today.source === "unset" && (
         <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500">
