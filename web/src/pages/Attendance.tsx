@@ -54,16 +54,24 @@ export default function Attendance() {
       <Tabs
         value={tab}
         onValueChange={(v) => {
-          // replace emas — orqaga tugmasi tablar orasida ishlashi tabiiy
-          setSearchParams({ tab: v });
+          // replace emas — orqaga tugmasi tablar orasida ishlashi tabiiy.
+          // UX2-A8: boshqa parametrlar (masalan ?month=) O'CHMASIN — ilgari
+          // butun query almashtirib yuborilardi.
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("tab", v);
+            return next;
+          });
         }}
       >
-        <TabsList>
-          <TabsTrigger value="bugun">Bugun</TabsTrigger>
-          <TabsTrigger value="jadval">Oylik jadval</TabsTrigger>
-          <TabsTrigger value="hisobot">Hisobot</TabsTrigger>
+        {/* UX2-A2: telefonda (360px) 4 tab sig'masa — gorizontal aylanadi,
+            sahifani cho'zmaydi. */}
+        <TabsList className="w-full justify-start overflow-x-auto md:w-auto">
+          <TabsTrigger value="bugun" className="flex-shrink-0">Bugun</TabsTrigger>
+          <TabsTrigger value="jadval" className="flex-shrink-0">Oylik jadval</TabsTrigger>
+          <TabsTrigger value="hisobot" className="flex-shrink-0">Hisobot</TabsTrigger>
           {canSeeSettings && (
-            <TabsTrigger value="sozlamalar">
+            <TabsTrigger value="sozlamalar" className="flex-shrink-0">
               Sozlamalar
               {reregCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-700">
@@ -75,7 +83,7 @@ export default function Attendance() {
         </TabsList>
 
         <TabsContent value="bugun" className="mt-4">
-          <TodayTab active={tab === "bugun"} />
+          <TodayTab active={tab === "bugun"} canEdit={canEdit} />
         </TabsContent>
         <TabsContent value="jadval" className="mt-4">
           <MatrixTab active={tab === "jadval"} canEdit={canEdit} isDasturchi={isDasturchi} />

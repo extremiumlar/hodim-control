@@ -1498,6 +1498,96 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("UX-A1/A5 tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- UX2-W1: dashboard late_list/user_id + remind-all --")
+        try:
+            conn = db()
+            cur = conn.cursor()
+            wd = date.today().weekday()
+            today_iso2 = date.today().isoformat()
+
+            # Kechikkan va allaqachon ketgan T-xodim — late_list'da bo'lishi kerak
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444804,'T-LateGuy','employee',1,1,datetime('now'))")
+            lg_uid = cur.lastrowid
+            cur.execute(
+                "insert into attendance (user_id, date, check_in_time, check_out_time, status,"
+                " late_minutes, early_leave_minutes, worked_minutes, created_at, updated_at)"
+                " values (?,?,datetime('now','-4 hours'),datetime('now','-1 hours'),'late',25,0,180,"
+                " datetime('now'),datetime('now'))",
+                (lg_uid, today_iso2))
+            conn.commit()
+
+            r = client.get(f"{API_BASE}/attendance/dashboard", headers=auth(boss_t))
+            body = r.json() if r.status_code == 200 else {}
+            ll = body.get("late_list", [])
+            lg = next((x for x in ll if x["user_id"] == lg_uid), None)
+            check("W1: late_list'da kechikkan xodim (25 daq, ketgan)",
+                  lg is not None and lg["late_minutes"] == 25 and lg["left"] is True, str(lg))
+            check("W1: late_list kamayish tartibida",
+                  ll == sorted(ll, key=lambda x: x["late_minutes"], reverse=True),
+                  str([x["late_minutes"] for x in ll]))
+            check("W1: recent yozuvlarida user_id bor",
+                  all("user_id" in x for x in body.get("recent", [])),
+                  f"recent={len(body.get('recent', []))}")
+            check("W1: in_office yozuvlarida user_id bor",
+                  all("user_id" in x for x in body.get("in_office", [])),
+                  f"in_office={len(body.get('in_office', []))}")
+
+            # remind-all XAVFSIZ sinovi: yuborishdan OLDIN limit tekshiriladi,
+            # shuning uchun BARCHA haqiqiy xodimlarga bugunga 2 tadan audit izi
+            # qo'yamiz (ularga HECH NARSA yuborilmaydi); faqat fake-telegram'li
+            # T-xodim yuborish yo'lidan o'tadi (Telegram 'chat not found' — jim).
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999444805,'T-RemindAll','employee',1,1,datetime('now'))")
+            ra_uid = cur.lastrowid
+            cur.execute(
+                "insert into work_schedule_weekly (user_id, weekday, is_working, start_time, end_time, updated_at)"
+                " values (?,?,1,'09:00','18:00',datetime('now'))", (ra_uid, wd))
+            seeded_ids = []
+            for (uid,) in cur.execute(
+                "select id from users where is_active=1 and id not in (?,?)", (ra_uid, lg_uid)
+            ).fetchall():
+                for _ in range(2):
+                    cur.execute(
+                        "insert into audit_logs (actor_id, action, target_user_id, created_at)"
+                        " values (1, 'attendance_reminder_sent', ?, datetime('now'))", (uid,))
+                    seeded_ids.append(cur.lastrowid)
+            conn.commit()
+
+            r6 = client.post(f"{API_BASE}/attendance/remind-all", headers=auth(boss_t))
+            rb = r6.json() if r6.status_code == 200 else {}
+            check("W1: remind-all -> 200", r6.status_code == 200, f"kod={r6.status_code} {r6.text[:120]}")
+            check("W1: remind-all hech kimga yubormadi (hammada limit/fake)",
+                  rb.get("sent") == 0, str(rb)[:200])
+            ra_fail = next((f for f in rb.get("failed", []) if f["full_name"] == "T-RemindAll"), None)
+            check("W1: T-RemindAll yuborish yo'lidan o'tdi (yetkazib bo'lmadi)",
+                  ra_fail is not None and "yetkazib bo'lmadi" in ra_fail["reason"], str(ra_fail))
+            real_fails = [f for f in rb.get("failed", []) if not f["full_name"].startswith("T-")]
+            check("W1: haqiqiy xodimlar limitda to'xtadi (xabar ketmagan)",
+                  all("2 marta" in f["reason"] for f in real_fails),
+                  str([f["reason"] for f in real_fails])[:200])
+
+            emp_tok2 = token_for(ra_uid, "employee")
+            r7 = client.post(f"{API_BASE}/attendance/remind-all", headers=auth(emp_tok2))
+            check("W1: remind-all oddiy xodimga -> 403", r7.status_code == 403, f"kod={r7.status_code}")
+
+            # Tozalash: faqat O'ZIMIZ qo'ygan audit izlari + T- ma'lumotlar
+            if seeded_ids:
+                cur.execute(
+                    "delete from audit_logs where id in (%s)" % ",".join("?" * len(seeded_ids)),
+                    seeded_ids)
+            for u in (lg_uid, ra_uid):
+                cur.execute("delete from audit_logs where target_user_id=?", (u,))
+                cur.execute("delete from attendance where user_id=?", (u,))
+                cur.execute("delete from work_schedule_weekly where user_id=?", (u,))
+                cur.execute("delete from users where id=?", (u,))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("UX2-W1 tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
         print("\n-- UX-A6: yuz so'rovini webdan hal qilish --")
         try:
             conn = db()

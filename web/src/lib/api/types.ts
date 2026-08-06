@@ -115,8 +115,14 @@ export interface AttendanceDashboard {
     month_late_minutes: number;
     month_worked_hours: number;
   };
-  in_office: { user_name: string; check_in_time: string; late_minutes: number }[];
+  in_office: {
+    user_id: number;
+    user_name: string;
+    check_in_time: string;
+    late_minutes: number;
+  }[];
   recent: {
+    user_id: number;
     user_name: string;
     check_in_time: string;
     check_out_time: string | null;
@@ -141,6 +147,14 @@ export interface AttendanceDashboard {
     check_in_time: string;
     check_out_time: string;
     worked_minutes: number;
+  }[];
+  /** UX2-W1 (A4): bugun kechikkanlar — eng katta kechikish tepada. */
+  late_list: {
+    user_id: number;
+    user_name: string;
+    check_in_time: string;
+    late_minutes: number;
+    left: boolean;
   }[];
 }
 

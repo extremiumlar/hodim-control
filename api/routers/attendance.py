@@ -49,7 +49,7 @@ from api.services.attendance_month import build_month_cells, parse_month
 from api.notify import notify_user
 from api.routers.hourly_plan import DEFAULT_START
 from api.services.push import Category
-from api.telegram_notify import inline_keyboard
+from api.telegram_notify import inline_keyboard, inline_url_keyboard
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from db.models import (
     Attendance,
@@ -615,8 +615,15 @@ async def dashboard(
         )
     )
 
+    # UX2-W1 (B17): user_id barcha ro'yxatlarda — frontend ismni bosiladigan
+    # qiladi (EmployeeDrawer/profil). Eski frontend ortiqcha maydonni bilmaydi.
     in_office = [
-        {"user_name": name, "check_in_time": a.check_in_time, "late_minutes": a.late_minutes}
+        {
+            "user_id": a.user_id,
+            "user_name": name,
+            "check_in_time": a.check_in_time,
+            "late_minutes": a.late_minutes,
+        }
         for a, name in sorted(
             (r for r in today_rows if r[0].check_in_time is not None and r[0].check_out_time is None),
             key=lambda r: r[0].check_in_time,
@@ -624,6 +631,7 @@ async def dashboard(
     ]
     recent = [
         {
+            "user_id": a.user_id,
             "user_name": name,
             "check_in_time": a.check_in_time,
             "check_out_time": a.check_out_time,
@@ -635,6 +643,23 @@ async def dashboard(
             key=lambda r: r[0].check_in_time,
             reverse=True,
         )[:15]
+    ]
+
+    # UX2-W1 (A4): «kim kechikdi?» — ismma-ism, eng katta kechikish tepada.
+    # `in_office`dan farqi: ketib bo'lganlar ham kiradi (ular ham kechikkan edi).
+    late_list = [
+        {
+            "user_id": a.user_id,
+            "user_name": name,
+            "check_in_time": a.check_in_time,
+            "late_minutes": a.late_minutes,
+            "left": a.check_out_time is not None,
+        }
+        for a, name in sorted(
+            (r for r in today_rows if (r[0].late_minutes or 0) > 0),
+            key=lambda r: r[0].late_minutes or 0,
+            reverse=True,
+        )
     ]
 
     return {
@@ -659,66 +684,63 @@ async def dashboard(
         "not_come": not_come,
         "excused_today": excused_today,
         "left": left,
+        "late_list": late_list,
     }
 
 
-@router.post("/remind/{user_id}")
-async def remind_employee(
-    user_id: int,
-    actor: User = Depends(_require_manager),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """UX-A5: "Bugun" tabidagi «Eslatish» tugmasi — kelmagan xodimga bot/push
-    orqali shaxsiy eslatma. Ilgari rahbar faqat digestni kutar yoki qo'lda
-    telefon qilardi.
+async def _send_reminder(db: AsyncSession, actor: User, target: User) -> tuple[bool, str, int]:
+    """Bitta xodimga «hali kelmadingiz» eslatmasi. (ok, xabar, bugungi_soni)
+    qaytaradi — remind/{id} HTTPException'ga o'raydi, remind-all natija yig'adi.
 
     Spam himoyasi: bitta xodimga kuniga ko'pi bilan 2 ta (AuditLog'dagi
     `attendance_reminder_sent` yozuvlari sanaladi — yangi jadval kerak emas,
-    iz baribir auditda qolishi kerak edi)."""
-    target = await db.get(User, user_id)
-    if target is None or not target.is_active:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    iz baribir auditda qolishi kerak edi).
+
+    UX2-W4 (C6/C7/C2): matn ayblovsiz va kim eslatgani bilan; jadval topilmasa
+    "jadvalingiz: None" chiqmaydi; xabarga «Keldim qilish» URL tugmasi
+    qo'shildi; force_telegram — jarimaga ta'sir qiladigan yagona eslatma
+    push'da yo'qolib qolmasligi kerak (tushuntirish xati bilan bir qoida)."""
     if target.role not in ATTENDANCE_TRACKED_ROLES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu rol uchun davomat kuzatuvi yoqilmagan")
+        return False, "Bu rol uchun davomat kuzatuvi yoqilmagan", 0
 
     today = today_local()
     att = await db.scalar(
-        select(Attendance).where(Attendance.user_id == user_id, Attendance.date == today)
+        select(Attendance).where(Attendance.user_id == target.id, Attendance.date == today)
     )
     if att is not None and att.check_in_time is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim allaqachon «Keldim» qilgan")
+        return False, "allaqachon «Keldim» qilgan", 0
 
     day_start, day_end = local_range_utc_naive(today, today)
     sent_today = await db.scalar(
         select(func.count(AuditLog.id)).where(
             AuditLog.action == "attendance_reminder_sent",
-            AuditLog.target_user_id == user_id,
+            AuditLog.target_user_id == target.id,
             AuditLog.created_at >= day_start,
             AuditLog.created_at < day_end,
         )
     )
     if (sent_today or 0) >= 2:
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS, "Bugun allaqachon 2 marta eslatilgan"
-        )
+        return False, "bugun allaqachon 2 marta eslatilgan", int(sent_today or 0)
 
     # Bugungi jadval boshlanishini eslatma matnida ko'rsatamiz.
     from api.routers.hourly_plan import _effective_today  # circular importdan qochish
 
     _, sched_start, _ = await _effective_today(db, target, today)
+    sched_line = f" Bugungi ish vaqtingiz {sched_start}da boshlangan." if sched_start else ""
     result = await notify_user(
         db,
         target,
         Category.ATTENDANCE_REMINDER,
-        f"⏰ Siz hali «Keldim» qilmadingiz (jadvalingiz: {sched_start}).\n"
-        "Sabab bo'lsa botdan «Sababli kun so'rash»ni bosing.",
+        f"👋 {actor.full_name} eslatmoqda: «Keldim» hali qayd etilmagan.{sched_line}\n"
+        "Sabab bo'lsa — «Sababli kun so'rash» tugmasidan foydalaning.",
+        reply_markup=inline_url_keyboard(
+            [[("✅ Keldim qilish", f"{settings.frontend_url}/check-in")]]
+        ),
         data={"path": "/check-in"},
+        force_telegram=True,
     )
     if not (result.get("push") or result.get("telegram")):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Xodimga yetkazib bo'lmadi — u Telegram botga ulanmagan va push yoqmagan",
-        )
+        return False, "yetkazib bo'lmadi — botga ulanmagan va push yoqmagan", int(sent_today or 0)
 
     db.add(
         AuditLog(
@@ -730,7 +752,107 @@ async def remind_employee(
         )
     )
     await db.commit()
-    return {"sent": True, "sent_today": (sent_today or 0) + 1}
+    return True, "", int(sent_today or 0) + 1
+
+
+@router.post("/remind/{user_id}")
+async def remind_employee(
+    user_id: int,
+    actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """UX-A5: "Bugun" tabidagi «Eslatish» tugmasi — kelmagan xodimga bot/push
+    orqali shaxsiy eslatma. Ilgari rahbar faqat digestni kutar yoki qo'lda
+    telefon qilardi."""
+    target = await db.get(User, user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    ok, reason, sent_today = await _send_reminder(db, actor, target)
+    if not ok:
+        # Eski HTTP semantika saqlanadi: limit → 429, qolganlari → 400.
+        code = (
+            status.HTTP_429_TOO_MANY_REQUESTS
+            if "2 marta" in reason
+            else status.HTTP_400_BAD_REQUEST
+        )
+        # Matnlar eski frontend kutgan shaklga yaqin qolsin
+        detail = {
+            "allaqachon «Keldim» qilgan": "Xodim allaqachon «Keldim» qilgan",
+            "bugun allaqachon 2 marta eslatilgan": "Bugun allaqachon 2 marta eslatilgan",
+            "yetkazib bo'lmadi — botga ulanmagan va push yoqmagan":
+                "Xodimga yetkazib bo'lmadi — u Telegram botga ulanmagan va push yoqmagan",
+        }.get(reason, reason)
+        raise HTTPException(code, detail)
+    return {"sent": True, "sent_today": sent_today}
+
+
+@router.post("/remind-all")
+async def remind_all_employees(
+    actor: User = Depends(_require_manager),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """UX2-W1 (A12): bugun kelmagan BARCHAGA bitta bosishda eslatma.
+    Har xodim uchun xuddi /remind/{id} qoidalari (2/kun limiti, sababli
+    kunlilarga tegilmaydi — ular "kutilmayapti"); natija bitta xulosa:
+    {sent: N, failed: [{full_name, reason}]}."""
+    today = today_local()
+    active_users = list(await db.scalars(select(User).where(User.is_active.is_(True))))
+    employees = [u for u in active_users if u.role in ATTENDANCE_TRACKED_ROLES]
+
+    checked_ids = {
+        a.user_id
+        for a in await db.scalars(
+            select(Attendance).where(
+                Attendance.date == today, Attendance.check_in_time.isnot(None)
+            )
+        )
+    }
+    excused_ids = {
+        e.user_id
+        for e in await db.scalars(
+            select(ExcusedDay).where(
+                ExcusedDay.date == today, ExcusedDay.status == ExcusedStatus.approved.value
+            )
+        )
+    }
+
+    overrides_by_user = {
+        o.user_id: o
+        for o in await db.scalars(
+            select(WorkScheduleOverride).where(WorkScheduleOverride.date == today)
+        )
+    }
+    weekly_by_user = {
+        w.user_id: w
+        for w in await db.scalars(
+            select(WorkScheduleWeekly).where(WorkScheduleWeekly.weekday == today.weekday())
+        )
+    }
+    default_working = today.weekday() < 5
+
+    def _works_today(u: User) -> bool:
+        row = overrides_by_user.get(u.id) or weekly_by_user.get(u.id)
+        if row is not None:
+            return bool(row.is_working)
+        return default_working
+
+    targets = [
+        u
+        for u in employees
+        if _works_today(u) and u.id not in checked_ids and u.id not in excused_ids
+    ]
+
+    sent = 0
+    failed: list[dict] = []
+    for target in targets:
+        ok, reason, _n = await _send_reminder(db, actor, target)
+        if ok:
+            sent += 1
+        else:
+            failed.append({"full_name": target.full_name, "reason": reason})
+
+    return {"total": len(targets), "sent": sent, "failed": failed}
 
 
 @router.get("/matrix")
@@ -1359,8 +1481,20 @@ async def attendance_reminder_tick(
                 if arriving
                 else f"⏰ {off} daqiqadan keyin ish tugaydi ({p['at']}) — «Ketdim» bosishni unutmang."
             )
+        # UX2-W4 (C2/C7): xabar «bosing» deydi — bosadigan TUGMA ham bo'lsin;
+        # force_telegram — bu eslatma jarimaga to'g'ridan-to'g'ri ta'sir qiladi,
+        # push kanalida yo'qolib qolishi mumkin emas.
+        btn_label = "✅ Keldim qilish" if arriving else "🚪 Ketdim qilish"
         res = await notify_user(
-            db, user, Category.ATTENDANCE_REMINDER, text, data={"path": "/check-in"}
+            db,
+            user,
+            Category.ATTENDANCE_REMINDER,
+            text,
+            reply_markup=inline_url_keyboard(
+                [[(btn_label, f"{settings.frontend_url}/check-in")]]
+            ),
+            data={"path": "/check-in"},
+            force_telegram=True,
         )
         if res["telegram"] or res["push"]:
             sent += 1

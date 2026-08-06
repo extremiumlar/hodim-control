@@ -166,6 +166,9 @@ export const useMyAttendanceHistory = (month?: string) =>
 export const useRemindAttendance = () =>
   useApiMutation((userId: number) => api.remindAttendance(userId));
 
+// UX2-W1 (A12): hammaga birdan — natija bitta xulosa toast bilan ko'rsatiladi.
+export const useRemindAllAttendance = () => useApiMutation(() => api.remindAllAttendance());
+
 // UX-A6: yuz so'rovlari (web).
 export const useFaceReregList = (statusFilter?: string, enabled = true) =>
   useQuery({
@@ -342,7 +345,9 @@ export const useDecideExcusedDay = () =>
 export const useRecordExcusedDayForUser = () =>
   useApiMutation(
     (data: { user_id: number; reason: string; date?: string }) => api.recordExcusedDayForUser(data),
-    [["excused-days"]]
+    // Dashboard ham yangilanadi: xodim «Kelmagan»dan «Sababli»ga o'tishi
+    // darhol ko'rinsin (UX2-W1 A5 — Bugun tabidan turib belgilash).
+    [["excused-days"], ["attendance", "dashboard"], ["attendance", "readiness"]]
   );
 
 // ─── Normalar ───

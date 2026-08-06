@@ -3,10 +3,15 @@
  *
  * Ma'lumot ALLAQACHON yuklangan matritsadan keladi (qo'shimcha so'rov yo'q):
  * oy statlari + kalendar + kun tafsiloti + profil havolasi.
+ *
+ * UX2-A15: panel endi boshi berk ko'cha emas — pastda AMALLAR qatori:
+ * tanlangan kunni tuzatish, ish jadvalini sozlash, profil. Kalendarda kun
+ * tanlanganda «Tuzatish» faollashadi (kontekst yo'qolmaydi).
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ExternalLink } from "lucide-react";
+import { CalendarCog, ExternalLink, Pencil } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { CellDetail, MonthCalendar } from "@/components/attendance/MonthCalendar";
 import { monthLabel } from "@/components/attendance/MonthNav";
@@ -42,10 +47,13 @@ export default function EmployeeDrawer({
   employee,
   month,
   onClose,
+  onEditDay,
 }: {
   employee: MatrixEmployee | null;
   month: string;
   onClose: () => void;
+  /** Tanlangan kunni tuzatish (EditAttendanceDialog preset) — canEdit bo'lsagina. */
+  onEditDay?: (emp: MatrixEmployee, cell: MatrixCell) => void;
 }) {
   const [selected, setSelected] = useState<MatrixCell | null>(null);
 
@@ -63,7 +71,7 @@ export default function EmployeeDrawer({
         {employee && (
           <div className="space-y-4">
             <div>
-              <SheetTitle className="text-lg">{employee.full_name}</SheetTitle>
+              <SheetTitle className="text-lg">{employee.full_name.trim()}</SheetTitle>
               <div className="text-sm text-slate-500">{monthLabel(month)}</div>
             </div>
 
@@ -76,13 +84,39 @@ export default function EmployeeDrawer({
             />
             {selected && <CellDetail cell={selected} />}
 
-            <Link
-              to={`/employees/${employee.user_id}`}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-            >
-              Xodim profiliga o'tish
-              <ExternalLink className="h-3.5 w-3.5" />
-            </Link>
+            {/* A15: amallar qatori */}
+            <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+              {onEditDay && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!selected || selected.status === "future"}
+                  title={
+                    selected
+                      ? "Tanlangan kunni tuzatish"
+                      : "Avval kalendardan kunni tanlang"
+                  }
+                  onClick={() => selected && onEditDay(employee, selected)}
+                >
+                  <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                  {selected
+                    ? `${Number(selected.date.slice(8, 10))}-kunni tuzatish`
+                    : "Kunni tuzatish"}
+                </Button>
+              )}
+              <Button size="sm" variant="outline" asChild>
+                <Link to={`/work-schedule?tab=bitta&user=${employee.user_id}`}>
+                  <CalendarCog className="mr-1.5 h-3.5 w-3.5" />
+                  Ish jadvali
+                </Link>
+              </Button>
+              <Button size="sm" variant="outline" asChild>
+                <Link to={`/employees/${employee.user_id}`}>
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                  Profil
+                </Link>
+              </Button>
+            </div>
           </div>
         )}
       </SheetContent>

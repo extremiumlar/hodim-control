@@ -176,15 +176,39 @@ function SuccessScreen({
   );
 }
 
+/** UX2-W1 (A10): jonli soat ALOHIDA komponentda — ilgari `setInterval` sahifa
+ * ildizida edi va har soniyada butun sahifa (kalendar bilan birga) qayta
+ * chizilardi; arzon telefonlarda "sayt sekin" his qilinardi. */
+function LiveClock() {
+  const [time, setTime] = useState(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="mb-4 flex items-center justify-between">
+      <div>
+        <h2 className="text-lg font-semibold">Bugungi davomat</h2>
+        <p className="text-sm text-slate-500">{fmtDateUz(time)}</p>
+      </div>
+      <div className="text-3xl font-bold tabular-nums text-primary">
+        {time.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+      </div>
+    </div>
+  );
+}
+
 export default function CheckIn() {
   const { user, refreshUser } = useAuth();
   const todayQuery = useMyAttendanceToday();
   const checkIn = useMyCheckIn();
   const checkOut = useMyCheckOut();
   const registerFace = useRegisterMyFace();
+  // UX2-W2: tarix kalendari endi akkordeonda — sahifa qisqaradi va uning
+  // so'rovi faqat ochilganda ketadi (check-in lahzasida tarmoq band emas).
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [statusMsg, setStatusMsg] = useState("");
-  const [time, setTime] = useState(new Date());
   const [showFace, setShowFace] = useState<null | Action>(null);
   const [showRegister, setShowRegister] = useState(false);
   const [success, setSuccess] = useState<{ action: Action; att: Attendance } | null>(null);
@@ -193,11 +217,6 @@ export default function CheckIn() {
   // YOPILMAYDI, shuning uchun xodim butun GPS/kamera oqimini qaytadan
   // boshlamay (FaceCapture hali ochiq), DARHOL qayta urinishi mumkin.
   const [checkError, setCheckError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const t = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
 
   const att = todayQuery.data ?? null;
   const busy = checkIn.isPending || checkOut.isPending;
@@ -323,15 +342,43 @@ export default function CheckIn() {
 
       <Card>
         <CardContent className="p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold">Bugungi davomat</h2>
-              <p className="text-sm text-slate-500">{fmtDateUz(time)}</p>
+          <LiveClock />
+
+          {/* UX2-W2 (A9): ASOSIY amal — bitta katta, to'liq kenglikdagi tugma
+              ENG TEPADA (birinchi ekranga sig'adi). Bir paytda baribir faqat
+              bitta amal mumkin edi — ikkita yonma-yon tugmaning bittasi doim
+              o'lik turardi. B16: yuz ro'yxatdan o'tmagan bo'lsa asosiy amal —
+              yuzni ro'yxatdan o'tkazish. */}
+          {user && !user.has_face ? (
+            <Button
+              className="mb-4 h-16 w-full bg-amber-500 text-base font-semibold hover:bg-amber-600"
+              onClick={() => setShowRegister(true)}
+            >
+              📸 Yuzni ro'yxatdan o'tkazish (bir marta)
+            </Button>
+          ) : !hasCheckIn ? (
+            <Button
+              className="mb-4 h-16 w-full bg-emerald-600 text-lg font-semibold hover:bg-emerald-700"
+              disabled={busy}
+              onClick={() => startCheck("check-in")}
+            >
+              <LogIn className="mr-2 h-6 w-6" />
+              Keldim
+            </Button>
+          ) : !hasCheckOut ? (
+            <Button
+              className="mb-4 h-16 w-full bg-rose-600 text-lg font-semibold hover:bg-rose-700"
+              disabled={busy}
+              onClick={() => startCheck("check-out")}
+            >
+              <LogOut className="mr-2 h-6 w-6" />
+              Ketdim
+            </Button>
+          ) : (
+            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-center text-sm font-medium text-emerald-700">
+              ✅ Bugungi davomat yakunlandi — yaxshi dam oling!
             </div>
-            <div className="text-3xl font-bold tabular-nums text-primary">
-              {time.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </div>
-          </div>
+          )}
 
           {todayQuery.isLoading ? (
             <div className="mb-5 grid grid-cols-2 gap-4">
@@ -359,34 +406,6 @@ export default function CheckIn() {
             </div>
           )}
 
-          {user && !user.has_face && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              ⚠️ Check-in qilish uchun avval{" "}
-              <button onClick={() => setShowRegister(true)} className="font-semibold underline">
-                yuzingizni ro'yxatdan o'tkazing
-              </button>
-            </div>
-          )}
-
-          <div className="flex gap-3">
-            <Button
-              className="h-14 flex-1 bg-emerald-600 text-base font-semibold hover:bg-emerald-700"
-              disabled={hasCheckIn || busy || !user?.has_face}
-              onClick={() => startCheck("check-in")}
-            >
-              <LogIn className="mr-2 h-5 w-5" />
-              Keldim
-            </Button>
-            <Button
-              className="h-14 flex-1 bg-rose-600 text-base font-semibold hover:bg-rose-700"
-              disabled={!hasCheckIn || hasCheckOut || busy || !user?.has_face}
-              onClick={() => startCheck("check-out")}
-            >
-              <LogOut className="mr-2 h-5 w-5" />
-              Ketdim
-            </Button>
-          </div>
-
           {statusMsg && (
             <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-base text-blue-700">
               {statusMsg}
@@ -411,8 +430,17 @@ export default function CheckIn() {
 
       <LateStatusCard />
 
-      {/* UX-D2: xodimning o'z oylik tarixi — ilgari umuman yo'q edi */}
-      <MyHistoryCard />
+      {/* UX-D2: xodimning o'z oylik tarixi. UX2-W2: akkordeon — sahifa
+          qisqaradi, so'rov faqat ochilganda ketadi. */}
+      <button
+        type="button"
+        className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        onClick={() => setHistoryOpen((o) => !o)}
+      >
+        <span>📅 Oylik davomatim</span>
+        <span className="text-slate-400">{historyOpen ? "▴ yopish" : "▾ ochish"}</span>
+      </button>
+      {historyOpen && <MyHistoryCard />}
 
       {user?.has_face && !showRegister && (
         <div className="text-center">

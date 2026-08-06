@@ -1,26 +1,38 @@
 /**
  * Ma'lumot tayyorligi — oylik/jarima hisobidan oldin ko'riladigan "bo'sh joylar".
- * UX-B: Attendance.tsx dan alohida komponentga ko'chirildi; "Oylik jadval"
- * tabida tanlangan oy davri bilan ko'rsatiladi.
+ *
+ * UX2-A7: chiplar endi O'LIK EMAS — har biri muammoni HAL QILISH yo'liga
+ * olib boradi: jadval yo'q → o'sha xodimning jadval muharriri; yopilmagan/
+ * avto-yopilgan kun → tuzatish dialogi (onFixDay orqali); sababli kutmoqda →
+ * sababli kunlar sahifasi. «va yana N ta» ham endi ochiladi.
  */
+import { useState } from "react";
+import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type AttendanceReadiness, type ReadinessIssue } from "@/lib/api";
 import { useAttendanceReadiness } from "@/lib/queries";
 
+type GroupKey = "no_schedule" | "open_checkouts" | "auto_closed" | "pending_excused" | "no_face";
+
 export default function ReadinessSection({
   dateFrom,
   dateTo,
+  onFixDay,
 }: {
   dateFrom: string;
   dateTo: string;
+  /** Yopilmagan/avto-yopilgan kun chipi bosilganda tuzatish dialogini ochish. */
+  onFixDay?: (issue: ReadinessIssue) => void;
 }) {
   const query = useAttendanceReadiness({ date_from: dateFrom, date_to: dateTo });
   const data: AttendanceReadiness | undefined = query.data;
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const groups: { key: keyof AttendanceReadiness; label: string; hint: string }[] = [
+  const groups: { key: GroupKey; label: string; hint: string }[] = [
     { key: "no_schedule", label: "Ish jadvali yo'q", hint: "kechikish taxminiy hisoblanadi" },
     { key: "open_checkouts", label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt 0 bo'lib qolgan" },
     { key: "auto_closed", label: "Avtomatik yopilgan", hint: "ishlangan vaqt taxminiy" },
@@ -29,7 +41,76 @@ export default function ReadinessSection({
   ];
 
   if (query.isLoading) return <Skeleton className="h-24 w-full rounded-xl" />;
-  if (query.error || !data) return null;
+  // B5: xato endi JIMGINA yashirilmaydi — "muammo yo'q"dek ko'rinib qolardi.
+  if (query.error) {
+    return (
+      <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        Tayyorlikni yuklab bo'lmadi: {query.error.message}
+        <Button variant="outline" size="sm" onClick={() => query.refetch()}>
+          Qayta urinish
+        </Button>
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  /** Chip qaysi yo'l bilan hal qilinadi — guruhga qarab. */
+  function chip(key: GroupKey, it: ReadinessIssue, i: number) {
+    const label = (
+      <>
+        {it.full_name.trim()}
+        {it.date && ` · ${format(new Date(it.date), "dd.MM")}`}
+      </>
+    );
+    const cls =
+      "rounded-md px-2 py-0.5 text-xs transition-colors";
+    if (key === "no_schedule") {
+      return (
+        <Link
+          key={`${it.user_id}-${i}`}
+          to={`/work-schedule?tab=bitta&user=${it.user_id}`}
+          className={`${cls} bg-slate-100 text-slate-700 underline-offset-2 hover:bg-primary/10 hover:text-primary hover:underline`}
+          title="Jadvalini sozlash uchun bosing"
+        >
+          {label} ✎
+        </Link>
+      );
+    }
+    if ((key === "open_checkouts" || key === "auto_closed") && onFixDay) {
+      return (
+        <button
+          key={`${it.user_id}-${it.date ?? i}`}
+          type="button"
+          className={`${cls} bg-slate-100 text-slate-700 hover:bg-primary/10 hover:text-primary`}
+          title={it.detail ?? "Kunni tuzatish uchun bosing"}
+          onClick={() => onFixDay(it)}
+        >
+          {label} ✎
+        </button>
+      );
+    }
+    if (key === "pending_excused") {
+      return (
+        <Link
+          key={`${it.user_id}-${it.date ?? i}`}
+          to="/excused-days"
+          className={`${cls} bg-slate-100 text-slate-700 underline-offset-2 hover:bg-primary/10 hover:text-primary hover:underline`}
+          title="Sababli kunlar sahifasida qaror qiling"
+        >
+          {label} →
+        </Link>
+      );
+    }
+    return (
+      <span
+        key={`${it.user_id}-${it.date ?? i}`}
+        className={`${cls} bg-slate-100 text-slate-700`}
+        title={it.detail ?? undefined}
+      >
+        {label}
+      </span>
+    );
+  }
 
   return (
     <Card>
@@ -54,6 +135,8 @@ export default function ReadinessSection({
             {groups.map(({ key, label, hint }) => {
               const items = data[key] as ReadinessIssue[];
               if (!items.length) return null;
+              const showAll = expanded[key];
+              const visible = showAll ? items : items.slice(0, 12);
               return (
                 <li key={key}>
                   <div className="mb-1 text-sm font-medium">
@@ -64,20 +147,15 @@ export default function ReadinessSection({
                     <span className="ml-2 text-xs font-normal text-slate-500">— {hint}</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {items.slice(0, 12).map((it, i) => (
-                      <span
-                        key={`${it.user_id}-${it.date ?? i}`}
-                        className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
-                        title={it.detail ?? undefined}
+                    {visible.map((it, i) => chip(key, it, i))}
+                    {items.length > 12 && !showAll && (
+                      <button
+                        type="button"
+                        className="px-1 text-xs text-primary underline"
+                        onClick={() => setExpanded((e) => ({ ...e, [key]: true }))}
                       >
-                        {it.full_name}
-                        {it.date && ` · ${format(new Date(it.date), "dd.MM")}`}
-                      </span>
-                    ))}
-                    {items.length > 12 && (
-                      <span className="px-1 text-xs text-slate-500">
-                        va yana {items.length - 12} ta
-                      </span>
+                        va yana {items.length - 12} ta — ko'rsatish
+                      </button>
                     )}
                   </div>
                 </li>

@@ -232,8 +232,11 @@ export default function Offices() {
           ) : (
             <ul className="divide-y divide-slate-100">
               {query.data?.map((o) => (
-                <li key={o.id} className="flex items-center justify-between gap-3 py-3">
-                  <div>
+                // UX2-A13: flex-wrap — telefonda tugmalar ikkinchi qatorga
+                // tushadi, sahifa gorizontal cho'zilmaydi. «Vaqtincha o'chirish» —
+                // qaytariladigan amal qaytarilmaydigani bilan adashtirilmasin.
+                <li key={o.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 font-medium">
                       {o.name}
                       {!o.is_active && <Badge variant="secondary">faolsiz</Badge>}
@@ -242,7 +245,7 @@ export default function Offices() {
                       {o.latitude}, {o.longitude} · radius {o.radius_meters} m
                     </div>
                   </div>
-                  <div className="flex shrink-0 gap-1">
+                  <div className="flex shrink-0 flex-wrap gap-1">
                     <Button variant="ghost" size="sm" onClick={() => startEdit(o)}>
                       <Pencil className="mr-1 h-3.5 w-3.5" />
                       Tahrirlash
@@ -256,13 +259,15 @@ export default function Offices() {
                           { officeId: o.id, data: { is_active: !o.is_active } },
                           {
                             onSuccess: () =>
-                              toast.success(o.is_active ? "Ofis o'chirib qo'yildi." : "Ofis yoqildi."),
+                              toast.success(
+                                o.is_active ? "Ofis vaqtincha o'chirildi." : "Ofis yoqildi."
+                              ),
                           }
                         )
                       }
                     >
                       <Power className="mr-1 h-3.5 w-3.5" />
-                      {o.is_active ? "O'chirib qo'yish" : "Yoqish"}
+                      {o.is_active ? "Vaqtincha o'chirish" : "Yoqish"}
                     </Button>
                     <Button
                       variant="ghost"

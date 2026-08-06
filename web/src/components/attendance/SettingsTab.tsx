@@ -5,6 +5,7 @@
  *     qilinadi; ilgari faqat botda edi, HR xabarni o'tkazib yuborsa so'rov
  *     osilib qolardi).
  */
+import { Link } from "react-router-dom";
 import { format } from "date-fns";
 import { ScanFace } from "lucide-react";
 import { toast } from "sonner";
@@ -105,6 +106,42 @@ export default function SettingsTab({
     <div className="space-y-4">
       <FaceReregCard active={active} />
       {canManageLocationExempt && <LocationExemptCard />}
+
+      {/* UX2-B14: davomatga TA'SIR qiladigan, lekin boshqa sahifalardagi
+          sozlamalarga yo'l ko'rsatkichlari — rahbar ularni bu yerdan qidiradi. */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Bog'liq sozlamalar</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 sm:grid-cols-3">
+          {[
+            {
+              to: "/offices",
+              title: "🏢 Ofislar (GPS radius)",
+              desc: "Check-in qayerdan qabul qilinadi",
+            },
+            {
+              to: "/work-schedule",
+              title: "🗓 Ish jadvali",
+              desc: "Kechikish nimaga nisbatan hisoblanadi",
+            },
+            {
+              to: "/payroll/settings",
+              title: "💵 Jarima qoidalari",
+              desc: "Kechikish limiti va jarima stavkasi",
+            },
+          ].map((l) => (
+            <Link
+              key={l.to}
+              to={l.to}
+              className="rounded-lg border border-slate-200 p-3 transition-colors hover:border-primary/40 hover:bg-slate-50"
+            >
+              <div className="text-sm font-medium">{l.title}</div>
+              <div className="mt-0.5 text-xs text-slate-500">{l.desc}</div>
+            </Link>
+          ))}
+        </CardContent>
+      </Card>
     </div>
   );
 }

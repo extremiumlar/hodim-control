@@ -109,15 +109,24 @@ export default function ReportTab({ active }: { active: boolean }) {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:max-w-md">
-        <StatCard
-          label="Jami kechikish"
-          value={`${totalLateMinutes} daq`}
-          icon={Hourglass}
-          warn={totalLateMinutes > 0}
-        />
-        <StatCard label="Jami ishlangan" value={`${Math.round(totalWorkedHours)} soat`} icon={Clock} />
-      </div>
+      {/* UX2-B4: yuklanish paytida "0 daq" YOLG'ON raqami emas — skelet.
+          Rahbar bir soniya bo'lsa ham "hech kim kechikmabdi" deb ko'rmasin. */}
+      {summaryQuery.isLoading || lateQuery.isLoading ? (
+        <div className="grid grid-cols-2 gap-3 md:max-w-md">
+          <Skeleton className="h-[86px] rounded-xl" />
+          <Skeleton className="h-[86px] rounded-xl" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:max-w-md">
+          <StatCard
+            label="Jami kechikish"
+            value={`${totalLateMinutes} daq`}
+            icon={Hourglass}
+            warn={totalLateMinutes > 0}
+          />
+          <StatCard label="Jami ishlangan" value={`${Math.round(totalWorkedHours)} soat`} icon={Clock} />
+        </div>
+      )}
 
       {/* Xodimlar xulosasi */}
       <div>

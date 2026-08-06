@@ -102,6 +102,12 @@ export const api = {
     apiFetch<{ sent: boolean; sent_today: number }>(`/attendance/remind/${userId}`, {
       method: "POST",
     }),
+  // UX2-W1 (A12): bugun kelmagan BARCHAGA bitta bosishda eslatma.
+  remindAllAttendance: () =>
+    apiFetch<{ total: number; sent: number; failed: { full_name: string; reason: string }[] }>(
+      "/attendance/remind-all",
+      { method: "POST" }
+    ),
   // UX-A6: yuz qayta-ro'yxat so'rovlari (web).
   listFaceRereg: (statusFilter?: string) =>
     apiFetch<FaceReregRequest[]>(

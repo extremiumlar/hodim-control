@@ -6,6 +6,7 @@
  *                   filtri (J3).
  */
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { format, subDays } from "date-fns";
 import { Copy, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -567,8 +568,18 @@ function SingleEmployeeEditor({
 
 export default function WorkSchedule() {
   const usersQuery = useUsers();
-  const [tab, setTab] = useState<"umumiy" | "bitta">("umumiy");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // UX2-A14: tab va xodim endi URLda (?tab=bitta&user=12) — matritsa/tayyorlik
+  // bannaridan "shu xodimning jadvalini sozla" deb TO'G'RIDAN-TO'G'RI havola
+  // qilish mumkin; sahifa yangilansa ham tanlov saqlanadi.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: "umumiy" | "bitta" = searchParams.get("tab") === "bitta" ? "bitta" : "umumiy";
+  const urlUser = Number(searchParams.get("user")) || null;
+  const [selectedId, setSelectedId] = useState<number | null>(urlUser);
+
+  useEffect(() => {
+    if (urlUser && urlUser !== selectedId) setSelectedId(urlUser);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlUser]);
 
   useEffect(() => {
     if (usersQuery.data?.length && selectedId == null) {
@@ -576,24 +587,32 @@ export default function WorkSchedule() {
     }
   }, [usersQuery.data, selectedId]);
 
+  function update(next: { tab?: "umumiy" | "bitta"; user?: number }) {
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (next.tab) p.set("tab", next.tab);
+      if (next.user) p.set("user", String(next.user));
+      return p;
+    });
+    if (next.user) setSelectedId(next.user);
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader title="Ish jadvali" />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as "umumiy" | "bitta")}>
-        <TabsList>
-          <TabsTrigger value="umumiy">Umumiy</TabsTrigger>
-          <TabsTrigger value="bitta">Bitta xodim</TabsTrigger>
+      <Tabs value={tab} onValueChange={(v) => update({ tab: v as "umumiy" | "bitta" })}>
+        <TabsList className="w-full justify-start overflow-x-auto md:w-auto">
+          <TabsTrigger value="umumiy" className="flex-shrink-0">Umumiy</TabsTrigger>
+          <TabsTrigger value="bitta" className="flex-shrink-0">Bitta xodim</TabsTrigger>
         </TabsList>
         <TabsContent value="umumiy" className="mt-4">
-          <ScheduleOverviewTab
-            onPick={(id) => {
-              setSelectedId(id);
-              setTab("bitta");
-            }}
-          />
+          <ScheduleOverviewTab onPick={(id) => update({ tab: "bitta", user: id })} />
         </TabsContent>
         <TabsContent value="bitta" className="mt-4">
-          <SingleEmployeeEditor selectedId={selectedId} onSelectUser={setSelectedId} />
+          <SingleEmployeeEditor
+            selectedId={selectedId}
+            onSelectUser={(id) => update({ user: id })}
+          />
         </TabsContent>
       </Tabs>
     </div>

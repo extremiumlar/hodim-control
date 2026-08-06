@@ -103,9 +103,58 @@ export default function ScheduleOverviewTab({
           Ko'rsatadigan xodim yo'q.
         </div>
       ) : (
+        <>
+        {/* UX2-B11: MOBIL ko'rinish — 730px jadval o'rniga xodim kartalari;
+            har kunda harf + vaqt, bosilsa muharrirga o'tadi. */}
+        <div className="space-y-2 md:hidden">
+          {rows.map((emp) => {
+            const allUnset = emp.days.every((d) => d.source === "unset");
+            return (
+              <button
+                key={emp.user_id}
+                type="button"
+                className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-primary/40"
+                onClick={() => onPick(emp.user_id)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium">{emp.user_full_name.trim()}</span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
+                </div>
+                {allUnset ? (
+                  <div className="mt-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700">
+                    jadval belgilanmagan — standart Du–Ju 09:00–18:00
+                  </div>
+                ) : (
+                  <div className="mt-1.5 grid grid-cols-7 gap-1 text-center">
+                    {emp.days.map((d, i) => (
+                      <div key={d.date} className={cn("rounded-md py-1", d.date === today && "bg-blue-50")}>
+                        <div className={cn("text-[10px] font-semibold", i >= 5 ? "text-rose-400" : "text-slate-500")}>
+                          {WD_LETTERS[i]}
+                        </div>
+                        {d.is_working ? (
+                          <div
+                            className={cn(
+                              "text-[10px] tabular-nums",
+                              d.source === "override" ? "font-semibold text-amber-700" : "text-slate-600"
+                            )}
+                          >
+                            {shortTime(d.start_time)?.split(":")[0]}–{shortTime(d.end_time)?.split(":")[0]}
+                          </div>
+                        ) : (
+                          <Moon className="mx-auto h-3 w-3 text-slate-300" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         <div
           className={cn(
-            "overflow-x-auto rounded-xl border border-slate-200 bg-white transition-opacity",
+            "hidden overflow-x-auto rounded-xl border border-slate-200 bg-white transition-opacity md:block",
             query.isPlaceholderData && "opacity-60"
           )}
         >
@@ -195,6 +244,7 @@ export default function ScheduleOverviewTab({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

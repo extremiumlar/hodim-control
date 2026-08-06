@@ -1,26 +1,52 @@
 /**
- * «Bugun» tabi — jonli nazorat (UX-B).
+ * «Bugun» tabi — jonli nazorat (UX-B, UX2-W1).
  *
- * Rahbarning ertalabki asosiy savoli — «kim kelmadi?» — endi ISMLAR bilan,
- * jadval boshlanish vaqti va «Eslatish» tugmasi bilan (UX-A1/A5). Stat
- * kartalar 8 tadan 5 taga tushdi; «Keldi X/Y» progress chizig'i bilan.
- * Dashboard so'rovi faqat shu tab ochiq bo'lganda 30s'da yangilanib turadi.
+ * Rahbarning ertalabki savollari shu yerda hal bo'ladi (boshqa sahifaga
+ * o'tmasdan): kim kelmadi → «Eslatish» yoki «Sababli» (2 bosish), kim
+ * kechikdi → ismma-ism ro'yxat, hammasiga birdan eslatish — bitta tugma.
+ * Ismlar xodim profiliga havola (dashboard endi user_id qaytaradi).
  */
-import { Bell, CalendarCheck, CalendarOff, Hourglass, UserX, Users } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Bell, BellRing, CalendarCheck, CalendarOff, Hourglass, UserX, Users } from "lucide-react";
 import { toast } from "sonner";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAttendanceDashboard, useRemindAttendance } from "@/lib/queries";
+import {
+  useAttendanceDashboard,
+  useRecordExcusedDayForUser,
+  useRemindAllAttendance,
+  useRemindAttendance,
+} from "@/lib/queries";
 import { fmtLocalTime as fmtTime } from "@/lib/utils";
 
-export default function TodayTab({ active }: { active: boolean }) {
+/** Ba'zi ismlar bazada ortiqcha bo'shliq bilan ("Kamola ") — ko'rinishda tozalaymiz. */
+const nm = (s: string) => s.trim();
+
+/** UX2-W1 (A5): sabab tez-tanlash chiplari — HR har safar jumla yozmasin. */
+const EXCUSE_PRESETS = ["Kasallik", "Oilaviy holat", "Ta'til", "Xizmat safari"];
+
+export default function TodayTab({ active, canEdit }: { active: boolean; canEdit: boolean }) {
   const dashQuery = useAttendanceDashboard(active);
   const remind = useRemindAttendance();
+  const remindAll = useRemindAllAttendance();
+  const recordExcused = useRecordExcusedDayForUser();
   const dash = dashQuery.data;
   const s = dash?.summary;
+
+  // A5: «Sababli» dialogi — xodim va sana ma'lum, faqat sabab so'raladi.
+  const [excuseFor, setExcuseFor] = useState<{ userId: number; name: string } | null>(null);
+  const [excuseReason, setExcuseReason] = useState("");
 
   if (dashQuery.isLoading) {
     return (
@@ -52,12 +78,56 @@ export default function TodayTab({ active }: { active: boolean }) {
     );
   }
 
-  if (!dash || !s) return null;
+  // B5: null bo'lsa bo'sh oq ekran emas — skelet (ma'lumot hali kelmagan).
+  if (!dash || !s) {
+    return <Skeleton className="h-64 rounded-xl" />;
+  }
 
   const attendedPct = s.working_today > 0 ? Math.round((s.checked_in_today / s.working_today) * 100) : 0;
+  const lateList = dash.late_list ?? [];
+  const remindable = dash.not_come.filter((p) => p.telegram_linked).length;
+
+  function submitExcuse() {
+    if (!excuseFor) return;
+    const reason = excuseReason.trim();
+    if (reason.length < 3) {
+      toast.error("Sababni yozing (kamida 3 belgi).");
+      return;
+    }
+    recordExcused.mutate(
+      { user_id: excuseFor.userId, reason },
+      {
+        onSuccess: () => {
+          toast.success(`${nm(excuseFor.name)} — bugun sababli deb belgilandi.`);
+          setExcuseFor(null);
+          setExcuseReason("");
+        },
+      }
+    );
+  }
 
   return (
     <div className="space-y-4">
+      {/* B7: ma'lumot qachon yangilangani + qo'lda yangilash — rahbar tabni
+          fonda qoldirib qaytsa, eskirgan raqamga bilmay ishonmasin. */}
+      <div className="flex items-center justify-end gap-2 text-xs text-slate-400">
+        <span>
+          Yangilangan:{" "}
+          {new Date(dashQuery.dataUpdatedAt).toLocaleTimeString("uz-UZ", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+        <button
+          type="button"
+          className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
+          disabled={dashQuery.isFetching}
+          onClick={() => dashQuery.refetch()}
+        >
+          {dashQuery.isFetching ? "yangilanmoqda..." : "yangilash"}
+        </button>
+      </div>
+
       {/* Stat kartalar — 5 ta muhimi (UX-B: 8 -> 5) */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {/* «Keldi X/Y» — progress bilan (StatCard'da meter yo'q, shu yerda kichik custom) */}
@@ -92,16 +162,42 @@ export default function TodayTab({ active }: { active: boolean }) {
         <StatCard label="Dam olishda" value={s.on_day_off} icon={CalendarOff} />
       </div>
 
-      {/* Uch ustun: Kelmagan / Ofisda / Ketdi (UX-A1 ismlari bilan) */}
+      {/* Uch ustun: Kelmagan / Kechikdi / Ofisda-Ketdi */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">
-              ❌ Kelmagan ({dash.not_come.length + dash.excused_today.length})
+            {/* A3: sarlavha soni endi stat karta bilan MOS (sababli alohida). */}
+            <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+              <span>❌ Kelmagan ({dash.not_come.length})</span>
+              {dash.not_come.length > 1 && remindable > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs text-indigo-700 hover:bg-indigo-100"
+                  disabled={remindAll.isPending}
+                  onClick={() =>
+                    remindAll.mutate(undefined, {
+                      onSuccess: (r) => {
+                        if (r.failed.length === 0) {
+                          toast.success(`Hammaga eslatma yuborildi (${r.sent} kishi).`);
+                        } else {
+                          toast.warning(
+                            `${r.sent} ta yuborildi, ${r.failed.length} ta yo'q: ` +
+                              r.failed.map((f) => `${nm(f.full_name)} — ${f.reason}`).join("; ")
+                          );
+                        }
+                      },
+                    })
+                  }
+                >
+                  <BellRing className="mr-1 h-3 w-3" />
+                  {remindAll.isPending ? "Yuborilmoqda..." : `Hammaga eslatish (${remindable})`}
+                </Button>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {dash.not_come.length === 0 && dash.excused_today.length === 0 ? (
+            {dash.not_come.length === 0 ? (
               <div className="text-sm text-slate-400">Hamma keldi 🎉</div>
             ) : (
               <ul className="space-y-1">
@@ -110,43 +206,106 @@ export default function TodayTab({ active }: { active: boolean }) {
                     key={p.user_id}
                     className="flex items-center justify-between gap-2 border-t border-slate-100 py-1.5 text-sm first:border-t-0"
                   >
-                    <span className="min-w-0 truncate">
-                      {p.full_name}
+                    <Link
+                      to={`/employees/${p.user_id}`}
+                      className="min-w-0 truncate hover:text-primary hover:underline"
+                    >
+                      {nm(p.full_name)}
                       <span className="ml-1.5 text-xs tabular-nums text-slate-400">
                         · jadval {p.schedule_start}
                       </span>
+                    </Link>
+                    <span className="flex shrink-0 gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs text-indigo-700 hover:bg-indigo-100"
+                        disabled={remind.isPending}
+                        title={
+                          p.telegram_linked
+                            ? "Bot orqali shaxsiy eslatma (kuniga ko'pi bilan 2 marta)"
+                            : "Xodim Telegram botga ulanmagan — yetkazib bo'lmasligi mumkin"
+                        }
+                        onClick={() =>
+                          remind.mutate(p.user_id, {
+                            onSuccess: (r) =>
+                              toast.success(
+                                `${nm(p.full_name)}ga eslatma yuborildi (bugun ${r.sent_today}-marta).`
+                              ),
+                          })
+                        }
+                      >
+                        <Bell className="mr-1 h-3 w-3" />
+                        Eslatish
+                      </Button>
+                      {/* A5: sababli kunni SHU YERDAN belgilash — 2 bosish. */}
+                      {canEdit && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 border-sky-200 bg-sky-50 px-2 text-xs text-sky-700 hover:bg-sky-100"
+                          title="Bugunni sababli kun deb belgilash (kasallik, ta'til...)"
+                          onClick={() => setExcuseFor({ userId: p.user_id, name: p.full_name })}
+                        >
+                          Sababli
+                        </Button>
+                      )}
                     </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 shrink-0 border-indigo-200 bg-indigo-50 px-2 text-xs text-indigo-700 hover:bg-indigo-100"
-                      disabled={remind.isPending}
-                      title={
-                        p.telegram_linked
-                          ? "Bot orqali shaxsiy eslatma (kuniga ko'pi bilan 2 marta)"
-                          : "Xodim Telegram botga ulanmagan — yetkazib bo'lmasligi mumkin"
-                      }
-                      onClick={() =>
-                        remind.mutate(p.user_id, {
-                          onSuccess: (r) =>
-                            toast.success(
-                              `${p.full_name}ga eslatma yuborildi (bugun ${r.sent_today}-marta).`
-                            ),
-                        })
-                      }
-                    >
-                      <Bell className="mr-1 h-3 w-3" />
-                      Eslatish
-                    </Button>
                   </li>
                 ))}
-                {dash.excused_today.map((p) => (
+              </ul>
+            )}
+            {/* A3: sababli kunlilar endi ALOHIDA bo'limcha — «kelmagan» bilan
+                aralashmaydi, sonlar zid chiqmaydi. */}
+            {dash.excused_today.length > 0 && (
+              <div className="mt-3 border-t border-slate-100 pt-2">
+                <div className="mb-1 text-xs font-medium text-slate-500">
+                  🌿 Sababli ({dash.excused_today.length})
+                </div>
+                <ul className="space-y-1">
+                  {dash.excused_today.map((p) => (
+                    <li key={p.user_id} className="flex items-center justify-between gap-2 py-1 text-sm">
+                      <Link
+                        to={`/employees/${p.user_id}`}
+                        className="min-w-0 truncate text-slate-500 hover:text-primary hover:underline"
+                      >
+                        {nm(p.full_name)}
+                      </Link>
+                      <StatusBadge kind="attendance" status="excused" />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* A4: KIM kechikdi — endi ismma-ism (eng kattasi tepada). */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">⏱ Kechikdi ({lateList.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lateList.length === 0 ? (
+              <div className="text-sm text-slate-400">Bugun hech kim kechikmadi 🎉</div>
+            ) : (
+              <ul className="space-y-1">
+                {lateList.map((p) => (
                   <li
                     key={p.user_id}
                     className="flex items-center justify-between gap-2 border-t border-slate-100 py-1.5 text-sm first:border-t-0"
                   >
-                    <span className="min-w-0 truncate text-slate-500">{p.full_name}</span>
-                    <StatusBadge kind="attendance" status="excused" />
+                    <Link
+                      to={`/employees/${p.user_id}`}
+                      className="min-w-0 truncate hover:text-primary hover:underline"
+                    >
+                      {nm(p.user_name)}
+                      {p.left && <span className="ml-1.5 text-xs text-slate-400">· ketgan</span>}
+                    </Link>
+                    <span className="shrink-0 tabular-nums text-slate-500">
+                      {fmtTime(p.check_in_time)}
+                      <span className="ml-1.5 font-semibold text-rose-600">+{p.late_minutes} daq</span>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -165,10 +324,15 @@ export default function TodayTab({ active }: { active: boolean }) {
               <ul className="space-y-1">
                 {dash.in_office.map((p) => (
                   <li
-                    key={`${p.user_name}-${p.check_in_time}`}
+                    key={p.user_id}
                     className="flex items-center justify-between border-t border-slate-100 py-1.5 text-sm first:border-t-0"
                   >
-                    <span className="min-w-0 truncate">{p.user_name}</span>
+                    <Link
+                      to={`/employees/${p.user_id}`}
+                      className="min-w-0 truncate hover:text-primary hover:underline"
+                    >
+                      {nm(p.user_name)}
+                    </Link>
                     <span className="shrink-0 tabular-nums text-slate-500">
                       {fmtTime(p.check_in_time)}
                       {p.late_minutes > 0 && (
@@ -179,31 +343,31 @@ export default function TodayTab({ active }: { active: boolean }) {
                 ))}
               </ul>
             )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">🚪 Ketdi ({dash.left.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {dash.left.length === 0 ? (
-              <div className="text-sm text-slate-400">Hali hech kim ketmadi</div>
-            ) : (
-              <ul className="space-y-1">
-                {dash.left.map((p) => (
-                  <li
-                    key={p.user_id}
-                    className="flex items-center justify-between border-t border-slate-100 py-1.5 text-sm first:border-t-0"
-                  >
-                    <span className="min-w-0 truncate">{p.full_name}</span>
-                    <span className="shrink-0 tabular-nums text-xs text-slate-500">
-                      {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)} ·{" "}
-                      {Math.round((p.worked_minutes / 60) * 10) / 10} st
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            {/* Ketdi — alohida karta o'rniga shu kartaning pastki bo'limi
+                (uch ustunda joy ochish uchun; ketganlar ro'yxati odatda kun
+                oxirida to'ladi, ertalab bo'sh turardi). */}
+            {dash.left.length > 0 && (
+              <div className="mt-3 border-t border-slate-100 pt-2">
+                <div className="mb-1 text-xs font-medium text-slate-500">
+                  🚪 Ketdi ({dash.left.length})
+                </div>
+                <ul className="space-y-1">
+                  {dash.left.map((p) => (
+                    <li key={p.user_id} className="flex items-center justify-between py-1 text-sm">
+                      <Link
+                        to={`/employees/${p.user_id}`}
+                        className="min-w-0 truncate hover:text-primary hover:underline"
+                      >
+                        {nm(p.full_name)}
+                      </Link>
+                      <span className="shrink-0 tabular-nums text-xs text-slate-500">
+                        {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)} ·{" "}
+                        {Math.round((p.worked_minutes / 60) * 10) / 10} st
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -222,7 +386,7 @@ export default function TodayTab({ active }: { active: boolean }) {
                   key={p.user_id}
                   className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600"
                 >
-                  {p.full_name}
+                  {nm(p.full_name)}
                 </span>
               ))}
             </div>
@@ -245,10 +409,15 @@ export default function TodayTab({ active }: { active: boolean }) {
             <ul className="space-y-2">
               {dash.recent.map((p) => (
                 <li
-                  key={`${p.user_name}-${p.check_in_time}`}
+                  key={`${p.user_id}-${p.check_in_time}`}
                   className="flex items-center justify-between text-sm"
                 >
-                  <span>{p.user_name}</span>
+                  <Link
+                    to={`/employees/${p.user_id}`}
+                    className="hover:text-primary hover:underline"
+                  >
+                    {nm(p.user_name)}
+                  </Link>
                   <span className="flex items-center gap-2 tabular-nums text-slate-500">
                     {fmtTime(p.check_in_time)} → {fmtTime(p.check_out_time)}
                     <StatusBadge kind="attendance" status={p.status} />
@@ -259,6 +428,59 @@ export default function TodayTab({ active }: { active: boolean }) {
           )}
         </CardContent>
       </Card>
+
+      {/* A5: «Sababli» dialogi — xodim/sana ma'lum, faqat sabab. */}
+      <Dialog
+        open={excuseFor !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setExcuseFor(null);
+            setExcuseReason("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {excuseFor ? `${nm(excuseFor.name)} — bugun sababli` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-500">
+            Darhol tasdiqlangan holda yoziladi (xodimga bot orqali bildiriladi), bugungi
+            «kelmadi» hisobidan chiqadi.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {EXCUSE_PRESETS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                  excuseReason === r
+                    ? "border-sky-400 bg-sky-100 text-sky-800"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100"
+                }`}
+                onClick={() => setExcuseReason(r)}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <Input
+            placeholder="Yoki sababni yozing..."
+            value={excuseReason}
+            onChange={(e) => setExcuseReason(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submitExcuse()}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setExcuseFor(null)}>
+              Bekor qilish
+            </Button>
+            <Button onClick={submitExcuse} disabled={recordExcused.isPending}>
+              {recordExcused.isPending ? "Saqlanmoqda..." : "Belgilash"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

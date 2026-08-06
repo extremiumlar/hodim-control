@@ -33,3 +33,15 @@ def inline_keyboard(buttons: list[list[tuple[str, str]]]) -> dict:
             for row in buttons
         ]
     }
+
+
+def inline_url_keyboard(buttons: list[list[tuple[str, str]]]) -> dict:
+    """buttons: [[(matn, url), ...], ...] — havola ochadigan tugmalar.
+
+    Eslatma xabarlarida «Keldim»ni BOSADIGAN joy bo'lishi shart (UX2-W4):
+    ilgari xabar «Keldim ni bosing» der, tugma esa yo'q edi."""
+    return {
+        "inline_keyboard": [
+            [{"text": text, "url": url} for text, url in row] for row in buttons
+        ]
+    }
