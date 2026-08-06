@@ -10,11 +10,22 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    """Polling rejimi (lokal, Docker/VPS). cPanel webhook rejimi uchun
-    api/routers/bot_webhook.py — ikkalasi bot/setup.py'dan bir xil dispatcher
-    quradi."""
+    """Polling rejimi (lokal, Docker/VPS, yoki cPanel'da doimiy fon jarayoni).
+    cPanel webhook rejimi uchun api/routers/bot_webhook.py — ikkalasi
+    bot/setup.py'dan bir xil dispatcher quradi."""
     bot = build_bot()
     dp = build_dispatcher(bot)
+
+    # cPanel fon-jarayon rejimi (2026-07-31): bot API bilan tarmoq (HTTPS)
+    # o'rniga O'Z ICHIDA yuklangan FastAPI ilovasi orqali gaplashadi — so'rovlar
+    # Passenger'ning yagona ishchisiga umuman bormaydi (u faqat web-panelga
+    # xizmat qiladi). SQLite'ga ikkala jarayon (bu + Passenger) parallel yozadi —
+    # busy_timeout 30s bilan (cron allaqachon shunday ishlaydi).
+    if os.getenv("BOT_INPROCESS_API") == "true":
+        from api.main import app as api_app
+
+        api_client.use_in_process_transport(api_app)
+        logger.info("Bot API bilan in-process gaplashadi (Passenger ishchisiga tegmaydi)")
 
     # XAVFSIZLIK: bitta BOT_TOKEN bir vaqtda faqat bitta rejimda (polling YOKI
     # webhook) ishlay oladi. Agar hozir Telegram'da FAOL webhook bo'lsa (odatda
