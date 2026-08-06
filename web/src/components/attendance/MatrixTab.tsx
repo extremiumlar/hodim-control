@@ -289,9 +289,10 @@ export default function MatrixTab({
       {/* Oy tanlagich + qidiruv + legend */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <MonthNav month={month} onChange={setMonth} />
-        {/* B18: legend telefonda joy yemasin — faqat md+ da ko'rinadi
-            (mobil kartalarda holat matn bilan yoziladi). */}
-        <div className="hidden flex-wrap items-center gap-3 text-xs text-slate-600 md:flex">
+        {/* B18: legend telefonda ixchamroq (kichikroq shrift/oraliq), lekin
+            YASHIRILMAYDI — mobil kartalardagi mini oy-chizig'i ham rangli,
+            izohsiz u tushunarsiz bo'lib qolardi. */}
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-slate-600 md:gap-3 md:text-xs">
           {LEGEND.map((l) => (
             <span key={l.status} className="inline-flex items-center gap-1.5">
               <span className={cn("h-3 w-3 rounded", MATRIX_CELL_CLS[l.status])} />

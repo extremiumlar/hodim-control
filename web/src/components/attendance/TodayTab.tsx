@@ -212,6 +212,28 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
         <StatCard label="Dam olishda" value={s.on_day_off} icon={CalendarOff} />
       </div>
 
+      {/* Oylik jami — eski sahifada «Oy: ishlangan soat» va oylik kechikish
+          alohida kartalar edi; kartalar 8 tadan 5 taga tushirilganda ular
+          UI'dan butunlay tushib qolgan edi (backend baribir yuborardi).
+          Endi bitta ixcham qator sifatida qaytarildi. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        <span className="font-medium text-slate-500">Bu oy (1-sanadan bugungacha):</span>
+        <span>
+          Ishlangan: <b className="tabular-nums text-slate-800">{s.month_worked_hours} soat</b>
+        </span>
+        <span>
+          Kechikish:{" "}
+          <b
+            className={`tabular-nums ${s.month_late_minutes > 0 ? "text-rose-600" : "text-slate-800"}`}
+          >
+            {s.month_late_minutes} daq
+          </b>
+        </span>
+        <Link to="/attendance?tab=hisobot" className="ml-auto text-primary hover:underline">
+          Batafsil hisobot →
+        </Link>
+      </div>
+
       {/* Uch ustun: Kelmagan / Kechikdi / Ofisda-Ketdi */}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
