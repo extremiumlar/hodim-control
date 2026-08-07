@@ -83,7 +83,7 @@ export default function Attendance() {
         </TabsList>
 
         <TabsContent value="bugun" className="mt-4">
-          <TodayTab active={tab === "bugun"} canEdit={canEdit} />
+          <TodayTab active={tab === "bugun"} canEdit={canEdit} isDasturchi={isDasturchi} />
         </TabsContent>
         <TabsContent value="jadval" className="mt-4">
           <MatrixTab active={tab === "jadval"} canEdit={canEdit} isDasturchi={isDasturchi} />

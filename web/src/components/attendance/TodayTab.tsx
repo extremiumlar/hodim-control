@@ -48,7 +48,18 @@ const nm = (s: string) => s.trim();
 /** UX2-W1 (A5): sabab tez-tanlash chiplari — HR har safar jumla yozmasin. */
 const EXCUSE_PRESETS = ["Kasallik", "Oilaviy holat", "Ta'til", "Xizmat safari"];
 
-export default function TodayTab({ active, canEdit }: { active: boolean; canEdit: boolean }) {
+export default function TodayTab({
+  active,
+  canEdit,
+  isDasturchi,
+}: {
+  active: boolean;
+  canEdit: boolean;
+  /** Dasturchi rejimi: tuzatish AUDITSIZ ketadi va botga xabar berilmaydi.
+      Egasining qat'iy talabi — bu huquq HAR BIR tuzatish yo'lida turishi
+      shart, faqat «Jadval» tabida emas. */
+  isDasturchi: boolean;
+}) {
   const dashQuery = useAttendanceDashboard(active);
   const remind = useRemindAttendance();
   const remindAll = useRemindAllAttendance();
@@ -535,6 +546,11 @@ export default function TodayTab({ active, canEdit }: { active: boolean; canEdit
           row={null}
           preset={editPreset}
           onClose={() => setEditPreset(null)}
+          // `silent` UZATILISHI SHART: default `false` bo'lgani uchun
+          // Dasturchining bu tabdagi tuzatishi AUDITGA TUSHIB ketardi
+          // («Jadval» tabida to'g'ri edi, bu yerda unutilgan). Egasining
+          // talabi — auditsiz tuzatish barcha yo'llarda ishlashi kerak.
+          silent={isDasturchi}
         />
       )}
 

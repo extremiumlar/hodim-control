@@ -132,7 +132,11 @@ export default function MatrixTab({
   // akkordeon ichida 9 bosish chuqurlikda edi.
   const [addOpen, setAddOpen] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
-  const [recordsOpen, setRecordsOpen] = useState(false);
+  // Tuzatish huquqi borlarda OCHIQ boshlanadi: eski kunni tuzatish aynan shu
+  // ro'yxatdagi qalam tugmasi bilan qilinadi va yig'iq holatda foydalanuvchi
+  // «funksiya yo'qolib qolibdi» deb o'ylagan (egasining 2026-08-07 shikoyati).
+  // Huquqi yo'qlarga avvalgidek yopiq — ularga xom qatorlar shovqin.
+  const [recordsOpen, setRecordsOpen] = useState(canEdit);
   // A11: qidiruv/filtr/saralash
   const [q, setQ] = useState("");
   const [onlyProblem, setOnlyProblem] = useState(false);
@@ -516,7 +520,9 @@ export default function MatrixTab({
           onClick={() => setRecordsOpen((o) => !o)}
         >
           {recordsOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          Yozuvlar ro'yxati (xom qatorlar, qidiruv/filtr bilan)
+          {canEdit
+            ? "Yozuvlar ro'yxati — eski kunlarni tuzatish (✎) va yozuv qo'shish"
+            : "Yozuvlar ro'yxati (xom qatorlar, qidiruv/filtr bilan)"}
         </button>
         {recordsOpen && (
           <div className="border-t border-slate-100 p-4">
