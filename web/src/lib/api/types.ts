@@ -577,6 +577,30 @@ export interface FinePolicyInput {
   is_active?: boolean;
 }
 
+/** KPI (bonus) stavkasi — 3 darajali (global/lavozim/xodim) va tarixiy. */
+export interface KpiRate {
+  id: number;
+  scope: "global" | "position" | "user";
+  scope_id: number | null;
+  scope_label: string | null;
+  metric: KpiMetric;
+  amount: number;
+  effective_from: string;
+  changed_by: number;
+  note: string | null;
+  created_at: string;
+}
+
+/** Backend `KpiRateIn._valid_metric` bilan BIR XIL ro'yxat bo'lishi shart. */
+export type KpiMetric = "suhbat" | "tashrif" | "oddiy_video" | "dumaloq_video";
+
+export const KPI_METRIC_LABELS: Record<KpiMetric, string> = {
+  suhbat: "Suhbatlar",
+  tashrif: "Tashriflar",
+  oddiy_video: "Oddiy videolar",
+  dumaloq_video: "Dumaloq videolar",
+};
+
 export interface SalaryRate {
   id: number;
   user_id: number;

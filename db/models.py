@@ -1240,6 +1240,53 @@ class SalaryRate(Base):
     deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class KpiRate(Base):
+    """KPI (bonus) stavkasi — bitta ko'rsatkich birligi uchun necha so'm.
+
+    NEGA KERAK (2026-08-08, egasining talabi "oylik stavkaga KPI stavka
+    qilish"): ilgari stavkalar `api/services/bonus.py` da KONSTANTA edi
+    (`PLACEHOLDER_RATE_PER_CONVERSATION = 2000` va h.k.). Oqibati:
+      - HR stavkani saytdan o'zgartira olmasdi, har safar dasturchi + deploy;
+      - stavka TARIXIY emasdi — o'zgartirilsa o'tgan oylar bonusi ham qayta
+        hisoblanganda o'zgarib ketardi;
+      - lavozimga qarab farqlanmasdi (sotuvchi va mobilograf bir xil).
+
+    ARXITEKTURA: ikkita mavjud naqsh birlashtirildi —
+      - `FinePolicy` dan: 3 DARAJALI qamrov (global -> lavozim -> xodim),
+        `resolve_kpi_rate` xodim > lavozim > global tartibida qidiradi;
+      - `SalaryRate` dan: TARIXIYLIK (`effective_from`, UPDATE qilinmaydi,
+        faqat yangi qator qo'shiladi) — o'tgan oy payslip'i buzilmaydi.
+
+    `metric` — `api/routers/norms.py::METRIC_LABELS` kalitlari: "suhbat",
+    "tashrif", "oddiy_video", "dumaloq_video". Alohida jadval qilinmadi:
+    metrikalar ro'yxati kod darajasida belgilangan va lavozimga biriktiriladi.
+
+    Stavka topilmasa bonus o'sha ko'rsatkich uchun 0 — "sozlanmagan" holat
+    xavfsiz tomonga og'adi (tasodifan pul yozilmasin)."""
+
+    __tablename__ = "kpi_rates"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_id", "metric", "effective_from", name="uq_kpi_rates_grain"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # "global" | "position" | "user" — `FinePolicy.scope` bilan bir xil
+    # so'zlar. `scope_id` polimorfik (positions.id yoki users.id), shuning
+    # uchun FK YO'Q; "global"da NULL.
+    scope: Mapped[str] = mapped_column(String(20), index=True)
+    scope_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metric: Mapped[str] = mapped_column(String(30), index=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2))
+    effective_from: Mapped[date] = mapped_column(Date, index=True)
+    changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # `SalaryRate` bilan bir xil yumshoq o'chirish (Dasturchi rejimi).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
 class OvertimeProfile(Base):
     """Kimga qo'shimcha ish (overtime) yoqilgani va qanday hisoblanishi — faqat
     HR belgilagan xodimlarga (`enabled`). `multiplier`da tizim darajasidagi

@@ -56,6 +56,7 @@ export const qk = {
   auditLogs: (params?: object) => ["audit-logs", params ?? {}] as const,
   finePolicies: ["payroll", "policies"] as const,
   salaryRates: (userId: number) => ["payroll", "rates", userId] as const,
+  kpiRates: ["payroll", "kpi-rates"] as const,
   overtimeProfiles: ["payroll", "overtime-profiles"] as const,
   overtimeEntries: (params?: object) => ["payroll", "overtime", params ?? {}] as const,
   payrollPeriods: ["payroll", "periods"] as const,
@@ -450,6 +451,11 @@ export const useSalaryRates = (userId: number, enabled = true) =>
 
 export const useCreateSalaryRate = () =>
   useApiMutation(api.createSalaryRate, [["payroll", "rates"]]);
+
+export const useKpiRates = () =>
+  useQuery({ queryKey: qk.kpiRates, queryFn: api.listKpiRates });
+
+export const useCreateKpiRate = () => useApiMutation(api.createKpiRate, [qk.kpiRates]);
 
 export const useOvertimeProfiles = () =>
   useQuery({ queryKey: qk.overtimeProfiles, queryFn: api.listOvertimeProfiles });

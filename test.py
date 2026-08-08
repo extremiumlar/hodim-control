@@ -4162,6 +4162,107 @@ def test_dashboard_day_off() -> None:
         conn.close()
 
 
+def test_kpi_rates() -> None:
+    """KPI stavkalari saytdan sozlanadigan bo'ldi (2026-08-08, egasi so'radi).
+
+    Ilgari stavkalar `api/services/bonus.py` da KONSTANTA edi — HR ularni
+    o'zgartira olmasdi, tarixiy emasdi va lavozimga qarab farqlanmasdi
+    (mobilograf video stavkasi 0 bo'lgani uchun uning KPI'si doim nol edi).
+
+    Tekshiriladi:
+      (a) stavka yaratish va ro'yxat;
+      (b) 3 darajali qamrov — xodim stavkasi global'dan USTUN;
+      (c) tarixiylik — keyingi `effective_from` eskisini bosmaydi;
+      (d) validatsiya (noma'lum ko'rsatkich, global+scope_id, dublikat sana);
+      (e) sozlanmagan stavka -> bonus 0, LEKIN breakdown'da `missing_rates`.
+    """
+    import asyncio as _aio
+    import httpx
+    from datetime import date as _date
+    from decimal import Decimal as _Dec
+
+    print("\n" + "=" * 60)
+    print("KPI STAVKALARI (kpi_rates)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    token = token_for(mgr[0], mgr[1])
+    if not token:
+        return
+
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    try:
+        cur.execute(
+            "insert into users (full_name, role, is_active, bot_started, created_at)"
+            " values (?,?,1,0,datetime('now'))", ("T-Kpi", "employee"))
+        uid = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=20) as c:
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "global", "metric": "suhbat", "amount": 2500,
+                "effective_from": "2020-01-01", "note": "T-sinov"})
+            check("global stavka yaratildi", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "user", "scope_id": uid, "metric": "suhbat", "amount": 4000,
+                "effective_from": "2020-01-01"})
+            check("xodimga alohida stavka", r.status_code == 200, f"kod={r.status_code}")
+
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "global", "metric": "suhbat", "amount": 9999,
+                "effective_from": "2020-01-01"})
+            check("bir sanaga ikkinchi stavka -> 400", r.status_code == 400, f"kod={r.status_code}")
+
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "global", "scope_id": 5, "metric": "suhbat", "amount": 100,
+                "effective_from": "2020-01-01"})
+            check("global + scope_id -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "global", "metric": "yolgon_korsatkich", "amount": 100,
+                "effective_from": "2020-01-01"})
+            check("noma'lum ko'rsatkich -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # Tarixiylik: keyingi sanaga yangi qiymat
+            r = c.post("/payroll/kpi-rates", headers=auth(token), json={
+                "scope": "user", "scope_id": uid, "metric": "suhbat", "amount": 6000,
+                "effective_from": "2020-06-01"})
+            check("keyingi sanaga yangi stavka (tarix)", r.status_code == 200, f"kod={r.status_code}")
+
+        # Qamrov va tarix — xizmat qatlamidan
+        from api.services.kpi_rates import resolve_kpi_rate
+        from db.base import async_session
+        from db.models import User as _U
+
+        async def _chk():
+            async with async_session() as s2:
+                u = await s2.get(_U, uid)
+                eski = await resolve_kpi_rate(s2, u, "suhbat", _date(2020, 3, 1))
+                yangi = await resolve_kpi_rate(s2, u, "suhbat", _date(2020, 9, 1))
+                yoq = await resolve_kpi_rate(s2, u, "tashrif", _date(2020, 9, 1))
+                return eski, yangi, yoq
+
+        eski, yangi, yoq = _aio.run(_chk())
+        check("xodim stavkasi global'dan USTUN (4000)", eski == _Dec("4000.00"), f"={eski}")
+        check("tarix ishlaydi — keyingi sanada 6000", yangi == _Dec("6000.00"), f"={yangi}")
+        check("sozlanmagan ko'rsatkich -> None (0 EMAS)", yoq is None, f"={yoq}")
+    finally:
+        if uid is not None:
+            cur.execute("delete from kpi_rates where scope='user' and scope_id=?", (uid,))
+            cur.execute("delete from kpi_rates where scope='global' and metric='suhbat' and note='T-sinov'")
+            cur.execute("delete from kpi_rates where scope='global' and metric='suhbat'")
+            cur.execute("delete from audit_logs where action='kpi_rate_created'")
+            cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        conn.close()
+
+
 def test_absent_deduct_daily() -> None:
     """Kelmagan kun kunlik ulush bilan ayiriladi (2026-08-08, egasi "A" tanladi).
 
@@ -4654,6 +4755,11 @@ def main() -> None:
         test_dashboard_day_off()
     except Exception:
         print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_kpi_rates()
+    except Exception:
+        print("KPI stavkalari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_absent_deduct_daily()

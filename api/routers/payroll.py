@@ -30,6 +30,8 @@ from api.schemas import (
     BotPayslipOut,
     FinePolicyIn,
     FinePolicyOut,
+    KpiRateIn,
+    KpiRateOut,
     OvertimeEntryDecide,
     OvertimeEntryIn,
     OvertimeEntryOut,
@@ -67,6 +69,7 @@ from api.timeutil import today_local
 from db.models import (
     AuditLog,
     FinePolicy,
+    KpiRate,
     OvertimeEntry,
     OvertimeEntryStatus,
     OvertimeProfile,
@@ -353,6 +356,110 @@ async def create_rate(
     await db.commit()
     await db.refresh(rate)
     return rate
+
+
+# ─────────────────────────────────────────────
+# KPI stavkalari (bonus) — 2026-08-08
+# ─────────────────────────────────────────────
+
+
+async def _scope_label(db: AsyncSession, scope: str, scope_id: int | None) -> str | None:
+    """`_policy_label` bilan bir xil mantiq, lekin har qanday qamrov uchun."""
+    if scope == "user" and scope_id:
+        u = await db.get(User, scope_id)
+        return u.full_name if u else f"#{scope_id}"
+    if scope == "position" and scope_id:
+        pos = await db.get(Position, scope_id)
+        return pos.name if pos else f"#{scope_id}"
+    return None
+
+
+@router.get("/kpi-rates", response_model=list[KpiRateOut])
+async def list_kpi_rates(
+    _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> list[KpiRateOut]:
+    """Barcha KPI stavkalari — TARIX bilan (har o'zgarish alohida qator).
+
+    Yumshoq o'chirilganlar ko'rinmaydi (`SalaryRate` bilan bir xil qoida) —
+    ularni Dasturchi rejimi orqali ko'rish/tiklash mumkin."""
+    rows = list(
+        await db.scalars(
+            select(KpiRate)
+            .where(KpiRate.deleted_at.is_(None))
+            .order_by(KpiRate.metric, KpiRate.scope, KpiRate.effective_from.desc())
+        )
+    )
+    out: list[KpiRateOut] = []
+    for r in rows:
+        item = KpiRateOut.model_validate(r)
+        item.scope_label = await _scope_label(db, r.scope, r.scope_id)
+        out.append(item)
+    return out
+
+
+@router.post("/kpi-rates", response_model=KpiRateOut)
+async def create_kpi_rate(
+    payload: KpiRateIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> KpiRateOut:
+    """Yangi KPI stavkasi. `SalaryRate` bilan BIR XIL naqsh: mavjud qator
+    HECH QACHON o'zgartirilmaydi, faqat yangi `effective_from` bilan qator
+    qo'shiladi — o'tgan oy bonusi buzilmaydi.
+
+    Nishon mavjudligi tekshiriladi: lavozim/xodim o'chirilgan bo'lsa stavka
+    hech qachon qo'llanmasdi va bu jimgina sezilmay qolardi."""
+    if payload.scope == "user":
+        if await db.get(User, payload.scope_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    elif payload.scope == "position":
+        if await db.get(Position, payload.scope_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Lavozim topilmadi")
+
+    existing = await db.scalar(
+        select(KpiRate).where(
+            KpiRate.scope == payload.scope,
+            KpiRate.scope_id.is_(None) if payload.scope_id is None else KpiRate.scope_id == payload.scope_id,
+            KpiRate.metric == payload.metric,
+            KpiRate.effective_from == payload.effective_from,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Bu sanaga shu ko'rsatkich uchun stavka allaqachon kiritilgan",
+        )
+
+    rate = KpiRate(
+        scope=payload.scope,
+        scope_id=payload.scope_id,
+        metric=payload.metric,
+        amount=payload.amount,
+        effective_from=payload.effective_from,
+        note=payload.note,
+        changed_by=actor.id,
+    )
+    db.add(rate)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="kpi_rate_created",
+            target_user_id=payload.scope_id if payload.scope == "user" else None,
+            before=None,
+            # `payload` maydonlari allaqachon oddiy turlar (float/str/date),
+            # lekin `date` JSON'ga aylanmaydi — shuning uchun ISO satr.
+            after={
+                "scope": payload.scope,
+                "scope_id": payload.scope_id,
+                "metric": payload.metric,
+                "amount": payload.amount,
+                "effective_from": payload.effective_from.isoformat(),
+            },
+        )
+    )
+    await db.commit()
+    await db.refresh(rate)
+    out = KpiRateOut.model_validate(rate)
+    out.scope_label = await _scope_label(db, rate.scope, rate.scope_id)
+    return out
 
 
 @router.get("/overtime-profiles", response_model=list[OvertimeProfileOut])

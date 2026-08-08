@@ -1008,6 +1008,57 @@ class SalaryRateIn(BaseModel):
         return v
 
 
+class KpiRateIn(BaseModel):
+    """KPI stavkasi kiritish. `scope='global'`da `scope_id` bo'lmaydi,
+    `position`/`user`da MAJBURIY (`FinePolicyIn` bilan bir xil qoida)."""
+
+    scope: str
+    scope_id: int | None = None
+    metric: str
+    amount: float = Field(ge=0)
+    effective_from: dt.date
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("scope")
+    @classmethod
+    def _valid_scope(cls, v: str) -> str:
+        if v not in {"global", "position", "user"}:
+            raise ValueError("scope 'global', 'position' yoki 'user' bo'lishi kerak")
+        return v
+
+    @field_validator("metric")
+    @classmethod
+    def _valid_metric(cls, v: str) -> str:
+        # Ro'yxat `api/routers/norms.py::METRIC_LABELS` bilan bir xil bo'lishi
+        # SHART — aks holda hech qachon qo'llanmaydigan stavka kiritilardi.
+        if v not in {"suhbat", "tashrif", "oddiy_video", "dumaloq_video"}:
+            raise ValueError("Bunday ko'rsatkich yo'q")
+        return v
+
+    @model_validator(mode="after")
+    def _scope_id_required(self):
+        if self.scope == "global" and self.scope_id is not None:
+            raise ValueError("'global' qamrovda scope_id bo'lmaydi")
+        if self.scope != "global" and self.scope_id is None:
+            raise ValueError("'position'/'user' qamrovda scope_id majburiy")
+        return self
+
+
+class KpiRateOut(BaseModel):
+    id: int
+    scope: str
+    scope_id: int | None
+    scope_label: str | None = None
+    metric: str
+    amount: float
+    effective_from: dt.date
+    changed_by: int
+    note: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class SalaryRateOut(BaseModel):
     id: int
     user_id: int

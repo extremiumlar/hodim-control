@@ -38,6 +38,7 @@ import type {
   PayslipRow,
   Position,
   RegisterFaceResult,
+  KpiRate,
   SalaryRate,
   StatsOverview,
   Task,
@@ -342,6 +343,15 @@ export const api = {
   listSalaryRates: (userId: number) => apiFetch<SalaryRate[]>(`/payroll/rates?user_id=${userId}`),
   createSalaryRate: (data: { user_id: number; amount: number; pay_basis: string; effective_from: string; note?: string | null }) =>
     apiFetch<SalaryRate>("/payroll/rates", { method: "POST", body: JSON.stringify(data) }),
+  listKpiRates: () => apiFetch<KpiRate[]>("/payroll/kpi-rates"),
+  createKpiRate: (data: {
+    scope: string;
+    scope_id: number | null;
+    metric: string;
+    amount: number;
+    effective_from: string;
+    note?: string | null;
+  }) => apiFetch<KpiRate>("/payroll/kpi-rates", { method: "POST", body: JSON.stringify(data) }),
   listOvertimeProfiles: () => apiFetch<OvertimeProfile[]>("/payroll/overtime-profiles"),
   upsertOvertimeProfile: (userId: number, data: OvertimeProfileInput) =>
     apiFetch<OvertimeProfile>(`/payroll/overtime-profiles/${userId}`, {
