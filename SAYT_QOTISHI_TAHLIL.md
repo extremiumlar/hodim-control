@@ -1,10 +1,24 @@
 # Sayt qotishi — sabab tahlili va yechim rejasi
 
 > **Holat:** tahlil tugadi, amalga oshirish BOSHLANMAGAN.
-> **Sana:** 2026-08-07
+> **Sana:** 2026-08-07 · **Tuzatildi:** 2026-08-08
 > **Qamrov:** faqat 1-muammo — cPanel/Passenger deploy'idagi konkurentlik cheklovi.
-> Boshqa aniqlangan muammolar (Face ID brauzer qotishi, indekslar, Excel eksport)
+> Boshqa aniqlangan muammolar (Face ID brauzer qotishi, Excel eksport)
 > shu hujjatga KIRMAYDI — ular alohida ko'rib chiqiladi (oxirgi bo'limga qarang).
+
+> ### ⚠️ 2026-08-08 TUZATISHI — BAZA HAQIDAGI DA'VOLAR XATO EDI
+>
+> Hujjat dastlab **production SQLite ishlatadi** deb yozgan edi. Bu **NOTO'G'RI**:
+> production **PostgreSQL** (`DATABASE_URL=postgresql+asyncpg://...`), repodagi
+> `app.db` esa 0 baytlik qoldiq fayl. Sabab: lokal `.env` va lokal (eski dev)
+> SQLite sxemasi production deb qabul qilingan.
+>
+> **Nima o'zgardi:**
+> - **10.2 «Indekslar yo'qligi» — BUTUNLAY BEKOR.** PostgreSQL'da kerakli
+>   indekslar allaqachon bor (jonli tekshirildi).
+> - **SQLite/WAL/qulf** bilan bog'liq barcha xavflar — productionga **tegishli emas**.
+> - 1-muammoning o'zi (konkurentlik = 1) **o'zgarishsiz qoladi** — u jonli
+>   zinapoya testi bilan tasdiqlangan, bazaga bog'liq emas.
 
 ---
 
@@ -219,12 +233,12 @@ keltiradi:
 - `_SharedRateBudget` ishchi soniga bo'linishi kerak — kod izohida o'zi yozilgan
   ([`uysot.py:80`](crm/uysot.py:80)): *«API ko'p-worker qilinsa byudjetni worker
   soniga bo'lish kerak bo'ladi»*
-- SQLite yozuv to'qnashuvi ortadi, **WAL esa o'chiq**
-  ([`db/base.py:32-42`](db/base.py:32) — WAL Passenger ostida 500 bergani uchun
-  ataylab qaytarib olingan)
+- ~~SQLite yozuv to'qnashuvi ortadi, WAL esa o'chiq~~ — **BEKOR (2026-08-08)**:
+  production **PostgreSQL** ishlatadi, ya'ni bu xavf yo'q (pastdagi 6-bo'limga qarang)
+- Xotira: bitta ishchi **225 MB**, LVE limiti **1 GB** → realistik maksimum **3 ta**
 - cPanel "Setup Python App" bu sozlamani odatda **umuman ko'rsatmaydi**
 
-Ya'ni: kam ehtimolli foyda, aniq zarar.
+Ya'ni asosiy to'siq — **rate byudjet** (2.2) va xotira; baza emas.
 
 ### 4.2. 6-variant — aniqlashtirish kerak
 
@@ -593,13 +607,37 @@ ko'rib chiqiladi:
 - [`face.ts:417-440`](web/src/lib/face.ts:417) — tiriklik sinovi 18 soniya davomida
   har freymda descriptor hisoblaydi (oxirida faqat bittasi kerak)
 
-### 10.2. Indekslar yo'qligi (vaqt o'tgani sari yomonlashadi)
+### 10.2. ~~Indekslar yo'qligi~~ — ❌ BEKOR QILINDI (2026-08-08)
 
-- `lead_events` — **umuman indeks yo'q**, `detected_at` bo'yicha filtr
-  ([`stats.py:381`](api/routers/stats.py:381)) to'liq skan
-- `hot_lead` — `status`, `crm_lead_id` yo'q
-- `audit_logs` — `created_at`, `target_user_id` yo'q
-- `attendance` — alohida `date` indeksi yo'q
+> **Bu bo'lim XATO edi.** Men **lokal `app.db`** (eski dev SQLite) sxemasini
+> o'qib, uni production deb hisoblagandim. Production esa **PostgreSQL**
+> (`DATABASE_URL=postgresql+asyncpg://...`; repodagi `app.db` — 0 baytlik qoldiq).
+>
+> Jonli PostgreSQL tekshiruvi (2026-08-08) **indekslar borligini** ko'rsatdi:
+
+| Jadval | Qatorlar | Indekslar |
+|---|---|---|
+| `lead_events` | 10 925 | pkey, `crm_lead_id`, `event_type`, **`detected_at`** ✅ |
+| `hot_lead` | 1 100 | pkey, `crm_lead_id`, `user_id`, **`status`** ✅ |
+| `attendance` | 140 | pkey, uq(user_id,date), `user_id`, **`date`**, `status` ✅ |
+| `hourly_actual` | 1 004 | pkey, uq, `user_id`, `date` ✅ |
+| `lead_stage_daily` | 1 195 | pkey, uq, `date` ✅ |
+| `crm_webhook_log` | 4 | pkey, `received_at` ✅ |
+| `audit_logs` | 438 | pkey, `actor_id`, `action` — `created_at` yo'q |
+| `crm_lead_state` | 11 011 | faqat pkey (`crm_lead_id`) |
+
+**Qoldiq (juda kichik):** `audit_logs.created_at` indeksi yo'q — lekin jadval
+438 qator, ya'ni amalda muammo emas. `crm_lead_state` faqat PK bo'yicha
+so'raladi — indeks yetarli.
+
+**Saboq:** lokal `.env`/baza production bilan bir xil emas. Sxema da'volari
+faqat **jonli bazadan** tekshirilsin.
+
+### 10.2b. SQLite/WAL bo'yicha barcha da'volar ham BEKOR
+
+`db/base.py:32-42` dagi WAL izohi **lokal SQLite** rejimiga tegishli.
+Productionda PostgreSQL ishlaydi — MVCC bor, «yozuvchi o'quvchini bloklaydi»
+muammosi **yo'q**, `busy_timeout` ham ahamiyatsiz.
 
 ### 10.3. Excel eksport — event loop'ni bloklaydi
 

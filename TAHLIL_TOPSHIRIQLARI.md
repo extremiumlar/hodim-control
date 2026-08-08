@@ -222,7 +222,27 @@
 
 ---
 
-## 2.1 — Uysot API kaliti 401 qaytaryapti
+## 2.1 — Uysot API kaliti 401 qaytaryapti ✅ HAL BO'LDI (2026-08-08)
+
+> **ILDIZ SABAB:** 04.08.2026 **16:43** da Uysot kabinetida «TechSupport Nurli
+> Diyor» **yangi token yaratgan** («Xodimlar tizimi», muddati 31.12.2026).
+> Yangi token eskisini bekor qildi, `.env` da esa **eskisi** qolgan edi.
+> Bizning birinchi 401 xatomiz — **aynan o'sha daqiqada** (`cron.log`).
+>
+> **Rad etilgan gipotezalar:** ❌ litsenziya muddati · ❌ 429 suiiste'moli tufayli blok
+> (ikkalasi ham ishonarli edi — 4-bosqich ularni yiqitdi).
+>
+> **Bajarilgan:** `.env` da `CRM_API_KEY` yangilandi (zaxira: `.env.bak_2026-08-08_103618`),
+> Passenger restart (10:37:43).
+>
+> **Tasdiq:** `lead/filter` va `call-history` **401 → 200**. 10:38 dagi birinchi
+> sog'lom tikda: **6 ta issiq lid** aniqlanib Telegram'ga yetkazildi, 2 ta
+> kechikish eskalatsiyasi yuborildi, `lid snapshot: synced: True`.
+>
+> **Ochiq qoldi:** *nega 3 kun davomida hech kim bilmadi?* — kuzatuv tizimi
+> CRM 401'ini ushlamadi. Bu **alohida** ish (qo'riqchini kengaytirish).
+
+<details><summary>Asl karta (tarix uchun)</summary>
 
 | | |
 |---|---|
@@ -297,11 +317,26 @@
 **⚠️ Kutilayotgan YUZAKI yechim**
 - ❌ «Har jarayonga 20/daq beramiz» — statik bo'lish; bitta jarayon bo'sh turganda ham quvvat yo'qoladi
 - ❌ «`CRM_UYSOT_MAX_REQUESTS_PER_MINUTE` ni 20 qilamiz» — yuqoridagi bilan bir xil, faqat sozlama orqali
-- ❌ Jarayonlararo qulfni SQLite'ga qo'yish — **3.4** (WAL o'chiq) bilan to'qnashadi, buni hisobga olish shart
+- ❌ Jarayonlararo qulfni SQLite'ga qo'yish — ~~**3.4** (WAL o'chiq) bilan to'qnashadi~~
+  **(2026-08-08 tuzatish: production PostgreSQL, ya'ni bu e'tiroz bekor —
+  jarayonlararo qulfni bazada saqlash butunlay maqbul yo'l)**
 
 ---
 
-## 2.3 — CRM webhook jim (24 soat)
+## 2.3 — CRM webhook jim ⏳ SABAB ANIQLANDI, UYSOT TOMONIDA
+
+> **2026-08-08 holati:** sozlash joyi topildi (`Integratsiya → Dasturchi
+> oynasini ochish → «Xodimlar tizimi» → Webhook tabi`). 04.08 da yangi token
+> yaratilganda webhook sozlamalari **ko'chirilmagan** — toggle o'chiq, URL bo'sh,
+> voqealar tanlanmagan.
+>
+> Egasi sozlagach qayta tekshirildi — **hamon 0 ta webhook**. Batafsil dalillar
+> va Uysot'ga yuboriladigan xat: [WEBHOOK_MUAMMOSI.md](WEBHOOK_MUAMMOSI.md)
+>
+> **Xulosa:** bizning endpoint sog'lom (test: sekret bilan 200, sekretsiz 401),
+> polling qoplab turibdi → ma'lumot yo'qolmayapti. To'siq **Uysot tomonida**.
+
+<details><summary>Asl karta (tarix uchun)</summary>
 
 | | |
 |---|---|
@@ -334,13 +369,43 @@
 - ❌ «Uysot kabinetida webhook'ni qayta sozlaymiz» — **bizning endpoint ishlashini tekshirmasdan**
 - ❌ Xabar matnini o'chirib qo'yish («bezovta qilmasin») — bu ogohlantirish **to'g'ri ishlayapti**
 
+</details>
+
+> ✅ **3-bosqichdagi ayri (kelmayaptimi / rad etilyaptimi) HAL QILINDI** —
+> access log orqali: `/api/crm-webhook/*` ga Uysot'dan **umuman so'rov kelmagan**.
+> Ya'ni «rad etilyapti» varianti bekor, «yubormayapti» tasdiqlandi.
+
 ---
 
 # ILDIZ 3 — Baza: indekslar va so'rov sifati
 
+> ### ⚠️ 2026-08-08 TUZATISHI — BU ILDIZNING KATTA QISMI BEKOR
+>
+> Kartalar dastlab **lokal `app.db`** (eski dev SQLite) sxemasiga qarab
+> yozilgan edi. Production esa **PostgreSQL** — jonli tekshiruv indekslar
+> **allaqachon borligini** ko'rsatdi:
+>
+> | Jadval | Qatorlar | Indekslar |
+> |---|---|---|
+> | `lead_events` | 10 925 | pkey, `crm_lead_id`, `event_type`, **`detected_at`** ✅ |
+> | `hot_lead` | 1 100 | pkey, `crm_lead_id`, `user_id`, **`status`** ✅ |
+> | `attendance` | 140 | pkey, uq, `user_id`, **`date`**, `status` ✅ |
+> | `audit_logs` | 438 | pkey, `actor_id`, `action` |
+> | `crm_lead_state` | 11 011 | faqat pkey |
+>
+> **Holat:** `3.1` ❌ bekor · `3.2` ❌ deyarli bekor · `3.4` ❌ bekor ·
+> **`3.3` (N+1) — kuchida qoladi**, u bazadan qat'i nazar amal qiladi.
+>
+> Ya'ni bu ildizdan **faqat bitta** ish qoldi: **3.3**.
+
 ---
 
-## 3.1 — `lead_events` jadvalida umuman indeks yo'q
+## 3.1 — ~~`lead_events` jadvalida umuman indeks yo'q~~ ❌ BEKOR
+
+**Sabab:** da'vo lokal SQLite'dan olingan. Productionda `ix_lead_events_detected_at`
+**mavjud** (10 925 qator). Ish talab qilinmaydi.
+
+<details><summary>Asl karta (tarix uchun)</summary>
 
 | | |
 |---|---|
@@ -380,9 +445,25 @@
 - ❌ O'lchamasdan indeks qo'shish — «indeks har doim yaxshi» degan noto'g'ri refleks
 - ❌ Arxivlash/tozalash savolini umuman ko'rmaslik
 
+</details>
+
+> 💡 **Faqat bitta qoldiq savol** asl kartadan omon qoldi va u indeksga aloqador emas:
+> **`lead_events` cheksiz o'sadimi?** (10 925 qator, har diff-tikda o'sadi.)
+> Arxivlash/tozalash siyosati kerakmi — buni alohida ko'rib chiqish mumkin.
+
 ---
 
-## 3.2 — `hot_lead`, `audit_logs`, `attendance` indekslari yetishmaydi
+## 3.2 — ~~`hot_lead`, `audit_logs`, `attendance` indekslari~~ ❌ DEYARLI BEKOR
+
+**Jonli holat:** `hot_lead` (`status`, `crm_lead_id`, `user_id`) va `attendance`
+(`date`, `user_id`, `status`) indekslari **mavjud**.
+
+**Yagona haqiqiy qoldiq:** `audit_logs.created_at` indeksi yo'q — lekin jadval
+**438 qator**, ya'ni amalda sezilmaydi. Jadval 100 000+ ga yetganda qayta ko'riladi.
+
+<details><summary>Asl karta (tarix uchun)</summary>
+
+### 3.2 (eski matn)
 
 | | |
 |---|---|
@@ -417,9 +498,11 @@
 - ❌ Uch jadvalni bitta ro'yxatga qo'shib, «hammasiga indeks qo'shamiz» deyish — **har biri alohida asoslanishi kerak**
 - ❌ Mavjud kompozit indekslarni hisobga olmaslik (ortiqcha, foydasiz indeks)
 
+</details>
+
 ---
 
-## 3.3 — N+1 halqalar (~15 joyda)
+## 3.3 — N+1 halqalar (~15 joyda) ✅ KUCHIDA QOLADI
 
 | | |
 |---|---|
@@ -461,7 +544,17 @@
 
 ---
 
-## 3.4 — SQLite WAL o'chiq
+## 3.4 — ~~SQLite WAL o'chiq~~ ❌ BEKOR
+
+**Sabab:** production **PostgreSQL** ishlatadi. `db/base.py:32-42` dagi WAL
+mantig'i faqat lokal SQLite rejimida bajariladi (`if DATABASE_URL.startswith("sqlite")`).
+Productionda MVCC bor — «yozuvchi o'quvchini bloklaydi» muammosi **yo'q**.
+
+**Muhim oqibat:** bu **1.1 (Passenger ishchilarini ko'paytirish)** yo'lidagi
+to'siqni olib tashlaydi. Endi yagona jiddiy old shart — **2.2 (rate byudjet)**
+va xotira (225 MB × N ≤ 1 GB).
+
+<details><summary>Asl karta (tarix uchun)</summary>
 
 | | |
 |---|---|
@@ -502,6 +595,13 @@
   Sababi aniqlanmasdan qayta yoqish = o'sha xatoni takrorlash
 - ❌ `busy_timeout` ni oshirish — kutishni uzaytiradi, muammoni hal qilmaydi
 - ❌ «PostgreSQL'ga o'tamiz» deb yengil aytish — bu katta migratsiya, alohida qaror va reja talab qiladi
+
+</details>
+
+> 😅 **Kulgili yakun:** oxirgi «yuzaki yechim» bandi «PostgreSQL'ga o'tamiz deb
+> yengil aytmang» degan edi — aslida **allaqachon o'tilgan ekan**. Bu kartaning
+> o'zi 4-bosqich («rad etishga urinish») bajarilmagani uchun xato chiqdi:
+> baza turini **jonli tekshirish** o'rniga lokal `.env` ga ishonildi.
 
 ---
 
@@ -766,20 +866,31 @@
 
 # Ilova: qaysi tartibda ishlash
 
-| Navbat | Bo'lim | Nega shu tartibda |
+**2026-08-08 holatiga yangilangan.** 18 ta bo'limdan **5 tasi yopildi** →
+qolgani **13 ta**.
+
+| Navbat | Bo'lim | Holat / nega shu tartibda |
 |---|---|---|
-| 1 | **2.1** | Tizim hozir buzuq — lidlar kelmayapti |
-| 2 | **1.3 + 5.1** | Birga (bir hodisaning ikki tomoni), bot saytni bloklab turibdi |
-| 3 | **1.2** | Eng katta o'lchanadigan yutuq (~20 daq/soat) |
-| 4 | **1.4** | 1.2 dan keyin: qolgan 429 xavfini yopadi |
-| 5 | **4.1 → 4.2 → 4.3** | Shu tartibda: 4.1 o'lchov beradi, 4.2 asosiy yutuq, 4.3 qolgani |
-| 6 | **3.1 → 3.2 → 3.3** | O'lchovga tayangan holda, ehtimol ba'zilari kerak emas |
-| 7 | **1.5** | 1.1 hal bo'lmaguncha to'liq yopilmaydi — buni bilib turib qiling |
-| 8 | **5.2, 5.3** | Gigiyena |
-| 9 | **2.2 → 1.1** | 2.2 **shart**, keyin 1.1 |
-| 10 | **2.3, 3.4** | Alohida qaror talab qiladi |
+| ~~1~~ | ~~**2.1**~~ | ✅ **HAL BO'LDI** — token almashtirilgan edi |
+| **1** | **1.3 + 5.1** | Birga (bir hodisaning ikki tomoni), bot saytni bloklab turibdi |
+| **2** | **1.2** | Eng katta o'lchanadigan yutuq (~20 daq/soat) |
+| **3** | **1.4** | 1.2 dan keyin: qolgan 429 xavfini yopadi |
+| **4** | **4.1 → 4.2 → 4.3** | 4.1 o'lchov beradi, 4.2 asosiy yutuq, 4.3 qolgani |
+| **5** | **3.3** | Yagona omon qolgan baza ishi (N+1) |
+| **6** | **1.5** | 1.1 hal bo'lmaguncha to'liq yopilmaydi — buni bilib turib qiling |
+| **7** | **5.2, 5.3** | Gigiyena |
+| **8** | **2.2 → 1.1** | 2.2 **shart**, keyin 1.1 (endi 3.4 to'sig'i yo'q) |
+| **9** | **2.3** | Uysot tomonida — [WEBHOOK_MUAMMOSI.md](WEBHOOK_MUAMMOSI.md) |
+| — | ~~3.1, 3.2, 3.4~~ | ❌ **BEKOR** — noto'g'ri (lokal SQLite) dalilga asoslangan edi |
+
+### Yangi ish (avvalgi ro'yxatda yo'q edi)
+
+| Bo'lim | Nima |
+|---|---|
+| **5.4** (yangi) | **CRM 401'ini qo'riqchi ushlamadi** — 3 kun jimlik. Kuzatuvni kengaytirish kerak |
 
 ---
 
-*Hujjat 2026-08-07. Manba: [SAYT_QOTISHI_TAHLIL.md](SAYT_QOTISHI_TAHLIL.md),
-usul: [CHUQUR_TAHLIL_METODIKASI.md](CHUQUR_TAHLIL_METODIKASI.md).*
+*Hujjat 2026-08-07, tuzatildi 2026-08-08. Manba:
+[SAYT_QOTISHI_TAHLIL.md](SAYT_QOTISHI_TAHLIL.md), usul:
+[CHUQUR_TAHLIL_METODIKASI.md](CHUQUR_TAHLIL_METODIKASI.md).*
