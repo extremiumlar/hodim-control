@@ -1,6 +1,9 @@
 # Oylik / jarima / KPI / qo'shimcha ish — arxitektura tahlili
 
-**Sana:** 2026-08-08 · **Tekshirgan:** Claude (agent) · **Holat:** tahlil tugadi, kod hali TEGILMAGAN
+**Sana:** 2026-08-08 · **Tekshirgan:** Claude (agent)
+
+**Holat:** BUG-1 TUZATILDI (`1409fd1`). Qolgan bandlar navbatda —
+egasining qarorlari 8.5-bo'limda.
 
 Bu hujjat egasining topshirig'i bo'yicha tuzildi: «bu bo'limlar deyarli
 ishlamayapti, buglarga to'la, hatto oylikni ham belgilay olmayapmiz — shuni
@@ -344,15 +347,29 @@ Har bandda «nega shu tartibda» izohi bor — tartib ahamiyatli.
 10. Stavkani tuzatish (tasdiqlanmagan davrlar uchun).
 11. Kalendarga jarima summasini qo'shish + payslip'dan havola.
 
-### 5-bosqich — aniqlashtirish kerak bo'lgan qarorlar
+### 5-bosqich — egasining qarorlari (2026-08-08 da olindi)
 
-Bular **kod emas, egasining qarori**:
+| Savol | Javob | Nima qilinadi |
+|---|---|---|
+| Limitni buzgan kunning o'zi jarimalanadimi? | **Yo'q — faqat keyingilari** | ✅ Hozirgi xulq TO'G'RI, kod o'zgarmaydi |
+| Kelmagan kun asosiy oylikni kamaytiradimi? | **Ha, kamaytiriladi** | 🔧 Hisoblash o'zgaradi (quyida) |
+| Video KPI stavkasi qancha? | KPI bo'limi ochilsin, **keyin belgilanadi** (mobilografga) | 🔧 Faqat mexanizm quriladi, qiymat bo'sh |
+| Global (default) jarima qoidasi kerakmi? | **Ha** — hozirgilari «faqat nomiga, ChatGPT'dan olingan umumiy xulosalar, haqiqiy qoida emas» | 🔧 Global qoida + HR uni to'ldiradi |
 
-- Limitni buzgan kunning o'zi jarimalanadimi?
-- Kelmagan kun asosiy oylikni kamaytiradimi yoki faqat jarima bo'ladimi?
-- Video KPI stavkasi qancha?
-- Global (default) jarima qoidasi bo'lishi kerakmi, yoki har lavozimga
-  alohida?
+#### Kelmagan kun — aniqlashtirish kerak bo'lgan nuqta
+
+«Ha, kamaytiriladi» degani hozirgi `absent_fine` (qat'iy summa) **ustiga**
+qo'shiladimi yoki **o'rniga** keladimi — bu ikki xil natija beradi:
+
+- **Ustiga:** kelmagan kun uchun ham kunlik ulush ayiriladi, ham jarima →
+  ikki marta jazolanadi;
+- **O'rniga:** kunlik ulush ayiriladi, alohida jarima yo'q.
+
+Sinovda 16 kun kelmagan xodim hozir oylikning 80% ini oladi. «O'rniga»
+variantida u ~30% oladi (ishlagan kunlari uchun), «ustiga» variantida
+undan ham kam.
+
+**Amalga oshirishdan oldin shu bitta narsa tasdiqlanishi kerak.**
 
 ---
 
