@@ -1899,9 +1899,15 @@ def test_payroll_engine() -> None:
 
             rate = await pr.resolve_rate(s, u1.id, date(2020, 1, 1))
             first_rate = await pr._first_rate(s, u1.id)
-            base_amount, base_item = pr.compute_base(rate, first_rate, days, date(2020, 1, 1))
+            # Uchinchi qiymat — kelmagan kunlar ayirmasi (2026-08-08). Bu yerda
+            # qoida `fixed` rejimda, ya'ni ayirma bo'lmasligi kerak.
+            base_amount, base_item, absent_item = pr.compute_base(
+                rate, first_rate, days, date(2020, 1, 1), policy
+            )
             check("Payroll: base_amount to'liq oylik (prorata yo'q, 6/6 kun)",
                   base_amount == Decimal("3000000"), f"base={base_amount}")
+            check("Payroll: 'fixed' rejimda bazadan ayirma YO'Q (ikki marta jazo bo'lmasin)",
+                  absent_item is None, f"absent_item={absent_item}")
 
             # ── run_payroll orqali to'liq oqim (Payslip + PayslipItem yoziladi) ──
             result = await pr.run_payroll(s, PERIOD, user_ids=[u1.id])
@@ -4156,6 +4162,79 @@ def test_dashboard_day_off() -> None:
         conn.close()
 
 
+def test_absent_deduct_daily() -> None:
+    """Kelmagan kun kunlik ulush bilan ayiriladi (2026-08-08, egasi "A" tanladi).
+
+    NEGA MUHIM: ilgari `monthly` stavkada kelmagan kun asosiy oylikni UMUMAN
+    kamaytirmasdi — faqat qat'iy `absent_fine` bor edi va jonli bazada u 0
+    ekan, ya'ni kelmaslik mutlaqo bepul edi.
+
+    Bu yerda tekshiriladi:
+      (a) `deduct_daily` rejimida baza kunlik ulush ×  kelmagan kun ga kamayadi;
+      (b) alohida qat'iy jarima QO'YILMAYDI (ikki marta jazo yo'q);
+      (c) ayirma jarima CHEKLOVIGA (cap) tushmaydi — cap faqat jarimaga;
+      (d) sababli kun ayirilmaydi.
+    """
+    from datetime import date as _date
+    from decimal import Decimal as _D
+
+    print("\n" + "=" * 60)
+    print("KELMAGAN KUN — KUNLIK ULUSH AYIRMASI (deduct_daily)")
+    print("=" * 60)
+
+    import api.services.payroll as pr
+    from db.models import AbsentMode, FineMode, FinePolicy, PayBasis
+
+    class _Rate:
+        amount = _D("3000000")
+        pay_basis = PayBasis.monthly.value
+        effective_from = _date(2020, 1, 1)
+
+    # 10 ish kuni: 7 kelgan, 2 kelmagan, 1 sababli
+    days = []
+    for i in range(1, 11):
+        if i in (3, 4):
+            st, exc = "absent", False
+        elif i == 5:
+            st, exc = "excused", True
+        else:
+            st, exc = "present", False
+        days.append({
+            "date": _date(2020, 1, i), "is_working": True, "status": st,
+            "excused": exc, "late_minutes": 0, "worked_minutes": 480,
+            "scheduled_minutes": 480,
+        })
+
+    pol = FinePolicy(
+        scope="global", absent_mode=AbsentMode.deduct_daily.value, absent_fine=999999,
+        fine_mode=FineMode.per_day.value, fine_per_day=0,
+        monthly_cap_percent=20, is_active=True,
+    )
+
+    base, item, absent_item = pr.compute_base(_Rate(), _Rate(), days, _date(2020, 1, 1), pol)
+
+    kunlik = _D("3000000") / _D(10)          # 300 000
+    kutilgan = _D("3000000") - kunlik * 2    # 2 400 000
+    check("baza kunlik ulush bilan kamaydi (2 kun)", base == kutilgan,
+          f"base={base}, kutilgan={kutilgan}")
+    check("ayirma qatori yaratildi", absent_item is not None)
+    if absent_item:
+        check("ayirma manfiy va 600 000 ga teng", absent_item["amount"] == -kunlik * 2,
+              f"amount={absent_item['amount']}")
+        check("sababli kun ayirilmadi (2 kun, 3 emas)", absent_item["quantity"] == 2,
+              f"quantity={absent_item['quantity']}")
+
+    fine = pr.compute_absent_fine(days, pol)
+    check("deduct_daily'da qat'iy jarima QO'YILMAYDI (ikki marta jazo yo'q)",
+          fine["amount"] == _D("0"), f"amount={fine['amount']} (absent_fine=999999 bo'lsa ham)")
+
+    # Cap ayirmaga tegmasligi: jarima 0 bo'lgani uchun cap umuman ishlamaydi,
+    # ya'ni 600 000 ayirma 20% (600 000) chegarasidan qat'i nazar to'liq qoladi.
+    lo, ab, raw, capped = pr.apply_fine_cap(_D("0"), fine["amount"], base, pol)
+    check("cap ayirmaga tegmaydi (jarima yo'q -> cap qo'llanmaydi)", not capped,
+          f"capped={capped}, raw={raw}")
+
+
 def test_payroll_settings_reedit() -> None:
     """Sozlamalarni QAYTA tahrirlash (2026-08-08 regressiyasi, BUG-1).
 
@@ -4575,6 +4654,11 @@ def main() -> None:
         test_dashboard_day_off()
     except Exception:
         print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_absent_deduct_daily()
+    except Exception:
+        print("Kelmagan kun ayirmasi testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_settings_reedit()

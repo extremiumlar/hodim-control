@@ -340,11 +340,18 @@ def compute_late_fine(days: list[dict], policy: FinePolicy | None) -> dict:
 
 
 def compute_absent_fine(days: list[dict], policy: FinePolicy | None) -> dict:
-    """Kelmagan kun jarimasi. QAROR (9-bo'lim, savol 5): kunlik ish haqi
-    ulushi EMAS — `absent_mode='fixed'` bo'lsa HR kiritgan qat'iy summa
-    (`absent_fine`) har kelmagan kunga. `deduct_daily` — ⭐ kelajakda (hozir
-    qo'llanmaydi, `compute_base` allaqachon faqat ishlangan/rejadagi kunlarni
-    hisobga oladi)."""
+    """Kelmagan kun uchun QAT'IY jarima (`absent_mode='fixed'`).
+
+    IKKI REJIM (egasining 2026-08-08 qarori bilan ikkinchisi yoqildi):
+    - `fixed` — HR kiritgan qat'iy summa har kelmagan kunga (bu funksiya);
+    - `deduct_daily` — kunlik ish haqi ulushi bazadan ayiriladi
+      (`compute_base`), bu yerda 0 qaytariladi, aks holda xodim ikki marta
+      jazolanardi.
+
+    ⚠️ Eski izohda "compute_base allaqachon faqat ishlangan kunlarni hisobga
+    oladi" deyilgan edi — bu FAQAT `daily`/`hourly` uchun to'g'ri. `monthly`
+    stavkada baza kelmagan kundan kamaymasdi, ya'ni `absent_fine=0` bo'lsa
+    kelmaslik umuman bepul edi (jonli bazada aynan shunday holat topildi)."""
     absent_days = [d for d in days if d["status"] == "absent"]
     result = {"absent_days": len(absent_days), "amount": Decimal("0")}
     if policy is None or policy.absent_mode != AbsentMode.fixed.value:
@@ -387,7 +394,9 @@ def apply_fine_cap(late_amount: Decimal, absent_amount: Decimal, base_amount: De
     return late_amount * ratio, absent_amount * ratio, raw_total, True
 
 
-def compute_base(rate, first_rate, days: list[dict], period_start: date) -> tuple[Decimal, dict | None]:
+def compute_base(
+    rate, first_rate, days: list[dict], period_start: date, policy: FinePolicy | None = None
+) -> tuple[Decimal, dict | None, dict | None]:
     """Asosiy oylik. `pay_basis` bo'yicha:
     - `monthly` — qat'iy stavka, lekin PRORATA: agar xodimning birinchi
       stavkasi (`first_rate.effective_from`) shu oyning o'rtasida boshlansa,
@@ -395,9 +404,27 @@ def compute_base(rate, first_rate, days: list[dict], period_start: date) -> tupl
       (⭐ band: oy oxirida ishdan bo'shash uchun alohida sana maydoni
       hozircha YO'Q — faqat BOSHLANISH tomoni proratalanadi).
     - `daily`/`hourly` — o'z-o'zidan proratalanadi (faqat haqiqiy
-      ishlangan kun/daqiqa bo'yicha hisoblanadi)."""
+      ishlangan kun/daqiqa bo'yicha hisoblanadi).
+
+    KELMAGAN KUN (2026-08-08, egasining qarori — "A variant"):
+    `policy.absent_mode == 'deduct_daily'` bo'lsa, sababsiz kelmagan har bir
+    REJADAGI kun uchun kunlik ulush asosiy oylikdan AYIRILADI va alohida
+    qat'iy jarima QO'YILMAYDI (`compute_absent_fine` bunday rejimda 0
+    qaytaradi — ikki marta jazolanmasin).
+
+    NEGA JARIMA EMAS, BALKI BAZANING KAMAYISHI: kelmagan kun uchun haq
+    to'lanmasligi jazo emas, oddiy hisob. Agar u jarima sifatida yozilsa,
+    oylik jarima CHEKLOVIGA (`monthly_cap_percent`, odatda 20%) tushib
+    qolardi — ya'ni oyning yarmida kelmagan xodim baribir oylikning 80% ini
+    olardi. Bazadan ayirilgani uchun cheklov unga tegmaydi.
+
+    Sababli kunlar (`excused`) AYIRILMAYDI — ular tasdiqlangan (kasallik va
+    h.k.) va haqi saqlanadi.
+
+    Qaytaradi: (summa, asosiy qator, ayirma qatori | None).
+    """
     if rate is None:
-        return Decimal("0"), None
+        return Decimal("0"), None, None
     amount = _dec(rate.amount)
     basis = rate.pay_basis
 
@@ -412,7 +439,9 @@ def compute_base(rate, first_rate, days: list[dict], period_start: date) -> tupl
             "rate": amount,
             "amount": base,
         }
-        return base, item
+        # Soatbay allaqachon faqat ISHLANGAN daqiqa bo'yicha — kelmagan kun
+        # o'z-o'zidan to'lanmaydi, alohida ayirma kerak emas.
+        return base, item, None
 
     if basis == PayBasis.daily.value:
         worked_days = sum(1 for d in days if d["status"] in ("present", "late"))
@@ -424,7 +453,8 @@ def compute_base(rate, first_rate, days: list[dict], period_start: date) -> tupl
             "rate": amount,
             "amount": base,
         }
-        return base, item
+        # Kunbay ham o'z-o'zidan proratali.
+        return base, item, None
 
     # monthly (default)
     full_scheduled = sum(1 for d in days if d["is_working"])
@@ -444,7 +474,33 @@ def compute_base(rate, first_rate, days: list[dict], period_start: date) -> tupl
         label = f"Asosiy oylik (prorata — {prorated_scheduled}/{full_scheduled} kun)"
 
     item = {"kind": "base", "label": label, "quantity": None, "rate": amount, "amount": base}
-    return base, item
+
+    # ── Kelmagan kunlar uchun kunlik ulushni ayirish ──
+    absent_item = None
+    if (
+        policy is not None
+        and policy.absent_mode == AbsentMode.deduct_daily.value
+        and full_scheduled > 0
+    ):
+        absent_days = sum(1 for d in days if d["is_working"] and d["status"] == "absent")
+        if absent_days:
+            # Kunlik ulush TO'LIQ stavkadan emas, PRORATA qilingan bazadan
+            # olinadi: oy o'rtasida ishga kirgan xodimning kunlik haqi ham
+            # o'sha proratali summadan kelib chiqishi kerak.
+            daily_share = base / Decimal(full_scheduled)
+            deduction = daily_share * Decimal(absent_days)
+            # Ayirma bazadan katta bo'lib ketmasin (nazariy: barcha kun
+            # kelmagan) — manfiy oylik chiqmasligi kerak.
+            deduction = min(deduction, base)
+            base = base - deduction
+            absent_item = {
+                "kind": "absent_deduction",
+                "label": f"Kelmagan kunlar — {absent_days} kun × {round_money(daily_share):,.0f}".replace(",", " "),
+                "quantity": Decimal(absent_days),
+                "rate": round_money(daily_share),
+                "amount": -round_money(deduction),
+            }
+    return base, item, absent_item
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -576,7 +632,9 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     first_rate = await _first_rate(db, user.id)
     overtime_profile = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user.id))
 
-    base_amount, base_item = compute_base(rate, first_rate, days, period_start)
+    base_amount, base_item, absent_deduct_item = compute_base(
+        rate, first_rate, days, period_start, policy
+    )
     late = compute_late_fine(days, policy)
     absent = compute_absent_fine(days, policy)
     late_fine, absent_fine, raw_fine_total, cap_applied = apply_fine_cap(
@@ -613,6 +671,11 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     items: list[dict] = []
     if base_item is not None:
         items.append(base_item)
+    # Kelmagan kunlar ayirmasi ASOSIY QATORDAN KEYIN — payslip'da "5 000 000"
+    # va ostida "− 16 kun × 217 391" ko'rinsin. Bu jarima EMAS, shuning uchun
+    # `fine_*` qatorlari bilan aralashmaydi va cheklovga tushmaydi.
+    if absent_deduct_item is not None:
+        items.append(absent_deduct_item)
     if overtime["amount"] > 0:
         hrs = Decimal(overtime["minutes"]) / Decimal(60)
         items.append(
@@ -684,7 +747,13 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
         "fined_late_days": late["fined_days"],
         "fined_late_minutes": late["fined_minutes"],
         "fine_amount": float(late_fine),
-        "absent_deduction": float(absent_fine),
+        # Kelmagan kun uchun ushlanma — REJIMDAN QAT'I NAZAR shu maydonda:
+        # `fixed` da qat'iy jarima, `deduct_daily` da bazadan ayirilgan kunlik
+        # ulush. Aks holda hisobotlarda `deduct_daily` rejimi 0 bo'lib
+        # ko'rinardi, holbuki pul ushlab qolingan (faqat boshqa "chelak"dan).
+        "absent_deduction": float(
+            absent_fine if absent_deduct_item is None else -_dec(absent_deduct_item["amount"])
+        ),
         "overtime_minutes": overtime["minutes"],
         "overtime_amount": float(overtime["amount"]),
         "overtime_rate_snapshot": float(overtime["rate_snapshot"]) if overtime["rate_snapshot"] is not None else None,
