@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.audit_json import row_to_dict
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import (
     BotLateStatusOut,
@@ -241,7 +242,10 @@ async def upsert_policy(
 
     before = None
     if existing is not None:
-        before = {c.name: getattr(existing, c.name) for c in FinePolicy.__table__.columns if c.name != "id"}
+        # `row_to_dict` SHART: xom ORM qiymatlari ichida `Decimal` bo'ladi
+        # (fine_per_day, absent_fine, cap...) va u JSON ustunga yozilmaydi —
+        # audit commit paytida yiqilib, QOIDA O'ZGARISHI ham qaytarilardi.
+        before = row_to_dict(existing, exclude=("id",))
         for field, value in payload.model_dump(exclude={"scope", "scope_id"}).items():
             setattr(existing, field, value)
         policy = existing
@@ -377,7 +381,9 @@ async def upsert_overtime_profile(
     existing = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user_id))
     before = None
     if existing is not None:
-        before = {c.name: getattr(existing, c.name) for c in OvertimeProfile.__table__.columns if c.name != "id"}
+        # Yuqoridagi bilan bir xil sabab: `multiplier`/`fixed_rate_per_hour`
+        # — `Decimal`, `updated_at` — `datetime`.
+        before = row_to_dict(existing, exclude=("id",))
         for field, value in payload.model_dump().items():
             setattr(existing, field, value)
         profile = existing

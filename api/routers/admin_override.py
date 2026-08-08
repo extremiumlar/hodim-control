@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.audit_json import row_to_dict
 from api.deps import get_current_user, get_db, require_dasturchi
 from api.schemas import (
     AdminAttendanceEditorGrant,
@@ -53,24 +54,13 @@ from db.models import (
 router = APIRouter(prefix="/admin", tags=["admin-override"])
 
 
-def _json_safe(value):
-    """`date`/`datetime` -> ISO satr, `Decimal` -> `float`. Bu qiymatlar HTTP
-    javobida FastAPI'ning `jsonable_encoder`i orqali baribir to'g'ri chiqadi,
-    lekin `_row_to_dict()` natijasi `AuditLog.before/after` (JSON ustun)ga
-    HAM yoziladi — u yerda SQLAlchemy oddiy `json.dumps` ishlatadi va
-    `date`/`Decimal`ni tushunmay 500 beradi. Shu sabab bu yerda oldindan
-    xavfsiz turga o'giriladi."""
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return float(value)
-    return value
-
-
+# Yordamchilar `api/audit_json.py` ga ko'chirildi — ular faqat shu yerda
+# turgani uchun `payroll.py` ularni bilmay o'z snapshot'ini xom ORM
+# qiymatlari bilan qurgan va tahrirlash 500 bergan (2026-08-08, BUG-1).
 def _row_to_dict(row) -> dict:
-    """Har qanday ORM qatorini JSON-xavfsiz dict'ga — ustunlar ro'yxati
-    orqali (HTTP javobi va `AuditLog` uchun bir xil, ikkalasida ham ishlaydi)."""
-    return {c.name: _json_safe(getattr(row, c.name)) for c in row.__table__.columns}
+    """Har qanday ORM qatorini JSON-xavfsiz dict'ga (HTTP javobi va
+    `AuditLog` uchun bir xil, ikkalasida ham ishlaydi)."""
+    return row_to_dict(row)
 
 
 async def _log_override(

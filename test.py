@@ -4156,6 +4156,88 @@ def test_dashboard_day_off() -> None:
         conn.close()
 
 
+def test_payroll_settings_reedit() -> None:
+    """Sozlamalarni QAYTA tahrirlash (2026-08-08 regressiyasi, BUG-1).
+
+    Jarima qoidasi ham, qo'shimcha ish profili ham bir marta YARATILGANDA
+    ishlardi, lekin har qanday keyingi TAHRIR 500 berardi: audit `before`
+    snapshot'i xom ORM qiymatlari bilan qurilardi va ichidagi `Decimal`
+    JSON ustunga yozilmasdi (`Object of type Decimal is not JSON
+    serializable`). Audit commit paytida yiqilgani uchun asosiy o'zgarish
+    ham qaytarilardi — foydalanuvchi sababsiz 500 ko'rardi.
+
+    Shuning uchun bu yerda har bir upsert IKKI MARTA chaqiriladi: birinchisi
+    yaratadi, ikkinchisi TAHRIRLAYDI. Faqat ikkinchisi bugni ushlaydi."""
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("OYLIK SOZLAMALARINI QAYTA TAHRIRLASH (BUG-1)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    token = token_for(mgr[0], mgr[1])
+    if not token:
+        return
+
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    try:
+        cur.execute(
+            "insert into users (full_name, role, is_active, bot_started, created_at)"
+            " values (?,?,1,0,datetime('now'))", ("T-PayReedit", "employee"))
+        uid = cur.lastrowid
+        conn.commit()
+
+        pol = {
+            "scope": "user", "scope_id": uid, "grace_minutes": 5,
+            "free_late_minutes_per_month": 60, "fine_mode": "per_day",
+            "fine_per_day": 50000, "absent_mode": "fixed", "absent_fine": 200000,
+            "monthly_cap_percent": 20, "fine_applies_to": "net_salary", "is_active": True,
+        }
+        otp = {
+            "enabled": True, "mode": "derived", "multiplier": 1.5,
+            "norm_hours_source": "schedule", "min_minutes": 15,
+        }
+
+        with httpx.Client(base_url=API_BASE, timeout=20) as c:
+            r1 = c.put("/payroll/policies", headers=auth(token), json=pol)
+            check("jarima qoidasi — yaratish", r1.status_code == 200,
+                  f"kod={r1.status_code} {r1.text[:120]}")
+
+            pol2 = {**pol, "fine_per_day": 70000}
+            r2 = c.put("/payroll/policies", headers=auth(token), json=pol2)
+            check("jarima qoidasi — QAYTA tahrirlash (ilgari 500)",
+                  r2.status_code == 200, f"kod={r2.status_code} {r2.text[:160]}")
+            if r2.status_code == 200:
+                check("yangi qiymat saqlandi", float(r2.json().get("fine_per_day") or 0) == 70000,
+                      f"fine_per_day={r2.json().get('fine_per_day')}")
+
+            r3 = c.put(f"/payroll/overtime-profiles/{uid}", headers=auth(token), json=otp)
+            check("qo'shimcha ish profili — yaratish", r3.status_code == 200,
+                  f"kod={r3.status_code} {r3.text[:120]}")
+
+            otp2 = {**otp, "multiplier": 2.0}
+            r4 = c.put(f"/payroll/overtime-profiles/{uid}", headers=auth(token), json=otp2)
+            check("qo'shimcha ish profili — QAYTA tahrirlash (ilgari 500)",
+                  r4.status_code == 200, f"kod={r4.status_code} {r4.text[:160]}")
+            if r4.status_code == 200:
+                check("yangi koeffitsiyent saqlandi",
+                      float(r4.json().get("multiplier") or 0) == 2.0,
+                      f"multiplier={r4.json().get('multiplier')}")
+    finally:
+        if uid is not None:
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from fine_policies where scope='user' and scope_id=?", (uid,))
+            cur.execute("delete from overtime_profiles where user_id=?", (uid,))
+            cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        conn.close()
+
+
 def test_fine_policy_rights() -> None:
     """Kechikish normasini o'zgartirish huquqi (C-bo'lim, 2026-08-03).
 
@@ -4493,6 +4575,11 @@ def main() -> None:
         test_dashboard_day_off()
     except Exception:
         print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_settings_reedit()
+    except Exception:
+        print("Oylik sozlamalari qayta tahrirlash testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_fine_policy_rights()
