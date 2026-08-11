@@ -191,16 +191,16 @@ async def _map_users_by_crm_id(db: AsyncSession) -> dict[str, User]:
 async def _pick_operator(db: AsyncSession) -> User | None:
     """Mas'ulsiz lidni kimga berish — BUGUN eng kam issiq lid olgan operator.
 
-    Nomzodlar: CRM'da mas'ul bo'la oladigan (crm_visit_external_id biriktirilgan)
-    faol xodimlar, ishdan chiqib ketmaganlari (`_operator_absent_reason`).
+    Nomzodlar: `hot_lead_enabled` bayrog'i YOQILGAN faol xodimlar, ishdan
+    chiqib ketmaganlari (`_operator_absent_reason`). Bayroq HR/Boshliq
+    panelidan boshqariladi — ta'tildagi operator yoki sinov akkaunti
+    (Tester) taqsimotdan bir bosishda chiqariladi va unga lid tushmaydi.
     Bu — CRM'da CRUD paydo bo'lgunicha vaqtinchalik taqsimlash qatlami; CRM
     tomonida mas'ul belgilansa, `sync_crm_state` uni baribir ustun deb oladi
     va yozuv o'sha odamga ko'chadi (bot taqsimoti CRM'ni buzmaydi)."""
     candidates = list(
         await db.scalars(
-            select(User).where(
-                User.is_active.is_(True), User.crm_visit_external_id.isnot(None)
-            )
+            select(User).where(User.is_active.is_(True), User.hot_lead_enabled.is_(True))
         )
     )
     if not candidates:

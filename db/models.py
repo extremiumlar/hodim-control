@@ -205,6 +205,12 @@ class User(Base):
     # qayta-egallanadigan: invite-link har doim (bot_started bo'lsa ham) qayta olinadi,
     # va uni boshqa odam bosib /start qilsa, o'sha avtomatik joriy egasi bo'lib qoladi.
     is_seat: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Issiq lid taqsimotida QATNASHADIMI (2026-08-06, egasining talabi).
+    # Bot mas'ulsiz lidni faqat shu bayrog'i yoqilgan operatorlarga beradi —
+    # ya'ni ta'tildagi/sinov (Tester) akkauntiga lid "tushib qolmaydi".
+    # Migratsiyada CRM ID biriktirilgan xodimlarga TRUE qo'yildi (ular
+    # allaqachon operator edi), qolganlarga FALSE.
+    hot_lead_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Davomat (keldi/ketdi) vaqtini QO'LDA tuzatish huquqi — ROLDAN qat'i nazar,
     # SHAXSAN berilgan ruxsat. Roli bo'yicha huquqi borlar (hr/boss/dasturchi)
     # uchun bu bayroq ahamiyatsiz — ular baribir tahrirlay oladi.

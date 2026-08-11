@@ -189,6 +189,12 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ is_seat: isSeat }),
     }),
+  // Issiq lid taqsimoti: operatorni yoqish/o'chirish (2026-08-06)
+  updateUserHotLead: (userId: number, enabled: boolean) =>
+    apiFetch<User>(`/users/${userId}/hot-lead`, {
+      method: "PATCH",
+      body: JSON.stringify({ hot_lead_enabled: enabled }),
+    }),
   listPositions: (includeInactive = false) =>
     apiFetch<Position[]>(`/positions${includeInactive ? "?include_inactive=true" : ""}`),
   createPosition: (data: {

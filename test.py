@@ -1672,6 +1672,34 @@ def run_tests(ctx: dict) -> None:
             check("HL: yuklangan operator (T-Op1) taqsimotdan chetda qoldi",
                   picked is not None and picked != "T-Op1", f"tanlandi={picked}")
 
+            # O'CHIRGICH (2026-08-06): hot_lead_enabled=0 bo'lgan operatorga
+            # lid BERILMAYDI (Tester akkaunti uchun aynan shu kerak).
+            cur.execute("update users set hot_lead_enabled=0 where id in (?,?)", (op1, op2))
+            # Boshqa hamma nomzodni ham vaqtincha o'chiramiz — tanlov aynan
+            # bayroqqa bog'liqligini isbotlash uchun
+            others = [r[0] for r in cur.execute(
+                "select id from users where hot_lead_enabled=1").fetchall()]
+            if others:
+                cur.execute(
+                    "update users set hot_lead_enabled=0 where id in (%s)"
+                    % ",".join("?" * len(others)), others)
+            conn.commit()
+            picked_off = _aio.run(_pick())
+            check("HL: hamma o'chirilganda taqsimot to'xtaydi (lid berilmaydi)",
+                  picked_off is None, f"tanlandi={picked_off}")
+
+            cur.execute("update users set hot_lead_enabled=1 where id=?", (op2,))
+            conn.commit()
+            picked_on = _aio.run(_pick())
+            check("HL: faqat yoqilgan operator lid oladi (T-Op2)",
+                  picked_on == "T-Op2", f"tanlandi={picked_on}")
+            # Haqiqiy operatorlarni ASL holiga qaytaramiz
+            if others:
+                cur.execute(
+                    "update users set hot_lead_enabled=1 where id in (%s)"
+                    % ",".join("?" * len(others)), others)
+            conn.commit()
+
             # Kunlik statistika: kim nechta lidni sovutgan
             cur.execute(
                 "insert into hot_lead (crm_lead_id, user_id, created_ts, detected_at,"

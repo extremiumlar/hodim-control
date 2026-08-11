@@ -17,6 +17,7 @@ import {
   useUpdateCrmExternalId,
   useUpdateRole,
   useUpdateUserPosition,
+  useUpdateUserHotLead,
   useUpdateUserSeat,
   useUsers,
 } from "@/lib/queries";
@@ -46,6 +47,7 @@ export default function UsersTable({
   const updateRole = useUpdateRole();
   const updatePosition = useUpdateUserPosition();
   const updateSeat = useUpdateUserSeat();
+  const updateHotLead = useUpdateUserHotLead();
   const updateCrmId = useUpdateCrmExternalId();
   const deactivate = useDeactivateUser();
   const activate = useActivateUser();
@@ -213,6 +215,11 @@ export default function UsersTable({
           <span className={row.original.bot_started ? "text-emerald-700" : "text-slate-400"}>
             {row.original.bot_started ? "✅ ulangan" : "— kutilmoqda"}
             {row.original.is_seat && " · o'rin"}
+            {row.original.hot_lead_enabled && (
+              <span className="ml-1 text-orange-600" title="Issiq lid taqsimotida qatnashadi">
+                · 🔥 lid
+              </span>
+            )}
           </span>
         ),
       },
@@ -309,6 +316,39 @@ export default function UsersTable({
                 }
               >
                 {u.is_seat ? "O'rinlikni bekor qilish" : "O'ringa aylantirish"}
+              </Button>
+            )}
+            {/* Issiq lid taqsimoti o'chirgichi (2026-08-06): sinov akkaunti
+                (Tester) yoki ta'tildagi operatorga lid tushib qolmasin. */}
+            {u.is_active && u.role !== "boss" && (
+              <Button
+                variant="link"
+                size="sm"
+                className={
+                  "h-7 px-1 text-xs " +
+                  (u.hot_lead_enabled ? "text-orange-600" : "text-slate-500")
+                }
+                disabled={updateHotLead.isPending}
+                title={
+                  u.hot_lead_enabled
+                    ? "Issiq lid taqsimotidan chiqarish — bunga yangi lid berilmaydi"
+                    : "Issiq lid taqsimotiga qo'shish — bot unga ham lid bera boshlaydi"
+                }
+                onClick={() =>
+                  updateHotLead.mutate(
+                    { userId: u.id, enabled: !u.hot_lead_enabled },
+                    {
+                      onSuccess: () =>
+                        toast.success(
+                          u.hot_lead_enabled
+                            ? `${u.full_name.trim()} — issiq lid O'CHIRILDI`
+                            : `${u.full_name.trim()} — issiq lid YOQILDI`
+                        ),
+                    }
+                  )
+                }
+              >
+                {u.hot_lead_enabled ? "🔥 lid: yoqiq" : "🔥 lid: o'chiq"}
               </Button>
             )}
             {u.is_active ? (

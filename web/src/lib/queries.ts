@@ -288,6 +288,13 @@ export const useUpdateUserSeat = () =>
     [["users"]]
   );
 
+export const useUpdateUserHotLead = () =>
+  useApiMutation(
+    ({ userId, enabled }: { userId: number; enabled: boolean }) =>
+      api.updateUserHotLead(userId, enabled),
+    [["users"]]
+  );
+
 export const useDeleteUser = () => useApiMutation((userId: number) => api.deleteUser(userId), [["users"]]);
 
 export const useDeactivateUser = () =>

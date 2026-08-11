@@ -23,6 +23,8 @@ export interface User {
   bot_started: boolean;
   is_active: boolean;
   is_seat: boolean;
+  /** Issiq lid taqsimotida qatnashadimi (bot mas'ulsiz lidni shularga beradi). */
+  hot_lead_enabled: boolean;
   /** Davomat keldi/ketdi vaqtini tuzatish huquqi — Dasturchi SHAXSAN beradi
       (roldan qat'i nazar). hr/boss/dasturchi uchun ahamiyatsiz: ular baribir
       tahrirlay oladi. */

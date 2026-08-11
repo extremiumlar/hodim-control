@@ -102,6 +102,9 @@ class UserOut(BaseModel):
     # Kechikish/jarima qoidasini o'zgartirish huquqi — frontend
     # /payroll/settings sahifasiga kirishni shu bo'yicha ochadi.
     can_edit_fine_policy: bool = False
+    # Issiq lid taqsimotida qatnashadimi (bot mas'ulsiz lidni faqat
+    # yoqilganlarga beradi) — HR/Boshliq bir bosishda o'chirib qo'yadi.
+    hot_lead_enabled: bool = False
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
@@ -125,6 +128,12 @@ class UserPositionUpdate(BaseModel):
 
 class UserSeatUpdate(BaseModel):
     is_seat: bool
+
+
+class UserHotLeadUpdate(BaseModel):
+    """Issiq lid taqsimotida qatnashish bayrog'i (2026-08-06)."""
+
+    hot_lead_enabled: bool
 
 
 class UserCreate(BaseModel):

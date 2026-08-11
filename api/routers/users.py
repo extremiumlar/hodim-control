@@ -38,6 +38,7 @@ from api.schemas import (
     UserOut,
     UserPositionUpdate,
     UserRoleUpdate,
+    UserHotLeadUpdate,
     UserSeatUpdate,
 )
 
@@ -548,6 +549,39 @@ async def update_seat(
             target_user_id=user.id,
             before={"is_seat": before_is_seat},
             after={"is_seat": user.is_seat},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/hot-lead", response_model=UserOut)
+async def update_hot_lead_enabled(
+    user_id: int,
+    payload: UserHotLeadUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Operatorni issiq lid taqsimotiga qo'shish / chiqarish (2026-08-06).
+
+    Nima uchun kerak: bot mas'ulsiz lidni avtomatik taqsimlaydi — ta'tildagi
+    xodimga yoki sinov akkauntiga (Tester) lid "tushib qolmasligi" uchun bir
+    bosishlik o'chirgich. ROP ham qila oladi: bu kundalik operativ qaror
+    (kim bugun lid qabul qiladi), rol o'zgartirish kabi nozik amal emas."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = user.hot_lead_enabled
+    user.hot_lead_enabled = payload.hot_lead_enabled
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_hot_lead_toggled",
+            target_user_id=user.id,
+            before={"hot_lead_enabled": before},
+            after={"hot_lead_enabled": user.hot_lead_enabled},
         )
     )
     await db.commit()
