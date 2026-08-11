@@ -139,8 +139,12 @@ def parse_lead_events(payload) -> list[dict]:
                 "pipe_status_id": _as_int(
                     _first(r, "pipeStatusId", "pipe_status_id", "statusId") or pipe_status.get("id")
                 ),
+                # `statusName` — Uysot webhook'ining HAQIQIY maydoni (2026-08-11,
+                # jonli payload: {"lead": {"statusId": 539, "statusName":
+                # "Yangi aloqalar", ...}}). Ilgari ro'yxatda yo'q edi va bosqich
+                # nomi `_stage_name_fallback` orqali taxminan tiklanardi.
                 "stage_name": _first(
-                    r, "pipeStatusName", "stageName", "stage_name"
+                    r, "pipeStatusName", "stageName", "stage_name", "statusName"
                 ) or pipe_status.get("name"),
                 "responsible_id": _as_int(_first(r, "responsibleById", "responsible_by_id", "responsibleId")),
                 "responsible_name": _first(r, "responsibleBy", "responsibleByName", "responsible_name"),
