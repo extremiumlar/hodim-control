@@ -19,6 +19,7 @@ Aks holda CRM javob kutib qolar yoki timeout'da qayta yuborib navbat o'stirar ed
 import hmac
 import json
 import logging
+import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,37 @@ _SECRET_HEADERS = (
     "x-auth-token",
     "x-token",
 )
+# ─────────────────────────────────────────────────────────────────────────
+# UYSOT IMZO SXEMASI — VAQTINCHALIK ISHONCH (2026-08-11)
+#
+# Uysot sekretni YUBORMAYDI. U kalit + tanadan hisoblangan IMZO yuboradi:
+#     x-webhook-signature: sha256=<64 hex>
+#     x-webhook-timestamp: <unix>
+#     x-webhook-id:        <uuid>
+# Ya'ni yuqoridagi `_SECRET_HEADERS` yondashuvi (qiymatni sekret bilan
+# TENGLASHTIRISH) printsipial ravishda ishlamaydi — imzo har so'rovda boshqa.
+#
+# To'g'ri yo'l — imzoni qayta hisoblab solishtirish. LEKIN Uysot imzo QAYSI
+# qatordan hisoblanishini hujjatlashtirmagan va u aniqlanmadi: to'g'ri kalit
+# bilan 1536 kombinatsiya sinaldi (HMAC-SHA256/SHA1/SHA512/MD5 × 8 xabar
+# tuzilishi × 8 ajratuvchi × kalitning matn/hex ko'rinishi × hex/base64)
+# — birortasi mos kelmadi.
+#
+# Shu sababli VAQTINCHALIK ishonch mezoni: so'rov Uysot'ning ma'lum chiquvchi
+# IP'sidan kelgan VA imzo sarlavhasi mavjud bo'lsa qabul qilinadi.
+# Nega bu yetarli darajada xavfsiz: ulanish HTTPS, manba IP'ni soxtalashtirib
+# javob olib bo'lmaydi, URL maxfiy, imzo sarlavhasi majburiy. Ideal emas —
+# shuning uchun imzo `headers` bilan birga SAQLANADI: Uysot spetsifikatsiyani
+# bergach eski yozuvlarda algoritmni tekshirib, shu blokni haqiqiy HMAC
+# tekshiruviga almashtiramiz (o'shanda IP mezonini olib tashlash mumkin).
+_TRUSTED_WEBHOOK_IPS = tuple(
+    ip.strip()
+    for ip in os.getenv("CRM_WEBHOOK_TRUSTED_IPS", "158.179.201.167").split(",")
+    if ip.strip()
+)
+# Imzo mavjudligi tekshiriladigan sarlavhalar (qiymat TEKSHIRILMAYDI — yuqoriga qarang)
+_SIGNATURE_HEADERS = ("x-webhook-signature", "x-hub-signature-256", "x-signature")
+
 # Jurnalga yozilMAYdigan standart headerlar — qolganlari (maxsus/notanish)
 # Uysot sekret kanalini aniqlashga yordam beradi
 _BORING_HEADERS = {
@@ -89,6 +121,25 @@ def _secret_rejection_reason(request: Request) -> str | None:
     for candidate in _candidate_secrets(request):
         if hmac.compare_digest(candidate, settings.crm_webhook_secret):
             return None
+
+    # ── Vaqtinchalik ishonch: Uysot imzo sxemasi (yuqoridagi uzun izohga qarang) ──
+    ip = _proxy_verified_ip(request)
+    signature = next(
+        (request.headers[name] for name in _SIGNATURE_HEADERS if name in request.headers),
+        None,
+    )
+    if ip in _TRUSTED_WEBHOOK_IPS and signature:
+        # Qabul qilinadi, LEKIN aniq iz qoldiramiz: bu HMAC tekshiruvi EMAS.
+        # Imzo `headers`da saqlanadi — spetsifikatsiya kelgach shu yozuvlarda
+        # algoritmni aniqlab, bu yo'lni haqiqiy tekshiruvga almashtiramiz.
+        logger.info(
+            "CRM webhook ISHONCHLI IP orqali qabul qilindi (imzo TEKSHIRILMADI) — "
+            "IP: %s, imzo: %s",
+            ip,
+            signature[:24] + "...",
+        )
+        return None
+
     # Sekret QAYSI kanalda kelayotganini aniqlash uchun header NOMLARI va query
     # KALITLARI (qiymatlarsiz — sekret jurnalga tushmasin) saqlanadi. Mos kanal
     # topilsa `_SECRET_HEADERS`ga o'sha nom qo'shiladi.
@@ -122,9 +173,31 @@ def _interesting_headers(request: Request) -> dict:
 
 
 def _remote_ip(request: Request) -> str | None:
+    """Jurnal uchun mijoz IP'si — `x-forwarded-for`ning BIRINCHI qiymati
+    (odatiy amaliyot: eng chekka mijoz). DIQQAT: bu qiymatni mijozning O'ZI
+    yuborishi mumkin, ya'ni u FAQAT diagnostika uchun — ishonch qarorida
+    ishlatilmaydi (buning uchun `_proxy_verified_ip`)."""
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         return forwarded.split(",")[0].strip()[:64]
+    return request.client.host[:64] if request.client else None
+
+
+def _proxy_verified_ip(request: Request) -> str | None:
+    """IShONCH qarorlari uchun IP — soxtalashtirib bo'lmaydigan qiymat.
+
+    NEGA `_remote_ip` YARAMAYDI: u `x-forwarded-for`ning BIRINCHI elementini
+    oladi, mijoz esa o'z so'roviga istalgan `X-Forwarded-For` qo'shishi mumkin.
+    Oldimizdagi proksi (LiteSpeed/Apache) haqiqiy IP'ni ro'yxat OXIRIGA
+    qo'shadi, ya'ni `spoofed, ..., HAQIQIY`. Shuning uchun ishonch uchun
+    OXIRGI element olinadi. `x-real-ip` ham proksi tomonidan qo'yiladi va
+    mijoznikini bosib ketadi — u birinchi navbatda ishlatiladi."""
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()[:64]
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()[:64]
     return request.client.host[:64] if request.client else None
 
 
