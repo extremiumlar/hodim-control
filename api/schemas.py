@@ -1267,6 +1267,9 @@ class PayrollPeriodOut(BaseModel):
     status: str
     locked: bool
     calculated_at: datetime | None
+    # HR bosqichi — Boshliq tasdiqlash oynasida "kim tekshirdi" ko'rinsin.
+    hr_approved_at: datetime | None = None
+    hr_approved_name: str | None = None
     approved_at: datetime | None
     employee_count: int
     total_net: float

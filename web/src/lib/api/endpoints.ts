@@ -382,6 +382,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_ids: userIds ?? null }),
     }),
+  hrApprovePayrollPeriod: (period: string) =>
+    apiFetch<{ period: string; status: string; payslip_count: number }>(
+      `/payroll/${period}/hr-approve`,
+      { method: "POST" }
+    ),
   listPayslips: (period: string) => apiFetch<PayslipRow[]>(`/payroll/${period}`),
   payslipDetail: (period: string, userId: number) =>
     apiFetch<PayslipDetail>(`/payroll/${period}/user/${userId}`),

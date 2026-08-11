@@ -452,6 +452,9 @@ export const useSalaryRates = (userId: number, enabled = true) =>
 export const useCreateSalaryRate = () =>
   useApiMutation(api.createSalaryRate, [["payroll", "rates"]]);
 
+export const useHrApprovePayrollPeriod = () =>
+  useApiMutation(api.hrApprovePayrollPeriod, [["payroll"]]);
+
 export const useKpiRates = () =>
   useQuery({ queryKey: qk.kpiRates, queryFn: api.listKpiRates });
 

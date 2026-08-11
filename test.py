@@ -4162,6 +4162,90 @@ def test_dashboard_day_off() -> None:
         conn.close()
 
 
+def test_payroll_approval_segregation() -> None:
+    """Oylik tasdig'i ikki bosqichga ajratildi (2026-08-08, egasining talabi
+    "hr uni belgilaydi, boss boshliq uni tasdiqlaydi").
+
+    ILGARI: HR o'zi hisoblab, o'zi tasdiqlab, davrni QULFLAB qo'yardi —
+    bitta odam butun pul jarayonini yakunlardi (sinovda tasdiqlangan edi:
+    HR tokeni bilan calculate va approve ketma-ket 200 qaytargan).
+
+    ENDI: calculated -> hr_approved (HR) -> approved+locked (Boshliq).
+
+    Tekshiriladi:
+      (a) HR yakuniy tasdiqlay OLMAYDI (403);
+      (b) Boshliq HR bosqichisiz tasdiqlay OLMAYDI (409);
+      (c) HR "tayyor" deydi -> status hr_approved, kim tekshirgani ko'rinadi;
+      (d) Boshliq tasdiqlaydi -> locked;
+      (e) qulflangach qayta hisoblash 409.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("OYLIK TASDIG'I: VAZIFALAR AJRATIMI")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    period = "2019-05"          # ATAYLAB uzoq o'tmish — jonli davrlarga tegmasin
+    uid = None
+    try:
+        hr_row = cur.execute("select id from users where role='hr' and is_active=1 limit 1").fetchone()
+        boss_row = cur.execute("select id from users where role='boss' and is_active=1 limit 1").fetchone()
+        if not hr_row or not boss_row:
+            check("HR va Boshliq hisoblari topildi", False, "biri yo'q")
+            return
+        hr_t = token_for(hr_row[0], "hr")
+        boss_t = token_for(boss_row[0], "boss")
+
+        cur.execute(
+            "insert into users (full_name, role, is_active, bot_started, created_at)"
+            " values (?,?,1,0,datetime('now'))", ("T-Approve", "employee"))
+        uid = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=60) as c:
+            r = c.post(f"/payroll/{period}/calculate", headers=auth(hr_t), json={"user_ids": [uid]})
+            check("HR hisoblay oladi", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+
+            r = c.post(f"/payroll/{period}/approve", headers=auth(hr_t))
+            check("HR YAKUNIY tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
+
+            r = c.post(f"/payroll/{period}/approve", headers=auth(boss_t))
+            check("Boshliq HR bosqichisiz tasdiqlay olmaydi -> 409",
+                  r.status_code == 409, f"kod={r.status_code} {r.text[:120]}")
+
+            r = c.post(f"/payroll/{period}/hr-approve", headers=auth(hr_t))
+            check("HR «tayyor» dedi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            if r.status_code == 200:
+                check("status hr_approved bo'ldi", r.json().get("status") == "hr_approved",
+                      f"status={r.json().get('status')}")
+
+            r = c.get("/payroll/periods", headers=auth(boss_t))
+            if r.status_code == 200:
+                row = next((x for x in r.json() if x["period"] == period), None)
+                check("Boshliq kim tekshirganini ko'radi",
+                      bool(row and row.get("hr_approved_name")),
+                      f"hr_approved_name={row.get('hr_approved_name') if row else None}")
+
+            r = c.post(f"/payroll/{period}/approve", headers=auth(boss_t))
+            check("Boshliq yakuniy tasdiqladi -> 200", r.status_code == 200, f"kod={r.status_code}")
+
+            r = c.post(f"/payroll/{period}/calculate", headers=auth(hr_t), json={"user_ids": [uid]})
+            check("qulflangach qayta hisoblash -> 409", r.status_code == 409, f"kod={r.status_code}")
+    finally:
+        cur.execute("delete from payslip_items where payslip_id in (select id from payslips where period=?)", (period,))
+        cur.execute("delete from payslips where period=?", (period,))
+        cur.execute("delete from payroll_periods where period=?", (period,))
+        if uid is not None:
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from users where id=?", (uid,))
+        cur.execute("delete from audit_logs where action in "
+                    "('payroll_calculated','payroll_period_hr_approved','payroll_period_approved')")
+        conn.commit()
+        conn.close()
+
+
 def test_kpi_rates() -> None:
     """KPI stavkalari saytdan sozlanadigan bo'ldi (2026-08-08, egasi so'radi).
 
@@ -4755,6 +4839,11 @@ def main() -> None:
         test_dashboard_day_off()
     except Exception:
         print("Dashboard dam kuni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_payroll_approval_segregation()
+    except Exception:
+        print("Tasdiq ajratimi testida kutilmagan xato:" + chr(10) + traceback.format_exc())
 
     try:
         test_kpi_rates()

@@ -728,9 +728,13 @@ export interface PayslipDetail {
 
 export interface PayrollPeriodSummary {
   period: string;
+  /** draft | calculated | hr_approved | approved | paid */
   status: string;
   locked: boolean;
   calculated_at: string | null;
+  /** HR "tekshirdim, tayyor" bosqichi — qulflamaydi (2026-08-08). */
+  hr_approved_at: string | null;
+  hr_approved_name: string | null;
   approved_at: string | null;
   employee_count: number;
   total_net: number;

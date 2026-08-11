@@ -75,6 +75,7 @@ from db.models import (
     OvertimeProfile,
     PayrollAdjustment,
     PayrollPeriod,
+    PayrollPeriodStatus,
     Payslip,
     PayslipItem,
     Position,
@@ -681,6 +682,13 @@ async def list_periods(
     ro'yxatdan o'tishi SHART, aks holda FastAPI "periods" so'zini davr nomi
     deb talqin qilib qolardi."""
     periods = list(await db.scalars(select(PayrollPeriod).order_by(PayrollPeriod.period.desc())))
+    # HR tasdiqlaganlarning ismini BITTA so'rovda olamiz (davr soniga
+    # ko'paytirilgan N+1 bo'lmasin).
+    hr_ids = {pr.hr_approved_by for pr in periods if pr.hr_approved_by}
+    hr_names = {
+        u.id: u.full_name
+        for u in (await db.scalars(select(User).where(User.id.in_(hr_ids))) if hr_ids else [])
+    }
     out = []
     for pr in periods:
         rows = list(await db.scalars(select(Payslip).where(Payslip.period == pr.period)))
@@ -693,6 +701,8 @@ async def list_periods(
                 status=pr.status,
                 locked=pr.locked,
                 calculated_at=pr.calculated_at,
+                hr_approved_at=pr.hr_approved_at,
+                hr_approved_name=hr_names.get(pr.hr_approved_by),
                 approved_at=pr.approved_at,
                 employee_count=len(rows),
                 total_net=sum(float(r.net) for r in rows),
@@ -922,19 +932,93 @@ async def payslip_detail(
     )
 
 
-@router.post("/{period}/approve")
-async def approve_period(
+# Yakuniy tasdiq — FAQAT Boshliq/Dasturchi. HR bu yerda ATAYLAB yo'q:
+# vazifalarni ajratishning butun mohiyati shu (2026-08-08, egasining talabi
+# "hr uni belgilaydi, boss boshliq uni tasdiqlaydi").
+PAYROLL_FINAL_APPROVE_ROLES = (Role.boss.value, Role.dasturchi.value)
+
+
+@router.post("/{period}/hr-approve")
+async def hr_approve_period(
     period: str, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Davrni tasdiqlaydi va QULFLAYDI (`locked=True`) — shu nuqtadan keyin
-    `calculate` 409 qaytaradi (avval Dasturchi `reopen` qilishi kerak,
-    Bosqich 3.5). Har bir xodimga shaxsiy DM boradi (guruhga EMAS —
-    maxfiylik, 8.6-band)."""
+    """HR bosqichi: «tekshirdim, tayyor». QULFLAMAYDI va pulni o'zgartirmaydi.
+
+    NEGA ALOHIDA BOSQICH: ilgari HR o'zi hisoblab, o'zi tasdiqlab, davrni
+    qulflab qo'yardi — bitta odam butun pul jarayonini yakunlardi. Endi HR
+    faqat "tayyor" deb belgilaydi, Boshliqqa xabar ketadi, yakuniy qulf esa
+    Boshliqda.
+
+    Bu bosqichdan keyin ham qayta hisoblash MUMKIN (qulf yo'q) — HR xato
+    topsa tuzatib, qaytadan "tayyor" deyishi kerak emas, holat saqlanadi.
+    """
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
     if period_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bu davr uchun hali hisoblanmagan")
     if period_row.locked:
         raise HTTPException(status.HTTP_409_CONFLICT, "Bu davr allaqachon tasdiqlangan")
+
+    payslips_count = len(list(await db.scalars(select(Payslip).where(Payslip.period == period))))
+    if payslips_count == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu davr uchun payslip yo'q — avval hisoblang")
+
+    period_row.status = PayrollPeriodStatus.hr_approved.value
+    period_row.hr_approved_by = actor.id
+    period_row.hr_approved_at = datetime.utcnow()
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="payroll_period_hr_approved",
+            target_user_id=None,
+            before=None,
+            after={"period": period, "payslip_count": payslips_count},
+        )
+    )
+    await db.commit()
+
+    # Boshliqqa xabar — busiz HR "tayyor" deb qo'yadi-yu, hech kim bilmaydi.
+    bosses = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(PAYROLL_FINAL_APPROVE_ROLES), User.telegram_id.isnot(None)
+            )
+        )
+    )
+    for b in bosses:
+        await notify_user(
+            db,
+            b,
+            Category.APPROVALS,
+            f"✅ {actor.full_name} oylikni tekshirdi ({period}, {payslips_count} xodim). "
+            f"Yakuniy tasdiq sizda.",
+            data={"path": "/payroll"},
+        )
+    return {"period": period, "status": period_row.status, "payslip_count": payslips_count}
+
+
+@router.post("/{period}/approve")
+async def approve_period(
+    period: str,
+    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """YAKUNIY tasdiq — davrni QULFLAYDI (`locked=True`). Faqat Boshliq/
+    Dasturchi. Shu nuqtadan keyin `calculate` 409 qaytaradi (avval Dasturchi
+    `reopen` qilishi kerak, Bosqich 3.5). Har bir xodimga shaxsiy DM boradi
+    (guruhga EMAS — maxfiylik, 8.6-band).
+
+    AVVAL HR BOSQICHI O'TISHI SHART: aks holda ajratishning ma'nosi
+    qolmasdi — Boshliq HR tekshirmagan raqamni qulflab qo'yardi."""
+    period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
+    if period_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Bu davr uchun hali hisoblanmagan")
+    if period_row.locked:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Bu davr allaqachon tasdiqlangan")
+    if period_row.status != PayrollPeriodStatus.hr_approved.value:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Avval HR tekshirib «tayyor» deb belgilashi kerak",
+        )
 
     payslips = list(await db.scalars(select(Payslip).where(Payslip.period == period)))
     if not payslips:

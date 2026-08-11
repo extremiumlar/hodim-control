@@ -123,6 +123,11 @@ class OvertimeEntryStatus(str, enum.Enum):
 class PayrollPeriodStatus(str, enum.Enum):
     draft = "draft"
     calculated = "calculated"
+    # 2026-08-08: VAZIFALAR AJRATILDI. Ilgari HR o'zi hisoblab, o'zi
+    # tasdiqlab, davrni qulflab qo'yardi — bitta odam butun pul jarayonini
+    # yakunlardi. Endi oraliq bosqich: HR tekshirib "tayyor" deydi
+    # (`hr_approved`), YAKUNIY tasdiq va qulf esa Boshliq/Dasturchida.
+    hr_approved = "hr_approved"
     approved = "approved"
     paid = "paid"
 
@@ -1391,6 +1396,12 @@ class PayrollPeriod(Base):
     period: Mapped[str] = mapped_column(String(7), unique=True, index=True)  # "YYYY-MM"
     status: Mapped[str] = mapped_column(String(20), default=PayrollPeriodStatus.draft.value)
     calculated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # HR bosqichi — "men tekshirdim, tayyor". Qulflamaydi, pul o'zgarmaydi.
+    # Alohida ustunlar (audit yetarli emas): kim va qachon tayyorlaganini
+    # Boshliq tasdiqlash oynasida DARHOL ko'rishi kerak.
+    hr_approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    hr_approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Yakuniy tasdiq — faqat Boshliq/Dasturchi, shu bilan `locked=True`.
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)

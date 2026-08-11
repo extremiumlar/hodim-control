@@ -31,6 +31,7 @@ import { type PayslipRow, type ReadinessIssue } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   useApprovePayrollPeriod,
+  useHrApprovePayrollPeriod,
   useCalculatePayroll,
   useDownloadPayrollExport,
   usePayrollPeriods,
@@ -206,20 +207,27 @@ function PayslipDetailDialog({
 export default function Payroll() {
   const { user } = useAuth();
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
+  // YAKUNIY tasdiq — faqat Boshliq/Dasturchi (2026-08-08, vazifalar
+  // ajratildi). HR bu tugmani KO'RMAYDI: backend ham 403 qaytaradi, lekin
+  // ko'rinib turib bosilmaydigan tugma yomon UX bo'lardi.
+  const canFinalApprove = !!user && ["boss", "dasturchi"].includes(user.role);
 
   const [period, setPeriod] = useState(currentMonthKey());
   const [detailUserId, setDetailUserId] = useState<number | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  const [confirmHrApprove, setConfirmHrApprove] = useState(false);
 
   const periodsQuery = usePayrollPeriods();
   const payslipsQuery = usePayslips(period);
   const calculate = useCalculatePayroll();
   const approve = useApprovePayrollPeriod();
+  const hrApprove = useHrApprovePayrollPeriod();
   const downloadExport = useDownloadPayrollExport();
 
   const periodInfo = periodsQuery.data?.find((p) => p.period === period);
   const isLocked = periodInfo?.locked ?? false;
   const isApproved = periodInfo?.status === "approved" || periodInfo?.status === "paid";
+  const isHrApproved = periodInfo?.status === "hr_approved";
 
   const rows = payslipsQuery.data ?? [];
   const totals = rows.reduce(
@@ -320,11 +328,24 @@ export default function Payroll() {
               <RefreshCw className="mr-2 h-4 w-4" />
               {isLocked ? "Qulflangan" : "Hisoblash"}
             </Button>
-            {rows.length > 0 && !isApproved && (
-              <Button size="sm" onClick={() => setConfirmApprove(true)}>
+            {/* 1-bosqich: HR "tekshirdim, tayyor" — qulflamaydi. */}
+            {rows.length > 0 && !isApproved && !isHrApproved && (
+              <Button variant="outline" size="sm" onClick={() => setConfirmHrApprove(true)}>
                 <CheckCircle2 className="mr-2 h-4 w-4" />
-                Tasdiqlash
+                Tekshirdim — tayyor
               </Button>
+            )}
+            {/* 2-bosqich: yakuniy tasdiq va QULF — faqat Boshliq/Dasturchi. */}
+            {rows.length > 0 && isHrApproved && canFinalApprove && (
+              <Button size="sm" onClick={() => setConfirmApprove(true)}>
+                <Lock className="mr-2 h-4 w-4" />
+                Yakuniy tasdiqlash
+              </Button>
+            )}
+            {isHrApproved && !canFinalApprove && (
+              <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-sm text-amber-800">
+                Boshliq tasdig'i kutilmoqda
+              </span>
             )}
             {isApproved && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
@@ -367,8 +388,13 @@ export default function Payroll() {
       <ConfirmDialog
         open={confirmApprove}
         onOpenChange={setConfirmApprove}
-        title={`${period} davrini tasdiqlaysizmi?`}
-        description="Tasdiqlangach davr QULFLANADI — qayta hisoblash uchun avval Dasturchi ochishi kerak bo'ladi. Har bir xodimga shaxsiy xabar boradi."
+        title={`${period} davrini YAKUNIY tasdiqlaysizmi?`}
+        description={
+          (periodInfo?.hr_approved_name
+            ? `Tekshirgan: ${periodInfo.hr_approved_name}. `
+            : "") +
+          "Tasdiqlangach davr QULFLANADI — qayta hisoblash uchun avval Dasturchi ochishi kerak bo'ladi. Har bir xodimga shaxsiy xabar boradi."
+        }
         confirmLabel="Tasdiqlash"
         loading={approve.isPending}
         onConfirm={() =>
@@ -376,6 +402,24 @@ export default function Payroll() {
             onSuccess: (r) => {
               toast.success(`${r.approved} ta payslip tasdiqlandi.`);
               setConfirmApprove(false);
+            },
+          })
+        }
+      />
+
+      {/* HR bosqichi — qulflamaydi, shuning uchun ogohlantirish yumshoqroq. */}
+      <ConfirmDialog
+        open={confirmHrApprove}
+        onOpenChange={setConfirmHrApprove}
+        title={`${period} — tekshirdingizmi?`}
+        description="Bu davr Boshliqqa yakuniy tasdiq uchun yuboriladi va unga xabar boradi. Davr QULFLANMAYDI — kerak bo'lsa hali ham qayta hisoblash mumkin."
+        confirmLabel="Ha, tayyor"
+        loading={hrApprove.isPending}
+        onConfirm={() =>
+          hrApprove.mutate(period, {
+            onSuccess: () => {
+              toast.success("Boshliqqa yuborildi.");
+              setConfirmHrApprove(false);
             },
           })
         }
