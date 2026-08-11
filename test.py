@@ -1588,6 +1588,126 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("UX2-W1 tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
+        try:
+            import asyncio as _aio
+
+            from db.base import async_session as _asess
+            from api.services import hot_lead as _hl
+
+            conn = db()
+            cur = conn.cursor()
+
+            # HR qoidasi: global FinePolicy (bo'lmasa yaratamiz; borini eslab
+            # qolib, oxirida ASL HOLIGA qaytaramiz — jonli sozlamaga tegmaymiz)
+            old_global = cur.execute(
+                "select id, hot_lead_cool_minutes, hot_lead_fine from fine_policies"
+                " where scope='global'").fetchone()
+            if old_global:
+                cur.execute(
+                    "update fine_policies set hot_lead_cool_minutes=12, hot_lead_fine=50000"
+                    " where id=?", (old_global[0],))
+                created_policy = None
+            else:
+                cur.execute(
+                    "insert into fine_policies (scope, scope_id, free_late_minutes_per_month,"
+                    " fine_mode, absent_mode, early_leave_enabled, fine_applies_to, is_active,"
+                    " hot_lead_cool_minutes, hot_lead_fine, updated_at)"
+                    " values ('global', NULL, 60, 'per_day', 'fixed', 0, 'net_salary', 1,"
+                    " 12, 50000, datetime('now'))")
+                created_policy = cur.lastrowid
+            conn.commit()
+
+            async def _rules():
+                async with _asess() as s:
+                    return await _hl.hot_lead_rules(s)
+
+            mins, fine = _aio.run(_rules())
+            check("HL: HR qoidasi o'qildi (12 daq / 50 000)", mins == 12 and fine == 50000.0,
+                  f"{mins} daq, {fine}")
+
+            # Eslatma matni bosqichlari — senlab, jarima bilan
+            fake = type("L", (), {"contact_name": "T-Mijoz", "lead_name": None, "crm_lead_id": 1})()
+            t3 = _hl._reminder_text(3, 12, fake, 50000.0)
+            t9 = _hl._reminder_text(9, 12, fake, 50000.0)
+            check("HL: 3-daqiqa eslatmasi yumshoq, 9-daqiqa qattiq + jarima",
+                  "3 daqiqa" in t3 and "guruhga" in t9 and "50 000" in t9,
+                  f"{t3[:40]} | {t9[:60]}")
+            check("HL: eslatmalar sovish limitidan kichik bosqichlarda",
+                  all(s < 12 for s in _hl.REMINDER_STEPS), str(_hl.REMINDER_STEPS))
+
+            # Oldingi-qo'ng'iroq oynasi 2 soat (mijoz bilan gaplashib bo'lib
+            # CRM'ga kiritish holati) — egasining shikoyatining yechimi
+            check("HL: qo'ng'iroq oynasi 2 soat (10 daqiqa emas)",
+                  _hl.PRE_CREATION_GRACE_SECONDS == 7200, str(_hl.PRE_CREATION_GRACE_SECONDS))
+
+            # Taqsimlash: eng kam yuklangan operator tanlanadi
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " crm_visit_external_id, created_at)"
+                " values (999555001,'T-Op1','employee',1,1,'900001',datetime('now'))")
+            op1 = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " crm_visit_external_id, created_at)"
+                " values (999555002,'T-Op2','employee',1,1,'900002',datetime('now'))")
+            op2 = cur.lastrowid
+            # op1 ga bugun 2 ta lid — demak keyingisi op2 ga tushishi kerak
+            for i in (91001, 91002):
+                cur.execute(
+                    "insert into hot_lead (crm_lead_id, user_id, created_ts, detected_at,"
+                    " status, last_reminder_minute)"
+                    " values (?,?,?,datetime('now'),'notified',0)",
+                    (i, op1, int(__import__("time").time())))
+            conn.commit()
+
+            async def _pick():
+                async with _asess() as s:
+                    u = await _hl._pick_operator(s)
+                    return u.full_name if u else None
+
+            picked = _aio.run(_pick())
+            # Nomzodlar orasida HAQIQIY operatorlar ham bor (ular ham 0 lidli)
+            # — muhimi: bugun 2 ta lid olgan T-Op1 TANLANMASLIGI kerak.
+            check("HL: yuklangan operator (T-Op1) taqsimotdan chetda qoldi",
+                  picked is not None and picked != "T-Op1", f"tanlandi={picked}")
+
+            # Kunlik statistika: kim nechta lidni sovutgan
+            cur.execute(
+                "insert into hot_lead (crm_lead_id, user_id, created_ts, detected_at,"
+                " escalated_at, fine_amount, status, last_reminder_minute)"
+                " values (91003,?,?,datetime('now'),datetime('now'),50000,'notified',9)",
+                (op1, int(__import__("time").time())))
+            cur.execute(
+                "insert into hot_lead (crm_lead_id, user_id, created_ts, detected_at,"
+                " escalated_at, fine_amount, status, last_reminder_minute)"
+                " values (91004,?,?,datetime('now'),datetime('now'),50000,'called',9)",
+                (op1, int(__import__("time").time())))
+            conn.commit()
+
+            async def _cooled():
+                async with _asess() as s:
+                    return await _hl.cooled_by_operator(s, date.today())
+
+            cooled = _aio.run(_cooled())
+            row = next((c for c in cooled if c["full_name"] == "T-Op1"), None)
+            check("HL: statistikada sovutgan operator (1 ta, tuzatilgani sanalmaydi)",
+                  row is not None and row["count"] == 1 and row["fine"] == 50000.0, str(row))
+
+            # Tozalash: T- ma'lumot + sozlamani ASL holiga qaytarish
+            cur.execute("delete from hot_lead where crm_lead_id in (91001,91002,91003,91004)")
+            cur.execute("delete from users where id in (?,?)", (op1, op2))
+            if created_policy:
+                cur.execute("delete from fine_policies where id=?", (created_policy,))
+            elif old_global:
+                cur.execute(
+                    "update fine_policies set hot_lead_cool_minutes=?, hot_lead_fine=? where id=?",
+                    (old_global[1], old_global[2], old_global[0]))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("Issiq lid tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
         print("\n-- UX2-W4: bot dashboard + statistika davomat bloki + validatsiya --")
         try:
             conn = db()

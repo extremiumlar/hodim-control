@@ -755,6 +755,14 @@ class HotLead(Base):
     resolved_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # baseline | notified | claimed | called | resolved_no_call
     status: Mapped[str] = mapped_column(String(16), default="notified", index=True)
+    # ── Bosqichma-bosqich eslatmalar (egasining talabi 2026-08-06) ──
+    # Operatorga 3/5/7/9-daqiqada shaxsiy ogohlantirish yuboriladi; bu yerda
+    # OXIRGI yuborilgan bosqich (daqiqa) saqlanadi — tick qayta ishlaganda
+    # o'sha eslatma ikkinchi marta ketmasin.
+    last_reminder_minute: Mapped[int] = mapped_column(Integer, default=0)
+    # Sovutish e'lon qilingan paytdagi jarima summasi (FinePolicy'dan olingan
+    # nusxa) — keyin HR summani o'zgartirsa, o'tmishdagi e'lon o'zgarmasin.
+    fine_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
 
 
 class WorkScheduleWeekly(Base):
@@ -1357,6 +1365,13 @@ class FinePolicy(Base):
     monthly_cap_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     monthly_cap_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     fine_applies_to: Mapped[str] = mapped_column(String(20), default=FineAppliesTo.net_salary.value)
+    # ── Issiq lid (speed-to-lead) qoidasi — egasining talabi 2026-08-06 ──
+    # Lid CRM'da yaratilganidan keyin shuncha daqiqa ichida aloqa qo'ng'irog'i
+    # bo'lmasa — lid "sovutilgan" hisoblanadi: guruhga chiqadi va shu summa
+    # jarima sifatida e'lon qilinadi. Boshlang'ich: 10 daqiqa, jarima 0
+    # (HR o'z panelidan o'zgartiradi — 0 bo'lsa xabarga summa yozilmaydi).
+    hot_lead_cool_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hot_lead_fine: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

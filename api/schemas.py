@@ -924,6 +924,11 @@ class FinePolicyIn(BaseModel):
     monthly_cap_percent: float | None = Field(default=None, ge=0, le=100)
     monthly_cap_amount: float | None = Field(default=None, ge=0)
     fine_applies_to: str = "net_salary"
+    # Issiq lid qoidasi (2026-08-06): lid necha daqiqada "sovuydi" va har bir
+    # sovutilgan lid uchun jarima. Faqat GLOBAL qoidada o'qiladi (hot_lead.py:
+    # hot_lead_rules) — lavozim/xodim darajasida hozircha ishlatilmaydi.
+    hot_lead_cool_minutes: int | None = Field(default=None, ge=1, le=240)
+    hot_lead_fine: float | None = Field(default=None, ge=0)
     is_active: bool = True
 
     @field_validator("scope")
@@ -987,6 +992,8 @@ class FinePolicyOut(BaseModel):
     monthly_cap_percent: float | None
     monthly_cap_amount: float | None
     fine_applies_to: str
+    hot_lead_cool_minutes: int | None = None
+    hot_lead_fine: float | None = None
     is_active: bool
     updated_at: datetime
 

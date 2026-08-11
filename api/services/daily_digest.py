@@ -146,7 +146,25 @@ async def _hot_lead_line(db: AsyncSession, day: date) -> str | None:
             f"🚫{report['escalated_legit_closed']} qonuniy yopildi · "
             f"⚠️{report['escalated_still_open']} hali ochiq)"
         )
-    return " — ".join(parts)
+    line = " — ".join(parts)
+
+    # Egasining talabi (2026-08-06): kunlik statistikada HAR BIR OPERATOR
+    # nechta issiq lidni sovutgani ko'rinsin (jarima summasi bilan).
+    cooled = await hot_lead_service.cooled_by_operator(db, day)
+    if cooled:
+        total_cooled = sum(c["count"] for c in cooled)
+        total_fine = sum(c["fine"] for c in cooled)
+        line += f"\n❄️ <b>Sovutilgan lidlar: {total_cooled} ta</b>"
+        for c in cooled:
+            fine_part = (
+                f" · jarima {int(round(c['fine'])):,}".replace(",", " ") + " so'm"
+                if c["fine"] > 0
+                else ""
+            )
+            line += f"\n   • {html.escape(c['full_name'])} — {c['count']} ta{fine_part}"
+        if total_fine > 0:
+            line += f"\n   Jami jarima: {int(round(total_fine)):,}".replace(",", " ") + " so'm"
+    return line
 
 
 async def _tasks_by_user(db: AsyncSession, day: date) -> dict[int, tuple[int, int]]:

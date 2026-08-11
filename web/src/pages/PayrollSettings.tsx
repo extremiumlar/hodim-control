@@ -66,6 +66,9 @@ const emptyPolicyDraft = (): FinePolicyInput => ({
   monthly_cap_percent: 20,
   monthly_cap_amount: null,
   fine_applies_to: "net_salary",
+  // Issiq lid (2026-08-06, egasining talabi): boshlang'ich 10 daqiqa / 0 so'm
+  hot_lead_cool_minutes: 10,
+  hot_lead_fine: 0,
   is_active: true,
 });
 
@@ -99,6 +102,8 @@ function FinePolicyDialog({
         monthly_cap_percent: initial.monthly_cap_percent,
         monthly_cap_amount: initial.monthly_cap_amount,
         fine_applies_to: initial.fine_applies_to,
+        hot_lead_cool_minutes: initial.hot_lead_cool_minutes ?? 10,
+        hot_lead_fine: initial.hot_lead_fine ?? 0,
         is_active: initial.is_active,
       });
     } else {
@@ -253,6 +258,48 @@ function FinePolicyDialog({
               </Select>
             </div>
           </div>
+
+          {/* Issiq lid qoidasi — egasining talabi (2026-08-06). Faqat GLOBAL
+              qoidada o'qiladi (backend: hot_lead.hot_lead_rules), shuning uchun
+              boshqa scope'da ko'rsatilmaydi (chalkashmasin). */}
+          {draft.scope === "global" && (
+            <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
+              <div className="mb-2 text-sm font-medium text-orange-900">
+                🔥 Issiq lid (speed-to-lead) qoidasi
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="fp-hot-min">Necha daqiqada sovuydi</Label>
+                  <Input
+                    id="fp-hot-min"
+                    type="number"
+                    min={1}
+                    max={240}
+                    value={draft.hot_lead_cool_minutes ?? ""}
+                    onChange={(e) =>
+                      setDraft((d) => ({ ...d, hot_lead_cool_minutes: Number(e.target.value) }))
+                    }
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="fp-hot-fine">Sovutgani uchun jarima (so'm)</Label>
+                  <Input
+                    id="fp-hot-fine"
+                    type="number"
+                    min={0}
+                    value={draft.hot_lead_fine ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, hot_lead_fine: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-orange-800">
+                Lid CRM'ga tushgandan keyin shu vaqt ichida qo'ng'iroq bo'lmasa — operator
+                lidni «sovutgan» hisoblanadi: guruhga ismi bilan chiqadi va shu jarima
+                e'lon qilinadi. Operatorga 3/5/7/9-daqiqada shaxsiy ogohlantirish boradi.
+                Jarima 0 bo'lsa xabarda summa ko'rsatilmaydi.
+              </p>
+            </div>
+          )}
 
           <div>
             <Label className="mb-1.5 block">

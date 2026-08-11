@@ -38,7 +38,7 @@ Yozuvdagi uch vaqt farqi metrika beradi: yaratilish→aniqlash (tizim), aniqlash
 qabul (reaksiya), yaratilish→birinchi qo'ng'iroq (haqiqiy speed-to-lead)."""
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +63,16 @@ LOOKBACK_SECONDS = 6 * 3600
 # (call-history phoneSearch), Telegram tugmasi emas — tugmani bosib qo'ng'iroq
 # qilmagan operator ham shu yerda ushlanadi.
 ESCALATE_AFTER_MINUTES = 5
+# 2026-08-06 (egasining talabi): "sovish" muddati endi QATTIQ KODLANMAGAN —
+# HR o'z panelidan belgilaydi (`FinePolicy.hot_lead_cool_minutes`), boshlang'ich
+# qiymat 10 daqiqa. Yuqoridagi ESCALATE_AFTER_MINUTES faqat ZAXIRA (sozlama
+# umuman topilmasa) va eski matnlar uchun qoldi.
+DEFAULT_COOL_MINUTES = 10
+# Operatorga shaxsiy ogohlantirish bosqichlari (daqiqa). Egasining talabi:
+# lid tushishi bilan xabar, keyin 3/5/7/9-daqiqada BOSHLIQ OHANGIDA (senlab)
+# eslatma. Sovish muddati kichikroq sozlansa — undan katta bosqichlar
+# o'tkazib yuboriladi.
+REMINDER_STEPS = (3, 5, 7, 9)
 # Eskalatsiya faqat shu mahalliy soat oralig'ida (kechasi kelgan lid uchun
 # operatorni ayblamaymiz — adolat tamoyili).
 ESCALATE_HOUR_FROM, ESCALATE_HOUR_TO = 8, 21
@@ -89,7 +99,15 @@ FIRST_CALL_RECHECK_MAX_INTERVAL = timedelta(minutes=60)  # 24 soatdan eski lidla
 # manbalarda lid aynan qo'ng'iroqdan keyin avto-yaraladi (jonli misol: qo'ng'iroq
 # liddan 27s oldin — 13547494). Shu oynadagi oldingi qo'ng'iroq ham "qabul"
 # hisoblanadi (first_call_sec 0 ga qisqartiriladi), soxta eskalatsiya bo'lmaydi.
-PRE_CREATION_GRACE_SECONDS = 10 * 60
+#
+# 2026-08-06 (egasining aniq ko'rsatmasi): 10 daqiqa JUDA KICHIK edi. Amaldagi
+# ish tartibi — operator mijoz bilan TO'LIQ gaplashib bo'lgach lidni CRM'ga
+# kiritadi. Ya'ni qo'ng'iroq lid yaratilishidan 20-40 daqiqa OLDIN tugagan
+# bo'lishi mumkin, va tizim buni "umuman qo'ng'iroq qilmadi" deb hisoblab,
+# operator hali gaplashib turganda ogohlantirish yuborardi. Endi oyna 2 soat:
+# shu oraliqda mijozning raqamiga aloqa bo'lgan bo'lsa — lid o'sha zahoti
+# "aloqa qilingan" deb yopiladi, eslatma ham, sovutish e'loni ham bo'lmaydi.
+PRE_CREATION_GRACE_SECONDS = 2 * 3600
 # Mas'ul-o'tkazish DM'lari va tuzatish xabarlari — YANGI kuzatuv (bu tizim
 # ishga tushirilgunga qadar to'plangan ESKI "ochiq"/"eskalatsiya qilingan"
 # yozuvlar bo'yicha emas). Bir tickda shu sondan ko'p nomzod chiqsa — bu haqiqiy
@@ -109,8 +127,35 @@ def _lead_label(lead: HotLead) -> str:
     return lead.contact_name or lead.lead_name or f"lid #{lead.crm_lead_id}"
 
 
-def _notify_text(lead: HotLead) -> str:
-    lines = ["🔥 <b>Yangi issiq lid!</b>"]
+async def hot_lead_rules(db: AsyncSession) -> tuple[int, float]:
+    """(sovish_daqiqasi, jarima_summasi) — HR panelidan sozlanadigan qoida.
+
+    Manba: GLOBAL `FinePolicy` qatori (kechikish jarimasi bilan bir joyda —
+    HR uchun bitta sozlamalar sahifasi, `PayrollSettings`). Sozlanmagan
+    bo'lsa boshlang'ich: 10 daqiqa / 0 so'm (egasining ko'rsatmasi — jarima
+    HR belgilagunicha 0 turadi va xabarda summa yozilmaydi)."""
+    from db.models import FinePolicy  # kech import — modul yuklanish tsikli
+
+    policy = await db.scalar(
+        select(FinePolicy).where(FinePolicy.scope == "global", FinePolicy.is_active.is_(True))
+    )
+    minutes = DEFAULT_COOL_MINUTES
+    fine = 0.0
+    if policy is not None:
+        if policy.hot_lead_cool_minutes:
+            minutes = int(policy.hot_lead_cool_minutes)
+        if policy.hot_lead_fine:
+            fine = float(policy.hot_lead_fine)
+    return max(1, minutes), max(0.0, fine)
+
+
+def _fmt_money(amount: float) -> str:
+    """bot/handlers/payroll.py `_fmt_money` bilan bir xil ko'rinish."""
+    return f"{int(round(amount)):,}".replace(",", " ") + " so'm"
+
+
+def _notify_text(lead: HotLead, cool_minutes: int, fine: float) -> str:
+    lines = ["🔥 <b>Yangi issiq lid — SENGA biriktirildi!</b>"]
     if lead.contact_name:
         lines.append(f"👤 {lead.contact_name}")
     if lead.phone:
@@ -119,9 +164,11 @@ def _notify_text(lead: HotLead) -> str:
         lines.append(f"🌐 Manba: {lead.source}")
     lines.append("")
     lines.append(
-        f"⏱ {ESCALATE_AFTER_MINUTES} daqiqa ichida qo'ng'iroq qiling — birinchi daqiqalarda lid eng issiq bo'ladi. "
-        "Qo'ng'iroq CRM'dan avtomatik tekshiriladi, kechikkani guruhga chiqadi."
+        f"⏱ <b>{cool_minutes} daqiqa</b> ichida qo'ng'iroq qil — keyin lid sovuydi. "
+        "Qo'ng'iroq CRM'dan avtomatik tekshiriladi."
     )
+    if fine > 0:
+        lines.append(f"💸 Sovutsang jarima: <b>{_fmt_money(fine)}</b>.")
     return "\n".join(lines)
 
 
@@ -139,6 +186,44 @@ async def _main_group_chat_id(db: AsyncSession) -> int | None:
 async def _map_users_by_crm_id(db: AsyncSession) -> dict[str, User]:
     users = await db.scalars(select(User).where(User.crm_visit_external_id.isnot(None)))
     return {u.crm_visit_external_id: u for u in users}
+
+
+async def _pick_operator(db: AsyncSession) -> User | None:
+    """Mas'ulsiz lidni kimga berish — BUGUN eng kam issiq lid olgan operator.
+
+    Nomzodlar: CRM'da mas'ul bo'la oladigan (crm_visit_external_id biriktirilgan)
+    faol xodimlar, ishdan chiqib ketmaganlari (`_operator_absent_reason`).
+    Bu — CRM'da CRUD paydo bo'lgunicha vaqtinchalik taqsimlash qatlami; CRM
+    tomonida mas'ul belgilansa, `sync_crm_state` uni baribir ustun deb oladi
+    va yozuv o'sha odamga ko'chadi (bot taqsimoti CRM'ni buzmaydi)."""
+    candidates = list(
+        await db.scalars(
+            select(User).where(
+                User.is_active.is_(True), User.crm_visit_external_id.isnot(None)
+            )
+        )
+    )
+    if not candidates:
+        return None
+
+    today_start = datetime.utcnow() - timedelta(hours=24)
+    counts = dict(
+        (
+            await db.execute(
+                select(HotLead.user_id, func.count(HotLead.id))
+                .where(HotLead.user_id.isnot(None), HotLead.detected_at >= today_start)
+                .group_by(HotLead.user_id)
+            )
+        ).all()
+    )
+
+    available: list[User] = []
+    for u in candidates:
+        if await _operator_absent_reason(db, u.id) is None:
+            available.append(u)
+    pool = available or candidates  # hammasi ketgan bo'lsa ham lid egasiz qolmasin
+    # Teng bo'lsa — id bo'yicha barqaror tartib (navbat aylanib turadi).
+    return min(pool, key=lambda u: (counts.get(u.id, 0), u.id))
 
 
 async def _lead_states_by_id(db: AsyncSession, crm_lead_ids: list[int]) -> dict[int, CrmLeadState]:
@@ -289,12 +374,21 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
     fresh = [l for l in fresh if l["id"] not in existing]
 
     users_by_crm = await _map_users_by_crm_id(db)
-    main_chat_id = await _main_group_chat_id(db)
+    cool_minutes, fine = await hot_lead_rules(db)
     results = []
     for item in fresh:
         detail = await adapter.get_lead_detail(item["id"]) or {}
         responsible_id = detail.get("responsible_id") or item.get("responsible_id")
         user = users_by_crm.get(str(responsible_id)) if responsible_id is not None else None
+        # CRM'da mas'ul yo'q (yoki bizda topilmadi) — 2026-08-06 dan boshlab
+        # bot O'ZI taqsimlaydi (CRM'da CRUD paydo bo'lgunicha vaqtinchalik
+        # qatlam): eng kam yuklangan faol operatorga biriktiriladi. Ilgari
+        # bunday lid GURUHGA "kim oladi?" deb tashlanardi — egasi buni bekor
+        # qildi (guruh yangi lidlar bilan to'lib ketardi).
+        assigned_by_bot = False
+        if user is None:
+            user = await _pick_operator(db)
+            assigned_by_bot = user is not None
 
         phone = detail.get("phone")
         phones = detail.get("phones") or ([phone] if phone else None)
@@ -316,27 +410,27 @@ async def detect_and_notify(db: AsyncSession, dry_run: bool) -> dict:
             "contact": lead.contact_name,
             "phone": lead.phone,
             "operator": user.full_name if user else None,
-            "text": _notify_text(lead),
+            "assigned_by_bot": assigned_by_bot,
         }
         if not dry_run:
             db.add(lead)
-            await db.flush()  # tugma callback_data uchun lead.id kerak
+            await db.flush()
             delivered = None
             if user and user.telegram_id:
-                # Sotuv signali — ilova faol bo'lsa ham Telegram QOLADI:
-                # bu jamoaviy oqim, guruh chatiga ham ketadi va u yerda
-                # tarix sifatida kerak (services/push.py: PERSONAL_CATEGORIES).
+                text = _notify_text(lead, cool_minutes, fine)
+                if assigned_by_bot:
+                    text += "\n\n📌 Bu lidni CRM'da mas'ul belgilanmagani uchun bot senga biriktirdi."
+                # Sotuv signali — ilova faol bo'lsa ham Telegram QOLADI
+                # (services/push.py: PERSONAL_CATEGORIES).
                 res = await notify_user(
-                    db, user, Category.SALES_SIGNALS, _notify_text(lead),
-                    data={"path": "/me/lead-stats"},
+                    db, user, Category.SALES_SIGNALS, text, data={"path": "/me/lead-stats"},
                 )
                 delivered = res["telegram"] or res["push"]
-            elif main_chat_id:
-                # Mas'ul tizimda topilmadi — lid ko'rinmay qolmasin, guruhga
-                text = _notify_text(lead) + "\n\n⚠️ Mas'ul operator tizimda topilmadi — kim oladi?"
-                delivered = await send_message(main_chat_id, text)
+            # Hech qanday operator topilmasa — GURUHGA YOZILMAYDI (egasining
+            # qarori). Lid baribir yoziladi va sovish hisobi ishlaydi; sovutish
+            # e'lonida "mas'ul topilmadi" deb ko'rinadi.
             lead.notified_at = datetime.utcnow()
-            entry["delivered"] = delivered is not None
+            entry["delivered"] = bool(delivered)
         results.append(entry)
 
     if not dry_run:
@@ -425,14 +519,111 @@ async def check_first_calls(db: AsyncSession, dry_run: bool) -> dict:
     return {"checked": len(pending), "called": found}
 
 
+def _reminder_text(step: int, cool_minutes: int, lead: HotLead, fine: float) -> str:
+    """Operatorga shaxsiy ogohlantirish — egasining talabi bo'yicha BOSHLIQ
+    ohangida, senlab. Har bosqichda bosim ortadi."""
+    left = max(0, cool_minutes - step)
+    who = _lead_label(lead)
+    fine_part = f" Jarima: {_fmt_money(fine)}." if fine > 0 else ""
+    if step <= 3:
+        return (
+            f"⏰ <b>{step} daqiqa bo'ldi</b> — «{who}» ga hali qo'ng'iroq qilmading.\n"
+            f"Mijoz kutib turibdi. {left} daqiqa qoldi, tez bo'l."
+        )
+    if step <= 5:
+        return (
+            f"🔥 <b>{step} daqiqa!</b> «{who}» sovib boryapti.\n"
+            f"Hoziroq telefon qil — {left} daqiqadan keyin jarima yozaman.{fine_part}"
+        )
+    if step <= 7:
+        return (
+            f"⚠️ <b>{step} daqiqa bo'ldi — oxirgi ogohlantirish!</b>\n"
+            f"«{who}» ga qo'ng'iroq qilmasang, {left} daqiqadan keyin jarimaga tushasan "
+            f"va guruhga chiqaraman.{fine_part}"
+        )
+    return (
+        f"🚨 <b>{step} daqiqa! Atigi {left} daqiqa qoldi.</b>\n"
+        f"«{who}» ga hoziroq qo'ng'iroq qil. Aks holda «lidni sovutdi» deb guruhga "
+        f"ismingni yozib chiqaraman va jarima yozaman.{fine_part}"
+    )
+
+
+async def send_reminders(db: AsyncSession, dry_run: bool) -> dict:
+    """Bosqichli shaxsiy eslatmalar (3/5/7/9-daqiqa) — egasining talabi.
+
+    Guruhga HECH NARSA yuborilmaydi; bu faqat operatorning o'ziga bosim.
+    Qo'ng'iroq topilgan (`first_call_at`) yoki qonuniy yopilgan lid tabiiy
+    ravishda tushib qoladi — ya'ni mijoz bilan gaplashib bo'lgan operator
+    eslatma OLMAYDI (2026-08-06 shikoyatining to'g'ridan-to'g'ri yechimi:
+    qo'ng'iroq oynasi PRE_CREATION_GRACE_SECONDS bilan lid yaratilishidan
+    OLDINGI suhbatni ham qamrab oladi)."""
+    now_local = datetime.now(TASHKENT_TZ)
+    if not (ESCALATE_HOUR_FROM <= now_local.hour < ESCALATE_HOUR_TO):
+        return {"reminded": 0, "off_hours": True}
+
+    cool_minutes, fine = await hot_lead_rules(db)
+    steps = [s for s in REMINDER_STEPS if s < cool_minutes]
+    if not steps:
+        return {"reminded": 0}
+
+    now_ts = int(time.time())
+    open_leads = list(
+        await db.scalars(
+            select(HotLead).where(
+                HotLead.status.in_(("notified", "claimed")),
+                HotLead.first_call_at.is_(None),
+                HotLead.escalated_at.is_(None),
+                HotLead.user_id.isnot(None),
+                HotLead.created_ts >= now_ts - cool_minutes * 60,
+                HotLead.created_ts <= now_ts - steps[0] * 60,
+            )
+        )
+    )
+
+    sent = []
+    for lead in open_leads:
+        age_min = int((now_ts - lead.created_ts) // 60)
+        due = [s for s in steps if s <= age_min and s > (lead.last_reminder_minute or 0)]
+        if not due:
+            continue
+        step = due[-1]  # bir necha bosqich o'tib ketgan bo'lsa — eng oxirgisi
+        operator = await db.get(User, lead.user_id)
+        if operator is None or not operator.telegram_id:
+            continue
+        if await _operator_absent_reason(db, lead.user_id):
+            continue  # ishdan ketgan odamni siqmaymiz
+        if not dry_run:
+            await notify_user(
+                db,
+                operator,
+                Category.SALES_SIGNALS,
+                _reminder_text(step, cool_minutes, lead, fine),
+                data={"path": "/me/lead-stats"},
+                force_telegram=True,
+            )
+            lead.last_reminder_minute = step
+        sent.append({"crm_lead_id": lead.crm_lead_id, "step": step, "operator": operator.full_name})
+
+    if sent and not dry_run:
+        await db.commit()
+    return {"reminded": len(sent), "results": sent}
+
+
 async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
+    """Sovish muddati o'tgan lidlar — guruhga «sovutildi» e'loni + jarima.
+
+    2026-08-06: muddat HR sozlamasidan (`hot_lead_cool_minutes`, boshlang'ich
+    10 daqiqa), xabar matni «kechikdi» emas «SOVUTILDI» — chunki bu endi
+    yakuniy hukm (tuzatuvchi xabar guruhga YUBORILMAYDI, egasining talabi:
+    guruhda «kechikdi → kechikmagan ekan» deb bardoq bo'lmasin)."""
     now_local = datetime.now(TASHKENT_TZ)
     if not (ESCALATE_HOUR_FROM <= now_local.hour < ESCALATE_HOUR_TO):
         return {"escalated": 0, "off_hours": True}
 
+    cool_minutes, fine = await hot_lead_rules(db)
     # Muddat lid CRM'da YARATILGAN paytdan sanaladi (created_ts) — first_call_sec
     # bilan bir xil boshlanish nuqtasi, "tizim kech aniqladi" degan yumshoqlik yo'q.
-    threshold_ts = int(time.time()) - ESCALATE_AFTER_MINUTES * 60
+    threshold_ts = int(time.time()) - cool_minutes * 60
     stale = list(
         await db.scalars(
             select(HotLead).where(
@@ -466,18 +657,43 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
         operator = None
         if lead.user_id:
             operator = await db.get(User, lead.user_id)
-        who = operator.full_name if operator else "mas'ul topilmadi"
-        text = (
-            "⚠️ <b>Issiq lid kechikdi</b>\n"
-            f"👤 {_lead_label(lead)} — lid tushganiga {minutes} daqiqa bo'ldi, "
-            f"qo'ng'iroq hali yo'q ({ESCALATE_AFTER_MINUTES} daqiqalik qabul muddati o'tdi).\n"
-            f"Mas'ul: {who}. Keling, sovib qolmasin — hoziroq bog'lanaylik."
+        who = operator.full_name.strip() if operator else "mas'ul topilmadi"
+        fine_line = (
+            f"💸 Jarima: <b>{_fmt_money(fine)}</b>"
+            if fine > 0
+            else "💸 Jarima: belgilanmagan (HR panelidan sozlanadi)"
         )
-        entry = {"crm_lead_id": lead.crm_lead_id, "operator": who, "minutes": minutes, "text": text}
+        text = (
+            "❄️ <b>ISSIQ LID SOVUTILDI</b>\n"
+            f"👤 {_lead_label(lead)} — {minutes} daqiqa qo'ng'iroqsiz qoldi "
+            f"(limit {cool_minutes} daqiqa).\n"
+            f"🙍 Mas'ul: <b>{who}</b>\n"
+            f"{fine_line}"
+        )
+        entry = {
+            "crm_lead_id": lead.crm_lead_id,
+            "operator": who,
+            "minutes": minutes,
+            "fine": fine,
+            "text": text,
+        }
         if not dry_run:
             if main_chat_id:
                 await send_message(main_chat_id, text)
             lead.escalated_at = datetime.utcnow()
+            lead.fine_amount = fine
+            # Operatorning o'ziga ham yakuniy xabar — guruhdan bilib qolmasin.
+            if operator and operator.telegram_id:
+                await notify_user(
+                    db,
+                    operator,
+                    Category.SALES_SIGNALS,
+                    f"❄️ «{_lead_label(lead)}» lidini sovutding — {minutes} daqiqa "
+                    f"qo'ng'iroq qilmading. Guruhga chiqarildi."
+                    + (f"\n💸 Jarima: <b>{_fmt_money(fine)}</b>." if fine > 0 else ""),
+                    data={"path": "/me/lead-stats"},
+                    force_telegram=True,
+                )
         escalated.append(entry)
 
     if escalated and not dry_run:
@@ -486,11 +702,18 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
 
 
 async def send_corrections(db: AsyncSession, dry_run: bool) -> dict:
-    """Avval eskalatsiya qilingan, keyin qo'ng'iroq TOPILGAN yoki QONUNIY sabab
-    bilan yopilgan lidlar uchun guruhga tuzatuvchi xabar. Bu — 2-bug'ning
-    aynan o'zi ("lid o'z vaqtida olingan edi, lekin kechikdi deb chiqdi")ga
-    to'g'ridan-to'g'ri javob: yolg'on signal endi jim qolib ketmaydi, o'zi
-    tuzatiladi."""
+    """Sovutish e'lonidan KEYIN qo'ng'iroq topilsa / lid qonuniy yopilsa —
+    holatni tuzatadi.
+
+    ⚠️ 2026-08-06 (egasining aniq talabi): tuzatuvchi xabar GURUHGA ENDI
+    YUBORILMAYDI — «kechikdi → kechikmagan ekan» ketma-ketligi guruhda bardoq
+    qilardi. Tuzatish endi ikki joyda qoladi: (1) OPERATORNING O'ZIGA shaxsiy
+    xabar (nohaq ayblov jim qolmasin), (2) kunlik hisobot/statistika
+    raqamlarida (`daily_accuracy_report`, `cooled_by_operator`) — u yerda
+    sovutilgan deb sanalmaydi. Guruhda esa faqat YAKUNIY hukm ko'rinadi,
+    shuning uchun sovutish e'loni endi qo'ng'iroq tekshiruvidan keyin
+    (`last_call_check_at`) va 2 soatlik oldingi-qo'ng'iroq oynasi bilan
+    chiqadi — yolg'on signal ehtimoli o'zi minimal."""
     pending = list(
         await db.scalars(
             select(HotLead).where(
@@ -508,28 +731,35 @@ async def send_corrections(db: AsyncSession, dry_run: bool) -> dict:
     # lidlarni ko'rishi mumkin — ularning barchasi haqida guruhga xabar
     # yuborish spam bo'ladi. Katta backlog bo'lsa — holat jimgina belgilanadi.
     is_backlog = len(pending) > NOTIFY_BACKLOG_THRESHOLD
-    main_chat_id = await _main_group_chat_id(db)
 
     sent = []
     for lead in pending:
         if lead.status == "called":
             speed_min = round((lead.first_call_sec or 0) / 60, 1)
             text = (
-                "✅ <b>Tuzatish — issiq lid aslida javobsiz qolmagan</b>\n"
-                f"👤 {_lead_label(lead)} — qo'ng'iroq CRM'da topildi ({speed_min} daqiqada), "
-                "eskalatsiya paytida hali ko'rinmagan edi."
+                "✅ <b>Tuzatildi — sen aslida qo'ng'iroq qilgan ekansan</b>\n"
+                f"👤 {_lead_label(lead)} — qo'ng'iroq CRM'da topildi ({speed_min} daqiqada). "
+                "Bu lid «sovutilgan» hisobidan chiqarildi, jarima qo'llanmaydi."
             )
         else:
             text = (
-                "ℹ️ <b>Tuzatish — issiq lid qonuniy sabab bilan yopilgan</b>\n"
+                "ℹ️ <b>Tuzatildi — bu lid qonuniy sabab bilan yopilgan</b>\n"
                 f"👤 {_lead_label(lead)} — bosqich: «{lead.resolved_reason}». "
                 "Qo'ng'iroq kerak emas edi, avvalgi ogohlantirish ortiqcha edi."
             )
         entry = {"crm_lead_id": lead.crm_lead_id, "status": lead.status}
         if not dry_run:
-            if not is_backlog and main_chat_id:
-                await send_message(main_chat_id, text)
+            # Guruhga EMAS — faqat operatorning o'ziga (yuqoridagi izoh).
+            if not is_backlog and lead.user_id:
+                operator = await db.get(User, lead.user_id)
+                if operator and operator.telegram_id:
+                    await notify_user(
+                        db, operator, Category.SALES_SIGNALS, text,
+                        data={"path": "/me/lead-stats"}, force_telegram=True,
+                    )
             lead.correction_sent_at = datetime.utcnow()
+            # Jarima bekor qilinadi — bu lid endi sovutilgan hisoblanmaydi.
+            lead.fine_amount = None
         sent.append(entry)
 
     if sent and not dry_run:
@@ -594,6 +824,9 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
         detect = {"skipped": "webhook_mode"}
     sync = await sync_crm_state(db, dry_run)
     first_calls = await check_first_calls(db, dry_run)
+    # Eslatmalar qo'ng'iroq tekshiruvidan KEYIN — shu tick'da qo'ng'iroq
+    # topilgan lidga eslatma yuborilib qolmasin.
+    reminders = await send_reminders(db, dry_run)
     escalation = await escalate_stale(db, dry_run)
     corrections = await send_corrections(db, dry_run)
     return {
@@ -601,6 +834,51 @@ async def tick(db: AsyncSession, dry_run: bool = False) -> dict:
         "detect": detect,
         "sync": sync,
         "first_calls": first_calls,
+        "reminders": reminders,
         "escalation": escalation,
         "corrections": corrections,
     }
+
+
+async def cooled_by_operator(db: AsyncSession, day: date) -> list[dict]:
+    """Kunlik guruh statistikasi uchun: shu kuni KIM nechta issiq lidni
+    sovutgan (egasining talabi 2026-08-06).
+
+    Sanoq `escalated_at` (sovutish e'lon qilingan payt) bo'yicha — ya'ni
+    aynan o'sha kuni e'lon qilinganlar. Keyinchalik tuzatilgan (qo'ng'iroq
+    topilgan yoki qonuniy yopilgan) lidlar HISOBGA KIRMAYDI — `status`
+    hamon javobsiz bo'lganlari sanaladi."""
+    start_local = datetime.combine(day, datetime.min.time(), tzinfo=TASHKENT_TZ)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+    rows = list(
+        await db.scalars(
+            select(HotLead).where(
+                HotLead.escalated_at.isnot(None),
+                HotLead.escalated_at >= start_utc,
+                HotLead.escalated_at < end_utc,
+                HotLead.status.notin_(("called", "resolved_no_call")),
+            )
+        )
+    )
+    if not rows:
+        return []
+
+    by_user: dict[int | None, dict] = {}
+    for lead in rows:
+        item = by_user.setdefault(
+            lead.user_id, {"user_id": lead.user_id, "full_name": None, "count": 0, "fine": 0.0}
+        )
+        item["count"] += 1
+        item["fine"] += float(lead.fine_amount or 0)
+
+    for uid, item in by_user.items():
+        if uid is None:
+            item["full_name"] = "mas'ul topilmadi"
+            continue
+        user = await db.get(User, uid)
+        item["full_name"] = user.full_name.strip() if user else f"#{uid}"
+
+    return sorted(by_user.values(), key=lambda x: -x["count"])

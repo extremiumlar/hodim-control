@@ -556,6 +556,9 @@ export interface FinePolicy {
   monthly_cap_percent: number | null;
   monthly_cap_amount: number | null;
   fine_applies_to: "bonus_first" | "net_salary";
+  /** Issiq lid: necha daqiqada sovuydi (bo'sh = 10) va sovutgani uchun jarima. */
+  hot_lead_cool_minutes: number | null;
+  hot_lead_fine: number | null;
   is_active: boolean;
   updated_at: string;
 }
@@ -574,6 +577,8 @@ export interface FinePolicyInput {
   monthly_cap_percent?: number | null;
   monthly_cap_amount?: number | null;
   fine_applies_to?: "bonus_first" | "net_salary";
+  hot_lead_cool_minutes?: number | null;
+  hot_lead_fine?: number | null;
   is_active?: boolean;
 }
 
