@@ -2368,14 +2368,33 @@ def test_payroll_api() -> None:
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(rop_t))
             check("ROP tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
 
+            # 2026-08-08: tasdiq IKKI BOSQICHLI bo'ldi (vazifalar ajratildi).
+            # Avval HR "tayyor" deyishi, keyin FAQAT Boshliq/Dasturchi
+            # yakuniy tasdiqlashi kerak.
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
-            check("HR/Boss tasdiqlaydi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
+            check("HR bosqichisiz yakuniy tasdiq -> 409", r.status_code == 409,
+                  f"kod={r.status_code} {r.text[:120]}")
+
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/hr-approve", headers=auth(mgr_t))
+            check("HR «tayyor» dedi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+
+            # Yakuniy tasdiq faqat boss/dasturchi — `find_manager_id` HR
+            # qaytargan bo'lishi mumkin, shuning uchun ALOHIDA boss tokeni.
+            _c = db()
+            _boss = _c.execute(
+                "select id, role from users where role in ('boss','dasturchi') and is_active=1 limit 1"
+            ).fetchone()
+            _c.close()
+            boss_t = token_for(_boss[0], _boss[1]) if _boss else mgr_t
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(boss_t))
+            check("Boshliq yakuniy tasdiqlaydi -> 200", r.status_code == 200,
+                  f"kod={r.status_code} {r.text[:150]}")
 
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
             check("tasdiqlangan (qulflangan) davrni qayta hisoblash -> 409", r.status_code == 409,
                   f"kod={r.status_code}")
 
-            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(boss_t))
             check("ikkinchi marta tasdiqlash -> 409", r.status_code == 409, f"kod={r.status_code}")
 
             # ── Bot: /payroll/my — faqat TASDIQLANGANDAN keyin ko'rinadi ──
@@ -4540,6 +4559,63 @@ def test_absent_deduct_daily() -> None:
           f"capped={capped}, raw={raw}")
 
 
+def test_audit_json_guard() -> None:
+    """JSON ustunlarga xavfli tur tushsa ham COMMIT yiqilmasin (BUG-1 sinfi).
+
+    BUG-1 da audit `before` ichidagi `Decimal` butun amalni bekor qilardi
+    (`TypeError: Object of type Decimal is not JSON serializable`) — jarima
+    qoidasini saqlash, oylik hisoblash kabi PUL amallari shu tufayli
+    yiqilardi.
+
+    Chaqiruvchi tomon `api/audit_json.py` bilan tuzatildi, lekin yangi kod
+    uni ishlatishni unutishi mumkin. Shuning uchun engine darajasida zaxira
+    o'girish qo'yildi (`db/base.py::_json_serializer`). Bu test aynan o'sha
+    zaxirani qo'riqlaydi: ATAYLAB xom Decimal/date/datetime/Enum uzatiladi.
+    """
+    import asyncio as _aio
+    from datetime import date as _d, datetime as _dt
+    from decimal import Decimal as _Dec
+
+    print("\n" + "=" * 60)
+    print("AUDIT JSON ZAXIRA HIMOYASI (BUG-1 sinfi qaytmasin)")
+    print("=" * 60)
+
+    from sqlalchemy import select as _sel
+    from db.base import async_session as _sess
+    from db.models import AuditLog as _AL, Role as _Role, User as _U
+
+    async def _run():
+        async with _sess() as s:
+            u = (await s.execute(_sel(_U).limit(1))).scalars().first()
+            if u is None:
+                return None, "bazada foydalanuvchi yo'q"
+            row = _AL(
+                actor_id=u.id, action="T-GUARD-SINOV", target_user_id=None,
+                before={"decimal": _Dec("12345.67"), "sana": _d(2026, 8, 8),
+                        "vaqt": _dt(2026, 8, 8, 12, 30), "enum": _Role.hr},
+                after=None,
+            )
+            s.add(row)
+            try:
+                await s.commit()
+            except Exception as e:
+                return None, f"{type(e).__name__}: {e}"
+            await s.refresh(row)
+            saqlangan = dict(row.before)
+            await s.delete(row)
+            await s.commit()
+            return saqlangan, None
+
+    saqlangan, xato = _aio.run(_run())
+    check("xavfli turlar bilan COMMIT yiqilmadi", xato is None, f"xato={xato}")
+    if saqlangan:
+        check("Decimal -> float", saqlangan.get("decimal") == 12345.67, f"={saqlangan.get('decimal')}")
+        check("date -> ISO satr", saqlangan.get("sana") == "2026-08-08", f"={saqlangan.get('sana')}")
+        check("datetime -> ISO satr", str(saqlangan.get("vaqt")).startswith("2026-08-08T"),
+              f"={saqlangan.get('vaqt')}")
+        check("Enum -> qiymat", saqlangan.get("enum") == "hr", f"={saqlangan.get('enum')}")
+
+
 def test_payroll_settings_reedit() -> None:
     """Sozlamalarni QAYTA tahrirlash (2026-08-08 regressiyasi, BUG-1).
 
@@ -4974,6 +5050,11 @@ def main() -> None:
         test_absent_deduct_daily()
     except Exception:
         print("Kelmagan kun ayirmasi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_audit_json_guard()
+    except Exception:
+        print("Audit JSON zaxira testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_settings_reedit()

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -16,7 +17,47 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 # 30s ga oshiramiz (lokalda ham zarari yo'q).
 _connect_args = {"timeout": 30} if DATABASE_URL.startswith("sqlite") else {}
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_connect_args)
+
+def _json_default(value):
+    """JSON ustunlar uchun ZAXIRA o'girish (`Decimal`/`date`/`Enum`).
+
+    NEGA KERAK (2026-08-08, BUG-1 saboqlari): `AuditLog.before/after`,
+    `Payslip.breakdown` kabi JSON ustunlarga SQLAlchemy oddiy `json.dumps`
+    qo'llaydi. Kod tasodifan `Decimal` (Numeric ustun) yoki `date` uzatsa,
+    u yerda `TypeError: Object of type Decimal is not JSON serializable`
+    chiqadi va COMMIT butunlay yiqiladi — ya'ni audit yozuvidagi kichik
+    xato ASOSIY amalni (jarima qoidasini saqlash, oylik hisoblash) bekor
+    qilardi. Aynan shu bug jonli tizimda topilgan.
+
+    Chaqiruvchi tomonda `api/audit_json.py` bor va u ASOSIY yo'l bo'lib
+    qoladi (u aniq, o'qiladigan qiymat beradi). Bu esa oxirgi to'siq: yangi
+    kod uni ishlatishni unutsa, audit biroz noaniqroq yoziladi, LEKIN pul
+    amali yiqilmaydi. Jim buzilishdan ko'ra jim tuzatish afzal.
+    """
+    from datetime import date as _date, datetime as _datetime
+    from decimal import Decimal as _Decimal
+    from enum import Enum as _Enum
+
+    if isinstance(value, (_datetime, _date)):
+        return value.isoformat()
+    if isinstance(value, _Decimal):
+        return float(value)
+    if isinstance(value, _Enum):
+        return value.value
+    # Qolgan noma'lum tur — satrga. `raise` qilsak, yana o'sha 500 bo'lardi.
+    return str(value)
+
+
+def _json_serializer(obj) -> str:
+    return json.dumps(obj, default=_json_default, ensure_ascii=False)
+
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=_connect_args,
+    json_serializer=_json_serializer,
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 # SQLite standart holatda FOREIGN KEY cheklovlarini MAJBURLAMAYDI — ondelete=CASCADE
