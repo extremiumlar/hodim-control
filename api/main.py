@@ -1,7 +1,48 @@
+import logging
+import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import settings
+
+
+def _setup_file_logging() -> None:
+    """Ilova loglarini FAYLGA yozadi (`logs/api.log`).
+
+    NEGA KERAK (2026-08-11, jonli diagnostikadan): ilgari logging umuman
+    sozlanmagan edi — ya'ni `logger.warning(...)` stderr'ga ketardi, cPanel
+    Passenger ostida esa stderr HECH QAYERGA saqlanmaydi (`passenger.log`,
+    `stderr` fayllari yo'q). Natijada webhook rad etilishi kabi MUHIM
+    diagnostik xabarlar butunlay yo'qolardi va "so'rov kelmadimi yoki rad
+    etildimi" degan savolga javob topib bo'lmasdi. Apache access log ham
+    yordam bermaydi: u kechikib yoziladi (o'lchandi: 200 qaytargan so'rov
+    1 daqiqadan keyin ham logda yo'q edi).
+
+    Rotatsiya bilan (5 MB × 3) — jadval/disk shishmasin; loglar katalogi
+    `logs/` allaqachon `rotate_logs.sh` qamrovida.
+    """
+    root = logging.getLogger()
+    if any(isinstance(h, RotatingFileHandler) for h in root.handlers):
+        return  # ikki marta sozlamaymiz (Passenger fork qilsa ham)
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "api.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+    except OSError:
+        return  # yozib bo'lmasa (huquq yo'q) — ilova baribir ishlashi kerak
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    root.addHandler(handler)
+    root.setLevel(getattr(logging, os.getenv("API_LOG_LEVEL", "INFO").upper(), logging.INFO))
+
+
+_setup_file_logging()
 from api.routers import (
     admin_override,
     ai_center,

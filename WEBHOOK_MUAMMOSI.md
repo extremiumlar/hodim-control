@@ -46,9 +46,21 @@ tanlanmagan holatda qolgan.
 Endpoint sekretni bir necha kanaldan qabul qiladi: `?secret=` query,
 `X-Crm-Webhook-Secret` va shunga o'xshash headerlar, `Authorization: Bearer`.
 
-**Qo'shimcha dalil:** 01.08.2026 11:14 da IP `84.54.71.13` dan (Uysot'niki
-bo'lsa kerak) `{"ping":true}` kelgan va **200 bilan qabul qilingan**. Ya'ni
-tarmoq yo'li, TLS, DNS va autentifikatsiya — hammasi ishlaydi.
+> ### ⚠️ TUZATISH (11.08.2026): «Uysot ping yubordi» degan da'vo XATO edi
+>
+> Hujjat dastlab 01.08 dagi `{"ping":true}` (IP `84.54.71.13`) ni **Uysot'niki**
+> deb yozgan va undan «ulanish yo'li ishlaydi» degan xulosa chiqargan edi.
+>
+> Loglarni chuqurroq tekshirganda ma'lum bo'ldiki, `84.54.71.*` — bu **bizning
+> ofis/lokal tarmog'imiz**: o'sha IP'lardan `python-httpx` bilan
+> `/api/daily-results/sync`, `/api/anketa/tick`, `/api/hot-lead/tick` kabi
+> **bizning cron chaqiruvlarimiz** kelgan (eski deploy davrida scheduler
+> ofisda ishlagan).
+>
+> Ya'ni o'sha ping ham **qo'lda yuborilgan test** bo'lgan.
+>
+> **Yangi, kuchliroq xulosa:** Uysot bizga **hech qachon, bironta ham** so'rov
+> yubormagan. Iyul-avgust arxivlari to'liq tekshirildi.
 
 ---
 
@@ -91,6 +103,38 @@ Ya'ni CRM'da lidlar **faol o'zgaryapti**, Uysot esa bu haqda xabar yubormayapti.
 
 ---
 
+## 4.4. Qayta tekshiruv — 11.08.2026, 16:10 (5 soatdan keyin)
+
+Egasi «webhook uladim» deganidan keyin qayta tekshirildi:
+
+| Tekshiruv | Natija |
+|---|---|
+| `crm-webhook` ga so'rovlar (access log) | **0** |
+| **404 javoblar** (bugun, butun sayt) | **0** |
+| Tashqi IP'lardan POST | faqat qonuniy: brauzer, mobil ilova, Telegram |
+
+**404 yo'qligi muhim xulosa beradi:** agar URL'da faqat **yo'l** xato bo'lsa
+(masalan `/api/crm-webhook/uysot` o'rniga `/crm-webhook/uysot`), so'rov bizga
+kelib **404** olardi va logda ko'rinardi. Ko'rinmadi.
+
+Demak qolgan ikki ehtimol:
+1. **Domen nomida xato** — so'rov butunlay boshqa manzilga ketyapti (bizda iz qolmaydi)
+2. **Uysot umuman yubormayapti**
+
+### URL'ni belgima-belgi tekshirish
+
+Uysot'dagi maydonda aynan shu bo'lishi kerak (`nuriddin`, ikkita `n` bilan;
+`building` to'liq; `.uz`):
+
+```
+https://nuriddin-building.uz/api/crm-webhook/uysot?secret=<SEKRET>
+```
+
+Tez-tez uchraydigan xatolar: `nuridin` (bitta `n`), `bulding`, `http://`
+(`https` o'rniga), `?secret=` qismining tushib qolishi, oxirida ortiqcha `/`.
+
+---
+
 ## 5. Tekshirilgan va rad etilgan sabablar
 
 | Gipoteza | Holat | Nega rad etildi |
@@ -100,6 +144,28 @@ Ya'ni CRM'da lidlar **faol o'zgaryapti**, Uysot esa bu haqda xabar yubormayapti.
 | DNS/TLS/tarmoq to'sig'i | ❌ | 01.08 dagi Uysot ping'i muvaffaqiyatli |
 | Server o'chiq edi | ❌ | Sayt 200 qaytaradi, boshqa trafik kelib turibdi |
 | Lid o'zgarmagan | ❌ | 2 soatda 56 ta bosqich o'zgarishi (polling ko'rgan) |
+
+---
+
+## 5b. Chuqurroq gipotezalar (11.08.2026)
+
+Uysot **hech qachon** urinmagani aniqlangach, sabab uch qatlamdan birida
+bo'lishi mumkin. Ularning ba'zilarini biz **tekshira olmaymiz**:
+
+| # | Gipoteza | Tekshirish imkoni |
+|---|---|---|
+| A | **Server xavfsizlik devori (CSF/LFD) Uysot IP'sini bloklagan** — so'rov Apache'ga yetmasdan tashlanadi, shuning uchun access logda **iz qolmaydi** | ❌ Root kerak — **ahost'dan so'rash** |
+| B | **Uysot tomonda yuborish umuman yoqilmagan** (saqlash muvaffaqiyatsiz, yoki tarif/ruxsat cheklovi) | ❌ Uysot'dan so'rash |
+| C | **Webhook voronka (pipeline) darajasida sozlanishi kerak** — token darajasidagi sozlama yetarli bo'lmasligi mumkin | 🟡 Kabinetda tekshirish |
+| D | **Uysot'ning chiquvchi tarmog'ida `.uz` yoki bizning IP bloklangan** | ❌ Uysot'dan so'rash |
+
+**A gipotezasi ayniqsa muhim:** agar xavfsizlik devori bloklayotgan bo'lsa,
+Uysot «yubordik» deydi, biz «kelmadi» deymiz — **ikkalasi ham to'g'ri** bo'ladi.
+Buni faqat hosting (ahost) tekshira oladi.
+
+Shu sababli quyidagi xatda **eng muhim savol — ularning yuborish jurnali
+(delivery log)**: unda urinish bormi, va qanday xato qaytgan (timeout /
+connection refused / 403 / DNS). Bu javob A va B ni darhol ajratadi.
 
 ---
 
@@ -121,23 +187,31 @@ https://nuriddin-building.uz/api/crm-webhook/uysot?secret=***
 Tanlangan voqealar: Lid yaratildi, Lid biriktirildi, Lid bosqichi o'zgardi
 
 TEKSHIRGANLARIMIZ:
-1. Endpointimiz ishlayapti — to'g'ri sekret bilan HTTP 200, sekretsiz HTTP 401.
-2. 01.08.2026 11:14 da sizning IP (84.54.71.13) dan {"ping":true} kelgan va
-   200 bilan qabul qilingan. Ya'ni tarmoq yo'li ishlaydi.
-3. Veb-server access logimizda 01.08 dan keyin /api/crm-webhook/ ga sizdan
-   birorta so'rov yo'q (access log autentifikatsiyadan OLDIN yoziladi, ya'ni
-   sekret xato bo'lganda ham so'rov ko'rinardi).
-4. Shu vaqtda Open API polling orqali biz o'zimiz 56 ta bosqich o'zgarishi va
+1. Endpointimiz ishlayapti — to'g'ri sekret bilan HTTP 200, sekretsiz HTTP 401
+   (tashqaridan sinab ko'rildi, javob normal).
+2. Veb-server access logimizni iyul va avgust arxivlari bilan birga to'liq
+   tekshirdik: /api/crm-webhook/ manziliga sizdan BIRORTA HAM so'rov
+   kelmagan. Muhim: access log autentifikatsiyadan OLDIN yoziladi, ya'ni
+   sekret xato bo'lganda ham (401) so'rov logda ko'rinardi. Shuningdek
+   bugun butun saytda 404 javoblar soni — 0, ya'ni noto'g'ri yo'l bilan ham
+   urinish bo'lmagan.
+3. Shu vaqtda Open API polling orqali biz o'zimiz 56 ta bosqich o'zgarishi va
    183 ta yangi lidni ko'rdik — ya'ni voqealar sodir bo'lgan.
 
-SAVOLLAR:
-1. Webhook yuborish sizning tomondan haqiqatan faolmi? Yuborish jurnalini
-   (delivery log) ko'ra olasizmi — urinishlar bormi, xato qaytganmi?
+SAVOLLAR (eng muhimi — 1-si):
+1. YUBORISH JURNALINGIZNI (delivery log) ko'ra olasizmi? Bizga aynan
+   quyidagilar kerak: urinish bo'lganmi, qachon, va qanday xato qaytgan
+   (timeout / connection refused / DNS / 403 / boshqa). Bu javob muammo
+   sizning tomondami yoki yo'lda ekanini darhol aniqlaydi.
 2. 04.08.2026 16:43 da token qayta yaratilganda webhook sozlamalari
    o'chib ketgani ma'lummi? (Biz shunday holatni ko'rdik.)
 3. Webhook ishlashi uchun qo'shimcha shart bormi — masalan alohida
-   litsenziya/tarif, voronka (pipeline) tanlash, yoki tasdiqlash bosqichi?
-4. Sinov uchun test-webhook yuborish imkoniyati bormi?
+   litsenziya/tarif, VORONKA (pipeline) darajasida sozlash, yoki
+   tasdiqlash bosqichi?
+4. Sinov uchun test-webhook yuborish imkoniyati bormi? Agar aniq vaqtni
+   aytsangiz, biz o'sha daqiqada serverni jonli kuzatib turamiz.
+5. Chiquvchi so'rovlaringizda .uz domenlari yoki bizning IP (167.235.222.200)
+   uchun cheklov yo'qmi?
 
 Hurmat bilan.
 ```
