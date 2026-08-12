@@ -80,10 +80,13 @@ _SIGNATURE_HEADERS = ("x-webhook-signature", "x-hub-signature-256", "x-signature
 
 # Jurnalga yozilMAYdigan standart headerlar — qolganlari (maxsus/notanish)
 # Uysot sekret kanalini aniqlashga yordam beradi
+# DIQQAT: `x-forwarded-for` va `x-real-ip` ATAYLAB saqlanadi (2026-08-12).
+# Ular ishonch qarorining KIRISHI (`_proxy_verified_ip`) — saqlanmasa, so'rov
+# nega rad etilganini aniqlab bo'lmaydi. Maxfiy ma'lumot emas.
 _BORING_HEADERS = {
     "host", "content-length", "content-type", "accept", "accept-encoding",
-    "connection", "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host",
-    "x-real-ip", "cf-connecting-ip", "cf-ray", "cf-visitor", "cdn-loop",
+    "connection", "x-forwarded-proto", "x-forwarded-host",
+    "cf-connecting-ip", "cf-ray", "cf-visitor", "cdn-loop",
 }
 
 
@@ -151,11 +154,12 @@ def _secret_rejection_reason(request: Request) -> str | None:
         ", ".join(sorted(request.headers.keys()))[:300],
         ", ".join(sorted(request.query_params.keys()))[:100],
     )
+    # Ishonch qarorining KIRISHLARI ham yoziladi: `proksi_ip` aynan
+    # `_proxy_verified_ip` ko'rgan qiymat — nega ishonchli IP mezoni
+    # ishlamaganini shu ko'rsatadi (imzo bor/yo'qligi bilan birga).
     return (
-        "rad: sekret mos emas | query kalitlari: ["
-        + ", ".join(sorted(request.query_params.keys()))[:80]
-        + "] | UA: "
-        + request.headers.get("user-agent", "-")[:60]
+        "rad: sekret mos emas | proksi_ip=%s | imzo=%s | UA: %s"
+        % (ip, "bor" if signature else "yo'q", request.headers.get("user-agent", "-")[:40])
     )[:255]
 
 
@@ -194,11 +198,25 @@ def _proxy_verified_ip(request: Request) -> str | None:
     mijoznikini bosib ketadi — u birinchi navbatda ishlatiladi."""
     real = request.headers.get("x-real-ip")
     if real:
-        return real.strip()[:64]
+        return _normalize_ip(real)
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[-1].strip()[:64]
-    return request.client.host[:64] if request.client else None
+        return _normalize_ip(forwarded.split(",")[-1])
+    return _normalize_ip(request.client.host) if request.client else None
+
+
+def _normalize_ip(value: str) -> str:
+    """`::ffff:1.2.3.4` → `1.2.3.4`.
+
+    NEGA KERAK (2026-08-12, jonli o'lchov): bu hostdagi proksi `x-real-ip`ni
+    IPv4-mapped IPv6 ko'rinishida beradi (`::ffff:213.230.93.114`). Normallash-
+    tirilmasa ishonchli IP ro'yxati bilan solishtirish HECH QACHON mos kelmaydi
+    — Uysot webhooklari aynan shu sababdan rad etilgan edi."""
+    ip = value.strip()[:64]
+    low = ip.lower()
+    if low.startswith("::ffff:"):
+        ip = ip[7:]
+    return ip
 
 
 @router.get("/uysot")
