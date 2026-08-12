@@ -1588,6 +1588,109 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("UX2-W1 tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- TASHRIF HISOBI: voqea-asosli (KPI = statistika) --")
+        try:
+            import asyncio as _aio2
+
+            from db.base import async_session as _asess2
+            from api.services import lead_diff as _ld
+
+            conn = db()
+            cur = conn.cursor()
+            VISIT_ID = 8787  # .env dagi tashrif bosqichi (birinchisi)
+            other = 7136
+
+            # Ikki operator: T-Olib (lidni olib kelgan) va T-Yopgan (tashrifga o'tkazgan)
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " crm_visit_external_id, created_at)"
+                " values (999777001,'T-Olib','employee',1,1,'970001',datetime('now'))")
+            u_olib = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " crm_visit_external_id, created_at)"
+                " values (999777002,'T-Yopgan','employee',1,1,'970002',datetime('now'))")
+            u_yopgan = cur.lastrowid
+
+            now_utc = datetime.utcnow()
+            ts_now = int(now_utc.timestamp())
+
+            def add_event(lead_id, frm, to, rid, first_rid):
+                cur.execute(
+                    "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                    " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                    " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                    " values (?,'stage_change',?,'T-eski',?,'T-Tashrif',?,?,?,?,?)",
+                    (lead_id, frm, to, rid, "T-op", first_rid, ts_now,
+                     now_utc.isoformat(sep=" ", timespec="seconds")))
+
+            # 1) Tashrifga YANGI kirish, olib kelgan boshqa odam -> DUAL-KREDIT
+            add_event(970101, other, VISIT_ID, 970002, 970001)
+            # 2) Allaqachon Tashrifda bo'lgan lid yana tahrirlandi -> SANALMAYDI
+            add_event(970102, VISIT_ID, VISIT_ID, 970002, 970002)
+            # 3) O'zi olib kelib o'zi yopgan -> FAQAT BITTA kredit
+            add_event(970103, other, VISIT_ID, 970002, 970002)
+            conn.commit()
+
+            async def _stats():
+                async with _asess2() as s:
+                    return await _ld.visit_stats_range(s, date.today(), date.today(), {VISIT_ID})
+
+            ser = _aio2.run(_stats())
+            ops = ser["daily_by_operator"].get(date.today(), {})
+            uniq = ser["daily_unique"].get(date.today(), 0)
+
+            check("Tashrif: takroriy tahrir SANALMAYDI (2 noyob, 3 voqea emas)",
+                  uniq >= 2 and ops.get(970002, 0) >= 2, f"noyob={uniq}, ops={ops}")
+            check("Tashrif: olib kelgan operatorga ALOHIDA kredit (dual)",
+                  ops.get(970001, 0) >= 1, f"olib_kelgan={ops.get(970001)}")
+            check("Tashrif: o'zi olib kelib o'zi yopganda ikki marta sanalmaydi",
+                  ops.get(970002, 0) == uniq, f"yopgan={ops.get(970002)}, noyob={uniq}")
+
+            # recalc-visits endpointi: dry_run farqni ko'rsatadi, yozmaydi
+            today_iso3 = date.today().isoformat()
+            cur.execute(
+                "insert into daily_results (user_id, date, conversations_count, visits_count,"
+                " source) values (?,?,0,99,'crm')",
+                (u_yopgan, today_iso3))
+            conn.commit()
+            r = client.post(
+                f"{API_BASE}/daily-results/recalc-visits?date_from={today_iso3}"
+                f"&date_to={today_iso3}&dry_run=true", headers=auth(boss_t))
+            body = r.json() if r.status_code == 200 else {}
+            ch = [c for c in body.get("changes", []) if c["user"] == "T-Yopgan"]
+            check("Tashrif: recalc dry_run yolg'on sonni ko'rsatadi (99 -> voqea)",
+                  r.status_code == 200 and ch and ch[0]["old"] == 99 and ch[0]["new"] != 99,
+                  f"kod={r.status_code}, {ch[:1]}")
+            after_dry = cur.execute(
+                "select visits_count from daily_results where user_id=? and date=?",
+                (u_yopgan, today_iso3)).fetchone()[0]
+            check("Tashrif: dry_run bazaga YOZMAYDI", after_dry == 99, f"baza={after_dry}")
+
+            r2 = client.post(
+                f"{API_BASE}/daily-results/recalc-visits?date_from={today_iso3}"
+                f"&date_to={today_iso3}&dry_run=false", headers=auth(boss_t))
+            conn.commit()
+            after_real = cur.execute(
+                "select visits_count from daily_results where user_id=? and date=?",
+                (u_yopgan, today_iso3)).fetchone()[0]
+            check("Tashrif: dry_run=false haqiqatan tuzatadi",
+                  r2.status_code == 200 and after_real != 99, f"baza={after_real}")
+
+            emp_tok3 = token_for(u_olib, "employee")
+            r3 = client.post(
+                f"{API_BASE}/daily-results/recalc-visits?date_from={today_iso3}"
+                f"&date_to={today_iso3}", headers=auth(emp_tok3))
+            check("Tashrif: recalc oddiy xodimga -> 403", r3.status_code == 403, f"kod={r3.status_code}")
+
+            cur.execute("delete from lead_events where crm_lead_id in (970101,970102,970103)")
+            cur.execute("delete from daily_results where user_id in (?,?)", (u_olib, u_yopgan))
+            cur.execute("delete from users where id in (?,?)", (u_olib, u_yopgan))
+            conn.commit()
+            conn.close()
+        except Exception:
+            check("Tashrif hisobi tekshiruvi", False, traceback.format_exc(limit=1).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

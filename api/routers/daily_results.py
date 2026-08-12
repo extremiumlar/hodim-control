@@ -1,6 +1,6 @@
 import hmac
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.services.lead_diff import visit_stats_range
 from api.timeutil import today_local
+from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_IDS
 from api.schemas import (
     CRMWebhookPayload,
     DailyResultManualCreate,
@@ -170,10 +172,115 @@ async def my_today_result_web(
     return await _today_result_for_user(db, user)
 
 
+@router.post("/daily-results/recalc-visits")
+async def recalc_visits(
+    date_from: date,
+    date_to: date,
+    dry_run: bool = True,
+    actor: User = Depends(require_roles(Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """O'TGAN kunlarning tashrif sonini VOQEA asosida qayta hisoblaydi.
+
+    Nega kerak: `sync_daily_results` tuzatilgunga qadar tashrif CRM'ning
+    `updatedTimestamp`i bo'yicha yozilgan — ya'ni allaqachon yozilgan kunlarda
+    yolg'on sonlar qolgan (jonli misol: 08-11 Shahnoza 4, aslida 0). Oylik
+    bonus aynan shu jadvaldan hisoblanadi, shuning uchun o'tmish ham
+    to'g'rilanishi kerak.
+
+    Xavfsizlik: `dry_run=true` (standart) — faqat farqni ko'rsatadi, yozmaydi.
+    QO'LDA kiritilgan yozuvlarga (`source=manual`) TEGILMAYDI. Voqea jurnali
+    bo'sh kunlar (diff-engine ishlamagan) ham chetlab o'tiladi — u yerda
+    "0 tashrif" degan xulosa chiqarib bo'lmaydi."""
+    if date_to < date_from:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "«date_to» «date_from» dan oldin bo'lmasin")
+    if (date_to - date_from).days > 92:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Oraliq 92 kundan oshmasin")
+
+    series = await visit_stats_range(db, date_from, date_to, set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS))
+    users = list(await db.scalars(select(User).where(User.crm_visit_external_id.isnot(None))))
+    by_crm = {u.crm_visit_external_id: u for u in users}
+
+    changes: list[dict] = []
+    skipped_days: list[str] = []
+    day = date_from
+    while day <= date_to:
+        if day not in series["days_with_events"]:
+            skipped_days.append(day.isoformat())
+            day += timedelta(days=1)
+            continue
+
+        want = {
+            by_crm[str(rid)].id: cnt
+            for rid, cnt in series["daily_by_operator"].get(day, {}).items()
+            if str(rid) in by_crm
+        }
+        rows = list(await db.scalars(select(DailyResult).where(DailyResult.date == day)))
+        by_user = {r.user_id: r for r in rows}
+
+        for uid in set(want) | set(by_user):
+            row = by_user.get(uid)
+            if row is not None and row.source == DailyResultSource.manual.value:
+                continue  # qo'lda kiritilgan — tegmaymiz
+            new_v = want.get(uid, 0)
+            old_v = row.visits_count if row else 0
+            if new_v == old_v:
+                continue
+            user = await db.get(User, uid)
+            changes.append(
+                {
+                    "date": day.isoformat(),
+                    "user": user.full_name.strip() if user else f"#{uid}",
+                    "old": old_v,
+                    "new": new_v,
+                }
+            )
+            if not dry_run:
+                if row is not None:
+                    row.visits_count = new_v
+                elif new_v:
+                    await _upsert_daily_result(
+                        db, uid, day, 0, new_v, DailyResultSource.crm.value
+                    )
+        day += timedelta(days=1)
+
+    if not dry_run and changes:
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="daily_results_visits_recalculated",
+                before={"range": f"{date_from}..{date_to}"},
+                after={"changed": len(changes)},
+            )
+        )
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "changed": len(changes),
+        "changes": changes[:100],
+        "skipped_days_without_events": skipped_days,
+    }
+
+
 @router.post("/daily-results/sync", dependencies=[Depends(verify_bot_secret)])
 async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
     """Scheduler tomonidan soatlik chaqiriladi (webhook mavjud bo'lmagan holat uchun zaxira).
-    CRM_TYPE=none bo'lsa hech narsa qilmaydi (qo'lda kiritish yetarli)."""
+    CRM_TYPE=none bo'lsa hech narsa qilmaydi (qo'lda kiritish yetarli).
+
+    ⚠️ TASHRIF HISOBI TUZATILDI (2026-08-12, egasining talabi). Ilgari tashrif
+    CRM'dagi `updatedTimestamp` bo'yicha sanalardi: "Tashrif bosqichida turgan
+    va BUGUN tahrirlangan lid". Bu ikki tomonlama noto'g'ri edi —
+      (a) 3 kun oldin tashrifga o'tgan lidga bugun izoh qo'shilsa, u YANA
+          tashrif deb sanalardi (jonli misol 08-11: Shahnoza'ga 4 ta tashrif
+          yozilgan, aslida o'sha kuni bironta ham tashrif voqeasi yo'q);
+      (b) lidni TASHRIFGA OLIB KELGAN, keyin boshqa mas'ulga o'tkazgan xodim
+          umuman hisobga olinmasdi (08-12: Hayot 2 ta tashrif qilgan, KPI'da 0).
+    Endi manba — `LeadEvent` voqealari (`lead_diff.daily_operator_breakdown`):
+    "lid Tashrif bosqichiga YANGI kirdi" hodisasi, dual-kredit bilan (yopgan
+    + olib kelgan). Statistika/guruh digesti allaqachon shu manbadan o'qiydi —
+    endi KPI/norma/bonus ham AYNAN SHU raqamni ko'radi (ilgari ikki bo'lim
+    ikki xil son ko'rsatardi)."""
     adapter = get_crm_adapter(settings.crm_type)
     if not adapter:
         return {"synced": 0, "skipped_reason": "CRM_TYPE sozlanmagan"}
@@ -197,6 +304,17 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
     # takrorlardi (jonli o'lchov: 4 xodimda ~4.4s). cPanel'da Passenger'ning yagona
     # ishchisi shu vaqt band bo'lib, sayt so'rovlari navbatda kutardi.
     results = await adapter.get_daily_results_bulk(employees, today)
+
+    # Tashrif — VOQEA asosidan (yuqoridagi izoh). `days_with_events` bo'sh
+    # bo'lsa diff-engine shu kuni umuman ishlamagan degani: bunday paytda
+    # tashrifni 0 ga tushirib yubormaymiz (mavjud qiymat saqlanadi), aks holda
+    # CRM/diff uzilishi xodimning kunlik natijasini nolga yechib yuborardi.
+    visit_series = await visit_stats_range(db, today, today, set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS))
+    events_exist = today in visit_series["days_with_events"]
+    visits_by_crm_id = {
+        str(rid): cnt for rid, cnt in visit_series["daily_by_operator"].get(today, {}).items()
+    }
+
     for emp in employees:
         data = results.get(emp.id)
         if data is None:
@@ -216,8 +334,20 @@ async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
             skipped_manual += 1
             continue
 
+        # Tashrif: voqea-asosli (aniq). Voqea jurnali shu kunga bo'sh bo'lsa —
+        # eski qiymat saqlanadi (yuqoridagi izoh), CRM'ning taxminiy soniga
+        # QAYTILMAYDI: u yolg'on ko'paytirardi.
+        if events_exist:
+            visits = (
+                visits_by_crm_id.get(emp.crm_visit_external_id, 0)
+                if emp.crm_visit_external_id
+                else 0
+            )
+        else:
+            visits = existing.visits_count if existing else 0
+
         await _upsert_daily_result(
-            db, emp.id, today, data["conversations"], data["visits"], DailyResultSource.crm.value
+            db, emp.id, today, data["conversations"], visits, DailyResultSource.crm.value
         )
         synced += 1
 
