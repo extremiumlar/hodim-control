@@ -34,6 +34,7 @@ from bot.handlers import (
     start,
     stats,
     tasks,
+    work_log,
     work_schedule,
 )
 
@@ -93,6 +94,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(hot_lead.router)
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
+    dp.include_router(work_log.router)
     dp.include_router(norms.router)
     dp.include_router(payroll.router)
     dp.include_router(admin_override.router)

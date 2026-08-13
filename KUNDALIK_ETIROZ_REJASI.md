@@ -471,10 +471,21 @@ Yangi `me/` bo'limlari uchun: `web/src/lib/employeeNav.ts` +
 - Eslatma faqat BUGUN KELGAN (check-in bosgan) xodimga — kelmagan odamdan
   kundalik so'ralmaydi (u uchun tushuntirish xati mexanizmi bor).
 
-### Bosqich 2 — Ish kundaligi: bot
-- [ ] `keyboards.py` (BTN + ALL_MENU_BUTTONS + main_menu)
-- [ ] `bot/handlers/work_log.py` + `setup.py` B zonaga
-- [ ] `api_client.py`: `work_log_add`, `work_log_today`
+### Bosqich 2 — Ish kundaligi: bot ✅ BAJARILDI (2026-08-13)
+- [x] `keyboards.py`: `BTN_WORK_LOG` + `ALL_MENU_BUTTONS` + `main_menu`
+      (Boshliqdan tashqari hammaga, `BTN_TASKS` dan keyin — kunlik tugma)
+- [x] `bot/handlers/work_log.py` + `setup.py` B zonaga (`excused` dan keyin,
+      catch-all'lardan ancha oldin)
+- [x] `api_client.py`: `work_log_add`, `work_log_today` (404 → None naqshi)
+- [x] Sinov: 32 tekshiruv, 0 xato — klaviatura qamrovi (Boshliqda tugma yo'q),
+      router tartibi (obyekt bo'yicha, ikkala catch-all'dan oldin), FSM oqimi,
+      qisqa/uzun matnda holat saqlanishi, kunda ko'p yozuv, bekor qilish,
+      rasm/stiker, HTML-escape (XSS), notanish foydalanuvchi.
+
+**⚠️ Ataylab qoldirilgan (Bosqich 3 da yopiladi):** botdan yozuvni TAHRIRLASH
+va O'CHIRISH yo'q — faqat qo'shish va bugungi ro'yxatni ko'rish. Xato yozilsa
+xodim kabinetdan tuzatadi. Agar bot-only xodimlar uchun bu yetarli bo'lmasa,
+`DELETE/PATCH /work-log/bot/{id}` adapterlari qo'shiladi (kichik ish).
 
 ### Bosqich 3 — Ish kundaligi: web
 - [ ] `endpoints.ts`/`types.ts`/`queries.ts`

@@ -132,6 +132,28 @@ async def create_excused_day(telegram_id: int, reason: str, date_str: str | None
     return resp.json()
 
 
+async def work_log_add(telegram_id: int, text: str) -> dict:
+    """Ish kundaligiga yozuv qo'shadi. Sana YUBORILMAYDI — backend har doim
+    bugungi (Toshkent) kunga yozadi, shunda bot serverining mahalliy vaqti kun
+    chegarasiga ta'sir qilmaydi. 400/422 (qisqa matn, noma'lum xodim)
+    chaqiruvchida HTTPStatusError sifatida ushlanadi."""
+    resp = await _get_client().post(
+        "/work-log/bot", json={"telegram_id": telegram_id, "text": text}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def work_log_today(telegram_id: int) -> list | None:
+    """Bugungi yozuvlar (eskisi birinchi). Ro'yxatdan o'tmagan/o'chirilgan
+    foydalanuvchi — None (404 -> None, get_user_by_telegram naqshi)."""
+    resp = await _get_client().get(f"/work-log/bot/today/{telegram_id}")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def answer_explanation(req_id: int, telegram_id: int, answer_text: str) -> dict:
     """Xodimning tushuntirish xati javobi. Shaxs `telegram_id`dan yechiladi —
     boshqa birov nomidan javob yozib bo'lmaydi (backend tekshiradi)."""

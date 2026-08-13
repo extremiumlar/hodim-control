@@ -6,6 +6,7 @@ BTN_KPI = "💰 Oylik KPI'm"
 BTN_PAYROLL = "💵 Mening oyligim"
 BTN_PANEL = "📈 Panelim"
 BTN_EXCUSED = "🙋 Sababli kun so'rash"
+BTN_WORK_LOG = "📝 Ish kundaligi"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
@@ -44,7 +45,7 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_LEAD_STATS, BTN_SCHEDULE, BTN_HOURLY_PLAN, BTN_HOURLY_PLAN_CONTROL,
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
-    BTN_SALES_AI, BTN_CHECKIN,
+    BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG,
 })
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
@@ -79,6 +80,12 @@ def main_menu(
 
     if flags.get("tasks"):
         rows.append([KeyboardButton(text=BTN_TASKS)])
+
+    # Ish kundaligi — Boshliqdan tashqari hammaga (BTN_PAYROLL bilan bir xil
+    # qamrov: xodim ham, HR/ROP/Dasturchi ham o'z kundaligini yuritadi).
+    # Kuniga bir necha marta bosiladi, shuning uchun tepada.
+    if role != "boss":
+        rows.append([KeyboardButton(text=BTN_WORK_LOG)])
 
     metrics_row = []
     if flags.get("norm"):
