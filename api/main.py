@@ -81,7 +81,6 @@ from api.routers import (
     tasks,
     users,
     uysot_webhook,
-    work_log,
     work_schedule,
 )
 
@@ -153,7 +152,6 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
-app.include_router(work_log.router)
 app.include_router(payroll.router)
 app.include_router(admin_override.router)
 app.include_router(hourly_plan.router)
