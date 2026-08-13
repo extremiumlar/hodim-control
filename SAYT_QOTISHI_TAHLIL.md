@@ -501,8 +501,8 @@ Bular allaqachon servisga to'g'ridan-to'g'ri chaqiruv:
 | `/auth/login-security-cleanup` | 3 ta `DELETE` | Juda oson | ✅ 2026-08-13 (4adc763) |
 | `/knowledge/tick` | `count` + servis | Oson | ✅ 2026-08-13 (4adc763) |
 | `/stats/lead-stages/group-tick` | `_get_group_config` + `send_daily_digest` | O'rta | ✅ 2026-08-13 (4adc763) |
-| `/attendance/reminder-tick` | halqa + audit | O'rta | ⏳ qoldi |
-| `/hourly-plan/send` | ish oynasi tekshiruvi | O'rta | ⏳ qoldi |
+| `/attendance/reminder-tick` | halqa + audit | O'rta | ✅ 2026-08-13 (2c7c962) |
+| `/hourly-plan/send` | ish oynasi tekshiruvi | O'rta | ✅ 2026-08-13 (2c7c962) |
 
 **Bajarilgani (4adc763):** mantiq `api/services/cron_jobs.py` ga ko'chirildi —
 ataylab FastAPI'dan mustaqil, chunki cron uni import qilganda butun web stack
@@ -591,22 +591,50 @@ To'liq yechim uchun 4- yoki 6-variant kerak.
 [ ] Bosqich 3 — /anketa/tick in-process          — ATAYLAB QOLDIRILDI (pastda)
 [x] Bosqich 4a — yupqa o'ramlar                  — 7e20cc4
 [x] Bosqich 4b — group-tick + 3 ta kichik tick   — 4adc763
-[ ] Bosqich 4b (qoldig'i) — /attendance/reminder-tick, /hourly-plan/send
-[~] Bosqich 5 — o'lchash: median ~1.9s, eng yomoni 10.0s (40.3s edi)
+[x] Bosqich 4b — davomat eslatmasi + soatlik reja — 2c7c962  TUGADI
+[~] Bosqich 5 — o'lchash (pastda)
 ```
+
+**Cron'dan saytga qolgan yagona yuk** (soatiga, jami ~35 chaqiruv):
+`/anketa/tick`, `/work-log/reminder-tick`, `/ai-watch/tick`,
+`/tasks/send-reminders`. Ko'p daqiqalarda cron saytga **umuman** tegmaydi
+(jonli log 16:45–16:48: to'rt daqiqadan uchtasida `tik:` qatori yo'q).
 
 **Bosqich 3 nega qoldirildi:** `/anketa/tick` — jonli o'lchovda arzon va
 kamdan-kam ish qiladi (odatda no-op), lekin uning mantiqi bot handlerlariga
 chuqur bog'langan; ko'chirish foydasi kichik, xatar esa yuqori. Qolgan
 ikkitasi tugagach qaytib ko'riladi.
 
-**Bosqich 5 dagi 10.0s — tasodif emas:** bu aynan
-`MAX_INREQUEST_WAIT_SECONDS = 10.0` (Bosqich 1 chegarasi). Ya'ni bitta so'rov
-CRM slotini to'liq 10 soniya kutgan va konkurentlik = 1 bo'lgani uchun
-orqasidagilarni ham ushlab turgan. Qolgan ~1.9s median ham `/health` kabi
-arzimas endpoint uchun yuqori — demak **ildiz sabab (konkurentlik = 1) hamon
-joyida**. To'liq yechim — 9-bo'limdagi 4-variant (doimiy scheduler + bir
-nechta ishchi).
+### Bosqich 5 — o'lchov natijalari (2026-08-13, `/api/health`)
+
+| Bosqich | Eng yomon | Median |
+|---|---|---|
+| Boshlanishida | **40.3s** | — |
+| 4a dan keyin | 10.0s | ~1.9s |
+| **4b tugagach** | **2.0s** (15 o'lchov) | ~1.9s |
+
+10.0s tasodif emas edi — u aynan `MAX_INREQUEST_WAIT_SECONDS = 10.0`
+(Bosqich 1 chegarasi): bitta so'rov CRM slotini to'liq kutib, orqasidagilarni
+ham ushlab turgan.
+
+**Qolgan kechikish cron'niki EMAS.** `curl` bosqichma-bosqich o'lchovi
+(`time_appconnect` → `time_starttransfer`) ko'rsatdi:
+
+```
+tarmoq + TLS  ~0.32s   (Germaniyagacha masofa — o'zgarmas, tegishli emas)
+server vaqti   0.10s   ← ishchi BO'SH bo'lganda
+server vaqti   1.6s    ← ishchi band, navbat
+server vaqti   6.6s    ← ishchi band, uzun navbat (bir marta)
+```
+
+Ya'ni **ilova aslida 0.10s da javob beradi**; 1.6–6.6s — bu yagona ishchi
+navbatida turish. Endi o'sha ishchini band qiluvchi cron emas, balki bot
+webhook'i (Telegram update'lari SHU ilovaga keladi) + haqiqiy foydalanuvchilar
++ qolgan 4 ta tick.
+
+**Ildiz sabab (konkurentlik = 1) hamon joyida** va uni kod bilan yechib
+bo'lmaydi — bu deploy sozlamasi. To'liq yechim: 9-bo'limdagi 4-variant
+(doimiy scheduler jarayoni + bir nechta Passenger ishchisi).
 
 ---
 
