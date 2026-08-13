@@ -495,14 +495,29 @@ Bular allaqachon servisga to'g'ridan-to'g'ri chaqiruv:
 
 #### 4b. Kichik ko'chirish kerak
 
-| Endpoint | Router ichidagi mantiq | Murakkablik |
-|---|---|---|
-| `/tasks/mark-overdue` | bitta `UPDATE` | Juda oson |
-| `/auth/login-security-cleanup` | 3 ta `DELETE` | Juda oson |
-| `/knowledge/tick` | `count` + servis | Oson |
-| `/stats/lead-stages/group-tick` | `_get_group_config` + `send_daily_digest` | O'rta |
-| `/attendance/reminder-tick` | halqa + audit | O'rta |
-| `/hourly-plan/send` | ish oynasi tekshiruvi | O'rta |
+| Endpoint | Router ichidagi mantiq | Murakkablik | Holat |
+|---|---|---|---|
+| `/tasks/mark-overdue` | bitta `UPDATE` | Juda oson | ✅ 2026-08-13 (4adc763) |
+| `/auth/login-security-cleanup` | 3 ta `DELETE` | Juda oson | ✅ 2026-08-13 (4adc763) |
+| `/knowledge/tick` | `count` + servis | Oson | ✅ 2026-08-13 (4adc763) |
+| `/stats/lead-stages/group-tick` | `_get_group_config` + `send_daily_digest` | O'rta | ✅ 2026-08-13 (4adc763) |
+| `/attendance/reminder-tick` | halqa + audit | O'rta | ⏳ qoldi |
+| `/hourly-plan/send` | ish oynasi tekshiruvi | O'rta | ⏳ qoldi |
+
+**Bajarilgani (4adc763):** mantiq `api/services/cron_jobs.py` ga ko'chirildi —
+ataylab FastAPI'dan mustaqil, chunki cron uni import qilganda butun web stack
+ko'tarilmasligi kerak (2026-07-31 dagi uzilish aynan shundan bo'lgan).
+Routerlar yupqa o'ram bo'lib qoldi, ya'ni **Docker/scheduler rejimi
+o'zgarishsiz** ishlaydi. Chastota ham o'zgarmadi.
+
+Eng katta foyda `group-tick` dan: u **HAR DAQIQA** saytga so'rov yuborardi —
+ya'ni kunda ~1440 marta yagona Passenger ishchisini band qilardi, holbuki
+99% hollarda javob `{"fired": false}` (bitta `SELECT`).
+
+**Jonli tasdiq (16:31–16:34):** log'da `guruh digesti (in-process)` chiqdi,
+`/stats/lead-stages/group-tick` HTTP ro'yxatidan yo'qoldi; **16:32 daqiqasida
+`tik:` qatori umuman bo'lmadi** — o'sha daqiqada cron saytga bitta ham so'rov
+yubormadi.
 
 #### 4c. Yakuniy holat
 
@@ -570,13 +585,28 @@ To'liq yechim uchun 4- yoki 6-variant kerak.
 ## 8. Bajarilish ketma-ketligi (qisqacha)
 
 ```
-[ ] Bosqich 0 — o'lchov (kod o'zgarmaydi)
-[ ] Bosqich 1 — 429 so'rov-ichi chegara          ← eng tez, eng xavfsiz
-[ ] Bosqich 2 — /daily-results/sync in-process   ← ASOSIY FOYDA
-[ ] Bosqich 3 — /anketa/tick in-process
-[ ] Bosqich 4 — qolgan 10 ta tick
-[ ] Bosqich 5 — tekshirish va o'lchash
+[x] Bosqich 0 — o'lchov (kod o'zgarmaydi)        — eng yomon holat: 40.3s
+[x] Bosqich 1 — 429 so'rov-ichi chegara          — 0de184a
+[x] Bosqich 2 — /daily-results/sync in-process   — 3249d84  ASOSIY FOYDA
+[ ] Bosqich 3 — /anketa/tick in-process          — ATAYLAB QOLDIRILDI (pastda)
+[x] Bosqich 4a — yupqa o'ramlar                  — 7e20cc4
+[x] Bosqich 4b — group-tick + 3 ta kichik tick   — 4adc763
+[ ] Bosqich 4b (qoldig'i) — /attendance/reminder-tick, /hourly-plan/send
+[~] Bosqich 5 — o'lchash: median ~1.9s, eng yomoni 10.0s (40.3s edi)
 ```
+
+**Bosqich 3 nega qoldirildi:** `/anketa/tick` — jonli o'lchovda arzon va
+kamdan-kam ish qiladi (odatda no-op), lekin uning mantiqi bot handlerlariga
+chuqur bog'langan; ko'chirish foydasi kichik, xatar esa yuqori. Qolgan
+ikkitasi tugagach qaytib ko'riladi.
+
+**Bosqich 5 dagi 10.0s — tasodif emas:** bu aynan
+`MAX_INREQUEST_WAIT_SECONDS = 10.0` (Bosqich 1 chegarasi). Ya'ni bitta so'rov
+CRM slotini to'liq 10 soniya kutgan va konkurentlik = 1 bo'lgani uchun
+orqasidagilarni ham ushlab turgan. Qolgan ~1.9s median ham `/health` kabi
+arzimas endpoint uchun yuqori — demak **ildiz sabab (konkurentlik = 1) hamon
+joyida**. To'liq yechim — 9-bo'limdagi 4-variant (doimiy scheduler + bir
+nechta ishchi).
 
 ---
 
