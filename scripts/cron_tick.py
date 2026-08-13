@@ -66,6 +66,19 @@ IDLE_WATCH_LOCK_STALE_MINUTES = 8
 # tushmasligini kafolatlaydi (CRM so'rov byudjeti ikki barobar yeyilmasin).
 CRM_SYNC_LOCK = ROOT / "logs" / "crm_sync.lock"
 CRM_SYNC_LOCK_STALE_MINUTES = 6
+# Bosqich 4a (2026-08-13): allaqachon YUPQA O'RAM bo'lgan ticklar — endpoint
+# faqat servisni chaqirardi, ya'ni refaktor kerak emas, to'g'ridan-to'g'ri
+# in-process'ga o'tdi. Maqsad: Passenger'ga cron trafigi umuman tegmasin.
+# Lock qisqa (2-3 daq): bular tez ishlaydi, lekin sekin ketgan bittasi ustiga
+# keyingi daqiqadagisi tushmasin.
+DIGEST_LOCK = ROOT / "logs" / "attendance_digest.lock"
+DIGEST_LOCK_STALE_MINUTES = 3
+PLAYBOOK_LOCK = ROOT / "logs" / "playbook.lock"
+PLAYBOOK_LOCK_STALE_MINUTES = 6
+SYSTEM_HEALTH_LOCK = ROOT / "logs" / "system_health.lock"
+SYSTEM_HEALTH_LOCK_STALE_MINUTES = 6
+AUTO_PLAN_LOCK = ROOT / "logs" / "auto_plan.lock"
+AUTO_PLAN_LOCK_STALE_MINUTES = 6
 
 
 def _is_last_day(d: datetime) -> bool:
@@ -87,7 +100,6 @@ def _due(now: datetime) -> list:
     # o'qiladi, ">=" semantikasi + kuniga-bir-marta qo'riqchisi bilan), shuning
     # uchun siyraklashtirilmaydi.
     add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
-    add("/attendance/digest-tick", timeout=60)       # davomat digesti (API vaqtni bazadan tekshiradi)
 
     # ── Siyraklashtirilgan (2026-07-27) ───────────────────────────────────────
     # SABAB: bu hostda Passenger'da ATIGI 1 ta ishchi jarayon bor. Har daqiqada
@@ -109,17 +121,13 @@ def _due(now: datetime) -> list:
         add("/anketa/tick", timeout=120)             # anketa max 2 daq kechikib boshlanadi
     if m % 5 == 3:
         add("/knowledge/tick", timeout=120)          # bilim bazasi AI ishlovi (draft yo'q — no-op)
-        add("/playbook/tick", timeout=120)           # playbook qurish bosqichlari (build yo'q — no-op)
 
     # ── Interval ──
     if m % 15 == 0:
         add("/tasks/mark-overdue")
-        add("/auto-plan/snapshot", timeout=120)      # AI actual (o'chiqda no-op)
-    # CRM aloqasi qo'riqchisi — 17-daqiqa qoldig'i ATAYIN (yuqoridagi m%15
-    # guruhiga qo'shilmasin, yagona Passenger ishchisi bir zumda to'lmasin).
-    # Chegara 2 soat bo'lgani uchun yarim soatlik tekshiruv yetarli.
-    if m % 30 == 17:
-        add("/system-health/tick", json={}, timeout=60)
+    # CRM aloqasi qo'riqchisi va AI avto-reja BU RO'YXATDA YO'Q (2026-08-13,
+    # Bosqich 4a) — ular in-process bajariladi (main() pastda). Chastota
+    # o'zgarmadi: m%30==17 va m%15==0.
     # DIQQAT: lid snapshoti (/stats/lead-stages/sync) bu ro'yxatda YO'Q — u og'ir
     # (~5-7 daqiqa) va gateway HTTP limitiga sig'maydi; _lead_sync_due + in-process
     # yo'l bilan bajariladi (pastda).
@@ -343,6 +351,48 @@ async def _run_crm_sync_inprocess(now: datetime) -> None:
     await _run_service_inprocess(now, "CRM sync", CRM_SYNC_LOCK, CRM_SYNC_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_attendance_digest_inprocess(now: datetime) -> None:
+    """Davomat digesti — HAR DAQIQA ishlaydi (vaqtni servisning o'zi bazadan
+    tekshiradi). Cron HTTP trafigining eng chastotali qismi shu edi."""
+    async def runner(db):
+        from api.services.attendance_digest import digest_tick
+        return await digest_tick(db)
+
+    await _run_service_inprocess(now, "davomat digesti", DIGEST_LOCK, DIGEST_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_playbook_inprocess(now: datetime) -> None:
+    async def runner(db):
+        from api.services import sales_playbook as svc
+        return await svc.process_build(db)
+
+    await _run_service_inprocess(now, "playbook", PLAYBOOK_LOCK, PLAYBOOK_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_system_health_inprocess(now: datetime) -> None:
+    async def runner(db):
+        from api.services import system_health
+        return await system_health.tick(db, dry_run=False)
+
+    await _run_service_inprocess(now, "tizim qo'riqchisi", SYSTEM_HEALTH_LOCK, SYSTEM_HEALTH_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_auto_plan_snapshot_inprocess(now: datetime) -> None:
+    """AI avto-reja actual'i. AI o'chiq bo'lsa servis emas, SHU YERDA to'xtaymiz —
+    endpoint ham aynan shunday qilardi (`settings.ai_enabled`)."""
+    async def runner(db):
+        from api.config import settings
+        if not settings.ai_enabled:
+            return {"disabled": True}
+        from api.services import auto_plan
+        from api.timeutil import today_local
+        written = await auto_plan.snapshot_hourly_actual(db, today_local())
+        return {"rows": written}
+
+    await _run_service_inprocess(now, "avto-reja snapshot", AUTO_PLAN_LOCK, AUTO_PLAN_LOCK_STALE_MINUTES, runner)
+
+
+
 def _lead_diff_due(now: datetime) -> bool:
     return now.minute % cfg.LEAD_DIFF_INTERVAL_MINUTES == 0
 
@@ -401,6 +451,17 @@ async def main() -> None:
     # u eng og'iri va vaqt-sezgir digestlarni kechiktirmasligi kerak.
     if now.minute % 2 == 1:
         await _run_crm_sync_inprocess(now)
+
+    # ── Bosqich 4a: yupqa o'ramlar in-process (HTTP o'rniga) ──
+    # Chastota AVVALGIDEK — faqat yo'l o'zgardi. Digest HAR DAQIQA (vaqtni
+    # servisning o'zi bazadan tekshiradi), qolganlari o'z qoldig'ida.
+    await _run_attendance_digest_inprocess(now)
+    if now.minute % 5 == 3:
+        await _run_playbook_inprocess(now)
+    if now.minute % 30 == 17:
+        await _run_system_health_inprocess(now)
+    if now.minute % 15 == 0:
+        await _run_auto_plan_snapshot_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):
