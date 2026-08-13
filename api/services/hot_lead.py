@@ -276,6 +276,8 @@ async def sync_crm_state(db: AsyncSession, dry_run: bool) -> dict:
     if not states:
         return {"checked": len(open_leads), "reassigned": 0, "resolved": 0}
     users_by_crm = await _map_users_by_crm_id(db)
+    # Sovish muddati va jarima — HR sozlamasidan (bir marta, sikldan tashqarida).
+    cool_minutes, fine = await hot_lead_rules(db)
 
     # Nechta lidda haqiqiy drift bor — shu asosda backlog/oqim qaror qilinadi
     # (pastga qarang, NOTIFY_BACKLOG_THRESHOLD izohi).
@@ -319,7 +321,8 @@ async def sync_crm_state(db: AsyncSession, dry_run: bool) -> dict:
                 if not is_backlog and new_user and new_user.telegram_id:
                     await send_message(
                         new_user.telegram_id,
-                        _notify_text(lead) + "\n\n↪️ Bu lid sizga CRM'da o'tkazildi.",
+                        _notify_text(lead, cool_minutes, fine)
+                        + "\n\n↪️ Bu lid sizga CRM'da o'tkazildi.",
                     )
 
     if not dry_run and (reassigned or resolved):
