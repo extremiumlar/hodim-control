@@ -815,6 +815,53 @@ export interface PushSettingsOut {
   quiet_to: number;
 }
 
+/** Ish kundaligi — bitta yozuv (KUNDALIK_ETIROZ_REJASI.md). */
+export interface WorkLogEntry {
+  id: number;
+  user_id: number;
+  /** "YYYY-MM-DD" */
+  date: string;
+  text: string;
+  /** bot | web */
+  source: string;
+  created_at: string;
+  updated_at: string | null;
+  /** SERVER hisoblaydi (date === bugun). Mijoz kun chegarasini o'zi
+      hisoblamaydi — Toshkent vaqti faqat backendda. */
+  editable: boolean;
+}
+
+export interface WorkLogDay {
+  date: string;
+  /** Ish jadvali bo'yicha ish kunimi (davomat kalendari bilan bir manba). */
+  is_working: boolean;
+  entries: WorkLogEntry[];
+}
+
+export interface WorkLogMonth {
+  month: string;
+  user_id: number;
+  user_full_name: string;
+  days: WorkLogDay[];
+  /** Bugungacha bo'lgan ish kunlari (kelajak kunlar hisobga olinmaydi). */
+  work_days: number;
+  logged_days: number;
+  entries_count: number;
+}
+
+export interface WorkLogCoverageRow {
+  user_id: number;
+  full_name: string;
+  work_days: number;
+  logged_days: number;
+  entries_count: number;
+}
+
+export interface WorkLogCoverage {
+  month: string;
+  rows: WorkLogCoverageRow[];
+}
+
 /** Sababsiz kelmagan kun uchun tushuntirish xati. */
 export interface ExplanationRequestRow {
   id: number;

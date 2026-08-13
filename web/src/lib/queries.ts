@@ -80,6 +80,13 @@ export const qk = {
   locationExempt: ["admin", "location-exempt"] as const,
   finePolicyEditors: ["payroll", "fine-policy-editors"] as const,
   explanations: (statusFilter?: string) => ["explanations", statusFilter ?? "all"] as const,
+  // Ish kundaligi. Kalitlar "work-log" prefiksi ostida — mutatsiyalar
+  // [["work-log"]] bilan invalidatsiya qilinadi va o'z oyim ham, rahbar
+  // ko'rinishi ham, qamrov ham birdaniga yangilanadi.
+  myWorkLog: (month?: string) => ["work-log", "me", month ?? "current"] as const,
+  workLogMonth: (userId: number, month?: string) =>
+    ["work-log", "user", userId, month ?? "current"] as const,
+  workLogCoverage: (month?: string) => ["work-log", "coverage", month ?? "current"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -572,6 +579,44 @@ export const useRequestMyExcusedDay = () =>
     (data: { reason: string; date?: string }) => api.requestMyExcusedDay(data),
     [["excused-days"]]
   );
+
+// ─── Ish kundaligi ───
+// Oy almashganda skeletonga tushmaslik uchun keepPreviousData (myWorkWeek
+// bilan bir xil sabab: navigatsiya tugmalari yo'qolib, keyin qaytardi).
+export const useMyWorkLog = (month?: string) =>
+  useQuery({
+    queryKey: qk.myWorkLog(month),
+    queryFn: () => api.myWorkLog(month),
+    placeholderData: keepPreviousData,
+  });
+
+export const useAddMyWorkLogEntry = () =>
+  useApiMutation((data: { text: string }) => api.addMyWorkLogEntry(data), [["work-log"]]);
+
+export const useEditMyWorkLogEntry = () =>
+  useApiMutation(
+    ({ entryId, text }: { entryId: number; text: string }) =>
+      api.editMyWorkLogEntry(entryId, { text }),
+    [["work-log"]]
+  );
+
+export const useDeleteMyWorkLogEntry = () =>
+  useApiMutation((entryId: number) => api.deleteMyWorkLogEntry(entryId), [["work-log"]]);
+
+export const useWorkLogMonth = (userId: number | null, month?: string) =>
+  useQuery({
+    queryKey: qk.workLogMonth(userId ?? 0, month),
+    queryFn: () => api.workLogMonth(userId as number, month),
+    enabled: userId != null,
+    placeholderData: keepPreviousData,
+  });
+
+export const useWorkLogCoverage = (month?: string) =>
+  useQuery({
+    queryKey: qk.workLogCoverage(month),
+    queryFn: () => api.workLogCoverage(month),
+    placeholderData: keepPreviousData,
+  });
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
 // kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham

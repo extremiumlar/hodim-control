@@ -129,6 +129,14 @@ const SECTIONS: Section[] = [
     webPath: "/me/excused",
     visible: (c) => !!c.flags.excused,
   },
+  {
+    key: "work-log",
+    title: "Ish kundaligi",
+    emoji: "📝",
+    webPath: "/me/work-log",
+    // bot: role != "boss" (BTN_WORK_LOG — Boshliqdan tashqari hammaga)
+    visible: (c) => c.role !== "boss",
+  },
 ];
 
 /** Shu xodimga ko'rinadigan bo'limlar, muhimlik tartibida. */

@@ -487,11 +487,31 @@ va O'CHIRISH yo'q — faqat qo'shish va bugungi ro'yxatni ko'rish. Xato yozilsa
 xodim kabinetdan tuzatadi. Agar bot-only xodimlar uchun bu yetarli bo'lmasa,
 `DELETE/PATCH /work-log/bot/{id}` adapterlari qo'shiladi (kichik ish).
 
-### Bosqich 3 — Ish kundaligi: web
-- [ ] `endpoints.ts`/`types.ts`/`queries.ts`
-- [ ] `pages/WorkLog.tsx` (rahbar) + `pages/me/WorkLog.tsx`
-- [ ] `App.tsx` route'lar, `Layout.tsx` NAV, `employeeNav.ts`, `mobile/lib/sections.ts`
-- Deploy №1 — kundalik jonli, appeal'siz
+### Bosqich 3 — Ish kundaligi: web ✅ BAJARILDI (2026-08-13)
+- [x] `types.ts` (WorkLogEntry/Day/Month/Coverage), `endpoints.ts` (6 metod),
+      `queries.ts` (3 kalit + 6 hook, `keepPreviousData` oy almashuvida)
+- [x] `pages/WorkLog.tsx` (rahbar: qamrov jadvali + tanlangan xodim oyi)
+- [x] `pages/me/WorkLog.tsx` (xodim: qo'shish + oylik ro'yxat + tahrir/o'chirish)
+- [x] `App.tsx` (lazy + 2 route), `Layout.tsx` NAV (Davomat guruhiga),
+      `employeeNav.ts`, `mobile/lib/sections.ts` — nav UCH joyda sinxron
+- [x] Brauzerda tekshirildi (jonli API + baza): rahbar qamrov jadvali,
+      xodim tanlash, to'liq CRUD (POST/PATCH/DELETE 200), qulf ko'rinishi
+      («Qulflangan» o'tgan kunlarda), mobil 375px da gorizontal skroll yo'q,
+      `/me/more` da bo'lim ko'rinadi. `tsc --noEmit` toza, `npm run build` toza.
+      Backend testi qayta o'tkazildi (51 OK) — regressiya yo'q.
+
+**Brauzer tekshiruvida topilgan va tuzatilgan xato:** rahbar ko'rinishida
+KELAJAKDAGI ish kunlari ham «yozuv yo'q» bo'lib chiqardi (13-avgustda 31-avgustgacha
+20 ta bo'sh kun) — go'yo xodim o'nlab kun tashlab ketgandek. Xodim sahifasida
+`date <= bugun` filtri bor edi, rahbar sahifasida tushib qolgan edi. Qamrov
+raqami (`work_days`) backendda allaqachon faqat o'tgan kunlarni sanardi, ya'ni
+raqam va ro'yxat bir-biriga zid edi.
+
+**Kabinetda bot'da yo'q imkoniyat:** bugungi yozuvni tahrirlash/o'chirish
+(qulf: `editable` bayrog'i serverdan). Bosqich 2 dagi bot kamchiligi shu bilan
+yopiladi — lekin faqat sayt/ilova orqali.
+
+- Deploy №1 — kundalik jonli, appeal'siz (HALI QILINMAGAN)
 
 ### Bosqich 4 — Appeal: poydevor + API
 - [ ] Modellar (`AppealKind/Topic/Status`, `Appeal`) + migratsiya `e4f5a6b7c8d9_appeals.py`

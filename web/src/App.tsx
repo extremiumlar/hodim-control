@@ -25,6 +25,7 @@ const Payroll = lazy(() => import("./pages/Payroll"));
 const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
 const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
+const WorkLog = lazy(() => import("./pages/WorkLog"));
 
 // Xodim kabineti. Bo'limlarning KO'RINISH shartlari lib/employeeNav.ts da —
 // bot menyusi (bot/keyboards.py: main_menu) bilan aynan bir xil.
@@ -39,6 +40,7 @@ const MeHourlyPlan = lazy(() => import("./pages/me/HourlyPlan"));
 const MeStats = lazy(() => import("./pages/me/Stats"));
 const MeKpi = lazy(() => import("./pages/me/Kpi"));
 const MeExcused = lazy(() => import("./pages/me/Excused"));
+const MeWorkLog = lazy(() => import("./pages/me/WorkLog"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -177,6 +179,7 @@ export default function App() {
               bu yerda yangi sahifa emas — faqat xodimga yo'l ochiladi. */}
           <Route path="me/lead-stats" element={<LeadStats />} />
           <Route path="me/excused" element={<MeExcused />} />
+          <Route path="me/work-log" element={<MeWorkLog />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
@@ -185,6 +188,9 @@ export default function App() {
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />
           <Route path="statistics" element={<ManagerRoute><Statistics /></ManagerRoute>} />
           <Route path="work-schedule" element={<ManagerRoute><WorkSchedule /></ManagerRoute>} />
+          {/* Ish kundaligi — ROP ham kiradi (backend uni o'z jamoasi bilan
+              cheklaydi: work_log.py VIEW_ROLES + manager_id filtri). */}
+          <Route path="work-log" element={<ManagerRoute><WorkLog /></ManagerRoute>} />
           <Route path="employees/:id" element={<ManagerRoute><EmployeeProfile /></ManagerRoute>} />
           <Route path="reports" element={<ManagerRoute><Reports /></ManagerRoute>} />
           <Route path="audit-logs" element={<ManagerRoute><AuditLogs /></ManagerRoute>} />

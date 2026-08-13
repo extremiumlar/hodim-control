@@ -38,6 +38,9 @@ import type {
   PayslipRow,
   Position,
   RegisterFaceResult,
+  WorkLogCoverage,
+  WorkLogEntry,
+  WorkLogMonth,
   KpiRate,
   SalaryRate,
   StatsOverview,
@@ -410,6 +413,26 @@ export const api = {
   myStats: () => apiFetch<MyStats>("/stats/me"),
   myBonuses: () => apiFetch<Bonus[]>("/bonuses/me"),
   myExcusedDays: () => apiFetch<ExcusedDay[]>("/excused-days/me"),
+  // ── Ish kundaligi ──
+  // Xodim: o'z oyi + bugunga yozuv qo'shish/tahrirlash/o'chirish. Sanani mijoz
+  // YUBORMAYDI — backend har doim bugungi (Toshkent) kunga yozadi, tahrir esa
+  // faqat o'sha kuni mumkin (aks holda 403).
+  myWorkLog: (month?: string) =>
+    apiFetch<WorkLogMonth>(`/work-log/me${month ? `?month=${month}` : ""}`),
+  addMyWorkLogEntry: (data: { text: string }) =>
+    apiFetch<WorkLogEntry>("/work-log/me", { method: "POST", body: JSON.stringify(data) }),
+  editMyWorkLogEntry: (entryId: number, data: { text: string }) =>
+    apiFetch<WorkLogEntry>(`/work-log/me/${entryId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMyWorkLogEntry: (entryId: number) =>
+    apiFetch<{ deleted: boolean }>(`/work-log/me/${entryId}`, { method: "DELETE" }),
+  // Rahbar: bitta xodim oyi + butun jamoa qamrovi.
+  workLogMonth: (userId: number, month?: string) =>
+    apiFetch<WorkLogMonth>(`/work-log?user_id=${userId}${month ? `&month=${month}` : ""}`),
+  workLogCoverage: (month?: string) =>
+    apiFetch<WorkLogCoverage>(`/work-log/coverage${month ? `?month=${month}` : ""}`),
   // Tanada `telegram_id` YO'Q — shaxs tokendan olinadi (ExcusedDayMeCreate).
   requestMyExcusedDay: (data: { reason: string; date?: string }) =>
     apiFetch<ExcusedDay>("/excused-days/me", { method: "POST", body: JSON.stringify(data) }),

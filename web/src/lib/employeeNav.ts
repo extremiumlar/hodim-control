@@ -18,6 +18,7 @@ import {
   Clock,
   ClipboardList,
   ListTodo,
+  NotebookPen,
   Target,
   TrendingUp,
   PencilLine,
@@ -168,6 +169,14 @@ export const EMPLOYEE_SECTIONS: EmployeeSection[] = [
     to: "/me/excused",
     icon: CalendarX,
     visible: (c) => !!c.flags.excused,
+  },
+  {
+    key: "work-log",
+    label: "Ish kundaligi",
+    to: "/me/work-log",
+    icon: NotebookPen,
+    // bot: role != "boss" (BTN_WORK_LOG — Boshliqdan tashqari hammaga)
+    visible: (c) => c.role !== "boss",
   },
 ];
 
