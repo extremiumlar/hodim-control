@@ -573,72 +573,9 @@ async def appeals_sla_tick(payload: AppealSlaTick, db: AsyncSession = Depends(ge
     """Javobsiz qolgan murojaatlar: 3 kundan keyin qabul qiluvchiga eslatma,
     5 kundan keyin Boshliqqa eskalatsiya.
 
-    TAKRORLANMASLIK: `sla_reminded_at` / `escalated_at` iz ustunlari — tick
-    kuniga bir marta ishlaydi, lekin cPanel'da cron ikki jarayonda ishlashi
-    va qo'lda ham chaqirilishi mumkin. Iz YUBORISHDAN OLDIN yoziladi va
-    darhol commit qilinadi (attendance reminder-tick naqshi)."""
-    now = datetime.utcnow()
-    remind_before = now - timedelta(days=SLA_REMIND_DAYS)
-    escalate_before = now - timedelta(days=SLA_ESCALATE_DAYS)
+    Mantiq `api/services/cron_jobs.py` da — cPanel cron uni SAYTGA so'rov
+    yubormasdan, o'z jarayonida bajaradi. Bu endpoint Docker/scheduler rejimi
+    va qo'lda `dry_run` tekshiruvi uchun saqlanadi."""
+    from api.services.cron_jobs import appeals_sla_tick as _tick
 
-    open_items = list(
-        await db.scalars(
-            select(Appeal)
-            .where(Appeal.status.in_(APPEAL_OPEN_STATUSES))
-            .order_by(Appeal.created_at.asc())
-        )
-    )
-    to_remind = [
-        i for i in open_items if i.sla_reminded_at is None and i.created_at <= remind_before
-    ]
-    to_escalate = [
-        i for i in open_items if i.escalated_at is None and i.created_at <= escalate_before
-    ]
-
-    if payload.dry_run:
-        return {
-            "dry_run": True,
-            "remind": [i.id for i in to_remind],
-            "escalate": [i.id for i in to_escalate],
-        }
-
-    reminded = 0
-    for item in to_remind:
-        item.sla_reminded_at = now
-        await db.commit()  # iz AVVAL — yuborish sekin, keyingi tick kelib qolmasin
-        days = (now - item.created_at).days
-        for rec in await _recipients(db, item):
-            await notify_user(
-                db, rec, Category.APPEALS,
-                f"⏳ <b>Javobsiz murojaat</b> ({days} kun)\n"
-                f"{_KIND_LABELS[item.kind]} — {_TOPIC_LABELS.get(item.topic, item.topic)}. "
-                "Iltimos, ko'rib chiqing.",
-                data={"path": "/appeals"},
-            )
-        reminded += 1
-
-    escalated = 0
-    bosses = list(
-        await db.scalars(
-            select(User).where(
-                User.role == Role.boss.value,
-                User.is_active.is_(True),
-                User.telegram_id.isnot(None),
-            )
-        )
-    )
-    for item in to_escalate:
-        item.escalated_at = now
-        await db.commit()
-        days = (now - item.created_at).days
-        for boss in bosses:
-            await notify_user(
-                db, boss, Category.APPEALS,
-                f"🚨 <b>Murojaat {days} kundan beri javobsiz</b>\n"
-                f"{_KIND_LABELS[item.kind]} — {_TOPIC_LABELS.get(item.topic, item.topic)} "
-                f"(kimga: {item.recipient_role}).",
-                data={"path": "/appeals"},
-            )
-        escalated += 1
-
-    return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}
+    return await _tick(db, dry_run=payload.dry_run)

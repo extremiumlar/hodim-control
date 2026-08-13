@@ -92,6 +92,12 @@ ATTENDANCE_REMINDER_LOCK = ROOT / "logs" / "attendance_reminder.lock"
 ATTENDANCE_REMINDER_LOCK_STALE_MINUTES = 3
 HOURLY_PLAN_LOCK = ROOT / "logs" / "hourly_plan.lock"
 HOURLY_PLAN_LOCK_STALE_MINUTES = 5
+# Ish kundaligi eslatmasi (har 10 daq) va murojaat SLA (kuniga bir marta) —
+# ikkalasi ham yengil, lekin bir xil naqsh: lock + in-process.
+WORK_LOG_REMINDER_LOCK = ROOT / "logs" / "work_log_reminder.lock"
+WORK_LOG_REMINDER_LOCK_STALE_MINUTES = 5
+APPEALS_SLA_LOCK = ROOT / "logs" / "appeals_sla.lock"
+APPEALS_SLA_LOCK_STALE_MINUTES = 10
 
 
 def _is_last_day(d: datetime) -> bool:
@@ -147,12 +153,9 @@ def _due(now: datetime) -> list:
     # (2026-08-13, Bosqich 4b) — in-process bajariladi (main() pastda).
     # Chastota o'zgarmadi: m%ATTENDANCE_REMINDER_INTERVAL_MINUTES==1 va m==0.
 
-    # Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun yozmaganlarga
-    # (KUNDALIK_ETIROZ_REJASI.md). Qoldiq 4 ATAYLAB bo'sh daqiqa: toq guruh
-    # (m%2==1 sync/anketa), m%5==3 (knowledge), m%5==1 (davomat eslatmasi),
-    # m%15==0 va m%30==17 bilan kesishmaydi.
-    if m % cfg.WORK_LOG_REMINDER_INTERVAL_MINUTES == 4:
-        add("/work-log/reminder-tick", json={}, timeout=120)
+    # DIQQAT: /work-log/reminder-tick va /appeals/sla-tick bu ro'yxatda YO'Q —
+    # ular ham in-process bajariladi (main() pastda), Bosqich 4b qoidasi:
+    # cron trafigi Passenger'ga tegmasin.
 
     # ── Soatlik ──
     if m == cfg.AI_WATCH_MINUTE:
@@ -167,10 +170,6 @@ def _due(now: datetime) -> list:
         add("/auto-plan/build-targets", timeout=120)
     if h == 9 and m == 35:
         add("/knowledge/stale-tick", timeout=60)     # eskirgan sana-sezgir yozuvlar eslatmasi
-    # E'tiroz/shikoyat SLA (KUNDALIK_ETIROZ_REJASI.md) — kuniga bir marta;
-    # API iz ustunlari bilan har bir murojaatga bir marta xabar yuboradi.
-    if h == cfg.APPEALS_SLA_HOUR and m == cfg.APPEALS_SLA_MINUTE:
-        add("/appeals/sla-tick", json={}, timeout=60)
     # Payroll (OYLIK_JARIMA_REJASI.md, Bosqich 6) — scheduler/main.py'dagi
     # payroll_late_warnings / payroll_overtime_auto_detect job'lari bilan bir xil
     if h == cfg.LATE_WARNING_HOUR and m == cfg.LATE_WARNING_MINUTE:
@@ -440,6 +439,32 @@ async def _run_hourly_plan_inprocess(now: datetime) -> None:
     )
 
 
+async def _run_work_log_reminder_inprocess(now: datetime) -> None:
+    """Ish kundaligi eslatmasi. Servis dam kuni/sababli kun/kelmagan/allaqachon
+    yozganlarni o'zi filtrlaydi va UNIQUE iz bilan kuniga bir marta yuboradi —
+    ortiqcha chaqiruv zararsiz."""
+    async def runner(db):
+        from api.services.cron_jobs import work_log_reminder_tick
+        return await work_log_reminder_tick(db)
+
+    await _run_service_inprocess(
+        now, "kundalik eslatmasi", WORK_LOG_REMINDER_LOCK, WORK_LOG_REMINDER_LOCK_STALE_MINUTES, runner
+    )
+
+
+async def _run_appeals_sla_inprocess(now: datetime) -> None:
+    """Murojaat SLA: 3 kunlik eslatma, 5 kunlik eskalatsiya. Iz ustunlari
+    (`sla_reminded_at`/`escalated_at`) har birini bir marta yuborishni
+    kafolatlaydi."""
+    async def runner(db):
+        from api.services.cron_jobs import appeals_sla_tick
+        return await appeals_sla_tick(db)
+
+    await _run_service_inprocess(
+        now, "murojaat SLA", APPEALS_SLA_LOCK, APPEALS_SLA_LOCK_STALE_MINUTES, runner
+    )
+
+
 
 
 
@@ -525,6 +550,15 @@ async def main() -> None:
         await _run_hourly_plan_inprocess(now)
     if now.minute % cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES == 1:
         await _run_attendance_reminder_inprocess(now)
+
+    # ── Ish kundaligi + murojaat SLA (KUNDALIK_ETIROZ_REJASI.md) ──
+    # Qoldiq 4 ATAYLAB bo'sh daqiqa: m%2 (CRM sync), m%5==1 (davomat
+    # eslatmasi), m%5==3 (bilim/playbook), m%15==0 va m%30==17 bilan
+    # kesishmaydi — bitta daqiqada ikki og'ir ish to'planmasin.
+    if now.minute % cfg.WORK_LOG_REMINDER_INTERVAL_MINUTES == 4:
+        await _run_work_log_reminder_inprocess(now)
+    if now.hour == cfg.APPEALS_SLA_HOUR and now.minute == cfg.APPEALS_SLA_MINUTE:
+        await _run_appeals_sla_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):

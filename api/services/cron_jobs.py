@@ -353,3 +353,202 @@ async def hourly_plan_send(db: AsyncSession) -> dict:
         if result["push"] or result["telegram"]:
             sent += 1
     return {"sent": sent, "at": f"{now.hour:02d}:{now.minute:02d}", "date": today_local().isoformat()}
+
+
+# ─────────────────────────────────────────────
+# Ish kundaligi + murojaat SLA (KUNDALIK_ETIROZ_REJASI.md)
+# ─────────────────────────────────────────────
+
+
+async def work_log_reminder_tick(db: AsyncSession, dry_run: bool = False) -> dict:
+    """«Bugun kundalikka hech narsa yozmadingiz» — ish tugashiga yaqin,
+    BUGUN ISHLAGAN (check-in bosgan) va hali yozmagan xodimlarga.
+
+    QAT'IY CHETLAB O'TILADI (davomat eslatmasi bilan bir falsafa):
+      - dam kuni / sababli kundagilar;
+      - bugun umuman kelmaganlar (kelmagan odamdan kundalik so'rash g'alati —
+        u uchun tushuntirish xati mexanizmi bor);
+      - bugun allaqachon yozganlar;
+      - rahbar rollari (kundalik xodim mehnati hisoboti).
+
+    TAKRORLANMASLIK: `attendance_reminders` UNIQUE(user_id, date, kind) izi,
+    kind="work_log" — IZ AVVAL yoziladi va darhol commit qilinadi (yuborish
+    sekin; keyingi tick shu orada kelib qolsa IntegrityError oladi va jim
+    o'tadi). cPanel'da cron va Passenger parallel ishlashi mumkin."""
+    from api.notify import notify_user
+    from api.routers.hourly_plan import _effective_today, _to_min
+    from api.services.attendance import is_excused_day
+    from api.services.push import Category
+    from db.models import WorkLogEntry
+
+    # Eslatma oynasi: ish tugashiga 30 daqiqa qolganda ochiladi va ish
+    # tugagach yana 2 soat ochiq turadi (cron uzoq to'xtasa ham eslatma
+    # kech bo'lsa-da boradi; UNIQUE iz kuniga bittani kafolatlaydi).
+    remind_before_end = 30
+    remind_until_after_end = 120
+    reminder_kind = "work_log"
+
+    now_local = datetime.now(TASHKENT_TZ)
+    day = today_local()
+    now_min = now_local.hour * 60 + now_local.minute
+
+    users = list(
+        await db.scalars(
+            select(User).where(
+                User.role == Role.employee.value,
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+
+    already = {
+        r.user_id
+        for r in await db.scalars(
+            select(AttendanceReminder).where(
+                AttendanceReminder.date == day, AttendanceReminder.kind == reminder_kind
+            )
+        )
+    }
+    logged_today = {
+        uid
+        for uid in await db.scalars(
+            select(WorkLogEntry.user_id)
+            .where(WorkLogEntry.date == day, WorkLogEntry.deleted_at.is_(None))
+            .distinct()
+        )
+    }
+
+    planned: list[dict] = []
+    for user in users:
+        if user.id in already or user.id in logged_today:
+            continue
+        is_working, _start, end = await _effective_today(db, user, day)
+        if not is_working or not end:
+            continue
+        if await is_excused_day(db, user.id, day):
+            continue
+        att = await db.scalar(
+            select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
+        )
+        if att is None or att.check_in_time is None:
+            continue  # bugun kelmagan — kundalik so'ralmaydi
+        delta = _to_min(end) - now_min
+        if -remind_until_after_end <= delta <= remind_before_end:
+            planned.append({"user": user, "end": end})
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "planned": [
+                {"user_id": p["user"].id, "full_name": p["user"].full_name, "end": p["end"]}
+                for p in planned
+            ],
+        }
+
+    sent = 0
+    for p in planned:
+        user = p["user"]
+        db.add(AttendanceReminder(user_id=user.id, date=day, kind=reminder_kind))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            continue
+
+        # force_telegram YO'Q: yozishni ilova/saytda ham qilsa bo'ladi, toifa
+        # PERSONAL — ilova faol bo'lsa Telegram takrorlanmaydi.
+        res = await notify_user(
+            db,
+            user,
+            Category.WORK_LOG,
+            "📝 <b>Ish kundaligi</b>\n"
+            "Bugun kundalikka hech narsa yozmadingiz. Ish tugashidan oldin "
+            "bugun bajargan ishlaringizni qisqacha yozib qo'ying — botdagi "
+            "«📝 Ish kundaligi» tugmasi yoki ilovadagi Kundalik bo'limi orqali.",
+            data={"path": "/me/work-log"},
+        )
+        if res["telegram"] or res["push"]:
+            sent += 1
+
+    return {"date": day.isoformat(), "candidates": len(planned), "sent": sent}
+
+
+async def appeals_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Javobsiz qolgan murojaatlar: 3 kundan keyin qabul qiluvchiga eslatma,
+    5 kundan keyin Boshliqqa eskalatsiya.
+
+    TAKRORLANMASLIK: `sla_reminded_at` / `escalated_at` iz ustunlari — iz
+    YUBORISHDAN OLDIN yoziladi va darhol commit qilinadi."""
+    from api.notify import notify_user
+    from api.routers.appeals import (
+        SLA_ESCALATE_DAYS,
+        SLA_REMIND_DAYS,
+        _KIND_LABELS,
+        _TOPIC_LABELS,
+        _recipients,
+    )
+    from api.services.push import Category
+    from db.models import APPEAL_OPEN_STATUSES, Appeal
+
+    now = datetime.utcnow()
+    remind_before = now - timedelta(days=SLA_REMIND_DAYS)
+    escalate_before = now - timedelta(days=SLA_ESCALATE_DAYS)
+
+    open_items = list(
+        await db.scalars(
+            select(Appeal)
+            .where(Appeal.status.in_(APPEAL_OPEN_STATUSES))
+            .order_by(Appeal.created_at.asc())
+        )
+    )
+    to_remind = [i for i in open_items if i.sla_reminded_at is None and i.created_at <= remind_before]
+    to_escalate = [i for i in open_items if i.escalated_at is None and i.created_at <= escalate_before]
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "remind": [i.id for i in to_remind],
+            "escalate": [i.id for i in to_escalate],
+        }
+
+    reminded = 0
+    for item in to_remind:
+        item.sla_reminded_at = now
+        await db.commit()
+        days = (now - item.created_at).days
+        for rec in await _recipients(db, item):
+            await notify_user(
+                db, rec, Category.APPEALS,
+                f"⏳ <b>Javobsiz murojaat</b> ({days} kun)\n"
+                f"{_KIND_LABELS[item.kind]} — {_TOPIC_LABELS.get(item.topic, item.topic)}. "
+                "Iltimos, ko'rib chiqing.",
+                data={"path": "/appeals"},
+            )
+        reminded += 1
+
+    escalated = 0
+    bosses = list(
+        await db.scalars(
+            select(User).where(
+                User.role == Role.boss.value,
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+    for item in to_escalate:
+        item.escalated_at = now
+        await db.commit()
+        days = (now - item.created_at).days
+        for boss in bosses:
+            await notify_user(
+                db, boss, Category.APPEALS,
+                f"🚨 <b>Murojaat {days} kundan beri javobsiz</b>\n"
+                f"{_KIND_LABELS[item.kind]} — {_TOPIC_LABELS.get(item.topic, item.topic)} "
+                f"(kimga: {item.recipient_role}).",
+                data={"path": "/appeals"},
+            )
+        escalated += 1
+
+    return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}

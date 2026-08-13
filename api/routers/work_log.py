@@ -343,105 +343,13 @@ async def user_month(
 async def work_log_reminder_tick(
     payload: WorkLogReminderTick, db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """«Bugun kundalikka hech narsa yozmadingiz» — ish tugashiga 30 daqiqa
-    qolganda, BUGUN ISHLAGAN (check-in bosgan) va hali yozmagan xodimlarga.
+    """«Bugun kundalikka hech narsa yozmadingiz» — ish tugashiga yaqin,
+    bugun ishlagan va hali yozmagan xodimlarga.
 
-    QAT'IY CHETLAB O'TILADI (attendance reminder-tick bilan bir falsafa):
-      - dam kuni / sababli kundagilar;
-      - bugun umuman kelmaganlar (kelmagan odamdan kundalik so'rash g'alati —
-        u uchun tushuntirish xati mexanizmi bor);
-      - bugun allaqachon yozganlar;
-      - rahbar rollari (kundalik xodim mehnati hisoboti; rahbar xohlasa
-        tugma orqali o'zi yozadi, lekin eslatma bezovta qilmaydi).
+    Mantiq `api/services/cron_jobs.py` da — cPanel cron uni SAYTGA so'rov
+    yubormasdan, o'z jarayonida bajaradi (SAYT_QOTISHI_TAHLIL.md Bosqich 4b
+    naqshi). Bu endpoint Docker/scheduler rejimi va qo'lda `dry_run`
+    tekshiruvi uchun saqlanadi."""
+    from api.services.cron_jobs import work_log_reminder_tick as _tick
 
-    TAKRORLANMASLIK: `attendance_reminders` UNIQUE(user_id, date, kind) izi,
-    kind="work_log" — IZ AVVAL yoziladi (yuborish sekin, keyingi tick shu
-    orada kelib qolsa IntegrityError oladi va jim o'tadi). cPanel'da cron
-    2 jarayonda ishlashi mumkin — shu iz yagona himoya."""
-    from api.routers.hourly_plan import _effective_today, _to_min  # circular import
-
-    now_local = datetime.now(TASHKENT_TZ)
-    day = today_local()
-    now_min = now_local.hour * 60 + now_local.minute
-
-    users = list(
-        await db.scalars(
-            select(User).where(
-                User.role == Role.employee.value,
-                User.is_active.is_(True),
-                User.telegram_id.isnot(None),
-            )
-        )
-    )
-
-    already = {
-        r.user_id
-        for r in await db.scalars(
-            select(AttendanceReminder).where(
-                AttendanceReminder.date == day, AttendanceReminder.kind == REMINDER_KIND
-            )
-        )
-    }
-    logged_today = {
-        uid
-        for uid in await db.scalars(
-            select(WorkLogEntry.user_id)
-            .where(WorkLogEntry.date == day, WorkLogEntry.deleted_at.is_(None))
-            .distinct()
-        )
-    }
-
-    planned: list[dict] = []
-    for user in users:
-        if user.id in already or user.id in logged_today:
-            continue
-        is_working, _start, end = await _effective_today(db, user, day)
-        if not is_working or not end:
-            continue
-        if await is_excused_day(db, user.id, day):
-            continue
-        att = await db.scalar(
-            select(Attendance).where(Attendance.user_id == user.id, Attendance.date == day)
-        )
-        if att is None or att.check_in_time is None:
-            continue  # bugun kelmagan — kundalik so'ralmaydi
-        delta = _to_min(end) - now_min  # ish tugashigacha qolgan daqiqa
-        if -REMIND_UNTIL_AFTER_END_MIN <= delta <= REMIND_BEFORE_END_MIN:
-            planned.append({"user": user, "end": end})
-
-    if payload.dry_run:
-        return {
-            "dry_run": True,
-            "planned": [
-                {"user_id": p["user"].id, "full_name": p["user"].full_name, "end": p["end"]}
-                for p in planned
-            ],
-        }
-
-    sent = 0
-    for p in planned:
-        user = p["user"]
-        # Izni AVVAL yozamiz (attendance.py:1505-1512 naqshi).
-        db.add(AttendanceReminder(user_id=user.id, date=day, kind=REMINDER_KIND))
-        try:
-            await db.commit()
-        except IntegrityError:
-            await db.rollback()
-            continue  # boshqa tick/jarayon ulgurdi
-
-        # force_telegram YO'Q: yozishni ilova/saytda ham qilsa bo'ladi, toifa
-        # PERSONAL — ilova faol bo'lsa Telegram takrorlanmaydi.
-        res = await notify_user(
-            db,
-            user,
-            Category.WORK_LOG,
-            "📝 <b>Ish kundaligi</b>\n"
-            "Bugun kundalikka hech narsa yozmadingiz. Ish tugashidan oldin "
-            "bugun bajargan ishlaringizni qisqacha yozib qo'ying — botdagi "
-            "«📝 Ish kundaligi» tugmasi yoki ilovadagi Kundalik bo'limi orqali.",
-            data={"path": "/me/work-log"},
-        )
-        if res["telegram"] or res["push"]:
-            sent += 1
-
-    return {"date": day.isoformat(), "candidates": len(planned), "sent": sent}
+    return await _tick(db, dry_run=payload.dry_run)
