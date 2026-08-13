@@ -20,7 +20,7 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.audit_json import row_to_dict
@@ -1481,6 +1481,19 @@ async def _latest_payslip_for_user(db: AsyncSession, user: User) -> BotPayslipOu
     )
     if payslip is None:
         return BotPayslipOut(calculated=False)
+
+    # Avansni qolgan ushlanmalardan AJRATAMIZ: xodim uchun «Avans» — o'zi
+    # olgan pul (tushunarli), «Ushlanma» esa boshqa narsa. Bittasiga
+    # qo'shib yuborilsa xodim summani taniy olmasdi.
+    advance_total = await db.scalar(
+        select(func.coalesce(func.sum(PayrollAdjustment.amount), 0)).where(
+            PayrollAdjustment.user_id == user.id,
+            PayrollAdjustment.period == payslip.period,
+            PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+            PayrollAdjustment.status == PayrollAdjustmentStatus.approved.value,
+        )
+    )
+    advance = float(advance_total or 0)
     return BotPayslipOut(
         calculated=True,
         period=payslip.period,
@@ -1489,6 +1502,11 @@ async def _latest_payslip_for_user(db: AsyncSession, user: User) -> BotPayslipOu
         absent_deduction=float(payslip.absent_deduction),
         overtime_amount=float(payslip.overtime_amount),
         bonus_amount=float(payslip.bonus_amount),
+        advance_amount=advance,
+        adjustments_plus=float(payslip.adjustments_plus),
+        # Avans allaqachon alohida ko'rsatilgani uchun uni bu yerdan
+        # chiqaramiz — aks holda xodim bitta summani IKKI marta ko'rardi.
+        adjustments_minus=max(float(payslip.adjustments_minus) - advance, 0.0),
         net=float(payslip.net),
         currency=payslip.currency,
         approved_at=payslip.approved_at,

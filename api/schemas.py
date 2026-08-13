@@ -1357,6 +1357,15 @@ class BotPayslipOut(BaseModel):
     absent_deduction: float | None = None
     overtime_amount: float | None = None
     bonus_amount: float | None = None
+    # Avans va boshqa qo'lda kiritilgan qo'shimcha/ushlanmalar (2026-08-13).
+    # ILGARI YO'Q EDI va bu XATO edi: ushlanma `net`ni kamaytirar, lekin
+    # xodimga ko'rsatilgan qatorlar yig'indisi `Jami`ga to'g'ri kelmasdi —
+    # ya'ni xodim "nega kam?" degan savolga javob topa olmasdi.
+    # `advance_amount` alohida: avans eng ko'p uchraydigan holat va u
+    # xodimning o'zi olgan puli, boshqa ushlanmalar bilan aralashmasin.
+    advance_amount: float | None = None
+    adjustments_plus: float | None = None
+    adjustments_minus: float | None = None
     net: float | None = None
     currency: str | None = None
     approved_at: datetime | None = None

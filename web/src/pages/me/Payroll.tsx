@@ -101,6 +101,18 @@ export default function MyPayroll() {
         {!!data.absent_deduction && (
           <Row label="Kelmagan kun ushlanmasi" amount={data.absent_deduction} sign="−" />
         )}
+        {/* Avans va qo'lda kiritilgan qo'shimcha/ushlanmalar (2026-08-13).
+            Bular ILGARI KO'RSATILMASDI — «Jami» yuqoridagi qatorlar
+            yig'indisiga to'g'ri kelmasdi va xodim farqni tushuntira olmasdi. */}
+        {!!data.adjustments_plus && (
+          <Row label="Qo'shimcha" amount={data.adjustments_plus} sign="+" />
+        )}
+        {!!data.advance_amount && (
+          <Row label="Avans (olingan)" amount={data.advance_amount} sign="−" />
+        )}
+        {!!data.adjustments_minus && (
+          <Row label="Ushlanma" amount={data.adjustments_minus} sign="−" />
+        )}
 
         <div className="flex items-baseline justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4">
           <span className="text-sm font-semibold">Jami</span>

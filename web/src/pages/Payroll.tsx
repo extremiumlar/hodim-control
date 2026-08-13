@@ -27,6 +27,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import AdvanceTab from "@/components/payroll/AdvanceTab";
+import SalaryRateTab from "@/components/payroll/SalaryRateTab";
 import { type PayslipRow, type ReadinessIssue } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
@@ -205,6 +208,38 @@ function PayslipDetailDialog({
 }
 
 export default function Payroll() {
+  const { user } = useAuth();
+  const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
+
+  // Stavka va avans tablari FAQAT payroll boshqaruvchilarida. ROP bu
+  // sahifaga kira oladi (o'z jamoasining payslip'ini ko'rish uchun), lekin
+  // pul kiritish huquqi yo'q — backend ham 403 beradi.
+  if (!canManage) return <PayrollTable />;
+
+  return (
+    <Tabs defaultValue="payslips" className="space-y-6">
+      <TabsList>
+        <TabsTrigger value="payslips">Hisob-kitob</TabsTrigger>
+        {/* «Oylik stavkalar» ilgari Sozlamalarda edi — egasining talabi
+            bo'yicha shu yerga ko'chirildi: stavka sozlama emas, u xodimning
+            puli va hisob-kitob bilan yonma-yon turishi kerak. */}
+        <TabsTrigger value="rates">Oylik stavkalar</TabsTrigger>
+        <TabsTrigger value="advances">Avans</TabsTrigger>
+      </TabsList>
+      <TabsContent value="payslips">
+        <PayrollTable />
+      </TabsContent>
+      <TabsContent value="rates">
+        <SalaryRateTab />
+      </TabsContent>
+      <TabsContent value="advances">
+        <AdvanceTab />
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function PayrollTable() {
   const { user } = useAuth();
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
   // YAKUNIY tasdiq — faqat Boshliq/Dasturchi (2026-08-08, vazifalar

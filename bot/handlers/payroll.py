@@ -35,6 +35,14 @@ def _payslip_text(data: dict) -> str:
         lines.append(f"Kechikish jarimasi: −{_fmt_money(data['fine_amount'])}")
     if data.get("absent_deduction"):
         lines.append(f"Kelmagan kun ushlanmasi: −{_fmt_money(data['absent_deduction'])}")
+    # Avans va qo'lda kiritilgan qo'shimcha/ushlanmalar (2026-08-13). Bular
+    # ILGARI KO'RSATILMASDI — `Jami` qatorlar yig'indisiga to'g'ri kelmasdi.
+    if data.get("adjustments_plus"):
+        lines.append(f"Qo'shimcha: +{_fmt_money(data['adjustments_plus'])}")
+    if data.get("advance_amount"):
+        lines.append(f"Avans (olingan): −{_fmt_money(data['advance_amount'])}")
+    if data.get("adjustments_minus"):
+        lines.append(f"Ushlanma: −{_fmt_money(data['adjustments_minus'])}")
     lines.append("")
     lines.append(f"<b>Jami: {_fmt_money(data['net'])}</b>")
     if data.get("approved_at"):

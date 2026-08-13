@@ -26,25 +26,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { currentMonthKey } from "@/components/PeriodPicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type FinePolicy,
   type FinePolicyInput,
   type OvertimeProfile,
-  type ReadinessIssue,
-  type SalaryRate,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
-  useCreateSalaryRate,
-  usePayrollPreflight,
   useDeleteFinePolicy,
   useFinePolicies,
   useFinePolicyEditors,
   useOvertimeProfiles,
   usePositions,
-  useSalaryRates,
   useSetFinePolicyEditor,
   useUpsertFinePolicy,
   useUpsertOvertimeProfile,
@@ -471,192 +465,6 @@ function FinePolicyTab() {
 }
 
 // ─────────────────────────────────────────────
-// Tab 2: Oylik stavkalar
-// ─────────────────────────────────────────────
-
-function SalaryRateTab() {
-  const usersQuery = useUsers();
-  const [userId, setUserId] = useState<number | null>(null);
-  const ratesQuery = useSalaryRates(userId ?? 0, userId !== null);
-  const createRate = useCreateSalaryRate();
-
-  // Kimda stavka YO'Q — `preflight` allaqachon shuni hisoblaydi (u yerda
-  // qamrov backend bilan bir xil: davomat kuzatiladigan faol xodimlar).
-  // Joriy oy olinadi: stavka kiritilgach ro'yxat o'z-o'zidan qisqaradi.
-  const preflightQuery = usePayrollPreflight(currentMonthKey());
-  const missingRate = preflightQuery.data?.no_salary_rate ?? [];
-
-  const [amount, setAmount] = useState("");
-  const [payBasis, setPayBasis] = useState("monthly");
-  const [effectiveFrom, setEffectiveFrom] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [note, setNote] = useState("");
-
-  const rateColumns: ColumnDef<SalaryRate>[] = [
-    {
-      accessorKey: "effective_from",
-      header: "Kuchga kirgan",
-      cell: ({ row }) => format(new Date(row.original.effective_from), "dd.MM.yyyy"),
-    },
-    { accessorKey: "amount", header: "Summa", cell: ({ row }) => fmtMoney(row.original.amount) },
-    {
-      accessorKey: "pay_basis",
-      header: "Asos",
-      cell: ({ row }) =>
-        ({ monthly: "Oylik", daily: "Kunlik", hourly: "Soatlik" })[row.original.pay_basis] ??
-        row.original.pay_basis,
-    },
-    { accessorKey: "note", header: "Izoh", cell: ({ row }) => row.original.note ?? "—" },
-  ];
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!userId) {
-      toast.error("Xodimni tanlang");
-      return;
-    }
-    const n = Number(amount);
-    if (!n || n <= 0) {
-      toast.error("Summa musbat son bo'lishi kerak");
-      return;
-    }
-    createRate.mutate(
-      { user_id: userId, amount: n, pay_basis: payBasis, effective_from: effectiveFrom, note: note || null },
-      {
-        onSuccess: () => {
-          const nomi = (usersQuery.data ?? []).find((u) => u.id === userId)?.full_name ?? "";
-          toast.success(nomi ? `${nomi} — stavka qo'shildi` : "Stavka qo'shildi");
-          setAmount("");
-          setNote("");
-          // Xodim tanlovi ham TOZALANADI. Ilgari tanlangan xodim qolib
-          // ketardi va HR ketma-ket bir necha kishiga stavka kiritayotganda
-          // xodimni almashtirishni unutib, AYNI sana uchun ikkinchi marta
-          // yuborardi -> 400 «Bu sanaga allaqachon stavka kiritilgan».
-          setUserId(null);
-        },
-      }
-    );
-  };
-
-  return (
-    <div className="grid gap-6 md:grid-cols-3">
-      <Card className="h-fit md:col-span-1">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Yangi stavka</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {/* Stavkasi hali yo'q xodimlar. Ularga oylik ham, jarima ham
-              hisoblanmaydi — ya'ni jarima qoidasi qanday sozlansa ham natija
-              0 bo'ladi. Shuning uchun ro'yxat ko'rinib tursin va bir bosishda
-              tanlansin (HR ketma-ket bir necha kishiga kiritadi). */}
-          {missingRate.length > 0 && (
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <div className="text-xs font-medium text-amber-900">
-                Stavkasi yo'q — {missingRate.length} xodim
-              </div>
-              <p className="mt-0.5 text-xs text-amber-800">
-                Ularga oylik ham, jarima ham hisoblanmaydi. Ismni bosing.
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {missingRate.map((u: ReadinessIssue) => (
-                  <button
-                    key={u.user_id}
-                    type="button"
-                    onClick={() => setUserId(u.user_id)}
-                    className={
-                      "rounded-md border px-2 py-1 text-xs " +
-                      (userId === u.user_id
-                        ? "border-amber-500 bg-amber-100 font-medium text-amber-900"
-                        : "border-amber-300 bg-white text-amber-900 hover:bg-amber-100")
-                    }
-                  >
-                    {u.full_name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mb-4">
-            <Label>Xodim</Label>
-            <Select value={userId ? String(userId) : undefined} onValueChange={(v) => setUserId(Number(v))}>
-              <SelectTrigger>
-                <SelectValue placeholder="Tanlang" />
-              </SelectTrigger>
-              <SelectContent>
-                {(usersQuery.data ?? []).map((u) => (
-                  <SelectItem key={u.id} value={String(u.id)}>
-                    {u.full_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <Label htmlFor="sr-amount">Summa (so'm)</Label>
-              <Input
-                id="sr-amount"
-                type="number"
-                min={1}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <Label>Hisob asosi</Label>
-              <Select value={payBasis} onValueChange={setPayBasis}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="monthly">Oylik (qat'iy)</SelectItem>
-                  <SelectItem value="daily">Kunbay</SelectItem>
-                  <SelectItem value="hourly">Soatbay</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="sr-date">Kuchga kirish sanasi</Label>
-              <Input
-                id="sr-date"
-                type="date"
-                value={effectiveFrom}
-                onChange={(e) => setEffectiveFrom(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <Label htmlFor="sr-note">Izoh (ixtiyoriy)</Label>
-              <Input id="sr-note" value={note} onChange={(e) => setNote(e.target.value)} />
-            </div>
-            <Button type="submit" disabled={createRate.isPending || !userId} className="w-full">
-              {createRate.isPending ? "Saqlanmoqda..." : "Qo'shish"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <div className="md:col-span-2">
-        <h3 className="mb-2 font-semibold">Stavka tarixi</h3>
-        {!userId ? (
-          <p className="text-sm text-slate-500">Tarixni ko'rish uchun xodimni tanlang.</p>
-        ) : (
-          <DataTable
-            columns={rateColumns}
-            data={ratesQuery.data}
-            isLoading={ratesQuery.isLoading}
-            error={ratesQuery.error ? ratesQuery.error.message : null}
-            onRetry={() => ratesQuery.refetch()}
-            empty={{ text: "Bu xodim uchun hali stavka kiritilmagan." }}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
 // Tab 3: Qo'shimcha ish
 // ─────────────────────────────────────────────
 
@@ -983,14 +791,13 @@ export default function PayrollSettings() {
         title="Ish haqi sozlamalari"
         description={
           isPayrollManager
-            ? "Jarima qoidasi, oylik va KPI stavkalari, qo'shimcha ish profillari."
+            ? "Jarima qoidasi, KPI stavkalari, qo'shimcha ish profillari. Oylik stavkalar «Ish haqi» sahifasiga ko'chirildi."
             : "Sizga kechikish/jarima qoidasini o'zgartirish huquqi berilgan."
         }
       />
       <Tabs defaultValue="policy">
         <TabsList>
           <TabsTrigger value="policy">Jarima qoidasi</TabsTrigger>
-          {isPayrollManager && <TabsTrigger value="rates">Oylik stavkalar</TabsTrigger>}
           {isPayrollManager && <TabsTrigger value="kpi">KPI stavkalari</TabsTrigger>}
           {isPayrollManager && <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>}
         </TabsList>
@@ -1000,11 +807,6 @@ export default function PayrollSettings() {
             {canGrant && <FinePolicyEditorsCard />}
           </div>
         </TabsContent>
-        {isPayrollManager && (
-          <TabsContent value="rates">
-            <SalaryRateTab />
-          </TabsContent>
-        )}
         {isPayrollManager && (
           <TabsContent value="kpi">
             <KpiRateTab />

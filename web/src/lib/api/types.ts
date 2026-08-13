@@ -535,6 +535,11 @@ export interface MyPayslip {
   absent_deduction: number | null;
   overtime_amount: number | null;
   bonus_amount: number | null;
+  // Avans alohida ko'rsatiladi — `adjustments_minus` dan CHIQARILGAN
+  // (backend shunday qaytaradi), aks holda bitta summa ikki marta chiqardi.
+  advance_amount: number | null;
+  adjustments_plus: number | null;
+  adjustments_minus: number | null;
   net: number | null;
   currency: string | null;
   approved_at: string | null;
@@ -669,6 +674,17 @@ export interface PayrollAdjustment {
   reason: string;
   created_by: number;
   created_at: string;
+  // Avans (2026-08-13). `category='manual'` — HR qo'lda kiritgan eski
+  // qo'shimcha/ushlanma (tasdiq talab qilmaydi, `status='approved'`).
+  category: "manual" | "advance";
+  status: "pending" | "approved" | "rejected";
+  issued_on: string | null;
+  decided_by: number | null;
+  decided_at: string | null;
+  decided_note: string | null;
+  full_name: string | null;
+  created_by_name: string | null;
+  decided_by_name: string | null;
 }
 
 export interface PayslipItem {

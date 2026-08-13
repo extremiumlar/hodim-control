@@ -472,6 +472,38 @@ export const useCreateSalaryRate = () =>
   // bo'lmasdi.
   useApiMutation(api.createSalaryRate, [["payroll", "rates"], ["payroll", "preflight"]]);
 
+export const useUpdateSalaryRate = () =>
+  useApiMutation(
+    (vars: {
+      rateId: number;
+      data: { amount?: number; pay_basis?: string; effective_from?: string; note?: string | null };
+    }) => api.updateSalaryRate(vars.rateId, vars.data),
+    [["payroll", "rates"], ["payroll", "preflight"]]
+  );
+
+// ── Avans (2026-08-13) ──
+export const usePayrollAdjustments = (
+  params: { period?: string; user_id?: number; category?: string } = {},
+  enabled = true
+) =>
+  useQuery({
+    queryKey: ["payroll", "adjustments", params] as const,
+    queryFn: () => api.listPayrollAdjustments(params),
+    enabled,
+  });
+
+export const useCreateAdvance = () =>
+  // `payslips`/`periods` ham yangilanadi: avans tasdiqlangach oylik summasi
+  // o'zgaradi va jadval eski raqam bilan qolib ketmasin.
+  useApiMutation(api.createAdvance, [["payroll", "adjustments"]]);
+
+export const useDecideAdvance = () =>
+  useApiMutation(
+    (vars: { adjustmentId: number; approve: boolean; note?: string | null }) =>
+      api.decideAdvance(vars.adjustmentId, { approve: vars.approve, note: vars.note }),
+    [["payroll", "adjustments"], ["payroll", "payslips"], ["payroll", "payslip"]]
+  );
+
 export const useHrApprovePayrollPeriod = () =>
   useApiMutation(api.hrApprovePayrollPeriod, [["payroll"]]);
 

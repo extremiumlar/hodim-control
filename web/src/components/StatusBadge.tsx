@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
  * rang xaritasi. "pending" ikki kontekstda har xil: vazifada ko'k
  * (jarayonda), so'rovda esa amber (qaror kutilmoqda) — shuning uchun kind.
  */
-type Kind = "attendance" | "task" | "request" | "payslip" | "overtime" | "appeal";
+type Kind = "attendance" | "task" | "request" | "payslip" | "overtime" | "appeal" | "advance";
 
 const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   attendance: {
@@ -39,6 +39,14 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   overtime: {
     pending: { text: "Kutilmoqda", cls: "bg-amber-100 text-amber-700" },
     approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
+    rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
+  },
+  // Avans: holatlar `overtime` bilan bir xil, lekin matni boshqa — bu yerda
+  // «tasdiqlangan» degani "pul oylikdan AYIRILADI", ya'ni HR uchun ma'nosi
+  // teskari. Shuning uchun alohida tur (nusxa emas, aniqlik uchun).
+  advance: {
+    pending: { text: "Boshliq tasdig'i kutilmoqda", cls: "bg-amber-100 text-amber-700" },
+    approved: { text: "Tasdiqlangan — oylikdan ayiriladi", cls: "bg-emerald-100 text-emerald-700" },
     rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
   },
   // E'tiroz/shikoyat: `request`dan farqli — oraliq «o'rganilmoqda» holati bor

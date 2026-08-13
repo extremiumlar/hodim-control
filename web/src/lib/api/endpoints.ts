@@ -354,6 +354,12 @@ export const api = {
   listSalaryRates: (userId: number) => apiFetch<SalaryRate[]>(`/payroll/rates?user_id=${userId}`),
   createSalaryRate: (data: { user_id: number; amount: number; pay_basis: string; effective_from: string; note?: string | null }) =>
     apiFetch<SalaryRate>("/payroll/rates", { method: "POST", body: JSON.stringify(data) }),
+  // PATCH — faqat YUBORILGAN maydon o'zgaradi. `note: null` yuborish izohni
+  // tozalaydi, shuning uchun uni "yubormaslik"dan farqlash kerak.
+  updateSalaryRate: (
+    rateId: number,
+    data: { amount?: number; pay_basis?: string; effective_from?: string; note?: string | null }
+  ) => apiFetch<SalaryRate>(`/payroll/rates/${rateId}`, { method: "PATCH", body: JSON.stringify(data) }),
   listKpiRates: () => apiFetch<KpiRate[]>("/payroll/kpi-rates"),
   createKpiRate: (data: {
     scope: string;
@@ -384,6 +390,26 @@ export const api = {
     }),
   createPayrollAdjustment: (data: { user_id: number; period: string; kind: "plus" | "minus"; amount: number; reason: string }) =>
     apiFetch<PayrollAdjustment>("/payroll/adjustments", { method: "POST", body: JSON.stringify(data) }),
+  listPayrollAdjustments: (params: { period?: string; user_id?: number; category?: string } = {}) => {
+    const q = new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== "")
+        .map(([k, v]) => [k, String(v)])
+    ).toString();
+    return apiFetch<PayrollAdjustment[]>(`/payroll/adjustments${q ? `?${q}` : ""}`);
+  },
+  createAdvance: (data: {
+    user_id: number;
+    period: string;
+    amount: number;
+    issued_on: string;
+    reason: string;
+  }) => apiFetch<PayrollAdjustment>("/payroll/advances", { method: "POST", body: JSON.stringify(data) }),
+  decideAdvance: (adjustmentId: number, data: { approve: boolean; note?: string | null }) =>
+    apiFetch<PayrollAdjustment>(`/payroll/advances/${adjustmentId}/decide`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   deletePayrollAdjustment: (adjustmentId: number) =>
     apiFetch<{ deleted: boolean }>(`/payroll/adjustments/${adjustmentId}`, { method: "DELETE" }),
   listPayrollPeriods: () => apiFetch<PayrollPeriodSummary[]>("/payroll/periods"),
