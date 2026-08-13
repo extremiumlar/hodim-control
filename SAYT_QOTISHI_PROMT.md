@@ -69,6 +69,66 @@ CRON YUKI (har biri jonli o'lchandi)
   ⚠️ `/daily-results/sync` davomiyligi CRM yukiga qarab 4s dan 40s gacha
   o'zgaradi (boshqa kuzatuvda 40.3 s qayd etilgan; kod izohida "~30-40s").
 
+`/daily-results/sync` NEGA SEKIN — MEXANIZM (2026-08-13, `logs/api.log`dan)
+  Har chaqiruvda Uysot'ga aynan shu so'rovlar ketadi:
+      3 × POST /call-history/filter   (sahifalash)
+      1 × POST /lead/filter           (tashrif hisobi, _load_day_visits)
+  Har so'rov orasida ~1.2 s (rate byudjet pacing'i) → jami ~4 s.
+
+  ILDIZ: `crm/uysot.py: _load_day_call_counts` HAR SAFAR 1-SAHIFADAN
+  boshlab BUTUN KUNNI qaytadan varaqlaydi (kechagi yozuvga yetguncha).
+  `self._day_cache` bor, LEKIN adapter har chaqiruvda qaytadan yaratiladi —
+  kesh amalda ishlamaydi.
+
+  Shuning uchun narx kun davomida O'SADI:
+      ertalab ~100 qo'ng'iroq  →  1-2 sahifa  →  ~2 s
+      15:30   ~300 qo'ng'iroq  →  3 sahifa    →  ~4 s   (o'lchandi)
+      kechqurun 1500+          →  15-20 sahifa→  20-25 s
+      + 429 backoff                            →  ~40 s (kuzatilgan)
+
+  Bu ish har 2 daqiqada takrorlanadi — kuniga ~360 marta AYNI ma'lumot
+  qayta yuklanadi. `logs/api.log`da jami 3519 ta `call-history/filter`.
+
+UYSOT API IMKONIYATLARI — SINALGAN (2026-08-13)
+  `/call-history/filter` SERVER TOMONIDA VAQT FILTRINI QO'LLAB-QUVVATLAMAYDI.
+  Olti xil parametr sinaldi — hammasi AYNI natijani qaytardi
+  (`totalElements=37999`), ya'ni noma'lum maydonlar e'tiborsiz qoldiriladi:
+      {"startStamp": {"from": <unix>}}      -> 37999
+      {"startStampFrom": <unix>}            -> 37999
+      {"dateFrom": "...", "dateTo": "..."}  -> 37999
+      {"from": <unix>, "to": <unix>}        -> 37999
+      {"startDate": "YYYY-MM-DD"}           -> 37999
+      (filtrsiz baza)                       -> 37999
+  ⇒ "faqat yangi qo'ng'iroqlarni ber" deb SO'RAB BO'LMAYDI. Inkremental
+  yechim MIJOZ tomonida bo'lishi shart. Bu variantlarni qayta sinama.
+
+  Foydali xususiyat: ro'yxat `startStamp` bo'yicha KAMAYISH tartibida
+  (eng yangisi birinchi) keladi — ya'ni "ko'rilgan yozuvga yetganda to'xtash"
+  strategiyasi ishlaydi.
+
+  Taqqoslash uchun: `/lead/filter` server tomonida filtrlashni QO'LLAB-
+  QUVVATLAYDI (`pipeStatusIds`) — ya'ni API filtrlarni umuman biladi,
+  faqat call-history uchun yo'q.
+
+WEBHOOK QO'NG'IROQLARNI QOPLAMAYDI
+  Uysot webhook voqealari ro'yxatida FAQAT bitta toifa bor: "Lidlar"
+  (6 ta voqea — yaratildi / biriktirildi / bosqichi o'zgardi / birlashtirildi
+  / o'chirildi / maydonlari yangilandi). Qo'ng'iroq voqeasi YO'Q.
+  ⇒ "webhook bilan hal qilamiz" — qo'ng'iroqlar uchun MUMKIN EMAS.
+
+LID POLLINGI TO'XTAGAN (2026-08-12 dan)
+  Uysot webhook ishga tushgach `crm_mode.lead_polling_active()` pollingni
+  o'zi to'xtatdi:
+      lid diff (in-process): {'ok': True, 'skipped': 'webhook_mode'}
+  Bu QAYTARILADIGAN: webhook jimib qolsa polling avtomatik tiklanadi.
+  DIQQAT: webhook faqat LID voqealarini yuboradi — QO'NG'IROQLARNI
+  yubormaydi, shuning uchun `/daily-results/sync` yuki saqlanib qolgan.
+
+  Og'ir to'liq lid skani (180+ sahifa/30 daqiqa) 2026-08-03 da allaqachon
+  olib tashlangan — lid kesimi endi LOKAL bazadan hisoblanadi
+  (`stats.py: _local_lead_breakdown`). Ya'ni "lid snapshot" ning og'ir
+  qismi — endi faqat uning QO'NG'IROQLAR bo'lagi (`_snapshot_calls`).
+
 RESURS LIMITLARI (CloudLinux LVE, `uapi ResourceUsage`)
   EP (kirish jarayonlari) : 40      (ishlatilgan ~0)
   NPROC                   : 80      (ishlatilgan ~7)
@@ -115,9 +175,31 @@ BOSHQA JARAYONLAR (xotira byudjeti uchun)
 ═══════════════════════════════════════════════════════════════
 
 P1. `/daily-results/sync` yagona ishchini 4-40 soniya bloklaydi, har 2 daqiqada.
-    Ma'lum yechim: cron jarayonining O'ZIDA bajarish. Naqsh loyihada BOR va
-    ishlaydi — `cron_tick.py: _run_service_inprocess` (hot_lead, idle_watch,
-    lead_sync, lead_diff shu yo'l bilan ko'chirilgan).
+    Mexanizmi 2-bo'limda batafsil: butun kun qayta yuklanadi, narx kun
+    davomida o'sadi.
+
+    IKKI MUSTAQIL YO'NALISH BOR — ikkalasini ham baholab, taqqoslab ber:
+
+    (a) YUKNI KO'CHIRISH — HTTP o'rniga cron jarayonining O'ZIDA bajarish.
+        Naqsh loyihada BOR va ishlaydi: `cron_tick.py: _run_service_inprocess`
+        (hot_lead, idle_watch, lead_sync, lead_diff shu yo'l bilan ko'chirilgan).
+        Ta'siri: sayt bloklanmaydi, LEKIN ishning o'zi bari bir 4-40 s davom
+        etadi (endi cron jarayonida).
+
+    (b) YUKNI YO'Q QILISH — inkremental yuklash: butun kunni emas, faqat
+        OXIRGI SINXRONIZATSIYADAN KEYINGI qo'ng'iroqlarni olish, natijani
+        bazada to'plab borish.
+        Kutilayotgan ta'sir (o'lchovga asoslangan baho):
+            sahifalar : 1→20 (o'suvchi)  =>  doim ~1
+            davomiylik: 2→40 s           =>  ~1.2 s, DOIMIY
+            Uysot so'rovlari/kun: ~3500  =>  ~400
+        Bu 429 bosimini ham keskin kamaytiradi (P3 ga qara).
+
+    (b) ildizni yo'q qiladi, (a) esa faqat ko'chiradi. Qaysi biri yoki
+    ikkalasi kerakligini O'ZING asoslab ber — jumladan (b) ning xavflari:
+    qo'ng'iroq keyin tahrirlansa/o'chirilsa nima bo'ladi, "oxirgi sinxron"
+    nuqtasi qayerda saqlanadi, xato bo'lsa qanday to'liq qayta hisoblash
+    (reconcile) qilinadi.
 
 P2. Sovuq start: har izolyatsiyalangan so'rovga +1.5 s.
 
