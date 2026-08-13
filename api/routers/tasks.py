@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services import cron_jobs
 from api.deps import get_current_user, get_db, is_superadmin, require_roles, verify_bot_secret
 from api.schemas import (
     TaskBotCreate,
@@ -368,17 +369,9 @@ async def mark_overdue_tasks(db: AsyncSession = Depends(get_db)) -> dict:
     pending vazifalarni overdue ga o'tkazadi. Muddatsiz (deadline=None) vazifalar
     tegilmaydi. Overdue vazifani xodim keyin ham «Bajardim» bilan done qila oladi
     (complete_task faqat done bo'lganda qisqa tutashadi)."""
-    result = await db.execute(
-        update(TaskModel)
-        .where(
-            TaskModel.status == TaskStatus.pending.value,
-            TaskModel.deadline.isnot(None),
-            TaskModel.deadline < datetime.utcnow(),
-        )
-        .values(status=TaskStatus.overdue.value)
-    )
-    await db.commit()
-    return {"marked_overdue": result.rowcount or 0}
+    # Mantiq `api/services/cron_jobs.py` da — cPanel cron uni HTTP orqali
+    # emas, o'z jarayonida chaqiradi (Bosqich 4b).
+    return await cron_jobs.mark_overdue(db)
 
 
 @router.post("/send-reminders", dependencies=[Depends(verify_bot_secret)])

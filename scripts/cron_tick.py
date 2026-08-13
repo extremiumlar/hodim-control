@@ -79,6 +79,13 @@ SYSTEM_HEALTH_LOCK = ROOT / "logs" / "system_health.lock"
 SYSTEM_HEALTH_LOCK_STALE_MINUTES = 6
 AUTO_PLAN_LOCK = ROOT / "logs" / "auto_plan.lock"
 AUTO_PLAN_LOCK_STALE_MINUTES = 6
+# Bosqich 4b (2026-08-13) — qolgan ticklar. `group_digest` HAR DAQIQA
+# ishlaydi va odatda arzon no-op (bitta SELECT), lekin vaqti kelganda
+# guruhga digest yuboradi — shuning uchun lock qisqa, ammo bor.
+GROUP_DIGEST_LOCK = ROOT / "logs" / "group_digest.lock"
+GROUP_DIGEST_LOCK_STALE_MINUTES = 5
+CRON_MISC_LOCK = ROOT / "logs" / "cron_misc.lock"
+CRON_MISC_LOCK_STALE_MINUTES = 5
 
 
 def _is_last_day(d: datetime) -> bool:
@@ -99,7 +106,6 @@ def _due(now: datetime) -> list:
     # Bu ikkisi foydalanuvchi sozlagan ANIQ daqiqada ishlashi kerak (vaqt bazadan
     # o'qiladi, ">=" semantikasi + kuniga-bir-marta qo'riqchisi bilan), shuning
     # uchun siyraklashtirilmaydi.
-    add("/stats/lead-stages/group-tick", timeout=120)  # kunlik digest (API vaqtni tekshiradi)
 
     # ── Siyraklashtirilgan (2026-07-27) ───────────────────────────────────────
     # SABAB: bu hostda Passenger'da ATIGI 1 ta ishchi jarayon bor. Har daqiqada
@@ -119,15 +125,11 @@ def _due(now: datetime) -> list:
         # konkurentlik = 1 bo'lgani uchun butun saytni shuncha vaqtga o'lik
         # qilardi.
         add("/anketa/tick", timeout=120)             # anketa max 2 daq kechikib boshlanadi
-    if m % 5 == 3:
-        add("/knowledge/tick", timeout=120)          # bilim bazasi AI ishlovi (draft yo'q — no-op)
-
     # ── Interval ──
-    if m % 15 == 0:
-        add("/tasks/mark-overdue")
-    # CRM aloqasi qo'riqchisi va AI avto-reja BU RO'YXATDA YO'Q (2026-08-13,
-    # Bosqich 4a) — ular in-process bajariladi (main() pastda). Chastota
-    # o'zgarmadi: m%30==17 va m%15==0.
+    # Bilim bazasi, muddati o'tgan vazifalar, CRM qo'riqchisi, AI avto-reja,
+    # guruh digesti va login tozalash BU RO'YXATDA YO'Q (2026-08-13, Bosqich
+    # 4a/4b) — hammasi in-process bajariladi (main() pastda). Chastota
+    # o'zgarmadi.
     # DIQQAT: lid snapshoti (/stats/lead-stages/sync) bu ro'yxatda YO'Q — u og'ir
     # (~5-7 daqiqa) va gateway HTTP limitiga sig'maydi; _lead_sync_due + in-process
     # yo'l bilan bajariladi (pastda).
@@ -156,7 +158,6 @@ def _due(now: datetime) -> list:
         # urinish yozuvlarini tozalash (scheduler/main.py'dagi
         # login_security_cleanup bilan bir xil — cron_tick shared hostingda
         # o'sha APScheduler job'ining o'rnini bosadi).
-        add("/auth/login-security-cleanup", json={}, timeout=30)
     if m == cfg.AI_WATCH_MINUTE:
         add("/ai-watch/tick", timeout=180)           # AI kuzatuv (o'chiqda no-op)
 
@@ -392,6 +393,28 @@ async def _run_auto_plan_snapshot_inprocess(now: datetime) -> None:
     await _run_service_inprocess(now, "avto-reja snapshot", AUTO_PLAN_LOCK, AUTO_PLAN_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_group_digest_inprocess(now: datetime) -> None:
+    """Kunlik lid digesti — HAR DAQIQA tekshiriladi (vaqtni servisning o'zi
+    bazadan o'qiydi). Cron HTTP trafigining oxirgi har-daqiqalik qismi shu edi."""
+    async def runner(db):
+        from api.services.cron_jobs import group_digest_tick
+        return await group_digest_tick(db)
+
+    await _run_service_inprocess(now, "guruh digesti", GROUP_DIGEST_LOCK, GROUP_DIGEST_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_misc_inprocess(now: datetime, label: str, fn_name: str) -> None:
+    """Kichik ticklar uchun umumiy yurituvchi (`cron_jobs` dagi funksiya nomi
+    bo'yicha). Alohida yurituvchi yozish o'rniga bitta qolip — ular bir xil
+    shaklda: `async def f(db) -> dict`."""
+    async def runner(db):
+        from api.services import cron_jobs
+        return await getattr(cron_jobs, fn_name)(db)
+
+    await _run_service_inprocess(now, label, CRON_MISC_LOCK, CRON_MISC_LOCK_STALE_MINUTES, runner)
+
+
+
 
 def _lead_diff_due(now: datetime) -> bool:
     return now.minute % cfg.LEAD_DIFF_INTERVAL_MINUTES == 0
@@ -462,6 +485,16 @@ async def main() -> None:
         await _run_system_health_inprocess(now)
     if now.minute % 15 == 0:
         await _run_auto_plan_snapshot_inprocess(now)
+
+    # ── Bosqich 4b: qolgan ticklar ham in-process ──
+    # Shu nuqtadan keyin Passenger'ga cron trafigi deyarli tegmaydi.
+    await _run_group_digest_inprocess(now)
+    if now.minute % 15 == 0:
+        await _run_misc_inprocess(now, "muddati o'tgan vazifalar", "mark_overdue")
+    if now.minute % 5 == 3:
+        await _run_misc_inprocess(now, "bilim bazasi", "knowledge_tick")
+    if now.minute == 0:
+        await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):

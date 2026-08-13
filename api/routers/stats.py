@@ -6,6 +6,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.services import cron_jobs
 from api.deps import get_current_user, get_db, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, metrics_for
 from api.services import lead_diff
@@ -995,13 +996,8 @@ async def web_operator_summary(
 
 
 async def _get_group_config(db: AsyncSession) -> GroupPostConfig:
-    cfg = await db.get(GroupPostConfig, 1)
-    if cfg is None:
-        cfg = GroupPostConfig(id=1, post_hour=19, post_minute=10)
-        db.add(cfg)
-        await db.commit()
-        await db.refresh(cfg)
-    return cfg
+    """Servisdagi bilan YAGONA manba — qolgan endpointlar shu o'ram orqali."""
+    return await cron_jobs.get_group_config(db)
 
 
 @router.post("/lead-stages/group-tick", dependencies=[Depends(verify_bot_secret)])
@@ -1011,22 +1007,7 @@ async def group_post_tick(db: AsyncSession = Depends(get_db)) -> dict:
     scheduler aynan sozlangan daqiqani o'tkazib yuborsa ham (restart, kechikish)
     keyingi tick'da baribir yuboriladi; `last_posted_date` qo'riqchi bir kunda ikki
     marta yuborilishdan saqlaydi."""
-    cfg = await _get_group_config(db)
-    now = datetime.now(TASHKENT_TZ)
-    today = now.date()
-    due = (now.hour, now.minute) >= (cfg.post_hour, cfg.post_minute)
-    if due and cfg.last_posted_date != today:
-        result = await send_daily_digest(db)
-        cfg.last_posted_date = today
-        # Digest ko'rsatgan jami raqamlar — ertalabki "kecha yakuni" tuzatish xabari
-        # (send_yesterday_correction) yakuniy sonlarni shu bilan solishtiradi.
-        totals = result.get("totals") or {}
-        cfg.last_posted_calls = totals.get("calls")
-        cfg.last_posted_leads = totals.get("leads")
-        cfg.last_posted_visits = totals.get("visits")
-        await db.commit()
-        return {"fired": True, **result}
-    return {"fired": False, "time": f"{cfg.post_hour:02d}:{cfg.post_minute:02d}"}
+    return await cron_jobs.group_digest_tick(db)
 
 
 @router.get("/lead-stages/group-time/{telegram_id}", dependencies=[Depends(verify_bot_secret)])

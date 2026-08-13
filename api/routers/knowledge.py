@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.services import cron_jobs
 from api.deps import get_db, verify_bot_secret
 from api.services import knowledge as svc
 from db.models import AuditLog, KnowledgeEntry, KnowledgeStatus, PlaybookEntry, User
@@ -119,14 +120,7 @@ async def ingest(payload: ActorPayload, db: AsyncSession = Depends(get_db)) -> d
 async def tick(db: AsyncSession = Depends(get_db)) -> dict:
     """Har daqiqa (cron/scheduler): draft yozuvlarni chegaralangan AI to'plamida
     qayta ishlaydi. Draft bo'lmasa yengil no-op."""
-    pending = await db.scalar(
-        select(func.count()).select_from(KnowledgeEntry).where(
-            KnowledgeEntry.status == KnowledgeStatus.draft.value
-        )
-    )
-    if not pending:
-        return {"processed": 0, "remaining": 0}
-    return await svc.process_batch(db)
+    return await cron_jobs.knowledge_tick(db)
 
 
 @router.get("/review-next/{telegram_id}")

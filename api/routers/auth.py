@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
+from api.services import cron_jobs
 from api.deps import get_current_user, get_db, rate_limit, verify_bot_secret
 from api.schemas import (
     AppLoginConfirmOut,
@@ -303,21 +304,6 @@ async def login_security_cleanup(db: AsyncSession = Depends(get_db)) -> dict:
     bilan) oshganda o'chiriladi — imzo o'zi shu vaqtda allaqachon yaroqsiz
     bo'lib qoladi. Urinish yozuvlari 1 soatdan oshganda — eng uzun oyna
     (dev-login, 3600s) shundan qisqa."""
-    hash_cutoff = datetime.utcnow() - timedelta(hours=25)
-    attempt_cutoff = datetime.utcnow() - timedelta(hours=1)
-    # Ilova login tokenlari 5 daqiqada eskiradi; 1 soat — yetarli zahira.
-    # Ilgari bu jadval UMUMAN tozalanmasdi va cheksiz o'sib borardi.
-    app_token_cutoff = datetime.utcnow() - timedelta(hours=1)
-
-    hash_result = await db.execute(delete(UsedTelegramLoginHash).where(UsedTelegramLoginHash.consumed_at < hash_cutoff))
-    attempt_result = await db.execute(delete(LoginAttempt).where(LoginAttempt.created_at < attempt_cutoff))
-    app_token_result = await db.execute(
-        delete(AppLoginToken).where(AppLoginToken.created_at < app_token_cutoff)
-    )
-    await db.commit()
-
-    return {
-        "deleted_hashes": hash_result.rowcount,
-        "deleted_attempts": attempt_result.rowcount,
-        "deleted_app_login_tokens": app_token_result.rowcount,
-    }
+    # Mantiq `api/services/cron_jobs.py` da (Bosqich 4b) — chegaralar va
+    # javob kalitlari o'zgarmadi, faqat joyi ko'chdi.
+    return await cron_jobs.cleanup_login_security(db)
