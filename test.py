@@ -1647,6 +1647,21 @@ def run_tests(ctx: dict) -> None:
             check("Tashrif: o'zi olib kelib o'zi yopganda ikki marta sanalmaydi",
                   ops.get(970002, 0) == uniq, f"yopgan={ops.get(970002)}, noyob={uniq}")
 
+            # 2026-08-13 (egasining qarori): `first_seen` — bu CRM hodisasi
+            # emas, bizning skaner lidni birinchi ko'rgani. Lid o'sha paytda
+            # allaqachon Tashrifda bo'lsa, u tashrif deb SANALMASLIGI kerak.
+            cur.execute(
+                "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                " values (970104,'first_seen',NULL,NULL,?,'T-Tashrif',970002,'T-op',970002,?,?)",
+                (VISIT_ID, ts_now, now_utc.isoformat(sep=" ", timespec="seconds")))
+            conn.commit()
+            ser2 = _aio2.run(_stats())
+            uniq2 = ser2["daily_unique"].get(date.today(), 0)
+            check("Tashrif: first_seen (skaner endi ko'rgan lid) SANALMAYDI",
+                  uniq2 == uniq, f"first_seen'siz={uniq}, keyin={uniq2}")
+
             # recalc-visits endpointi: dry_run farqni ko'rsatadi, yozmaydi
             today_iso3 = date.today().isoformat()
             cur.execute(
@@ -1683,7 +1698,7 @@ def run_tests(ctx: dict) -> None:
                 f"&date_to={today_iso3}", headers=auth(emp_tok3))
             check("Tashrif: recalc oddiy xodimga -> 403", r3.status_code == 403, f"kod={r3.status_code}")
 
-            cur.execute("delete from lead_events where crm_lead_id in (970101,970102,970103)")
+            cur.execute("delete from lead_events where crm_lead_id in (970101,970102,970103,970104)")
             cur.execute("delete from daily_results where user_id in (?,?)", (u_olib, u_yopgan))
             cur.execute("delete from users where id in (?,?)", (u_olib, u_yopgan))
             conn.commit()
@@ -5266,8 +5281,14 @@ def test_visit_counting() -> None:
                 ev(L + 1, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 11, 2, 0), day_epoch),
                 # B: dual-kredit — yopgan 991002, olib kelgan 991003
                 ev(L + 2, "stage_change", 111, 990002, 991002, 991002, 991003, datetime(2020, 6, 10, 9, 0), day_epoch),
-                # C: mas'ulsiz tashrif — jamida bor, operator kesimida yo'q
-                ev(L + 3, "first_seen", None, 990001, None, None, None, datetime(2020, 6, 10, 10, 0), day_epoch),
+                # C: mas'ulsiz tashrif — jamida bor, operator kesimida yo'q.
+                # 2026-08-13: turi `first_seen`dan `stage_change`ga o'zgartirildi —
+                # egasining qaroriga ko'ra `first_seen` (skaner lidni endi ko'rgani)
+                # umuman tashrif sanalmaydi; bu holat esa haqiqiy BOSQICH O'TISHI,
+                # faqat mas'uli noma'lum.
+                ev(L + 3, "stage_change", 111, 990001, None, None, None, datetime(2020, 6, 10, 10, 0), day_epoch),
+                # C2: skaner lidni birinchi marta Tashrifda ko'rdi — SANALMAYDI
+                ev(L + 7, "first_seen", None, 990001, None, 991009, 991009, datetime(2020, 6, 10, 10, 30), day_epoch),
                 # D: Tashrif bosqichlari orasida ko'chish — tashrif sanalmasin
                 ev(L + 4, "stage_change", 990001, 990002, 991001, 991001, 991001, datetime(2020, 6, 10, 11, 0), day_epoch),
                 # F: yana dual-kredit (yopgan 991001, olib kelgan 991003) — jami/kredit farqi uchun
@@ -5297,6 +5318,8 @@ def test_visit_counting() -> None:
               f"kreditlar={credits}")
         check("keyingi kun voqeasi kirmadi / Tashrif ichi ko'chish sanalmadi",
               agg.get(991001, {}).get("leads_touched") == 3, f"991001={agg.get(991001)}")
+        check("first_seen tashrif bermaydi (991009 = 0 kredit)",
+              agg.get(991009, {}).get("visits", 0) == 0, f"991009={agg.get(991009)}")
     except Exception:
         check("tashrif hisoblash testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 

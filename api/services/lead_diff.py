@@ -215,6 +215,30 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
 _DETECTION_LAG_DAYS = 3
 
 
+def _is_visit_event(ev: LeadEvent, visit_ids: set[int]) -> bool:
+    """Bu voqea HAQIQIY tashrifmi — ya'ni lid boshqa bosqichdan «Tashrif»ga
+    KO'CHIRILGANmi.
+
+    ⚠️ `first_seen` ATAYLAB CHIQARIB TASHLANDI (2026-08-13, egasining qarori).
+    `first_seen` — bu CRM'dagi hodisa EMAS, bu bizning skanerimiz lidni
+    BIRINCHI MARTA ko'rgani. Lid o'sha paytda allaqachon «Tashrif» bosqichida
+    turgan bo'lsa, tizim uni "hozir tashrifga o'tdi" deb yozardi. Jonli
+    oqibatlar: 2026-07-22 (jurnal boshlangan kun) — bir kunda 149 ta soxta
+    "tashrif"; 08-11 — Firuzabonu'ga 8 tashrif, aslida 2 ta ko'chirish, qolgan
+    6 tasi u o'zi CRM'ga kiritib darhol «Tashrif» qo'ygan lidlar (manba
+    EMPLOYEE). Egasi: bunday lidlar tashrif deb SANALMASIN — faqat bosqich
+    o'tishi (`stage_change`) hisoblanadi.
+
+    `responsible_change` ham hisoblanmaydi: unda bosqich o'zgarmaydi (mas'ul
+    almashadi), ya'ni `from == to` bo'lib quyidagi shart o'zi rad etadi."""
+    return (
+        bool(visit_ids)
+        and ev.event_type != "first_seen"
+        and ev.to_pipe_status_id in visit_ids
+        and ev.from_pipe_status_id not in visit_ids
+    )
+
+
 def _event_effective_utc(ev: LeadEvent) -> datetime:
     """Voqeaning HAQIQIY vaqti (naive UTC). CRM `updatedTimestamp`i bosqich
     o'tishining o'zida yangilanadi, ya'ni voqea vaqtiga `detected_at`dan ancha
@@ -291,11 +315,7 @@ async def daily_operator_breakdown(
         if not (day_start <= eff < day_end):
             continue
 
-        is_new_visit = (
-            bool(visit_ids)
-            and ev.to_pipe_status_id in visit_ids
-            and ev.from_pipe_status_id not in visit_ids
-        )
+        is_new_visit = _is_visit_event(ev, visit_ids)
         if is_new_visit:
             # Mas'ulsiz voqea operator kesimiga tushmaydi, lekin tashkilot
             # jamida baribir haqiqiy tashrif — yo'qolmasin.
@@ -353,12 +373,7 @@ async def visit_stats_range(
         local_day = eff.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ).date()
         days_with_events.add(local_day)
 
-        is_new_visit = (
-            bool(visit_ids)
-            and ev.to_pipe_status_id in visit_ids
-            and ev.from_pipe_status_id not in visit_ids
-        )
-        if not is_new_visit:
+        if not _is_visit_event(ev, visit_ids):
             continue
         daily_unique[local_day] = daily_unique.get(local_day, 0) + 1
         rid = ev.to_responsible_id
