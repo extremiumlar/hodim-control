@@ -1455,6 +1455,137 @@ class WorkLogCoverageOut(BaseModel):
     rows: list[WorkLogCoverageRow]
 
 
+# ─── E'tiroz / Shikoyat (KUNDALIK_ETIROZ_REJASI.md, Bosqich 4) ─────────────────
+
+_APPEAL_KINDS = {"objection", "complaint"}
+_APPEAL_TOPICS = {"attendance", "payroll", "work_env", "team", "other"}
+# E'tiroz — HAR DOIM aniq qarorga qarshi, ya'ni mavzusi ham aniq bo'lishi shart.
+_OBJECTION_TOPICS = {"attendance", "payroll"}
+
+
+class AppealCreateBase(BaseModel):
+    """Bot va web sxemalarining umumiy tanasi. `telegram_id` bu yerda YO'Q —
+    u faqat bot variantida qo'shiladi (web'da shaxs tokendan olinadi)."""
+
+    kind: str
+    topic: str = "other"
+    text: str = Field(min_length=10, max_length=3000)
+    is_anonymous: bool = False
+    recipient_role: str = "hr"
+    ref_date: dt.date | None = None
+    ref_period: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    file_id: str | None = Field(default=None, max_length=200)
+    file_type: str | None = Field(default=None, pattern="^(photo|document)$")
+
+    @field_validator("kind")
+    @classmethod
+    def _check_kind(cls, v: str) -> str:
+        if v not in _APPEAL_KINDS:
+            raise ValueError("kind: objection yoki complaint bo'lishi kerak")
+        return v
+
+    @field_validator("topic")
+    @classmethod
+    def _check_topic(cls, v: str) -> str:
+        if v not in _APPEAL_TOPICS:
+            raise ValueError(f"Noma'lum mavzu: {v}")
+        return v
+
+    @field_validator("recipient_role")
+    @classmethod
+    def _check_recipient(cls, v: str) -> str:
+        if v not in {"hr", "boss"}:
+            raise ValueError("recipient_role: hr yoki boss bo'lishi kerak")
+        return v
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        """E'tiroz MANZILLI bo'lishi shart — aks holda HR nima haqida
+        ekanini bilmaydi va yozishmalar boshlanadi. Anonimlik esa faqat
+        shikoyatda: e'tiroz aniq odamning aniq kuni/oyligi haqida, anonim
+        bo'lishi mantiqan mumkin emas."""
+        if self.kind == "objection":
+            if self.topic not in _OBJECTION_TOPICS:
+                raise ValueError("E'tiroz mavzusi 'attendance' yoki 'payroll' bo'lishi kerak")
+            if self.topic == "attendance" and self.ref_date is None:
+                raise ValueError("Davomat e'tirozi uchun sana (ref_date) ko'rsatilishi shart")
+            if self.topic == "payroll" and not self.ref_period:
+                raise ValueError("Oylik e'tirozi uchun davr (ref_period) ko'rsatilishi shart")
+            if self.is_anonymous:
+                raise ValueError("E'tiroz anonim bo'lishi mumkin emas")
+        else:
+            if self.topic in _OBJECTION_TOPICS:
+                raise ValueError("Shikoyat mavzusi 'work_env', 'team' yoki 'other' bo'lishi kerak")
+        return self
+
+
+class AppealBotCreate(AppealCreateBase):
+    telegram_id: int
+
+
+class AppealMeCreate(AppealCreateBase):
+    """Web/mobil (JWT) — `telegram_id` YO'Q, shaxs tokendan olinadi."""
+
+
+class AppealOut(BaseModel):
+    id: int
+    user_id: int | None  # anonim shikoyatda NULL (backend yashiradi)
+    user_full_name: str | None
+    kind: str
+    topic: str
+    text: str
+    is_anonymous: bool
+    recipient_role: str
+    ref_date: dt.date | None
+    ref_period: str | None
+    file_id: str | None
+    file_type: str | None
+    status: str
+    review_started_at: datetime | None
+    decided_by: int | None
+    decided_at: datetime | None
+    decision_note: str | None
+    created_at: datetime
+
+
+class AppealDecide(BaseModel):
+    """Qaror + MAJBURIY izoh. Izohsiz rad etish shaffoflikni buzadi — xodim
+    nega rad etilganini bilmaydi va nizо qaytadan boshlanadi (1.2-band)."""
+
+    decision: str  # accepted | rejected | resolved
+    note: str = Field(min_length=5, max_length=2000)
+
+    @field_validator("decision")
+    @classmethod
+    def _check_decision(cls, v: str) -> str:
+        if v not in {"accepted", "rejected", "resolved"}:
+            raise ValueError("decision: accepted, rejected yoki resolved")
+        return v
+
+
+class AppealDecideBot(AppealDecide):
+    telegram_id: int
+
+
+class AppealActorBot(BaseModel):
+    """Botdagi «O'rganyapman» tugmasi uchun — faqat aktyor kerak."""
+
+    telegram_id: int
+
+
+class AppealAttendanceTarget(BaseModel):
+    """E'tiroz uchun nishon: xodimning oxirgi kunlaridagi kechikish/kelmaslik.
+    Bot shu ro'yxatni tugma qilib ko'rsatadi — xodim sanani qo'lda termaydi."""
+
+    date: dt.date
+    status: str  # late | absent
+    late_minutes: int
+
+
+class AppealSlaTick(BaseModel):
+    dry_run: bool = False
+
+
 class WorkLogReminderTick(BaseModel):
     """Scheduler tick. `dry_run` — hech kimga YUBORMASDAN kimga ketishini
     qaytaradi (attendance reminder-tick bilan bir xil sinov naqshi)."""

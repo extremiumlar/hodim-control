@@ -113,6 +113,11 @@ ATTENDANCE_REMINDER_INTERVAL_MINUTES = 5
 # baribir bitta xabar ketadi (UNIQUE iz).
 WORK_LOG_REMINDER_INTERVAL_MINUTES = 10
 
+# E'tiroz/shikoyat SLA tekshiruvi — kuniga bir marta yetadi (chegara 3 va 5
+# KUN). Ish kuni boshida, HR stoliga o'tirganda ko'rsin.
+APPEALS_SLA_HOUR = 10
+APPEALS_SLA_MINUTE = 7
+
 # Telegram login xavfsizligi: replay-himoya hash'lari va rate-limit urinish
 # yozuvlarini tozalash chastotasi — vaqtinchalik jadvallar, shoshilinch emas.
 LOGIN_SECURITY_CLEANUP_INTERVAL_MINUTES = 60

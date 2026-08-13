@@ -150,6 +150,18 @@ async def attendance_reminder_tick() -> None:
         logger.info("Davomat eslatmasi: %s ta yuborildi (nomzod %s)", body["sent"], body.get("candidates"))
 
 
+async def appeals_sla_tick() -> None:
+    """E'tiroz/shikoyat SLA: 3 kundan beri javobsiz murojaat uchun qabul
+    qiluvchiga eslatma, 5 kundan beri javobsizi uchun Boshliqqa eskalatsiya.
+    API iz ustunlari bilan har birini bir marta yuboradi."""
+    body = await call_api("/appeals/sla-tick", json={}, timeout=60, label="Murojaat SLA")
+    if body is not None and (body.get("reminded") or body.get("escalated")):
+        logger.info(
+            "Murojaat SLA: %s eslatma, %s eskalatsiya (ochiq %s)",
+            body.get("reminded"), body.get("escalated"), body.get("open"),
+        )
+
+
 async def work_log_reminder_tick() -> None:
     """Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun ishlagan-u hali
     hech narsa yozmaganlarga. API dam kuni/sababli kun/kelmagan/yozgan

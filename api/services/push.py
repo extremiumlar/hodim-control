@@ -64,11 +64,15 @@ class Category:
     # Ish kundaligi: «bugun hali hech narsa yozmadingiz» — ish tugashiga yaqin,
     # kuniga ko'pi bilan 1 marta (UNIQUE iz attendance_reminders'da).
     WORK_LOG = "work_log"
+    # RAHBARGA: yangi e'tiroz/shikoyat keldi, SLA muddati o'tdi, eskalatsiya.
+    # Xodimga o'z murojaati bo'yicha qaror DECISIONS toifasida boradi.
+    APPEALS = "appeals"
 
 
 CATEGORY_LABELS: dict[str, str] = {
     Category.ATTENDANCE_REMINDER: "Keldim/Ketdim eslatmasi",
     Category.WORK_LOG: "Ish kundaligi eslatmasi",
+    Category.APPEALS: "E'tiroz va shikoyatlar",
     Category.LATE_WARNING: "Kechikish ogohlantirishi",
     Category.TASKS: "Vazifalar",
     Category.DECISIONS: "Qaror natijasi",
@@ -108,6 +112,9 @@ _DEFAULTS_EMPLOYEE: dict[str, bool] = {
     Category.DECISIONS: True,
     Category.PLAN_REMINDERS: False,
     Category.APPROVALS: False,
+    # Xodimga kerak emas: o'z murojaati bo'yicha qaror DECISIONS bilan keladi,
+    # bu toifa rahbar tomonining signali (yangi murojaat, SLA, eskalatsiya).
+    Category.APPEALS: False,
     Category.SALES_SIGNALS: False,
     Category.DIGESTS: False,
 }
@@ -115,6 +122,7 @@ _DEFAULTS_EMPLOYEE: dict[str, bool] = {
 _DEFAULTS_MANAGER: dict[str, bool] = {
     **_DEFAULTS_EMPLOYEE,
     Category.APPROVALS: True,
+    Category.APPEALS: True,
     Category.SALES_SIGNALS: True,
     # Kundalik eslatmasi xodim mehnati hisoboti uchun — rahbarga default o'chiq
     # (reminder-tick baribir faqat employee roliga yuboradi; bu bayroq rahbar

@@ -994,6 +994,88 @@ class ExplanationRequest(Base):
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class AppealKind(str, enum.Enum):
+    objection = "objection"  # e'tiroz — ANIQ qarorga qarshi (davomat kuni, oylik)
+    complaint = "complaint"  # shikoyat — erkin mavzu
+
+
+class AppealTopic(str, enum.Enum):
+    attendance = "attendance"  # davomat kuni / kechikish jarimasi (objection)
+    payroll = "payroll"  # oylik varaqasi / hisob (objection)
+    work_env = "work_env"  # ish sharoiti (complaint)
+    team = "team"  # jamoa/munosabatlar (complaint)
+    other = "other"
+
+
+class AppealStatus(str, enum.Enum):
+    pending = "pending"  # yangi, hali ochilmagan
+    in_review = "in_review"  # qabul qiluvchi "o'rganyapman" dedi
+    accepted = "accepted"  # e'tiroz qondirildi
+    rejected = "rejected"  # rad etildi (izoh majburiy)
+    resolved = "resolved"  # shikoyat hal qilindi (izoh majburiy)
+
+
+# Hali yopilmagan murojaatlar — SLA tick va spam limiti shu ikkitasini sanaydi.
+APPEAL_OPEN_STATUSES = (AppealStatus.pending.value, AppealStatus.in_review.value)
+
+
+class Appeal(Base):
+    """Xodim murojaati: e'tiroz (aniq qarorga qarshi) yoki shikoyat (erkin mavzu).
+
+    ⚠️ ENG MUHIM TAMOYIL (`ExplanationRequest`dan meros, models.py:938-942):
+    BU JADVAL HECH NARSANI HISOBLAMAYDI. `accepted` bo'lganda davomat yoki pul
+    tuzatish FAQAT MAVJUD mexanizmlar orqali bajariladi — davomat uchun
+    `ExcusedDay` (+ `recompute_attendance`), oylik uchun `PayrollAdjustment`
+    (davr qulf bo'lsa Dasturchi `admin_override` bilan ochadi). Aks holda
+    ikkita mustaqil hisob yo'li paydo bo'lardi va payslip raqami qaysi
+    yo'ldan kelganini hech kim ayta olmasdi.
+
+    Shuning uchun qaror qabul qilinganda API faqat XABAR beradi ("endi
+    tuzatishni kiriting") — avtomatik hech nima o'zgartirmaydi.
+
+    MAXFIYLIK: `recipient_role` — shikoyat KIMGA yuborilgani (hr yoki boss).
+    Shikoyat HR haqida bo'lishi mumkin, shuning uchun HR faqat O'ZIGA
+    yuborilganlarini ko'radi; Boshliq va Dasturchi hammasini ko'radi
+    (`api/routers/appeals.py: _can_access`).
+
+    ANONIMLIK: `is_anonymous` faqat shikoyatda. Bazada `user_id` HAR DOIM
+    saqlanadi (suiiste'molni tekshirish uchun), lekin API javobida ism
+    yashiriladi — yashirish BACKENDDA, frontendda emas."""
+
+    __tablename__ = "appeals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12), index=True)
+    topic: Mapped[str] = mapped_column(String(12), default=AppealTopic.other.value)
+    text: Mapped[str] = mapped_column(Text)  # 10..3000 belgi (sxema tekshiradi)
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, default=False)
+    recipient_role: Mapped[str] = mapped_column(String(10), default=Role.hr.value)
+
+    # E'tiroz manzili — qabul qiluvchi kontekstni bir qarashda ko'rsin.
+    ref_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # davomat kuni
+    ref_period: Mapped[str | None] = mapped_column(String(7), nullable=True)  # "YYYY-MM" payslip
+
+    # Telegram ilovasi (ixtiyoriy): rasm yoki hujjat. Faylning O'ZI saqlanmaydi —
+    # faqat Telegram `file_id`, botda shu bilan qayta yuboriladi.
+    file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # photo | document
+
+    status: Mapped[str] = mapped_column(String(12), default=AppealStatus.pending.value, index=True)
+    review_started_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    review_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # SLA izlari — eslatma/eskalatsiya BIR MARTA ketishi uchun (cPanel'da cron
+    # ikki jarayonda ishlashi mumkin; alohida jadval o'rniga shu ikki ustun).
+    sla_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class FsmState(Base):
     """Bot FSM holati — cPanel (webhook) rejimida XOTIRA O'RNIGA bazada.
 

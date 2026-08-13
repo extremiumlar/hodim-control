@@ -148,6 +148,12 @@ def _build_jobs() -> list[JobSpec]:
             IntervalTrigger(minutes=cfg.WORK_LOG_REMINDER_INTERVAL_MINUTES),
             max_instances=1, coalesce=True,
         ),
+        # E'tiroz/shikoyat SLA — kuniga bir marta (chegaralar 3 va 5 KUN).
+        JobSpec(
+            "appeals_sla", jobs.appeals_sla_tick,
+            _cron(hour=cfg.APPEALS_SLA_HOUR, minute=cfg.APPEALS_SLA_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ───────────
         # Eskirgan hash/urinish yozuvlarini tozalash — vaqtinchalik jadvallar
         JobSpec(

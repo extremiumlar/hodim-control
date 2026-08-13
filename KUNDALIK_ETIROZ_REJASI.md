@@ -513,12 +513,46 @@ yopiladi — lekin faqat sayt/ilova orqali.
 
 - Deploy №1 — kundalik jonli, appeal'siz (HALI QILINMAGAN)
 
-### Bosqich 4 — Appeal: poydevor + API
-- [ ] Modellar (`AppealKind/Topic/Status`, `Appeal`) + migratsiya `e4f5a6b7c8d9_appeals.py`
-- [ ] Sxemalar (bot/web juftligi, kind↔decision validatorlari)
-- [ ] `api/routers/appeals.py` to'liq + `main.py`
-- [ ] `Category.APPEALS`, AuditLog action'lari
-- [ ] `sla-tick` + scheduler/cron_tick
+### Bosqich 4 — Appeal: poydevor + API ✅ BAJARILDI (2026-08-13)
+- [x] Modellar (`AppealKind/Topic/Status`, `APPEAL_OPEN_STATUSES`, `Appeal`) +
+      migratsiya `e4f5a6b7c8d9_appeals.py` (qo'llandi, teskari yo'l sinaldi)
+- [x] Sxemalar: `AppealCreateBase` (+ bot/web juftligi), `AppealOut`,
+      `AppealDecide(+Bot)`, `AppealActorBot`, `AppealAttendanceTarget`, `AppealSlaTick`
+- [x] `api/routers/appeals.py` (11 endpoint) + `main.py`
+- [x] `Category.APPEALS` (4 joy) + 3 audit action
+- [x] `sla-tick` + `scheduler/config.py` (10:07), `jobs.py`, `main.py`, `cron_tick.py`
+- [x] Sinov: 74 tekshiruv, 0 xato — sxema validatsiyasi (8 xil noto'g'ri shakl),
+      maxfiylik (HR Boshliqqa yuborilganini ko'rmaydi va tegolmaydi),
+      anonimlik (rahbarda yashirin, muallifda ko'rinadi), qaror turi mosligi,
+      idempotentlik, bot adapterlari, davomat nishonlari (30 kun oynasi),
+      spam limiti, SLA (3/5 kun + iz bilan takrorlanmaslik), audit, push.
+      T- ma'lumotlar va audit yozuvlari to'liq tozalandi.
+
+**Ijro paytidagi qarorlar (rejadan ustiga):**
+- **Maxfiylik SQL darajasida:** HR ro'yxati `recipient_role == 'hr'` bilan
+  filtrlanadi, begona murojaatga 403 emas **404** — Boshliqqa yuborilgan
+  shikoyat MAVJUDLIGI ham oshkor bo'lmasin. Aks holda «Kimga» tanlovining
+  ma'nosi qolmasdi.
+- **E'tiroz har doim HRga**, «Kimga» tanlovi faqat shikoyatda (marshrutlash
+  qoidasi, sxema emas).
+- **E'tiroz anonim bo'lolmaydi** (sxema rad etadi): u aniq odamning aniq
+  kuni/oyligi haqida.
+- **Qaror turi murojaat turiga mos bo'lishi shart:** e'tiroz →
+  `accepted|rejected`, shikoyat → `resolved|rejected`. Aralashsa «nechta
+  e'tiroz qondirildi» degan hisobot ma'nosini yo'qotardi.
+- **`next_step`:** qaror `accepted` bo'lganda API javobida qabul qiluvchiga
+  KEYINGI QADAM matni qaytadi («Sababli kunlar bo'limidan belgilang» /
+  «Payroll tuzatish qo'shing»). Avtomatik tuzatish YO'Q — modulning asosiy
+  tamoyili.
+- **Yangi endpoint (rejada yo'q edi):** `GET /appeals/bot/attendance-targets/{tg}`
+  — oxirgi 30 kundagi kechikish/kelmaslik kunlari. Bot shularni tugma qilib
+  beradi, xodim sanani qo'lda termaydi va e'tiroz har doim haqiqiy davomat
+  yozuviga bog'lanadi.
+
+**Sinovda topilgan nomuvofiqlik:** anonim shikoyat yaratilganda javob
+MUALLIFNING o'ziga ham ismsiz qaytardi, holbuki `/appeals/me` ro'yxati o'zini
+ko'rsatadi — mijoz yaratilgan yozuvni o'z ro'yxatidagisi bilan bog'lay
+olmasdi. `_to_out_self` create javobiga ham qo'llandi.
 
 ### Bosqich 5 — Appeal: bot
 - [ ] Tugma + `bot/handlers/appeal.py` (yozish + qaror oqimlari)
