@@ -19,6 +19,7 @@ import {
   ClipboardList,
   ListTodo,
   NotebookPen,
+  Scale,
   Target,
   TrendingUp,
   PencilLine,
@@ -176,6 +177,14 @@ export const EMPLOYEE_SECTIONS: EmployeeSection[] = [
     to: "/me/work-log",
     icon: NotebookPen,
     // bot: role != "boss" (BTN_WORK_LOG — Boshliqdan tashqari hammaga)
+    visible: (c) => c.role !== "boss",
+  },
+  {
+    key: "appeals",
+    label: "E'tiroz / Shikoyat",
+    to: "/me/appeals",
+    icon: Scale,
+    // bot: role != "boss" (BTN_APPEAL — Boshliq qabul qiluvchi tomon)
     visible: (c) => c.role !== "boss",
   },
 ];

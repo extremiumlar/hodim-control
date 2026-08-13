@@ -87,6 +87,8 @@ export const qk = {
   workLogMonth: (userId: number, month?: string) =>
     ["work-log", "user", userId, month ?? "current"] as const,
   workLogCoverage: (month?: string) => ["work-log", "coverage", month ?? "current"] as const,
+  appeals: (params?: object) => ["appeals", "list", params ?? {}] as const,
+  myAppeals: ["appeals", "me"] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -617,6 +619,37 @@ export const useWorkLogCoverage = (month?: string) =>
     queryFn: () => api.workLogCoverage(month),
     placeholderData: keepPreviousData,
   });
+
+// ─── E'tiroz / Shikoyat ───
+// `enabled` — sidebar badge'i uchun Layout ham chaqiradi (faqat qabul
+// qiluvchi rollarda); staleTime 60s (useExcusedDays bilan bir xil sabab).
+export const useAppeals = (
+  params?: { status_filter?: string; kind?: string },
+  enabled = true
+) =>
+  useQuery({
+    queryKey: qk.appeals(params),
+    queryFn: () => api.listAppeals(params),
+    enabled,
+    staleTime: 60_000,
+  });
+
+export const useMyAppeals = () =>
+  useQuery({ queryKey: qk.myAppeals, queryFn: api.myAppeals });
+
+// ["appeals"] prefiksi — rahbar ro'yxati ham, ["appeals","me"] ham yangilanadi.
+export const useCreateMyAppeal = () =>
+  useApiMutation(api.createMyAppeal, [["appeals"]]);
+
+export const useReviewAppeal = () =>
+  useApiMutation((itemId: number) => api.reviewAppeal(itemId), [["appeals"]]);
+
+export const useDecideAppeal = () =>
+  useApiMutation(
+    ({ itemId, decision, note }: { itemId: number; decision: string; note: string }) =>
+      api.decideAppeal(itemId, { decision, note }),
+    [["appeals"]]
+  );
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga
 // kiradi, ya'ni ro'yxat o'zi yangilanadi. Rahbar vazifalar sahifasi ham

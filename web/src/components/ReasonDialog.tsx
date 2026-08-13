@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,10 @@ export default function ReasonDialog({
   loading = false,
   onConfirm,
   requireTypedConfirmation,
+  extra,
+  reasonLabel = "Sabab (majburiy, kamida 5 belgi)",
+  reasonPlaceholder = "Nega bu amal bajarilmoqda?",
+  confirmLabel = "Tasdiqlash",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -37,6 +41,14 @@ export default function ReasonDialog({
    * berilgan matnni ANIQ terib tasdiqlash talab qilinadi (tasodifan bosishdan
    * himoya, sabab yozishdan qo'shimcha). */
   requireTypedConfirmation?: string;
+  /** Sabab maydonidan YUQORIDA chiziladigan qo'shimcha boshqaruv (masalan
+   * e'tiroz qarorining turi). Dasturchi rejimida ishlatilmaydi. */
+  extra?: ReactNode;
+  /** Matn maydonining sarlavhasi/joy egasi — «sabab» har doim ham to'g'ri
+   * so'z emas (murojaat qarorida bu «izoh»). */
+  reasonLabel?: string;
+  reasonPlaceholder?: string;
+  confirmLabel?: string;
 }) {
   const [reason, setReason] = useState("");
   const [typed, setTyped] = useState("");
@@ -60,15 +72,16 @@ export default function ReasonDialog({
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
+        {extra}
         <div>
-          <Label htmlFor="override-reason">Sabab (majburiy, kamida 5 belgi)</Label>
+          <Label htmlFor="override-reason">{reasonLabel}</Label>
           <textarea
             id="override-reason"
             className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             rows={3}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Nega bu amal bajarilmoqda?"
+            placeholder={reasonPlaceholder}
             autoFocus
           />
         </div>
@@ -97,7 +110,7 @@ export default function ReasonDialog({
             variant={destructive ? "destructive" : "default"}
             onClick={() => onConfirm(reason.trim())}
           >
-            {loading ? "Bajarilmoqda..." : "Tasdiqlash"}
+            {loading ? "Bajarilmoqda..." : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,6 +1,8 @@
 import { apiFetch, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
 import type {
   AdminRecord,
+  Appeal,
+  AppealDecideResult,
   Attendance,
   AttendanceDashboard,
   AttendanceMatrix,
@@ -428,6 +430,32 @@ export const api = {
     }),
   deleteMyWorkLogEntry: (entryId: number) =>
     apiFetch<{ deleted: boolean }>(`/work-log/me/${entryId}`, { method: "DELETE" }),
+  // ── E'tiroz / Shikoyat ──
+  myAppeals: () => apiFetch<Appeal[]>("/appeals/me"),
+  // Tanada `telegram_id` YO'Q — shaxs tokendan (AppealMeCreate).
+  createMyAppeal: (data: {
+    kind: "objection" | "complaint";
+    topic: string;
+    text: string;
+    is_anonymous?: boolean;
+    recipient_role?: "hr" | "boss";
+    ref_date?: string | null;
+    ref_period?: string | null;
+  }) => apiFetch<Appeal>("/appeals/me", { method: "POST", body: JSON.stringify(data) }),
+  listAppeals: (params?: { status_filter?: string; kind?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status_filter) q.set("status_filter", params.status_filter);
+    if (params?.kind) q.set("kind", params.kind);
+    const s = q.toString();
+    return apiFetch<Appeal[]>(`/appeals${s ? `?${s}` : ""}`);
+  },
+  reviewAppeal: (itemId: number) =>
+    apiFetch<Appeal>(`/appeals/${itemId}/review`, { method: "POST" }),
+  decideAppeal: (itemId: number, data: { decision: string; note: string }) =>
+    apiFetch<AppealDecideResult>(`/appeals/${itemId}/decide`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   // Rahbar: bitta xodim oyi + butun jamoa qamrovi.
   workLogMonth: (userId: number, month?: string) =>
     apiFetch<WorkLogMonth>(`/work-log?user_id=${userId}${month ? `&month=${month}` : ""}`),

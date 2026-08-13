@@ -137,6 +137,14 @@ const SECTIONS: Section[] = [
     // bot: role != "boss" (BTN_WORK_LOG — Boshliqdan tashqari hammaga)
     visible: (c) => c.role !== "boss",
   },
+  {
+    key: "appeals",
+    title: "E'tiroz / Shikoyat",
+    emoji: "⚖️",
+    webPath: "/me/appeals",
+    // bot: role != "boss" (BTN_APPEAL — Boshliq qabul qiluvchi tomon)
+    visible: (c) => c.role !== "boss",
+  },
 ];
 
 /** Shu xodimga ko'rinadigan bo'limlar, muhimlik tartibida. */

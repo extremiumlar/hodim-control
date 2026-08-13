@@ -16,6 +16,7 @@ import {
   NotebookPen,
   PanelLeftClose,
   PanelLeftOpen,
+  Scale,
   ScrollText,
   Settings,
   ShieldAlert,
@@ -27,7 +28,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "./lib/auth";
-import { useExcusedDays, useExplanations } from "./lib/queries";
+import { useAppeals, useExcusedDays, useExplanations } from "./lib/queries";
 import { cn } from "./lib/utils";
 import { BRAND_NAME } from "./lib/brand";
 import { sectionTitle, splitSections } from "./lib/employeeNav";
@@ -111,6 +112,9 @@ const NAV_GROUPS: NavGroup[] = [
     title: "Ma'muriyat",
     items: [
       { to: "/users", label: "Foydalanuvchilar", icon: Users },
+      // ROP'da yo'q — `onlyPayrollManager` bilan bir xil qamrov (hr/boss/
+      // dasturchi), backend `appeals.py: MANAGE_ROLES` ham shunday.
+      { to: "/appeals", label: "E'tiroz/Shikoyat", icon: Scale, onlyPayrollManager: true },
       { to: "/positions", label: "Lavozimlar", icon: Briefcase, onlyPositionsManager: true },
       { to: "/audit-logs", label: "Audit", icon: ScrollText },
       { to: "/dasturchi", label: "Dasturchi rejimi", icon: ShieldAlert, onlyDasturchi: true },
@@ -311,7 +315,13 @@ export default function Layout() {
   const answeredExplanations = useExplanations("answered", isManager);
   const excusedBadge =
     (pendingExcused.data?.length ?? 0) + (answeredExplanations.data?.length ?? 0);
-  const navBadges = { "/excused-days": excusedBadge };
+  // Murojaatlar badge'i: hali qaror chiqarilmagan («yangi») murojaatlar.
+  // `in_review` sanalmaydi — u allaqachon qo'lga olingan.
+  const pendingAppeals = useAppeals({ status_filter: "pending" }, canManagePayroll);
+  const navBadges = {
+    "/excused-days": excusedBadge,
+    "/appeals": pendingAppeals.data?.length ?? 0,
+  };
 
   useEffect(() => {
     localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");

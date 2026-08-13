@@ -582,10 +582,33 @@ olmasdi. `_to_out_self` create javobiga ham qo'llandi.
   xabarda qolishi kerak (HR uni o'qib qaror qiladi), faqat «O'rganyapman»
   tugmasi olib tashlanadi.
 
-### Bosqich 6 — Appeal: web
-- [ ] `pages/Appeals.tsx` + badge + `StatusBadge` yangi kind
-- [ ] `pages/me/Appeals.tsx` + nav sinxronlari
-- Deploy №2
+### Bosqich 6 — Appeal: web ✅ BAJARILDI (2026-08-13)
+- [x] `types.ts` (`Appeal`, `AppealDecideResult`), `endpoints.ts` (6 metod),
+      `queries.ts` (2 kalit + 4 hook)
+- [x] `StatusBadge` ga yangi `kind="appeal"` (5 holat: Yangi / O'rganilmoqda /
+      Qondirildi / Hal qilindi / Rad etilgan)
+- [x] `pages/Appeals.tsx` (rahbar): tur+holat filtri, SLA yoshi ustunda
+      («4 kun kutmoqda» sariq, 5+ qizil), qaror dialogi, `next_step` paneli
+- [x] `pages/me/Appeals.tsx` (xodim): bitta forma (tur→mavzu→manzil/kimga→
+      anonim→matn) + murojaatlar ro'yxati HR javobi bilan
+- [x] `App.tsx` (`AppealsRoute` — ROP'siz), `Layout.tsx` NAV + badge,
+      `employeeNav.ts`, `mobile/lib/sections.ts` — nav UCH joyda sinxron
+- [x] `ReasonDialog` ga ixtiyoriy `extra`/`reasonLabel`/`reasonPlaceholder`/
+      `confirmLabel` proplari (mavjud chaqiruvchilarga ta'sir qilmaydi)
+- [x] Brauzerda jonli tekshirildi: anonimlik («Anonim» ko'rinadi, ism yo'q),
+      SLA yoshi, «O'rganyapman» → holat va tugma o'zgarishi, e'tiroz dialogi
+      («Qondirish»), shikoyat dialogi («Hal qilindi») — qaror turi mosligi
+      UI'da ham, qaror saqlanishi (POST 200) va `next_step` paneli, xodim
+      formasi (tur almashtirilganda mavzu/anonimlik moslashadi), murojaat
+      yuborish, sidebar badge («1»), ROP `/appeals` dan bosh sahifaga
+      qaytarilishi va sidebar bandini ko'rmasligi, mobil 375px da gorizontal
+      skroll yo'qligi, `/me/more` da bo'lim.
+- [x] `tsc --noEmit` (web + mobile) va `npm run build` toza; barcha testlar
+      regressiyasiz: 74 + 64 + 51 + 32 = **221 tekshiruv, 0 xato**.
+
+**MODUL TO'LIQ TAYYOR (Bosqich 1-6).** Qolgani — deploy va 7-bosqich (ixtiyoriy sayqal).
+
+- Deploy №2 — HALI QILINMAGAN
 
 ### Bosqich 7 — ⭐ ixtiyoriy sayqal (alohida qaror bilan)
 - [ ] AI oylik xulosa (kundalikdan; mavjud `ai_enabled` darvozalari bilan)

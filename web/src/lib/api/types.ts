@@ -862,6 +862,39 @@ export interface WorkLogCoverage {
   rows: WorkLogCoverageRow[];
 }
 
+/** E'tiroz (objection) yoki shikoyat (complaint) — KUNDALIK_ETIROZ_REJASI.md.
+    Anonim shikoyatda `user_id`/`user_full_name` BACKENDDA null qilinadi
+    (rahbar ko'rinishida); muallif o'z ro'yxatida o'zini ismi bilan ko'radi. */
+export interface Appeal {
+  id: number;
+  user_id: number | null;
+  user_full_name: string | null;
+  kind: "objection" | "complaint";
+  topic: "attendance" | "payroll" | "work_env" | "team" | "other";
+  text: string;
+  is_anonymous: boolean;
+  recipient_role: "hr" | "boss";
+  /** E'tiroz manzili: davomat kuni yoki oylik davri ("YYYY-MM"). */
+  ref_date: string | null;
+  ref_period: string | null;
+  /** Telegram fayl identifikatori — faqat botda ochiladi (web ko'rsatmaydi). */
+  file_id: string | null;
+  file_type: string | null;
+  status: "pending" | "in_review" | "accepted" | "rejected" | "resolved";
+  review_started_at: string | null;
+  decided_by: number | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  created_at: string;
+}
+
+/** Qaror javobi. `next_step` — e'tiroz QONDIRILGANDA keladi: tuzatishni qayerda
+    kiritish kerakligi (modul hech narsani o'zi hisoblamaydi). */
+export interface AppealDecideResult {
+  appeal: Appeal;
+  next_step: string | null;
+}
+
 /** Sababsiz kelmagan kun uchun tushuntirish xati. */
 export interface ExplanationRequestRow {
   id: number;
