@@ -323,8 +323,20 @@
 
 ---
 
-## 2.3 — CRM webhook jim ⏳ SABAB ANIQLANDI, UYSOT TOMONIDA
+## 2.3 — CRM webhook ✅ HAL BO'LDI (2026-08-12)
 
+> **YAKUN (2026-08-12):** webhook to'liq ishlayapti — kelgan so'rov **6 ms**
+> ichida bazaga yoziladi (polling: 3 daqiqagacha). To'rt qatlamli muammo edi:
+> (1) toggle o'chiq, (2) URL'da `?secret=` — Uysot query yubormaydi,
+> (3) rad etilganlar jurnalga yozilmasdi (diagnostika ko'r nuqtasi),
+> (4) proksi `::ffff:` prefiksli IP beradi. Batafsil:
+> [WEBHOOK_MUAMMOSI.md](WEBHOOK_MUAMMOSI.md)
+>
+> Qolgan ish: Uysot'dan imzo spetsifikatsiyasini olib, to'liq HMAC tekshiruviga
+> o'tish (hozir ishonch manba IP bo'yicha).
+>
+> <details><summary>2026-08-08 dagi oraliq holat</summary>
+>
 > **2026-08-08 holati:** sozlash joyi topildi (`Integratsiya → Dasturchi
 > oynasini ochish → «Xodimlar tizimi» → Webhook tabi`). 04.08 da yangi token
 > yaratilganda webhook sozlamalari **ko'chirilmagan** — toggle o'chiq, URL bo'sh,
@@ -333,8 +345,9 @@
 > Egasi sozlagach qayta tekshirildi — **hamon 0 ta webhook**. Batafsil dalillar
 > va Uysot'ga yuboriladigan xat: [WEBHOOK_MUAMMOSI.md](WEBHOOK_MUAMMOSI.md)
 >
-> **Xulosa:** bizning endpoint sog'lom (test: sekret bilan 200, sekretsiz 401),
-> polling qoplab turibdi → ma'lumot yo'qolmayapti. To'siq **Uysot tomonida**.
+> **O'sha paytdagi xulosa:** to'siq Uysot tomonida — bu **noto'g'ri** chiqdi,
+> muammo bizda edi (yuqoriga qarang).
+> </details>
 
 <details><summary>Asl karta (tarix uchun)</summary>
 

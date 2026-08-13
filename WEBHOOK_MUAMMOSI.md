@@ -1,242 +1,183 @@
-# Uysot webhook ishlamayapti — dalillar va Uysot'ga xat
+# Uysot webhook — muammo va yechim (HAL BO'LDI)
 
-> **Sana:** 2026-08-08 · **Holat:** bizning tomon sog'lom, Uysot yubormayapti
-> **Ta'sir:** kritik EMAS — polling zaxira sifatida ishlab turibdi, ma'lumot yo'qolmayapti
-
----
-
-## 1. Qisqa xulosa
-
-Uysot kabinetida webhook sozlangandan keyin ham `https://nuriddin-building.uz`
-serveriga **birorta ham webhook so'rovi kelmadi** — hatto shu vaqt oralig'ida
-CRM'da o'nlab lid o'zgargan bo'lsa ham.
-
-Bizning qabul qiluvchi endpoint **to'liq ishlayapti** (quyida sinov natijalari).
-Muammo Uysot tomonida.
+> **Holat:** ✅ **ISHLAYAPTI** (2026-08-12, 15:47)
+> **Tasdiq:** webhook 10:47:23.801 UTC da keldi → voqea 10:47:23.807 da bazaga
+> yozildi (**6 ms**). Polling bilan bu 3 daqiqagacha kutardi.
 
 ---
 
-## 2. Sozlash joyi (topilgan yo'l)
+## 1. Yakuniy holat
 
+| Bosqich | Holat |
+|---|---|
+| Uysot yuboradi | ✅ |
+| Server qabul qiladi | ✅ `QABUL` |
+| Autentifikatsiya | ✅ ishonchli IP + imzo mavjudligi |
+| Parse | ✅ `parsed=1` |
+| Bazaga qo'llash | ✅ `stage_change=1` |
+| Kechikish | ✅ **6 ms** (polling: 3 daqiqagacha) |
+
+**Ishlayotgan sozlama (Uysot kabineti):**
 ```
 Sozlamalar → Integratsiya → «Dasturchi oynasini ochish»
-  → «Ulanishlar» oynasi → «Kirish tokeni» tabi
-  → «Xodimlar tizimi» qatorini bosish
-  → «Ulanish tafsilotlari» → «Webhook» tabi
+  → «Ulanishlar» → «Xodimlar tizimi» → «Webhook» tabi
+
+Webhookni yoqish : YOQIQ
+Webhook URL      : https://nuriddin-building.uz/api/crm-webhook/uysot
+Webhook maxfiy kaliti : (Uysot generatsiya qilgan, 64 hex)
+Voqealar         : Lid yaratildi · Lid biriktirildi · Lid bosqichi o'zgardi
 ```
-
-Shu tabda: `Webhookni yoqish` (toggle) · `Webhook URL` · `Voqealar` (6 ta)
-
-**Muhim:** 04.08.2026 16:43 da «Xodimlar tizimi» tokeni **qayta yaratilganda**
-webhook sozlamalari ko'chirilmagan — toggle o'chiq, URL bo'sh, voqealar
-tanlanmagan holatda qolgan.
 
 ---
 
-## 3. Bizning tomon sog'lom — sinov natijalari
+## 2. Muammoning TO'RT qatlami
 
-**Endpoint:** `POST https://nuriddin-building.uz/api/crm-webhook/uysot?secret=<SEKRET>`
+Bu bitta xato emas edi — to'rtta mustaqil to'siq, har biri alohida butun
+tizimni ishlamas holga keltirardi. Shuning uchun ularni birin-ketin ochish
+kerak bo'ldi.
 
-| Sinov | Natija |
+### 2.1. «Webhookni yoqish» toggle'i O'CHIQ edi
+URL va kalit to'g'ri kiritilgan, lekin toggle yoqilmagan → Uysot **umuman
+yubormasdi**. Bu «bizda hech qanday so'rov yo'q» degan barcha o'lchovlarni
+tushuntiradi.
+
+### 2.2. URL'da `?secret=...` ishlatilardi
+Bizning format `.../uysot?secret=<SEKRET>` edi. Uysot esa **query parametr
+yubormaydi** (webhook.site namunasi: «Query strings: None»). Sekret hech
+qachon yetib kelmasdi.
+
+Uysot autentifikatsiyani **imzo** bilan qiladi:
+```
+x-webhook-signature: sha256=<64 hex>
+x-webhook-timestamp: <unix>
+x-webhook-id:        <uuid>
+```
+
+### 2.3. Rad etilgan so'rovlar HECH QAYERGA yozilmasdi ⭐
+**Eng qiyin qatlam.** Uchala iz qoldirish yo'li ham buzuq edi:
+
+| Manba | Nega ishlamasdi |
 |---|---|
-| `GET` + to'g'ri sekret | **HTTP 200** |
-| `POST` + to'g'ri sekret | **HTTP 200** |
-| `POST` sekretsiz | **HTTP 401** (to'g'ri rad etadi) |
+| Baza (`crm_webhook_log`) | `_verify_secret` 401 ni **log yozishdan oldin** otardi |
+| `logger.warning` | `api/main.py`da logging **sozlanmagan** → stderr → Passenger yo'qotadi |
+| Apache access log | Kechikadi/ishonchsiz (o'lchandi: 200 qaytargan so'rov 1 daqiqadan keyin ham yo'q edi) |
 
-Endpoint sekretni bir necha kanaldan qabul qiladi: `?secret=` query,
-`X-Crm-Webhook-Secret` va shunga o'xshash headerlar, `Authorization: Bearer`.
+Natijada «Uysot yubormayaptimi yoki yuboryapti-yu rad etilyaptimi» degan
+savolga javob topib bo'lmasdi.
 
-> ### ⚠️ TUZATISH (11.08.2026): «Uysot ping yubordi» degan da'vo XATO edi
->
-> Hujjat dastlab 01.08 dagi `{"ping":true}` (IP `84.54.71.13`) ni **Uysot'niki**
-> deb yozgan va undan «ulanish yo'li ishlaydi» degan xulosa chiqargan edi.
->
-> Loglarni chuqurroq tekshirganda ma'lum bo'ldiki, `84.54.71.*` — bu **bizning
-> ofis/lokal tarmog'imiz**: o'sha IP'lardan `python-httpx` bilan
-> `/api/daily-results/sync`, `/api/anketa/tick`, `/api/hot-lead/tick` kabi
-> **bizning cron chaqiruvlarimiz** kelgan (eski deploy davrida scheduler
-> ofisda ishlagan).
->
-> Ya'ni o'sha ping ham **qo'lda yuborilgan test** bo'lgan.
->
-> **Yangi, kuchliroq xulosa:** Uysot bizga **hech qachon, bironta ham** so'rov
-> yubormagan. Iyul-avgust arxivlari to'liq tekshirildi.
+> **Bu qatlam hal qilinmaganda 2.4 ni topib bo'lmasdi.** Diagnostika
+> imkoniyatining o'zi — mustaqil muammo edi.
+
+### 2.4. Proksi IPv4-mapped IPv6 beradi
+Ishonchli IP mezoni qo'shilgandan keyin ham rad etilardi. Sabab:
+```
+x-real-ip: ::ffff:158.179.201.167
+```
+Ro'yxatdagi `158.179.201.167` bilan `::ffff:158.179.201.167` **hech qachon**
+mos kelmasdi.
 
 ---
 
-## 4. Uysot'dan hech narsa kelmagani — uch mustaqil dalil
+## 3. Kiritilgan tuzatishlar
 
-### 4.1. Ilova jurnali (`crm_webhook_log`)
-
-Jami **4 ta** yozuv, **hammasi test**:
-
-| # | Vaqt (UTC) | IP | Payload | Izoh |
-|---|---|---|---|---|
-| 1 | 01.08 11:14 | 84.54.71.13 | `{"ping":true}` | Uysot test ping'i |
-| 2 | 04.08 09:55 | 167.235.222.200 | `{"diagnostika":...}` | o'z serverimizdan |
-| 3 | 04.08 11:31 | 167.235.222.200 | `{"diagnostika":...}` | o'z serverimizdan |
-| 4 | 08.08 05:41 | 213.230.93.61 | `{"ping":true}` | bugungi tekshiruv |
-
-Haqiqiy lid voqeasi — **0 ta**.
-
-### 4.2. Veb-server access log
-
-`~/access-logs/nuriddin-building.uz-ssl_log` da `/api/crm-webhook/` bo'yicha
-**yagona** yozuvlar — 08.08 10:41 dagi 3 ta tekshiruv so'rovi.
-
-Bu muhim, chunki access log **autentifikatsiyadan oldin** yoziladi: agar Uysot
-noto'g'ri sekret bilan yuborayotgan bo'lsa ham, so'rov bu yerda **ko'rinardi**.
-Ko'rinmadi → **so'rov umuman kelmayapti**.
-
-### 4.3. Polling bilan solishtirish (eng kuchli dalil)
-
-O'sha vaqt oralig'ida bizning polling (diff-engine) CRM'dan **o'zi topgan**
-o'zgarishlar:
-
-| Voqea turi | So'nggi 2 soatda | Oxirgisi |
-|---|---|---|
-| `first_seen` (yangi lid) | **183** | 10:41 |
-| `stage_change` (bosqich) | **56** | 10:51 |
-| **Webhook orqali kelgani** | **0** | — |
-
-Ya'ni CRM'da lidlar **faol o'zgaryapti**, Uysot esa bu haqda xabar yubormayapti.
-
----
-
-## 4.4. Qayta tekshiruv — 11.08.2026, 16:10 (5 soatdan keyin)
-
-Egasi «webhook uladim» deganidan keyin qayta tekshirildi:
-
-| Tekshiruv | Natija |
+| Commit | Nima |
 |---|---|
-| `crm-webhook` ga so'rovlar (access log) | **0** |
-| **404 javoblar** (bugun, butun sayt) | **0** |
-| Tashqi IP'lardan POST | faqat qonuniy: brauzer, mobil ilova, Telegram |
+| `4e76a43` | Rad etilgan so'rovlar ham jurnalga (avval yoz → keyin tekshir) + `logs/api.log` fayl-logging |
+| `fffe356` | Parserga Uysot'ning haqiqiy `statusName` maydoni |
+| `bf576cd` | Ishonchli IP + imzo mezoni; `_proxy_verified_ip` (soxtalashtirishga qarshi) |
+| `5436f71` | `_normalize_ip` — `::ffff:` prefiksi; `x-real-ip`/`x-forwarded-for` jurnalga |
 
-**404 yo'qligi muhim xulosa beradi:** agar URL'da faqat **yo'l** xato bo'lsa
-(masalan `/api/crm-webhook/uysot` o'rniga `/crm-webhook/uysot`), so'rov bizga
-kelib **404** olardi va logda ko'rinardi. Ko'rinmadi.
+### Xavfsizlik: soxtalashtirishga qarshi
+Ishonch qarori uchun `_remote_ip` **yaramaydi** — u `x-forwarded-for`ning
+BIRINCHI elementini oladi, uni esa mijozning o'zi yuborishi mumkin. Proksi
+haqiqiy IP'ni oxiriga qo'shadi, shuning uchun `_proxy_verified_ip` avval
+`x-real-ip`, bo'lmasa XFF ning **oxirgi** elementini oladi.
 
-Demak qolgan ikki ehtimol:
-1. **Domen nomida xato** — so'rov butunlay boshqa manzilga ketyapti (bizda iz qolmaydi)
-2. **Uysot umuman yubormayapti**
-
-### URL'ni belgima-belgi tekshirish
-
-Uysot'dagi maydonda aynan shu bo'lishi kerak (`nuriddin`, ikkita `n` bilan;
-`building` to'liq; `.uz`):
-
+Jonli sinov:
 ```
-https://nuriddin-building.uz/api/crm-webhook/uysot?secret=<SEKRET>
+imzosiz                      -> 401
+soxta X-Forwarded-For + imzo -> 401   (to'sildi)
+soxta X-Real-IP + imzo       -> 401   (to'sildi)
+haqiqiy Uysot so'rovi        -> 200   QABUL
 ```
 
-Tez-tez uchraydigan xatolar: `nuridin` (bitta `n`), `bulding`, `http://`
-(`https` o'rniga), `?secret=` qismining tushib qolishi, oxirida ortiqcha `/`.
+---
+
+## 4. Uysot payload formati (namuna)
+
+```json
+{"lead": {
+  "id": 12276261,
+  "name": "+998772920092",
+  "phone": "+998772920092",
+  "pipeId": 839,
+  "pipeName": "Pipeline",
+  "statusId": 7136,
+  "statusName": "Ro'yxatdan o'tgan mijozlar",
+  "attributions": [{"source": "WEBSITE", "channelId": 1591}]
+}, "eventType": "LEAD_CREATED", "occurredAt": 1786460450}
+```
+
+Yuboruvchi: IP `158.179.201.167` (Shvetsiya), UA `ReactorNetty/1.0.26`.
+
+Parser (`api/services/uysot_webhook.py`) shu formatni to'liq tushunadi:
+`id` → `lead_id`, `statusId` → `pipe_status_id`, `statusName` → `stage_name`.
 
 ---
 
-## 5. Tekshirilgan va rad etilgan sabablar
+## 5. Qolgan ish: to'liq HMAC tekshiruvi
 
-| Gipoteza | Holat | Nega rad etildi |
-|---|---|---|
-| Bizning endpoint ishlamaydi | ❌ | Sinovda 200; Uysot ping'i ham o'tgan |
-| Sekret noto'g'ri → rad etilyapti | ❌ | Access logda umuman so'rov yo'q |
-| DNS/TLS/tarmoq to'sig'i | ❌ | 01.08 dagi Uysot ping'i muvaffaqiyatli |
-| Server o'chiq edi | ❌ | Sayt 200 qaytaradi, boshqa trafik kelib turibdi |
-| Lid o'zgarmagan | ❌ | 2 soatda 56 ta bosqich o'zgarishi (polling ko'rgan) |
+Hozir imzo **mavjudligi** tekshiriladi, qiymati **qayta hisoblanmaydi** —
+chunki Uysot imzo qaysi qatordan hisoblanishini hujjatlashtirmagan.
 
----
+To'g'ri kalit bilan **1536 kombinatsiya** sinaldi va mos kelmadi:
+HMAC-SHA256/SHA1/SHA512/MD5 × 8 xabar tuzilishi (`body`, `ts+body`,
+`ts.body`, `id+ts+body`, ...) × 8 ajratuvchi × kalitning matn/hex
+ko'rinishlari × hex/base64 chiqish.
 
-## 5b. Chuqurroq gipotezalar (11.08.2026)
-
-Uysot **hech qachon** urinmagani aniqlangach, sabab uch qatlamdan birida
-bo'lishi mumkin. Ularning ba'zilarini biz **tekshira olmaymiz**:
-
-| # | Gipoteza | Tekshirish imkoni |
-|---|---|---|
-| A | **Server xavfsizlik devori (CSF/LFD) Uysot IP'sini bloklagan** — so'rov Apache'ga yetmasdan tashlanadi, shuning uchun access logda **iz qolmaydi** | ❌ Root kerak — **ahost'dan so'rash** |
-| B | **Uysot tomonda yuborish umuman yoqilmagan** (saqlash muvaffaqiyatsiz, yoki tarif/ruxsat cheklovi) | ❌ Uysot'dan so'rash |
-| C | **Webhook voronka (pipeline) darajasida sozlanishi kerak** — token darajasidagi sozlama yetarli bo'lmasligi mumkin | 🟡 Kabinetda tekshirish |
-| D | **Uysot'ning chiquvchi tarmog'ida `.uz` yoki bizning IP bloklangan** | ❌ Uysot'dan so'rash |
-
-**A gipotezasi ayniqsa muhim:** agar xavfsizlik devori bloklayotgan bo'lsa,
-Uysot «yubordik» deydi, biz «kelmadi» deymiz — **ikkalasi ham to'g'ri** bo'ladi.
-Buni faqat hosting (ahost) tekshira oladi.
-
-Shu sababli quyidagi xatda **eng muhim savol — ularning yuborish jurnali
-(delivery log)**: unda urinish bormi, va qanday xato qaytgan (timeout /
-connection refused / 403 / DNS). Bu javob A va B ni darhol ajratadi.
-
----
-
-## 6. Uysot qo'llab-quvvatlashiga xat (nusxalab yuboring)
+**Uysot'ga yuboriladigan savol:**
 
 ```
 Assalomu alaykum!
 
-Kompaniya: Nurli Diyor (super admin: Nurullojon Obloqulov)
-Ulanish nomi: «Xodimlar tizimi» (Kirish tokeni, yaratilgan 04.08.2026 16:43,
-muddati 31.12.2026)
+Kompaniya: Nurli Diyor
+Ulanish: «Xodimlar tizimi» (Kirish tokeni)
 
-MUAMMO: Ulanish tafsilotlari → Webhook tabida webhook yoqilgan va URL
-kiritilgan bo'lsa ham, serverimizga BIRORTA HAM webhook so'rovi kelmayapti.
+Webhook muvaffaqiyatli ishlayapti, rahmat. Bitta texnik savol bor:
 
-Webhook URL:
-https://nuriddin-building.uz/api/crm-webhook/uysot?secret=***
+x-webhook-signature (sha256=<hex>) imzosi AYNAN QAYSI qatordan
+hisoblanadi? Bizga quyidagilar kerak:
+  1. Imzolanadigan xabar tuzilishi (masalan: timestamp + "." + body,
+     yoki faqat body, yoki webhook-id ham qo'shiladimi?)
+  2. Kalit qanday ishlatiladi — matn sifatidami yoki hex baytlar sifatida?
+  3. Natija hex yoki base64?
 
-Tanlangan voqealar: Lid yaratildi, Lid biriktirildi, Lid bosqichi o'zgardi
-
-TEKSHIRGANLARIMIZ:
-1. Endpointimiz ishlayapti — to'g'ri sekret bilan HTTP 200, sekretsiz HTTP 401
-   (tashqaridan sinab ko'rildi, javob normal).
-2. Veb-server access logimizni iyul va avgust arxivlari bilan birga to'liq
-   tekshirdik: /api/crm-webhook/ manziliga sizdan BIRORTA HAM so'rov
-   kelmagan. Muhim: access log autentifikatsiyadan OLDIN yoziladi, ya'ni
-   sekret xato bo'lganda ham (401) so'rov logda ko'rinardi. Shuningdek
-   bugun butun saytda 404 javoblar soni — 0, ya'ni noto'g'ri yo'l bilan ham
-   urinish bo'lmagan.
-3. Shu vaqtda Open API polling orqali biz o'zimiz 56 ta bosqich o'zgarishi va
-   183 ta yangi lidni ko'rdik — ya'ni voqealar sodir bo'lgan.
-
-SAVOLLAR (eng muhimi — 1-si):
-1. YUBORISH JURNALINGIZNI (delivery log) ko'ra olasizmi? Bizga aynan
-   quyidagilar kerak: urinish bo'lganmi, qachon, va qanday xato qaytgan
-   (timeout / connection refused / DNS / 403 / boshqa). Bu javob muammo
-   sizning tomondami yoki yo'lda ekanini darhol aniqlaydi.
-2. 04.08.2026 16:43 da token qayta yaratilganda webhook sozlamalari
-   o'chib ketgani ma'lummi? (Biz shunday holatni ko'rdik.)
-3. Webhook ishlashi uchun qo'shimcha shart bormi — masalan alohida
-   litsenziya/tarif, VORONKA (pipeline) darajasida sozlash, yoki
-   tasdiqlash bosqichi?
-4. Sinov uchun test-webhook yuborish imkoniyati bormi? Agar aniq vaqtni
-   aytsangiz, biz o'sha daqiqada serverni jonli kuzatib turamiz.
-5. Chiquvchi so'rovlaringizda .uz domenlari yoki bizning IP (167.235.222.200)
-   uchun cheklov yo'qmi?
+Bizda imzo qiymati saqlanadi, shuning uchun javobingizdan keyin uni
+darhol tekshirib ko'ra olamiz.
 
 Hurmat bilan.
 ```
 
----
-
-## 7. Hozircha ta'siri
-
-**Kritik emas.** Polling (diff-engine) har 3 daqiqada CRM'ni tekshiradi va
-barcha lid voqealarini yozadi. Webhook faqat **kechikishni** kamaytirardi
-(3 daqiqa → bir necha soniya).
-
-Kod buni to'g'ri boshqaradi: `crm_mode.lead_polling_active()` webhook jonli
-ekaniga **dalil** bo'lmasa pollingni davom ettiradi. Ya'ni webhook ishlamasa
-ham hech narsa yo'qolmaydi, va u ishlab ketsa polling o'zi to'xtaydi.
+Javob kelgach: eski yozuvlarda algoritm tekshiriladi → haqiqiy HMAC yoziladi
+→ IP mezoni olib tashlanishi mumkin (`CRM_WEBHOOK_TRUSTED_IPS`).
 
 ---
 
-## 8. Bog'liq
+## 6. Saboqlar
 
-- Karta: [TAHLIL_TOPSHIRIQLARI.md](TAHLIL_TOPSHIRIQLARI.md) → bo'lim **2.3**
-- Qabul qiluvchi kod: [`api/routers/uysot_webhook.py`](api/routers/uysot_webhook.py)
-- Qayta ishlash: [`api/services/uysot_webhook.py`](api/services/uysot_webhook.py)
-- Rejim mantiqi: [`api/services/crm_mode.py`](api/services/crm_mode.py)
+1. **Diagnostika imkoniyati — mustaqil xususiyat.** Rad etilgan so'rovlar
+   yozilmagani uchun asl muammo (2.4) ko'rinmasdi. «Nega ishlamayapti»ga
+   javob berish uchun avval «ko'ra olish»ni tuzatish kerak edi.
+2. **Bir necha marta noto'g'ri xulosa chiqardim.** «Uysot hech qachon
+   yubormagan» degan da'vom asossiz edi — access log ishonchsiz ekan, va
+   01.08 dagi «Uysot ping'i» aslida bizning ofis IP'imizdan bo'lgan test edi.
+   Egasi «boshqa product ishlayapti» deb turib olgani muhim burilish bo'ldi.
+3. **Egasining kuzatuvi dalildan ustun keldi.** Ma'lumot «kelmayapti» degan
+   uchta mustaqil o'lchovim bor edi — lekin ularning hammasi bitta ko'r
+   nuqtadan azob chekardi.
 
-> ⚠️ Xatdagi `secret=***` ni yuborishdan oldin haqiqiy qiymatga almashtirmang —
-> Uysot'ga sekretni oshkor qilish shart emas, ular URL'ni o'z tizimida
-> allaqachon ko'radi.
+---
+
+*Hujjat 2026-08-08 da muammo sifatida boshlangan, 2026-08-12 da yechim bilan
+yakunlangan. Bog'liq: [TAHLIL_TOPSHIRIQLARI.md](TAHLIL_TOPSHIRIQLARI.md)
+bo'lim 2.3.*
