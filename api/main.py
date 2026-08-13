@@ -3,10 +3,15 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from crm.uysot import UysotBusy, mark_request_context
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 def _setup_file_logging() -> None:
@@ -76,6 +81,7 @@ from api.routers import (
     tasks,
     users,
     uysot_webhook,
+    work_log,
     work_schedule,
 )
 
@@ -98,6 +104,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _mark_uysot_request_context(request: Request, call_next):
+    """CRM (Uysot) kutish chegarasi uchun so'rov turini belgilaydi.
+
+    MUAMMO (2026-08-13 jonli o'lchovi): saytda bitta so'rov 40.3 SONIYA
+    kutdi. Deploy'da konkurentlik = 1, ya'ni bitta uzoq so'rov BUTUN saytni
+    o'lik qiladi. Uysot 429 bersa, so'rov ichida 60s × 4 = 4 daqiqagacha
+    kutish mumkin edi.
+
+    QOIDA: `X-Bot-Secret` bilan kelgan so'rov — MASHINA (cron/bot). Uning
+    orqasida hech kim kutmaydi va uning skanlari to'liq bajarilishi SHART,
+    shuning uchun u avvalgidek sabr qiladi. Qolgan hamma so'rov — odam
+    kutayotgan so'rov, unga `MAX_INREQUEST_WAIT_SECONDS` chegarasi qo'yiladi.
+
+    NEGA MIDDLEWARE (har endpointda alohida emas): CRM'ga boradigan yo'llar
+    bir nechta (`stats`, `users`, `daily_results`, `ai_watch`) va yangisi
+    qo'shilganda belgilashni unutish oson — u holda tuzatish jimgina
+    ishlamay qolardi.
+    """
+    if not request.headers.get("X-Bot-Secret"):
+        mark_request_context()
+    try:
+        return await call_next(request)
+    except UysotBusy as exc:
+        # 503 + Retry-After: bu vaqtinchalik holat, xato emas. Ilgari bunday
+        # so'rov 4 daqiqagacha kutib, butun saytni bloklar edi.
+        logger.warning("CRM band — so'rov qisqartirildi: %s %s (%s)", request.method, request.url.path, exc)
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "CRM hozir band — biroz kutib qayta urinib ko'ring."},
+            headers={"Retry-After": "30"},
+        )
+
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(attendance.router)
@@ -113,6 +153,7 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(work_schedule.router)
+app.include_router(work_log.router)
 app.include_router(payroll.router)
 app.include_router(admin_override.router)
 app.include_router(hourly_plan.router)

@@ -1,3 +1,4 @@
+import contextvars
 import asyncio
 import logging
 import time
@@ -54,6 +55,39 @@ SCAN_THROTTLE_SECONDS = 2.0
 MAX_PAGE_RETRIES = 4
 TRANSIENT_RETRY_SECONDS = 5
 
+class UysotBusy(RuntimeError):
+    """CRM band va HTTP so'rov ichida kutish chegarasi tugadi.
+
+    Chaqiruvchi buni 503/«CRM band, keyinroq urinib ko'ring» ga aylantiradi.
+    Fon (cron) yo'lida bu istisno HECH QACHON ko'tarilmaydi — u yerda sabr
+    qilish to'g'ri."""
+
+
+# HTTP so'rovi ichidamizmi. `contextvars` ATAYLAB: asyncio'da har so'rov o'z
+# kontekstini oladi, oddiy global bayroq esa bitta jarayonda parallel
+# ishlayotgan cron skani va web so'rovi orasida aralashib ketardi.
+#
+# NEGA KERAK (2026-08-13 o'lchovi): jonli saytda bitta so'rov 40.3 SONIYA
+# kutdi. Sabab — cron API'ga HTTP orqali murojaat qiladi, Uysot 429 bersa
+# so'rov ichida 60s × 4 = 4 daqiqagacha kutish mumkin, konkurentlik esa 1 —
+# ya'ni butun sayt o'sha vaqt davomida o'lik. Fon skanlari uchun sabr to'g'ri,
+# LEKIN foydalanuvchi kutayotgan so'rov uchun emas.
+_REQUEST_CONTEXT: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "uysot_request_context", default=False
+)
+
+# HTTP so'rov ichida Uysot'ni kutishga ajratilgan JAMI vaqt.
+MAX_INREQUEST_WAIT_SECONDS = 10.0
+
+
+def mark_request_context() -> None:
+    """Joriy async kontekstni «HTTP so'rovi» deb belgilaydi.
+
+    Buni CRM'ga boradigan endpointlar chaqiradi. Fon joblari chaqirmaydi —
+    ular default (`False`) bilan qoladi va avvalgidek sabr qiladi."""
+    _REQUEST_CONTEXT.set(True)
+
+
 class _SharedRateBudget:
     """Uysot'ning 60 so'rov/daqiqa limitini BARCHA iste'molchilar o'rtasida
     bitta joyda taqsimlaydi (2026-08-03, production'dagi 429 bo'roniga javob).
@@ -82,14 +116,26 @@ class _SharedRateBudget:
         self._next_slot = 0.0  # monotonic: keyingi so'rovga ruxsat vaqti
         self._cooldown_until = 0.0  # 429'dan keyin hamma shu vaqtgacha kutadi
 
-    async def acquire(self) -> None:
+    async def acquire(self, deadline: float | None = None) -> None:
+        """Slot oladi va kerak bo'lsa kutadi.
+
+        `deadline` (monotonic) berilsa va kutish undan oshsa — `UysotBusy`
+        ko'tariladi. Bu HTTP so'rov ichidan chaqirilganda kerak: foydalanuvchi
+        60 soniya kutib o'tirmasin (`_REQUEST_CONTEXT` izohiga qara).
+        Slot BARIBIR band qilinadi — aks holda navbatdagi so'rovlar chalkashib,
+        limitdan oshib ketardi."""
         async with self._lock:
             now = time.monotonic()
             slot = max(self._next_slot, self._cooldown_until, now)
             self._next_slot = slot + self._min_interval
         delay = slot - now
-        if delay > 0:
-            await asyncio.sleep(delay)
+        if delay <= 0:
+            return
+        if deadline is not None and slot > deadline:
+            raise UysotBusy(
+                f"CRM band — navbat {delay:.0f}s, so'rov chegarasi tugadi"
+            )
+        await asyncio.sleep(delay)
 
     def start_cooldown(self, seconds: float) -> None:
         until = time.monotonic() + seconds
@@ -122,14 +168,21 @@ async def _limited_request(
     retry'lar tugagan 429 ham chaqiruvchining `raise_for_status`iga qaytadi."""
     rate_limited = 0
     transient = 0
+    # HTTP so'rovi ichida bo'lsak — kutishga QAT'IY chegara. Fon (cron)
+    # yo'lida `deadline is None`, ya'ni xulq umuman o'zgarmaydi.
+    in_request = _REQUEST_CONTEXT.get()
+    deadline = time.monotonic() + MAX_INREQUEST_WAIT_SECONDS if in_request else None
+
     while True:
-        await _RATE_BUDGET.acquire()
+        await _RATE_BUDGET.acquire(deadline)
         try:
             resp = await client.request(method, path, json=json)
         except (httpx.TransportError, httpx.TimeoutException) as exc:
             transient += 1
             if transient > MAX_PAGE_RETRIES:
                 raise
+            if deadline is not None and time.monotonic() + TRANSIENT_RETRY_SECONDS > deadline:
+                raise UysotBusy(f"CRM javob bermadi ({type(exc).__name__}) — so'rov chegarasi tugadi")
             logger.warning(
                 "Uysot %s %s vaqtinchalik xato (%s) — %ss kutib qayta (%s/%s)",
                 method, path, type(exc).__name__, TRANSIENT_RETRY_SECONDS, transient, MAX_PAGE_RETRIES,
@@ -142,7 +195,13 @@ async def _limited_request(
         if rate_limited > MAX_RATE_LIMIT_RETRIES:
             return resp
         backoff = _retry_after_seconds(resp)
+        # Cooldown HAR DOIM e'lon qilinadi — u global va boshqa (fon)
+        # iste'molchilarga ham kerak. Faqat BIZ kutmaymiz.
         _RATE_BUDGET.start_cooldown(backoff)
+        if deadline is not None:
+            raise UysotBusy(
+                f"CRM limitga urildi (429), {int(backoff)}s cooldown — so'rov kutmaydi"
+            )
         logger.warning(
             "Uysot rate limit (%s %s) — %ss global cooldown, qayta urinish %s/%s",
             method, path, int(backoff), rate_limited, MAX_RATE_LIMIT_RETRIES,

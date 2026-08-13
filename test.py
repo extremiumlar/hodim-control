@@ -4705,6 +4705,66 @@ def test_absent_deduct_daily() -> None:
           f"capped={capped}, raw={raw}")
 
 
+def test_uysot_request_deadline() -> None:
+    """CRM kutishi: HTTP so'rov TEZ chiqadi, fon (cron) SABR qiladi.
+
+    MUAMMO (2026-08-13 jonli o'lchovi): saytda bitta so'rov 40.3 soniya
+    kutdi. Deploy'da konkurentlik = 1, ya'ni bitta uzoq so'rov BUTUN saytni
+    o'lik qiladi. Uysot 429 bersa so'rov ichida 60s x 4 = 4 daqiqagacha
+    kutilardi.
+
+    Ikki yo'l ATAYLAB turlicha:
+      - `mark_request_context()` chaqirilgan (odam kutayotgan so'rov) ->
+        `UysotBusy` darhol, kutmaydi;
+      - fon (cron) -> avvalgidek qayta urinadi.
+    Regressiya xavfi: kimdir `deadline` ni fon yo'liga ham qo'llasa, uzun
+    skanlar yarim yo'lda uzilib qolardi va buni HECH KIM sezmasdi.
+    """
+    import asyncio as _aio
+    import httpx as _hx
+    import crm.uysot as _U
+
+    print("\n" + "=" * 60)
+    print("CRM KUTISH CHEGARASI (so'rov vs fon)")
+    print("=" * 60)
+
+    class _Fake429:
+        def __init__(self): self.calls = 0
+        async def request(self, method, path, json=None):
+            self.calls += 1
+            return _hx.Response(429, request=_hx.Request(method, "http://x" + path))
+
+    async def _olcha(in_request: bool):
+        _U._RATE_BUDGET = _U._SharedRateBudget(60)
+        c = _Fake429()
+        async def _ish():
+            if in_request:
+                _U.mark_request_context()
+            try:
+                r = await _U._limited_request(c, "POST", "/test")
+                return f"javob {r.status_code}", c.calls
+            except _U.UysotBusy:
+                return "UysotBusy", c.calls
+        # ALOHIDA task — contextvar boshqa o'lchovga oqib ketmasin
+        return await _aio.create_task(_ish())
+
+    async def _run():
+        natija1, calls1 = await _olcha(True)
+        eski = _U.RATE_LIMIT_BACKOFF_SECONDS
+        _U.RATE_LIMIT_BACKOFF_SECONDS = 0.05      # fon yo'lini tez sinash uchun
+        try:
+            natija2, calls2 = await _olcha(False)
+        finally:
+            _U.RATE_LIMIT_BACKOFF_SECONDS = eski
+        return natija1, calls1, natija2, calls2
+
+    n1, c1, n2, c2 = _aio.run(_run())
+    check("so'rov yo'li 429'da DARHOL chiqadi (kutmaydi)", n1 == "UysotBusy", f"={n1}")
+    check("so'rov yo'li qayta urinmaydi (1 ta chaqiruv)", c1 == 1, f"={c1}")
+    check("fon yo'li avvalgidek qayta urinadi", c2 == _U.MAX_RATE_LIMIT_RETRIES + 1, f"={c2}")
+    check("fon yo'li 429'ni yuqoriga qaytaradi", n2 == "javob 429", f"={n2}")
+
+
 def test_audit_json_guard() -> None:
     """JSON ustunlarga xavfli tur tushsa ham COMMIT yiqilmasin (BUG-1 sinfi).
 
@@ -5196,6 +5256,11 @@ def main() -> None:
         test_absent_deduct_daily()
     except Exception:
         print("Kelmagan kun ayirmasi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_uysot_request_deadline()
+    except Exception:
+        print("CRM kutish chegarasi testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_audit_json_guard()
