@@ -37,6 +37,8 @@ from api.schemas import (
     OvertimeEntryOut,
     OvertimeProfileIn,
     OvertimeProfileOut,
+    AdvanceDecision,
+    AdvanceIn,
     PayrollAdjustmentIn,
     PayrollAdjustmentOut,
     PayrollCalculateRequest,
@@ -48,6 +50,7 @@ from api.schemas import (
     ReadinessIssue,
     SalaryRateIn,
     SalaryRateOut,
+    SalaryRateUpdate,
 )
 from api.services.attendance import collect_readiness
 from api.services.export import build_payroll_xlsx
@@ -75,6 +78,9 @@ from db.models import (
     OvertimeEntryStatus,
     OvertimeProfile,
     PayrollAdjustment,
+    PayrollAdjustmentCategory,
+    PayrollAdjustmentKind,
+    PayrollAdjustmentStatus,
     PayrollPeriod,
     PayrollPeriodStatus,
     Payslip,
@@ -89,6 +95,9 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 
 PAYROLL_MANAGE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 PAYROLL_VIEW_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
+# YAKUNIY tasdiq (davrni qulflash) va AVANSNI tasdiqlash — HR emas.
+# Vazifalar ajratimi: pulni HR kiritadi, Boshliq tasdiqlaydi.
+PAYROLL_FINAL_APPROVE_ROLES = (Role.boss.value, Role.dasturchi.value)
 
 
 def can_view_payroll(actor: User, target: User) -> bool:
@@ -353,6 +362,74 @@ async def create_rate(
                 "pay_basis": payload.pay_basis,
                 "effective_from": payload.effective_from.isoformat(),
             },
+        )
+    )
+    await db.commit()
+    await db.refresh(rate)
+    return rate
+
+
+@router.patch("/rates/{rate_id}", response_model=SalaryRateOut)
+async def update_rate(
+    rate_id: int,
+    payload: SalaryRateUpdate,
+    actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> SalaryRate:
+    """Kiritilgan stavkani tahrirlash (2026-08-13, egasining talabi).
+
+    NEGA KERAK: `POST /rates` bir sanaga ikkinchi stavkani rad etib
+    «avval eskisini o'zgartiring» derdi, lekin HR uchun o'zgartiradigan
+    yo'l umuman yo'q edi — faqat Dasturchining `/admin/records` sahifasida.
+    Xato summa kiritilsa uni tuzatib bo'lmasdi.
+
+    CHEKLOV ATAYLAB QO'YILMADI (egasining qarori: "HR har qanday stavkani
+    tahrirlay olsin"). Muhimi: bu tahrir ALLAQACHON HISOBLANGAN payslip'larni
+    O'ZGARTIRMAYDI — ular saqlangan summalar bilan turadi. Yangi summa faqat
+    davr qayta hisoblanganda kuchga kiradi, qulflangan davrni esa qayta
+    hisoblab bo'lmaydi. Ya'ni tasdiqlangan oylik o'z-o'zidan buzilmaydi.
+
+    Butun o'zgarish auditga tushadi (`before`/`after`)."""
+    rate = await db.get(SalaryRate, rate_id)
+    if rate is None or rate.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Stavka topilmadi")
+
+    fields = payload.model_fields_set
+    before = row_to_dict(rate, exclude=("created_at",))
+
+    if "effective_from" in fields and payload.effective_from != rate.effective_from:
+        # UNIQUE(user_id, effective_from) yumshoq o'chirilganlarni ham qamraydi
+        # — shuning uchun bu tekshiruv `deleted_at`ga QARAMAYDI, aks holda
+        # baza darajasida IntegrityError bilan yiqilardi.
+        clash = await db.scalar(
+            select(SalaryRate).where(
+                SalaryRate.user_id == rate.user_id,
+                SalaryRate.effective_from == payload.effective_from,
+                SalaryRate.id != rate.id,
+            )
+        )
+        if clash is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Bu sanada shu xodimning boshqa stavkasi bor — avval o'shani o'zgartiring",
+            )
+        rate.effective_from = payload.effective_from
+
+    if "amount" in fields and payload.amount is not None:
+        rate.amount = payload.amount
+    if "pay_basis" in fields and payload.pay_basis is not None:
+        rate.pay_basis = payload.pay_basis
+    if "note" in fields:
+        rate.note = payload.note  # None yuborilsa — izoh tozalanadi
+    rate.changed_by = actor.id
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="salary_rate_updated",
+            target_user_id=rate.user_id,
+            before=before,
+            after=row_to_dict(rate, exclude=("created_at",)),
         )
     )
     await db.commit()
@@ -648,6 +725,182 @@ async def create_adjustment(
     return adj
 
 
+# ─────────────────────────────────────────────
+# Avans (2026-08-13) — HR kiritadi, Boshliq tasdiqlaydi
+# ─────────────────────────────────────────────
+
+
+def _fmt_money(amount: float) -> str:
+    """1200000.0 → '1 200 000 so'm' — bot/handlers/payroll.py dagi ko'rinish
+    bilan bir xil (xodim ikki joyda bir xil summani boshqacha ko'rmasin)."""
+    return f"{int(round(amount)):,}".replace(",", " ") + " so'm"
+
+
+async def _adjustment_out(db: AsyncSession, adj: PayrollAdjustment) -> PayrollAdjustmentOut:
+    """Yozuvni ismlar bilan boyitadi — jadval har qator uchun alohida so'rov
+    yubormasin (ro'yxat sahifasi aynan shu shaklda ko'rsatadi)."""
+    out = PayrollAdjustmentOut.model_validate(adj, from_attributes=True)
+    target = await db.get(User, adj.user_id)
+    creator = await db.get(User, adj.created_by)
+    out.full_name = target.full_name if target else None
+    out.created_by_name = creator.full_name if creator else None
+    if adj.decided_by:
+        decider = await db.get(User, adj.decided_by)
+        out.decided_by_name = decider.full_name if decider else None
+    return out
+
+
+@router.get("/adjustments", response_model=list[PayrollAdjustmentOut])
+async def list_adjustments(
+    period: str | None = None,
+    user_id: int | None = None,
+    category: str | None = None,
+    _actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> list[PayrollAdjustmentOut]:
+    """Qo'lda qo'shimcha/ushlanma va avanslar ro'yxati.
+
+    Ilgari bu endpoint umuman YO'Q edi — yozuvni yaratish va o'chirish
+    mumkin bo'lgani holda, ro'yxatini ko'rish imkoni bo'lmagan (ya'ni web
+    panelda avans oynasini qurib bo'lmasdi)."""
+    stmt = select(PayrollAdjustment)
+    if period:
+        stmt = stmt.where(PayrollAdjustment.period == period)
+    if user_id:
+        stmt = stmt.where(PayrollAdjustment.user_id == user_id)
+    if category:
+        stmt = stmt.where(PayrollAdjustment.category == category)
+    rows = list(await db.scalars(stmt.order_by(PayrollAdjustment.created_at.desc())))
+    return [await _adjustment_out(db, a) for a in rows]
+
+
+@router.post("/advances", response_model=PayrollAdjustmentOut)
+async def create_advance(
+    payload: AdvanceIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> PayrollAdjustmentOut:
+    """HR avans kiritadi — `pending` holatida, oylikka HALI KIRMAYDI.
+
+    Yo'nalish (`minus`) serverda qat'iy: avans har doim ushlanma, mijoz uni
+    tanlay olmaydi. Boshliqqa tasdiq so'rab xabar boradi."""
+    target = await db.get(User, payload.user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    # Qulflangan davrga avans kiritish mantiqsiz — u baribir hisobga
+    # kirmaydi (davr qayta hisoblanmaydi), lekin HR uni "kiritdim" deb
+    # o'ylab qolardi.
+    period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == payload.period))
+    if period_row is not None and period_row.locked:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Bu davr qulflangan — avans hisobga kirmaydi. Avval Dasturchi davrni ochishi kerak.",
+        )
+
+    adj = PayrollAdjustment(
+        user_id=payload.user_id,
+        period=payload.period,
+        kind=PayrollAdjustmentKind.minus.value,
+        amount=payload.amount,
+        reason=payload.reason,
+        created_by=actor.id,
+        category=PayrollAdjustmentCategory.advance.value,
+        status=PayrollAdjustmentStatus.pending.value,
+        issued_on=payload.issued_on,
+    )
+    db.add(adj)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_created",
+            target_user_id=payload.user_id,
+            before=None,
+            after={
+                "period": payload.period,
+                "amount": payload.amount,
+                "issued_on": payload.issued_on.isoformat(),
+                "reason": payload.reason,
+            },
+        )
+    )
+    await db.commit()
+    await db.refresh(adj)
+
+    bosses = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(PAYROLL_FINAL_APPROVE_ROLES), User.telegram_id.isnot(None)
+            )
+        )
+    )
+    for b in bosses:
+        await notify_user(
+            db,
+            b,
+            Category.APPROVALS,
+            f"💵 <b>Avans tasdig'i kutilmoqda</b>\n\n"
+            f"Xodim: {target.full_name}\n"
+            f"Summa: {_fmt_money(payload.amount)}\n"
+            f"Berilgan sana: {payload.issued_on.strftime('%d.%m.%Y')}\n"
+            f"Davr: {payload.period}\n"
+            f"Sabab: {payload.reason}\n\n"
+            f"Kiritdi: {actor.full_name}",
+            data={"path": "/payroll"},
+        )
+    return await _adjustment_out(db, adj)
+
+
+@router.post("/advances/{adjustment_id}/decide", response_model=PayrollAdjustmentOut)
+async def decide_advance(
+    adjustment_id: int,
+    payload: AdvanceDecision,
+    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> PayrollAdjustmentOut:
+    """Boshliq qarori. Tasdiqlangach avans oylikdan ayiriladi va XODIMGA
+    xabar boradi (egasining qarori: xodim ko'rsin — oy oxirida "nega kam?"
+    degan savol chiqmasin)."""
+    adj = await db.get(PayrollAdjustment, adjustment_id)
+    if adj is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Yozuv topilmadi")
+    if adj.category != PayrollAdjustmentCategory.advance.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu yozuv avans emas")
+    if adj.status != PayrollAdjustmentStatus.pending.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu avans bo'yicha qaror allaqachon qabul qilingan")
+
+    before = row_to_dict(adj, exclude=("created_at",))
+    adj.status = (
+        PayrollAdjustmentStatus.approved.value if payload.approve else PayrollAdjustmentStatus.rejected.value
+    )
+    adj.decided_by = actor.id
+    adj.decided_at = datetime.utcnow()
+    adj.decided_note = payload.note
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_approved" if payload.approve else "advance_rejected",
+            target_user_id=adj.user_id,
+            before=before,
+            after=row_to_dict(adj, exclude=("created_at",)),
+        )
+    )
+    await db.commit()
+    await db.refresh(adj)
+
+    target = await db.get(User, adj.user_id)
+    if payload.approve and target is not None:
+        await notify_user(
+            db,
+            target,
+            Category.DECISIONS,
+            f"💵 <b>Avans tasdiqlandi</b>\n\n"
+            f"Summa: {_fmt_money(float(adj.amount))}\n"
+            f"Berilgan sana: {adj.issued_on.strftime('%d.%m.%Y') if adj.issued_on else '—'}\n\n"
+            f"Bu summa <b>{adj.period}</b> oyligingizdan ayiriladi.",
+            data={"path": "/me/payroll"},
+        )
+    return await _adjustment_out(db, adj)
+
+
 @router.delete("/adjustments/{adjustment_id}")
 async def delete_adjustment(
     adjustment_id: int, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
@@ -933,10 +1186,11 @@ async def payslip_detail(
     )
 
 
+# `PAYROLL_FINAL_APPROVE_ROLES` fayl boshida (94-qator) — avans tasdig'i ham
+# xuddi shu darvozadan o'tadi, u esa bu yerdan OLDIN e'lon qilingan.
 # Yakuniy tasdiq — FAQAT Boshliq/Dasturchi. HR bu yerda ATAYLAB yo'q:
 # vazifalarni ajratishning butun mohiyati shu (2026-08-08, egasining talabi
 # "hr uni belgilaydi, boss boshliq uni tasdiqlaydi").
-PAYROLL_FINAL_APPROVE_ROLES = (Role.boss.value, Role.dasturchi.value)
 
 
 @router.post("/{period}/hr-approve")

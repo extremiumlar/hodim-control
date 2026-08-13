@@ -154,6 +154,28 @@ class PayrollAdjustmentKind(str, enum.Enum):
     minus = "minus"
 
 
+class PayrollAdjustmentStatus(str, enum.Enum):
+    """2026-08-13: AVANS uchun tasdiq bosqichi (egasining qarori — "HR
+    kiritadi, Boshliq tasdiqlaydi").
+
+    MUHIM: default `approved`. Bu ataylab — bu maydon qo'shilishidan OLDIN
+    yaratilgan yozuvlar allaqachon hisobga kirgan edi, ular `pending` bo'lib
+    qolsa o'tgan oylar jimgina o'zgarib ketardi."""
+
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class PayrollAdjustmentCategory(str, enum.Enum):
+    """`manual` — HR qo'lda kiritgan qo'shimcha/ushlanma (eski oqim, tasdiq
+    talab qilmaydi). `advance` — AVANS: oy o'rtasida qo'lga berilgan pul,
+    Boshliq tasdig'idan keyin oy oxirida oylikdan ayiriladi."""
+
+    manual = "manual"
+    advance = "advance"
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -1632,6 +1654,19 @@ class PayrollAdjustment(Base):
     reason: Mapped[str] = mapped_column(Text)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # ── Avans (2026-08-13) ──
+    category: Mapped[str] = mapped_column(
+        String(20), default=PayrollAdjustmentCategory.manual.value, server_default="manual"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default=PayrollAdjustmentStatus.approved.value, server_default="approved"
+    )
+    # Avans QO'LGA BERILGAN sana. `created_at` dan farq qiladi: HR pulni
+    # 5-kuni bergan bo'lib, tizimga 12-kuni kiritishi mumkin.
+    issued_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class PushToken(Base):

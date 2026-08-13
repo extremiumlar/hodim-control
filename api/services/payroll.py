@@ -44,7 +44,9 @@ from db.models import (
     OvertimeProfile,
     PayBasis,
     PayrollAdjustment,
+    PayrollAdjustmentCategory,
     PayrollAdjustmentKind,
+    PayrollAdjustmentStatus,
     PayrollPeriod,
     PayrollPeriodStatus,
     Payslip,
@@ -646,9 +648,17 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     bonus_row = await db.scalar(select(Bonus).where(Bonus.user_id == user.id, Bonus.period == period))
     bonus_amount = _dec(bonus_row.amount) if bonus_row is not None else Decimal("0")
 
+    # FAQAT `approved` — avans (2026-08-13) Boshliq tasdig'igacha `pending`
+    # turadi va oylikka KIRMAYDI; rad etilgani esa hech qachon kirmaydi.
+    # Eski yozuvlar migratsiyada `approved` bo'lib qolgan, ya'ni o'tgan
+    # oylarning hisobi o'zgarmaydi.
     adjustments = list(
         await db.scalars(
-            select(PayrollAdjustment).where(PayrollAdjustment.user_id == user.id, PayrollAdjustment.period == period)
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.user_id == user.id,
+                PayrollAdjustment.period == period,
+                PayrollAdjustment.status == PayrollAdjustmentStatus.approved.value,
+            )
         )
     )
     adj_plus = sum((_dec(a.amount) for a in adjustments if a.kind == PayrollAdjustmentKind.plus.value), Decimal("0"))
@@ -711,10 +721,19 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
         )
     for a in adjustments:
         sign = 1 if a.kind == PayrollAdjustmentKind.plus.value else -1
+        # Avans qatori ATAYLAB «Avans» deb boshlanadi: xodim payslip'ida
+        # buni darhol tanishi kerak (aks holda sabab matni ko'rinib, "bu
+        # nima?" degan savol tug'ilardi).
+        if a.category == PayrollAdjustmentCategory.advance.value:
+            label = f"Avans — {a.issued_on.strftime('%d.%m.%Y')}" if a.issued_on else "Avans"
+            if a.reason:
+                label += f" ({a.reason})"
+        else:
+            label = a.reason
         items.append(
             {
                 "kind": f"adjustment_{a.kind}",
-                "label": a.reason,
+                "label": label,
                 "quantity": None,
                 "rate": None,
                 "amount": sign * _dec(a.amount),

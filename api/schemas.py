@@ -1024,6 +1024,32 @@ class SalaryRateIn(BaseModel):
         return v
 
 
+class SalaryRateUpdate(BaseModel):
+    """Kiritilgan stavkani TAHRIRLASH (2026-08-13).
+
+    NEGA KERAK: `POST /rates` bir sanaga ikkinchi stavka kiritilsa
+    «avval eskisini o'zgartiring» deb rad etardi, lekin o'zgartiradigan yo'l
+    faqat Dasturchining `/admin/records` sahifasida bor edi — HR uchun bu
+    boshi berk ko'cha edi (xato summani hech qanday yo'l bilan tuzatib
+    bo'lmasdi).
+
+    Barcha maydon ixtiyoriy — faqat yuborilgani o'zgaradi (PATCH semantikasi).
+    `note` uchun `None` yuborish izohni TOZALASH degani, shuning uchun
+    "yuborilmagan" holatini `model_fields_set` orqali ajratamiz."""
+
+    amount: float | None = Field(default=None, gt=0)
+    pay_basis: str | None = None
+    effective_from: dt.date | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("pay_basis")
+    @classmethod
+    def _valid_basis(cls, v: str | None) -> str | None:
+        if v is not None and v not in {"monthly", "daily", "hourly"}:
+            raise ValueError("pay_basis 'monthly', 'daily' yoki 'hourly' bo'lishi kerak")
+        return v
+
+
 class KpiRateIn(BaseModel):
     """KPI stavkasi kiritish. `scope='global'`da `scope_id` bo'lmaydi,
     `position`/`user`da MAJBURIY (`FinePolicyIn` bilan bir xil qoida)."""
@@ -1190,8 +1216,38 @@ class PayrollAdjustmentOut(BaseModel):
     reason: str
     created_by: int
     created_at: datetime
+    # ── Avans (2026-08-13) ──
+    category: str
+    status: str
+    issued_on: dt.date | None
+    decided_by: int | None
+    decided_at: datetime | None
+    decided_note: str | None
+    # Ro'yxatda ism ko'rsatish uchun (jadval har qator uchun alohida so'rov
+    # yubormasin) — router to'ldiradi, modelda yo'q.
+    full_name: str | None = None
+    created_by_name: str | None = None
+    decided_by_name: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class AdvanceIn(BaseModel):
+    """Avans kiritish (HR). Summa musbat — yo'nalish (`minus`) serverda
+    qo'yiladi, mijoz uni tanlay olmaydi: avans HAR DOIM ushlanma."""
+
+    user_id: int
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+    amount: float = Field(gt=0)
+    issued_on: dt.date
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class AdvanceDecision(BaseModel):
+    """Boshliq qarori. `approve=False` — rad etiladi va oylikka KIRMAYDI."""
+
+    approve: bool
+    note: str | None = Field(default=None, max_length=500)
 
 
 class PayslipItemOut(BaseModel):
