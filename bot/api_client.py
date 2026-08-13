@@ -154,6 +154,56 @@ async def work_log_today(telegram_id: int) -> list | None:
     return resp.json()
 
 
+async def appeal_create(telegram_id: int, payload: dict) -> dict:
+    """E'tiroz/shikoyat yaratadi. `payload` — sxema maydonlari (kind, topic,
+    text, is_anonymous, recipient_role, ref_date, ref_period, file_id,
+    file_type). 400 (spam limiti) va 422 (shakl xatosi) chaqiruvchida
+    HTTPStatusError sifatida ushlanadi — `detail` foydalanuvchiga ko'rsatiladi."""
+    resp = await _get_client().post("/appeals/bot", json={"telegram_id": telegram_id, **payload})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def appeal_my_list(telegram_id: int) -> list | None:
+    """Xodimning oxirgi 10 murojaati. 404 — ro'yxatdan o'tmagan (None)."""
+    resp = await _get_client().get(f"/appeals/bot/my/{telegram_id}")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def appeal_attendance_targets(telegram_id: int) -> list | None:
+    """Davomat e'tirozi uchun nishonlar — oxirgi 30 kundagi kechikish/kelmaslik.
+    Bot shularni tugma qilib beradi (xodim sanani qo'lda termaydi)."""
+    resp = await _get_client().get(f"/appeals/bot/attendance-targets/{telegram_id}")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def appeal_review(item_id: int, telegram_id: int) -> dict:
+    """«O'rganyapman» — oraliq holat (in_review)."""
+    resp = await _get_client().post(
+        f"/appeals/{item_id}/review/bot", json={"telegram_id": telegram_id}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def appeal_decide(item_id: int, telegram_id: int, decision: str, note: str) -> dict:
+    """Yakuniy qaror. Qaytadi `{"appeal": ..., "next_step": ...}` —
+    `next_step` qabul qiluvchiga ko'rsatiladigan keyingi qadam (avtomatik
+    tuzatish YO'Q, api/routers/appeals.py dagi asosiy tamoyil)."""
+    resp = await _get_client().post(
+        f"/appeals/{item_id}/decide/bot",
+        json={"telegram_id": telegram_id, "decision": decision, "note": note},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def answer_explanation(req_id: int, telegram_id: int, answer_text: str) -> dict:
     """Xodimning tushuntirish xati javobi. Shaxs `telegram_id`dan yechiladi —
     boshqa birov nomidan javob yozib bo'lmaydi (backend tekshiradi)."""

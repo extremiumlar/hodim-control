@@ -7,6 +7,10 @@ BTN_PAYROLL = "💵 Mening oyligim"
 BTN_PANEL = "📈 Panelim"
 BTN_EXCUSED = "🙋 Sababli kun so'rash"
 BTN_WORK_LOG = "📝 Ish kundaligi"
+# DIQQAT: «E'tiroz» so'zi botda SOTUV kontekstida ham bor (playbook: «🛡 E'tiroz
+# bilan ishlash» — MIJOZ e'tirozlari). Bu tugma esa XODIMNING o'z murojaati.
+# Matn ataylab farqli («/ Shikoyat» qo'shimchasi bilan) — chalkashmasin.
+BTN_APPEAL = "⚖️ E'tiroz / Shikoyat"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
@@ -45,7 +49,7 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_LEAD_STATS, BTN_SCHEDULE, BTN_HOURLY_PLAN, BTN_HOURLY_PLAN_CONTROL,
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
-    BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG,
+    BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL,
 })
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
@@ -99,6 +103,12 @@ def main_menu(
     if flags.get("excused"):
         stats_row.append(KeyboardButton(text=BTN_EXCUSED))
     rows.append(stats_row)
+
+    # E'tiroz/Shikoyat — Boshliqdan tashqari hammaga (u qabul qiluvchi tomon).
+    # Sababli kun qatoridan keyin: ikkalasi ham «murojaat» turkumidagi
+    # tugmalar, xodim ularni yonma-yon izlaydi.
+    if role != "boss":
+        rows.append([KeyboardButton(text=BTN_APPEAL)])
 
     # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
     rows.append([KeyboardButton(text=BTN_SCHEDULE)])

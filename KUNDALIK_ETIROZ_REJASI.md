@@ -554,10 +554,33 @@ MUALLIFNING o'ziga ham ismsiz qaytardi, holbuki `/appeals/me` ro'yxati o'zini
 ko'rsatadi — mijoz yaratilgan yozuvni o'z ro'yxatidagisi bilan bog'lay
 olmasdi. `_to_out_self` create javobiga ham qo'llandi.
 
-### Bosqich 5 — Appeal: bot
-- [ ] Tugma + `bot/handlers/appeal.py` (yozish + qaror oqimlari)
-- [ ] `api_client.py` funksiyalari
-- [ ] Payslip DM'ga "⚖️ E'tiroz" (`payroll.py:1055-1066` + `appeal_payslip:` handler)
+### Bosqich 5 — Appeal: bot ✅ BAJARILDI (2026-08-13)
+- [x] `BTN_APPEAL` + `ALL_MENU_BUTTONS` + `main_menu` (Boshliqdan tashqari hammaga)
+- [x] `bot/handlers/appeal.py` — yozish oqimi (e'tiroz: davomat nishoni yoki
+      davr; shikoyat: kimga → anonimmi → matn → ixtiyoriy ilova) + qaror oqimi
+      (o'rganyapman / qaror turi → majburiy izoh) + `appeal:my`
+- [x] `api_client.py`: 5 funksiya (create, my_list, attendance_targets, review, decide)
+- [x] `setup.py` B zonaga (`work_log` dan keyin, catch-all'lardan oldin)
+- [x] Payslip DM'ga «⚖️ E'tiroz bildirish» (`payroll.py` + `appeal_payslip:`
+      handler, davr oldindan to'ldirilgan) — **1.5-band qarzi yopildi**
+- [x] Sinov: 64 tekshiruv, 0 xato — klaviatura, router tartibi, uchala yozish
+      oqimi, davr validatsiyasi, ilova (hujjat + o'tkazib yuborish), spam
+      limiti xabari, qaror oqimi (klaviatura yangilanishi, qisqa izoh,
+      keyingi qadam), ROP rad etilishi, «Mening murojaatlarim», bekor qilish,
+      rasm/stiker, HTML-escape. Bosqich 1-4 regressiyasiz (74+51+32).
+
+**Ijro paytidagi qarorlar:**
+- **`_submit(actor_id=...)`:** callback orqali yuborilganda (`appeal:nofile`)
+  `message.from_user` BOTNING o'zi bo'ladi — xodim emas. Aktyor ataylab
+  alohida uzatiladi, aks holda murojaat bot nomidan ketardi.
+- **Oylik e'tirozida davr ikki bosqichli emas, bitta holatda** (`stage`
+  maydoni): davr ham, matn ham erkin matn — bitta `waiting_text` holati
+  ikkalasini boshqaradi.
+- **Qaror turi tanlovida uchala variant ham ko'rsatiladi** (murojaat turi
+  callback'da yo'q); mos kelmasa backend 400 va aniq xabar qaytaradi.
+- **`on_review` da `edit_text` EMAS, `edit_reply_markup`:** murojaat matni
+  xabarda qolishi kerak (HR uni o'qib qaror qiladi), faqat «O'rganyapman»
+  tugmasi olib tashlanadi.
 
 ### Bosqich 6 — Appeal: web
 - [ ] `pages/Appeals.tsx` + badge + `StatusBadge` yangi kind

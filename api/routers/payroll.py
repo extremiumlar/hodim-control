@@ -65,6 +65,7 @@ from api.services.payroll import (
 )
 from api.notify import notify_user
 from api.services.push import Category
+from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
 from db.models import (
     AuditLog,
@@ -1062,6 +1063,11 @@ async def approve_period(
             Category.DECISIONS,
             f"💵 {period} oyi uchun oyligingiz tasdiqlandi. Tafsilot uchun botdagi «Mening oyligim» "
             f"bo'limiga qarang.",
+            # 1.5-band (shaffoflik): hisobga rozi bo'lmasa — bir bosishda
+            # e'tiroz, davr oldindan to'ldirilgan holda. `force_telegram`
+            # SHART: tugma faqat botda ishlaydi (api/notify.py:66-72).
+            reply_markup=inline_keyboard([[("⚖️ E'tiroz bildirish", f"appeal_payslip:{period}")]]),
+            force_telegram=True,
             data={"path": "/me/payroll"},
         )
 

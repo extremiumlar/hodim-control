@@ -15,6 +15,7 @@ from bot.handlers import (
     ai_center,
     ai_watch,
     anketa,
+    appeal,
     assign_task,
     attendance_stats,
     busy_period,
@@ -95,6 +96,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(tasks.router)
     dp.include_router(excused.router)
     dp.include_router(work_log.router)
+    dp.include_router(appeal.router)
     dp.include_router(norms.router)
     dp.include_router(payroll.router)
     dp.include_router(admin_override.router)
