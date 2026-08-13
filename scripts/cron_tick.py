@@ -86,6 +86,12 @@ GROUP_DIGEST_LOCK = ROOT / "logs" / "group_digest.lock"
 GROUP_DIGEST_LOCK_STALE_MINUTES = 5
 CRON_MISC_LOCK = ROOT / "logs" / "cron_misc.lock"
 CRON_MISC_LOCK_STALE_MINUTES = 5
+# Davomat eslatmasi VAQT-SEZGIR (10/5/0 nuqta): lock uzoq turib qolsa
+# "10 daqiqa qoldi" xabari umuman tushmay ketadi. Shuning uchun stale qisqa.
+ATTENDANCE_REMINDER_LOCK = ROOT / "logs" / "attendance_reminder.lock"
+ATTENDANCE_REMINDER_LOCK_STALE_MINUTES = 3
+HOURLY_PLAN_LOCK = ROOT / "logs" / "hourly_plan.lock"
+HOURLY_PLAN_LOCK_STALE_MINUTES = 5
 
 
 def _is_last_day(d: datetime) -> bool:
@@ -137,12 +143,9 @@ def _due(now: datetime) -> list:
     # o'lchovda 4.7s va 2.0s chiqqani uchun lid skaneri kabi in-process
     # bajariladi (main() pastda) — Passenger'ning yagona ishchisi band bo'lmasin.
 
-    # «Keldim/Ketdim bosishni unutmang» — API dam kuni/sababli kun/allaqachon
-    # bosganlarni o'zi filtrlaydi va kuniga bir marta yuboradi (UNIQUE iz).
-    # Toq qoldiq (==1) ATAYLAB: yuqoridagi guruhlar juft daqiqalarda
-    # to'planadi, yagona Passenger ishchisi bir zumda to'lib qolmasin.
-    if m % cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES == 1:
-        add("/attendance/reminder-tick", json={}, timeout=120)
+    # DIQQAT: /attendance/reminder-tick va /hourly-plan/send bu ro'yxatda YO'Q
+    # (2026-08-13, Bosqich 4b) — in-process bajariladi (main() pastda).
+    # Chastota o'zgarmadi: m%ATTENDANCE_REMINDER_INTERVAL_MINUTES==1 va m==0.
 
     # Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun yozmaganlarga
     # (KUNDALIK_ETIROZ_REJASI.md). Qoldiq 4 ATAYLAB bo'sh daqiqa: toq guruh
@@ -152,12 +155,6 @@ def _due(now: datetime) -> list:
         add("/work-log/reminder-tick", json={}, timeout=120)
 
     # ── Soatlik ──
-    if m == 0:
-        add("/hourly-plan/send", timeout=60)         # soatlik reja (API ish oynasini tekshiradi)
-        # Telegram login xavfsizligi: replay-himoya hash'lari + rate-limit
-        # urinish yozuvlarini tozalash (scheduler/main.py'dagi
-        # login_security_cleanup bilan bir xil — cron_tick shared hostingda
-        # o'sha APScheduler job'ining o'rnini bosadi).
     if m == cfg.AI_WATCH_MINUTE:
         add("/ai-watch/tick", timeout=180)           # AI kuzatuv (o'chiqda no-op)
 
@@ -414,6 +411,32 @@ async def _run_misc_inprocess(now: datetime, label: str, fn_name: str) -> None:
     await _run_service_inprocess(now, label, CRON_MISC_LOCK, CRON_MISC_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_attendance_reminder_inprocess(now: datetime) -> None:
+    """«Keldim/Ketdim bosishni unutmang» eslatmasi. Servis dam kuni/sababli
+    kun/allaqachon bosganlarni o'zi filtrlaydi va UNIQUE iz bilan kuniga bir
+    marta yuboradi — ya'ni ortiqcha chaqiruv zararsiz."""
+    async def runner(db):
+        from api.services.cron_jobs import attendance_reminder_tick
+        return await attendance_reminder_tick(db)
+
+    await _run_service_inprocess(
+        now, "davomat eslatmasi", ATTENDANCE_REMINDER_LOCK, ATTENDANCE_REMINDER_LOCK_STALE_MINUTES, runner
+    )
+
+
+async def _run_hourly_plan_inprocess(now: datetime) -> None:
+    """Soatlik reja. Bayroq (`HOURLY_PLAN_ENABLED`) o'chiq bo'lsa servis darhol
+    no-op qaytaradi — hech kimga xabar ketmaydi."""
+    async def runner(db):
+        from api.services.cron_jobs import hourly_plan_send
+        return await hourly_plan_send(db)
+
+    await _run_service_inprocess(
+        now, "soatlik reja", HOURLY_PLAN_LOCK, HOURLY_PLAN_LOCK_STALE_MINUTES, runner
+    )
+
+
+
 
 
 def _lead_diff_due(now: datetime) -> bool:
@@ -495,6 +518,9 @@ async def main() -> None:
         await _run_misc_inprocess(now, "bilim bazasi", "knowledge_tick")
     if now.minute == 0:
         await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
+        await _run_hourly_plan_inprocess(now)
+    if now.minute % cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES == 1:
+        await _run_attendance_reminder_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):

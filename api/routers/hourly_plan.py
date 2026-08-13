@@ -10,11 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db, verify_bot_secret
 from api.schemas import HourlyMetricStatus, HourlyPlanOut
-from api.notify import notify_user
-from api.services.push import Category
 # Tushlik chegaralari va ish-daqiqa hisobi timeutil'da — davomat worked_minutes
 # bilan bitta manba ("ishlangan vaqt" ta'rifi ikki joyda farq qilmasligi uchun).
-from api.timeutil import LUNCH_END, LUNCH_START, TASHKENT_TZ, today_local, work_minutes as _work_minutes
+from api.timeutil import LUNCH_END, LUNCH_START, TASHKENT_TZ, work_minutes as _work_minutes
 from db.models import Role, User, WorkScheduleOverride, WorkScheduleWeekly
 
 router = APIRouter(prefix="/hourly-plan", tags=["hourly-plan"])
@@ -342,37 +340,12 @@ async def employee_hourly_plan(telegram_id: int, user_id: int, db: AsyncSession 
 
 @router.post("/send", dependencies=[Depends(verify_bot_secret)])
 async def send_hourly_plan(db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler har soat boshida chaqiradi: ayni damда ish vaqtida bo'lgan va normasi
-    bor xodimlarga shu soat rejasini + progressni yuboradi. Ish vaqtidan tashqarida
-    (yoki dam olish kunida) hech kimga yuborilmaydi. Xavfsizlik uchun default o'chiq
-    (settings.hourly_plan_enabled) — haqiqiy xodimlarga xabar ketgani sabab."""
-    if not settings.hourly_plan_enabled:
-        return {"sent": 0, "disabled": True}
-    now = datetime.now(TASHKENT_TZ)
-    users = list(
-        await db.scalars(
-            select(User).where(
-                User.role == Role.employee.value,
-                User.is_active == True,  # noqa: E712
-                User.telegram_id.isnot(None),
-            )
-        )
-    )
-    sent = 0
-    for user in users:
-        plan = await build_plan(db, user, now)
-        if not plan.is_working or not plan.metrics or plan.in_lunch:
-            continue
-        # Faqat ish oynasi ichida (rejada boshlanmagan/tugagan bo'lsa yubormaymiz)
-        if plan.start_time and plan.end_time:
-            now_min = now.hour * 60 + now.minute
-            if now_min < _to_min(plan.start_time) or now_min >= _to_min(plan.end_time):
-                continue
-        result = await notify_user(
-            db, user, Category.PLAN_REMINDERS, plan.text, data={"path": "/me/hourly-plan"}
-        )
-        # `notify_user` har doim dict qaytaradi (ilgari `send_message` xatoda
-        # None berardi) — shuning uchun haqiqatan yuborilganini tekshiramiz.
-        if result["push"] or result["telegram"]:
-            sent += 1
-    return {"sent": sent, "at": f"{now.hour:02d}:{now.minute:02d}", "date": today_local().isoformat()}
+    """Scheduler har soat boshida chaqiradi: ayni damda ish vaqtida bo'lgan va normasi
+    bor xodimlarga shu soat rejasini + progressni yuboradi.
+
+    Mantiq `api/services/cron_jobs.py` da — cPanel cron uni SAYTGA so'rov
+    yubormasdan, o'z jarayonida bajaradi (SAYT_QOTISHI_TAHLIL.md Bosqich 4b).
+    Bu endpoint Docker/scheduler rejimi uchun saqlanadi."""
+    from api.services.cron_jobs import hourly_plan_send
+
+    return await hourly_plan_send(db)
