@@ -457,7 +457,11 @@ export const useSalaryRates = (userId: number, enabled = true) =>
   useQuery({ queryKey: qk.salaryRates(userId), queryFn: () => api.listSalaryRates(userId), enabled });
 
 export const useCreateSalaryRate = () =>
-  useApiMutation(api.createSalaryRate, [["payroll", "rates"]]);
+  // `preflight` ham yangilanadi: u «stavkasi yo'q xodimlar» ro'yxatini beradi
+  // va stavka qo'shilgach o'sha ro'yxat qisqarishi kerak. Busiz HR 9 kishiga
+  // ketma-ket kiritayotganda ro'yxat qotib turardi va kim qolganini bilib
+  // bo'lmasdi.
+  useApiMutation(api.createSalaryRate, [["payroll", "rates"], ["payroll", "preflight"]]);
 
 export const useHrApprovePayrollPeriod = () =>
   useApiMutation(api.hrApprovePayrollPeriod, [["payroll"]]);

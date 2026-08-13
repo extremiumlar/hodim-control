@@ -26,16 +26,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { currentMonthKey } from "@/components/PeriodPicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   type FinePolicy,
   type FinePolicyInput,
   type OvertimeProfile,
+  type ReadinessIssue,
   type SalaryRate,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   useCreateSalaryRate,
+  usePayrollPreflight,
   useDeleteFinePolicy,
   useFinePolicies,
   useFinePolicyEditors,
@@ -477,6 +480,12 @@ function SalaryRateTab() {
   const ratesQuery = useSalaryRates(userId ?? 0, userId !== null);
   const createRate = useCreateSalaryRate();
 
+  // Kimda stavka YO'Q — `preflight` allaqachon shuni hisoblaydi (u yerda
+  // qamrov backend bilan bir xil: davomat kuzatiladigan faol xodimlar).
+  // Joriy oy olinadi: stavka kiritilgach ro'yxat o'z-o'zidan qisqaradi.
+  const preflightQuery = usePayrollPreflight(currentMonthKey());
+  const missingRate = preflightQuery.data?.no_salary_rate ?? [];
+
   const [amount, setAmount] = useState("");
   const [payBasis, setPayBasis] = useState("monthly");
   const [effectiveFrom, setEffectiveFrom] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -514,9 +523,15 @@ function SalaryRateTab() {
       { user_id: userId, amount: n, pay_basis: payBasis, effective_from: effectiveFrom, note: note || null },
       {
         onSuccess: () => {
-          toast.success("Stavka qo'shildi");
+          const nomi = (usersQuery.data ?? []).find((u) => u.id === userId)?.full_name ?? "";
+          toast.success(nomi ? `${nomi} — stavka qo'shildi` : "Stavka qo'shildi");
           setAmount("");
           setNote("");
+          // Xodim tanlovi ham TOZALANADI. Ilgari tanlangan xodim qolib
+          // ketardi va HR ketma-ket bir necha kishiga stavka kiritayotganda
+          // xodimni almashtirishni unutib, AYNI sana uchun ikkinchi marta
+          // yuborardi -> 400 «Bu sanaga allaqachon stavka kiritilgan».
+          setUserId(null);
         },
       }
     );
@@ -529,6 +544,38 @@ function SalaryRateTab() {
           <CardTitle className="text-base">Yangi stavka</CardTitle>
         </CardHeader>
         <CardContent>
+          {/* Stavkasi hali yo'q xodimlar. Ularga oylik ham, jarima ham
+              hisoblanmaydi — ya'ni jarima qoidasi qanday sozlansa ham natija
+              0 bo'ladi. Shuning uchun ro'yxat ko'rinib tursin va bir bosishda
+              tanlansin (HR ketma-ket bir necha kishiga kiritadi). */}
+          {missingRate.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="text-xs font-medium text-amber-900">
+                Stavkasi yo'q — {missingRate.length} xodim
+              </div>
+              <p className="mt-0.5 text-xs text-amber-800">
+                Ularga oylik ham, jarima ham hisoblanmaydi. Ismni bosing.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {missingRate.map((u: ReadinessIssue) => (
+                  <button
+                    key={u.user_id}
+                    type="button"
+                    onClick={() => setUserId(u.user_id)}
+                    className={
+                      "rounded-md border px-2 py-1 text-xs " +
+                      (userId === u.user_id
+                        ? "border-amber-500 bg-amber-100 font-medium text-amber-900"
+                        : "border-amber-300 bg-white text-amber-900 hover:bg-amber-100")
+                    }
+                  >
+                    {u.full_name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mb-4">
             <Label>Xodim</Label>
             <Select value={userId ? String(userId) : undefined} onValueChange={(v) => setUserId(Number(v))}>
