@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.services.crm_sync import sync_daily_results, upsert_daily_result
 from api.services.lead_diff import visit_stats_range
 from api.timeutil import today_local
 from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_IDS
@@ -18,7 +19,6 @@ from api.schemas import (
     DailyResultOut,
     DailyResultTodayOut,
 )
-from crm import get_crm_adapter
 from db.models import AuditLog, DailyResult, DailyResultSource, Role, User
 from db.upsert import upsert
 
@@ -38,30 +38,6 @@ def _validate_manual_metrics(target: User, conversations: int, visits: int) -> N
                 status.HTTP_400_BAD_REQUEST,
                 f"Bu xodimning lavozimi uchun '{METRIC_LABELS[metric]}' ko'rsatkichi kuzatilmaydi",
             )
-
-
-async def _upsert_daily_result(
-    db: AsyncSession, user_id: int, day: date, conversations: int, visits: int, source: str
-) -> DailyResult:
-    stmt = (
-        upsert(DailyResult)
-        .values(user_id=user_id, date=day, conversations_count=conversations, visits_count=visits, source=source)
-        .on_conflict_do_update(
-            index_elements=[DailyResult.user_id, DailyResult.date],
-            set_={"conversations_count": conversations, "visits_count": visits, "source": source},
-        )
-    )
-    await db.execute(stmt)
-    await db.commit()
-
-    # populate_existing=True: agar shu qatorga mos ORM obyekt sessiyada allaqachon
-    # (masalan chaqiruvchi "before" auditi uchun) yuklangan bo'lsa, identity map eski
-    # qiymatlarni qaytarib yubormasin — yangi UPDATE'dan keyingi haqiqiy qiymatlarni oling.
-    return await db.scalar(
-        select(DailyResult)
-        .where(DailyResult.user_id == user_id, DailyResult.date == day)
-        .execution_options(populate_existing=True)
-    )
 
 
 @router.post("/daily-results/manual", response_model=DailyResultOut)
@@ -86,7 +62,7 @@ async def manual_daily_result(
         else None
     )
 
-    record = await _upsert_daily_result(
+    record = await upsert_daily_result(
         db, payload.user_id, payload.date, payload.conversations_count, payload.visits_count,
         DailyResultSource.manual.value,
     )
@@ -239,7 +215,7 @@ async def recalc_visits(
                 if row is not None:
                     row.visits_count = new_v
                 elif new_v:
-                    await _upsert_daily_result(
+                    await upsert_daily_result(
                         db, uid, day, 0, new_v, DailyResultSource.crm.value
                     )
         day += timedelta(days=1)
@@ -264,99 +240,18 @@ async def recalc_visits(
 
 
 @router.post("/daily-results/sync", dependencies=[Depends(verify_bot_secret)])
-async def sync_daily_results(db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler tomonidan soatlik chaqiriladi (webhook mavjud bo'lmagan holat uchun zaxira).
-    CRM_TYPE=none bo'lsa hech narsa qilmaydi (qo'lda kiritish yetarli).
+async def sync_daily_results_endpoint(db: AsyncSession = Depends(get_db)) -> dict:
+    """CRM'dan bugungi natijalarni tortadi.
 
-    ⚠️ TASHRIF HISOBI TUZATILDI (2026-08-12, egasining talabi). Ilgari tashrif
-    CRM'dagi `updatedTimestamp` bo'yicha sanalardi: "Tashrif bosqichida turgan
-    va BUGUN tahrirlangan lid". Bu ikki tomonlama noto'g'ri edi —
-      (a) 3 kun oldin tashrifga o'tgan lidga bugun izoh qo'shilsa, u YANA
-          tashrif deb sanalardi (jonli misol 08-11: Shahnoza'ga 4 ta tashrif
-          yozilgan, aslida o'sha kuni bironta ham tashrif voqeasi yo'q);
-      (b) lidni TASHRIFGA OLIB KELGAN, keyin boshqa mas'ulga o'tkazgan xodim
-          umuman hisobga olinmasdi (08-12: Hayot 2 ta tashrif qilgan, KPI'da 0).
-    Endi manba — `LeadEvent` voqealari (`lead_diff.daily_operator_breakdown`):
-    "lid Tashrif bosqichiga YANGI kirdi" hodisasi, dual-kredit bilan (yopgan
-    + olib kelgan). Statistika/guruh digesti allaqachon shu manbadan o'qiydi —
-    endi KPI/norma/bonus ham AYNAN SHU raqamni ko'radi (ilgari ikki bo'lim
-    ikki xil son ko'rsatardi)."""
-    adapter = get_crm_adapter(settings.crm_type)
-    if not adapter:
-        return {"synced": 0, "skipped_reason": "CRM_TYPE sozlanmagan"}
+    Mantiq `api/services/crm_sync.py` ga ko'chirildi (2026-08-13): cPanel
+    rejimida `scripts/cron_tick.py` uni SHU JARAYONNING o'zida chaqiradi va
+    saytga umuman tegmaydi. Ilgari cron shu endpointga HTTP so'rov yuborardi
+    va ~30-40 soniya davomida yagona Passenger ishchisini band qilib, butun
+    saytni o'lik qilardi.
 
-    today = today_local()
-    employees = list(
-        await db.scalars(
-            select(User).where(
-                User.role == Role.employee.value,
-                User.is_active == True,  # noqa: E712
-                (User.crm_external_id.isnot(None) | User.crm_visit_external_id.isnot(None)),
-            )
-        )
-    )
-
-    synced = 0
-    failed = 0
-    skipped_manual = 0
-    # Kunlik CRM ma'lumoti BITTA chaqiruvda olinadi: u faqat kunga bog'liq, shuning
-    # uchun har xodim uchun alohida so'rash o'sha og'ir yuklashni N marta
-    # takrorlardi (jonli o'lchov: 4 xodimda ~4.4s). cPanel'da Passenger'ning yagona
-    # ishchisi shu vaqt band bo'lib, sayt so'rovlari navbatda kutardi.
-    results = await adapter.get_daily_results_bulk(employees, today)
-
-    # Tashrif — VOQEA asosidan (yuqoridagi izoh). `days_with_events` bo'sh
-    # bo'lsa diff-engine shu kuni umuman ishlamagan degani: bunday paytda
-    # tashrifni 0 ga tushirib yubormaymiz (mavjud qiymat saqlanadi), aks holda
-    # CRM/diff uzilishi xodimning kunlik natijasini nolga yechib yuborardi.
-    visit_series = await visit_stats_range(db, today, today, set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS))
-    events_exist = today in visit_series["days_with_events"]
-    visits_by_crm_id = {
-        str(rid): cnt for rid, cnt in visit_series["daily_by_operator"].get(today, {}).items()
-    }
-
-    for emp in employees:
-        data = results.get(emp.id)
-        if data is None:
-            # CRM'dan ma'lumot olib bo'lmadi (xatolik) — mavjud yozuvni ustidan
-            # yozib yubormaslik uchun bu xodimni butunlay o'tkazib yuboramiz.
-            logger.warning("CRM sinxronizatsiyasi o'tkazib yuborildi (user_id=%s) — CRM xatosi", emp.id)
-            failed += 1
-            continue
-
-        existing = await db.scalar(
-            select(DailyResult).where(DailyResult.user_id == emp.id, DailyResult.date == today)
-        )
-        if existing and existing.source == DailyResultSource.manual.value:
-            # Qo'lda kiritilgan yozuvni CRM sync avtomatik ustidan yozmaydi — qo'lda
-            # kiritilgan qiymat qasddan CRM'dan farq qilishi mumkin (masalan tuzatish).
-            logger.info("CRM sinxronizatsiyasi o'tkazib yuborildi (user_id=%s) — qo'lda kiritilgan yozuv", emp.id)
-            skipped_manual += 1
-            continue
-
-        # Tashrif: voqea-asosli (aniq). Voqea jurnali shu kunga bo'sh bo'lsa —
-        # eski qiymat saqlanadi (yuqoridagi izoh), CRM'ning taxminiy soniga
-        # QAYTILMAYDI: u yolg'on ko'paytirardi.
-        if events_exist:
-            visits = (
-                visits_by_crm_id.get(emp.crm_visit_external_id, 0)
-                if emp.crm_visit_external_id
-                else 0
-            )
-        else:
-            visits = existing.visits_count if existing else 0
-
-        await _upsert_daily_result(
-            db, emp.id, today, data["conversations"], visits, DailyResultSource.crm.value
-        )
-        synced += 1
-
-    return {
-        "synced": synced,
-        "failed": failed,
-        "skipped_manual": skipped_manual,
-        "total_employees_with_crm_id": len(employees),
-    }
+    Endpoint SAQLANADI — Docker/scheduler rejimi (`scheduler/main.py`) uni
+    hamon chaqiradi."""
+    return await sync_daily_results(db)
 
 
 @router.post("/crm/webhook")
@@ -387,7 +282,7 @@ async def crm_webhook(
         else None
     )
 
-    record = await _upsert_daily_result(
+    record = await upsert_daily_result(
         db, user.id, payload.date, payload.conversations, payload.visits, DailyResultSource.crm.value
     )
 

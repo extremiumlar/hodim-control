@@ -60,6 +60,12 @@ HOT_LEAD_LOCK = ROOT / "logs" / "hot_lead.lock"
 HOT_LEAD_LOCK_STALE_MINUTES = 8
 IDLE_WATCH_LOCK = ROOT / "logs" / "idle_watch.lock"
 IDLE_WATCH_LOCK_STALE_MINUTES = 8
+# CRM kunlik sinxronizatsiyasi (2026-08-13, SAYT_QOTISHI_TAHLIL.md Bosqich 2).
+# 6 daqiqa: ish har 2 daqiqada rejalashtiriladi, o'zi esa ~30-40s davom etadi —
+# lock uch siklni qamrab, sekin ketgan sinxronizatsiya ustiga ikkinchisi
+# tushmasligini kafolatlaydi (CRM so'rov byudjeti ikki barobar yeyilmasin).
+CRM_SYNC_LOCK = ROOT / "logs" / "crm_sync.lock"
+CRM_SYNC_LOCK_STALE_MINUTES = 6
 
 
 def _is_last_day(d: datetime) -> bool:
@@ -95,10 +101,11 @@ def _due(now: datetime) -> list:
     # daqiqada 11 ta chaqiruv). Bu guruhlar toq daqiqalarga surildi — cho'qqi
     # tekislanadi, yagona ishchi bir zumda to'lib qolmaydi.
     if m % 2 == 1:
-        # CRM sync: so'rov byudjeti pacing'i bilan kun oxirida (10-15 sahifa
-        # call-history + tashrif lidlari) 30s'dan oshishi mumkin — default 30s
-        # timeout'da cron.log'ga ReadTimeout traceback tushardi (jonli, 2026-08-04).
-        add("/daily-results/sync", timeout=120)
+        # CRM sync BU YERDA YO'Q (2026-08-13, Bosqich 2): u endi HTTP orqali
+        # emas, cron jarayonining O'ZIDA bajariladi — pastdagi
+        # `_run_crm_sync_inprocess`. Sabab: ish ~30-40s davom etadi va
+        # konkurentlik = 1 bo'lgani uchun butun saytni shuncha vaqtga o'lik
+        # qilardi.
         add("/anketa/tick", timeout=120)             # anketa max 2 daq kechikib boshlanadi
     if m % 5 == 3:
         add("/knowledge/tick", timeout=120)          # bilim bazasi AI ishlovi (draft yo'q — no-op)
@@ -309,6 +316,26 @@ async def _run_idle_watch_inprocess(now: datetime) -> None:
     await _run_service_inprocess(now, "harakatsizlik", IDLE_WATCH_LOCK, IDLE_WATCH_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_crm_sync_inprocess(now: datetime) -> None:
+    """CRM kunlik sinxronizatsiyasi — SHU jarayonda, saytga tegmasdan.
+
+    NEGA (SAYT_QOTISHI_TAHLIL.md Bosqich 2): ilgari cron `/daily-results/sync`
+    ga HTTP so'rov yuborardi. Deploy'da konkurentlik = 1 va bu ish ~30-40
+    soniya davom etadi — ya'ni har 2 daqiqada sayt shuncha vaqtga butunlay
+    javob bermay qolardi (jonli o'lchov: bitta so'rov 40.3 soniya kutdi).
+    Endi og'irlik cron jarayonida qoladi, Passenger ishchisi esa faqat
+    odamlarga xizmat qiladi.
+
+    Import ATAYLAB funksiya ichida: cron har daqiqada ishga tushadi, modul
+    darajasidagi import esa har safar (ish yo'q bo'lganda ham) FastAPI
+    stack'ini ko'tarardi — 2026-07-31 dagi uzilishning aynan sababi shu edi."""
+    async def runner(db):
+        from api.services.crm_sync import sync_daily_results
+        return await sync_daily_results(db)
+
+    await _run_service_inprocess(now, "CRM sync", CRM_SYNC_LOCK, CRM_SYNC_LOCK_STALE_MINUTES, runner)
+
+
 def _lead_diff_due(now: datetime) -> bool:
     return now.minute % cfg.LEAD_DIFF_INTERVAL_MINUTES == 0
 
@@ -361,6 +388,12 @@ async def main() -> None:
         await _run_hot_lead_inprocess(now)
     if now.minute % cfg.IDLE_WATCH_INTERVAL_MINUTES == 0:
         await _run_idle_watch_inprocess(now)
+
+    # CRM kunlik sinxronizatsiyasi — avvalgi bilan BIR XIL chastota (toq
+    # daqiqalar), lekin endi in-process. Yengil ticklardan KEYIN turadi:
+    # u eng og'iri va vaqt-sezgir digestlarni kechiktirmasligi kerak.
+    if now.minute % 2 == 1:
+        await _run_crm_sync_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):
