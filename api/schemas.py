@@ -1382,3 +1382,81 @@ class PushSettingsOut(BaseModel):
 
 class PushSettingsUpdate(BaseModel):
     categories: dict[str, bool]
+
+
+# ─── Ish kundaligi (KUNDALIK_ETIROZ_REJASI.md, Bosqich 1) ───────────────────────
+
+
+class WorkLogBotCreate(BaseModel):
+    """Bot — shaxs `telegram_id`dan. Sana YO'Q: yozuv HAR DOIM bugungi
+    (Toshkent) kunga tushadi — mijoz o'tgan kunga yozuv qo'sha olmasligi
+    qulf qoidasining asosi."""
+
+    telegram_id: int
+    text: str = Field(min_length=3, max_length=2000)
+
+
+class WorkLogMeCreate(BaseModel):
+    """Web/mobil (JWT) — `telegram_id` YO'Q, shaxs tokendan olinadi."""
+
+    text: str = Field(min_length=3, max_length=2000)
+
+
+class WorkLogMePatch(BaseModel):
+    text: str = Field(min_length=3, max_length=2000)
+
+
+class WorkLogEntryOut(BaseModel):
+    id: int
+    user_id: int
+    date: dt.date
+    text: str
+    source: str
+    created_at: datetime
+    updated_at: datetime | None
+    # Server hisoblaydi (date == bugun): bot ham, web ham "tahrirlash mumkinmi"
+    # qoidasini o'zi takrorlamasin — kun chegarasi faqat backend timezone'ida.
+    editable: bool
+
+    model_config = {"from_attributes": True}
+
+
+class WorkLogDayOut(BaseModel):
+    """Oylik ko'rinishning bitta kuni. `is_working` ish jadvalidan
+    (attendance_month.build_month_cells bilan bir manba) — kalendarda
+    "ish kuni-yu yozmagan" kunni qizil ko'rsatish uchun."""
+
+    date: dt.date
+    is_working: bool
+    entries: list[WorkLogEntryOut]
+
+
+class WorkLogMonthOut(BaseModel):
+    month: str  # "YYYY-MM"
+    user_id: int
+    user_full_name: str
+    days: list[WorkLogDayOut]
+    # Qamrov: o'tgan (bugungacha) ish kunlari va shulardan nechtasida yozuv bor.
+    work_days: int
+    logged_days: int
+    entries_count: int
+
+
+class WorkLogCoverageRow(BaseModel):
+    user_id: int
+    full_name: str
+    work_days: int
+    logged_days: int
+    entries_count: int
+
+
+class WorkLogCoverageOut(BaseModel):
+    month: str
+    rows: list[WorkLogCoverageRow]
+
+
+class WorkLogReminderTick(BaseModel):
+    """Scheduler tick. `dry_run` — hech kimga YUBORMASDAN kimga ketishini
+    qaytaradi (attendance reminder-tick bilan bir xil sinov naqshi)."""
+
+    dry_run: bool = False

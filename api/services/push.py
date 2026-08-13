@@ -61,10 +61,14 @@ class Category:
     # yaqin. Kuniga ko'pi bilan 2 marta (kelish + ketish), shuning uchun
     # PLAN_REMINDERS'dan farqli o'laroq default YOQIQ.
     ATTENDANCE_REMINDER = "attendance_reminder"
+    # Ish kundaligi: «bugun hali hech narsa yozmadingiz» — ish tugashiga yaqin,
+    # kuniga ko'pi bilan 1 marta (UNIQUE iz attendance_reminders'da).
+    WORK_LOG = "work_log"
 
 
 CATEGORY_LABELS: dict[str, str] = {
     Category.ATTENDANCE_REMINDER: "Keldim/Ketdim eslatmasi",
+    Category.WORK_LOG: "Ish kundaligi eslatmasi",
     Category.LATE_WARNING: "Kechikish ogohlantirishi",
     Category.TASKS: "Vazifalar",
     Category.DECISIONS: "Qaror natijasi",
@@ -84,6 +88,7 @@ PERSONAL_CATEGORIES = frozenset(
         Category.DECISIONS,
         Category.PLAN_REMINDERS,
         Category.ATTENDANCE_REMINDER,
+        Category.WORK_LOG,
     }
 )
 
@@ -96,6 +101,8 @@ _DEFAULTS_EMPLOYEE: dict[str, bool] = {
     # Kuniga ko'pi bilan 2 marta va aynan jarimadan saqlaydigan eslatma —
     # shuning uchun PLAN_REMINDERS'dan farqli o'laroq YOQIQ.
     Category.ATTENDANCE_REMINDER: True,
+    # Kuniga ko'pi bilan 1 marta va faqat hali yozmaganlarga — bezovta qilmaydi.
+    Category.WORK_LOG: True,
     Category.LATE_WARNING: True,
     Category.TASKS: True,
     Category.DECISIONS: True,
@@ -109,6 +116,10 @@ _DEFAULTS_MANAGER: dict[str, bool] = {
     **_DEFAULTS_EMPLOYEE,
     Category.APPROVALS: True,
     Category.SALES_SIGNALS: True,
+    # Kundalik eslatmasi xodim mehnati hisoboti uchun — rahbarga default o'chiq
+    # (reminder-tick baribir faqat employee roliga yuboradi; bu bayroq rahbar
+    # sozlamalar sahifasida toifani "yoqiq" deb adashtirmasligi uchun).
+    Category.WORK_LOG: False,
 }
 
 

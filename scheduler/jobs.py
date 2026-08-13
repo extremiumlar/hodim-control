@@ -150,6 +150,19 @@ async def attendance_reminder_tick() -> None:
         logger.info("Davomat eslatmasi: %s ta yuborildi (nomzod %s)", body["sent"], body.get("candidates"))
 
 
+async def work_log_reminder_tick() -> None:
+    """Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun ishlagan-u hali
+    hech narsa yozmaganlarga. API dam kuni/sababli kun/kelmagan/yozgan
+    holatlarni o'zi filtrlaydi va kuniga bir marta yuboradi (UNIQUE iz)."""
+    body = await call_api(
+        "/work-log/reminder-tick", json={}, timeout=120, label="Kundalik eslatmasi"
+    )
+    if body is not None and body.get("sent"):
+        logger.info(
+            "Kundalik eslatmasi: %s ta yuborildi (nomzod %s)", body["sent"], body.get("candidates")
+        )
+
+
 # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ─────────────────
 async def login_security_cleanup_tick() -> None:
     """Replay-himoya hash'lari (UsedTelegramLoginHash) va rate-limit urinish

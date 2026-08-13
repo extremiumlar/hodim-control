@@ -141,6 +141,13 @@ def _build_jobs() -> list[JobSpec]:
             IntervalTrigger(minutes=cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES),
             max_instances=1, coalesce=True,
         ),
+        # Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun yozmaganlarga
+        # (KUNDALIK_ETIROZ_REJASI.md, Bosqich 1). API o'zi filtrlaydi.
+        JobSpec(
+            "work_log_reminder", jobs.work_log_reminder_tick,
+            IntervalTrigger(minutes=cfg.WORK_LOG_REMINDER_INTERVAL_MINUTES),
+            max_instances=1, coalesce=True,
+        ),
         # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ───────────
         # Eskirgan hash/urinish yozuvlarini tozalash — vaqtinchalik jadvallar
         JobSpec(

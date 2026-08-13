@@ -402,6 +402,41 @@ class DailyResult(Base):
     raw_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class WorkLogSource(str, enum.Enum):
+    bot = "bot"
+    web = "web"  # xodim kabineti ham, mobil WebView ham shu
+
+
+class WorkLogEntry(Base):
+    """Xodimning kunlik ish yozuvi — "ish kundaligi" (KUNDALIK_ETIROZ_REJASI.md).
+
+    `DailyResult`dan farqi: u kunda BITTA qator va RAQAM (suhbat/tashrif soni),
+    bu esa kun ichida BIR NECHTA erkin MATNLI yozuv — har biri o'z vaqt
+    tamg'asi bilan. Oy oxirida "to'qib chiqarilgan" hisobotning oldini vaqt
+    tamg'alari oladi.
+
+    QULF QOIDASI: yozuvni faqat egasi va faqat `date == bugun (Toshkent)`
+    bo'lganda tahrirlaydi/o'chiradi — ertasi kundan hujjat (router tekshiradi,
+    `timeutil.today_local`; mijoz yuborgan sanaga ishonilmaydi).
+
+    O'chirish YUMSHOQ (`Norm` naqshi): barcha o'qish so'rovlari
+    `deleted_at IS NULL` bilan filtrlanishi SHART.
+
+    Pul mantig'iga ULANMAYDI: yozmaganlik jarima keltirmaydi, faqat rahbar
+    hisobotida (coverage) ko'rinadi — payroll yadrosi tinch qoladi."""
+
+    __tablename__ = "work_log_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    text: Mapped[str] = mapped_column(Text)  # 3..2000 belgi (sxema tekshiradi)
+    source: Mapped[str] = mapped_column(String(10), default=WorkLogSource.bot.value)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class MobilografVideo(Base):
     __tablename__ = "mobilograf_videos"
 

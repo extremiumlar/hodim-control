@@ -107,6 +107,12 @@ IDLE_WATCH_INTERVAL_MINUTES = 5
 # eslatma umuman yuborilmay qolishi mumkin.
 ATTENDANCE_REMINDER_INTERVAL_MINUTES = 5
 
+# Ish kundaligi eslatmasi («bugun hali hech narsa yozmadingiz»). API tomondagi
+# oyna kengroq (ish tugashiga 30 daqiqa qolganidan to 2 soat keyingacha,
+# work_log.py) — 10 daqiqalik interval oynani sakrab o'tolmaydi va kuniga
+# baribir bitta xabar ketadi (UNIQUE iz).
+WORK_LOG_REMINDER_INTERVAL_MINUTES = 10
+
 # Telegram login xavfsizligi: replay-himoya hash'lari va rate-limit urinish
 # yozuvlarini tozalash chastotasi — vaqtinchalik jadvallar, shoshilinch emas.
 LOGIN_SECURITY_CLEANUP_INTERVAL_MINUTES = 60

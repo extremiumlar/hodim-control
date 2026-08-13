@@ -134,6 +134,13 @@ def _due(now: datetime) -> list:
     if m % cfg.ATTENDANCE_REMINDER_INTERVAL_MINUTES == 1:
         add("/attendance/reminder-tick", json={}, timeout=120)
 
+    # Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun yozmaganlarga
+    # (KUNDALIK_ETIROZ_REJASI.md). Qoldiq 4 ATAYLAB bo'sh daqiqa: toq guruh
+    # (m%2==1 sync/anketa), m%5==3 (knowledge), m%5==1 (davomat eslatmasi),
+    # m%15==0 va m%30==17 bilan kesishmaydi.
+    if m % cfg.WORK_LOG_REMINDER_INTERVAL_MINUTES == 4:
+        add("/work-log/reminder-tick", json={}, timeout=120)
+
     # ── Soatlik ──
     if m == 0:
         add("/hourly-plan/send", timeout=60)         # soatlik reja (API ish oynasini tekshiradi)
