@@ -138,6 +138,14 @@ const SECTIONS: Section[] = [
     visible: (c) => c.role !== "boss",
   },
   {
+    key: "requests",
+    title: "Arizalarim",
+    emoji: "📄",
+    webPath: "/me/requests",
+    // bot: role != "boss" (BTN_REQUESTS hubi — Boshliq qabul qiluvchi tomon)
+    visible: (c) => c.role !== "boss",
+  },
+  {
     key: "appeals",
     title: "E'tiroz / Shikoyat",
     emoji: "⚖️",

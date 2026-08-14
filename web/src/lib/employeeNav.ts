@@ -17,6 +17,7 @@ import {
   CalendarX,
   Clock,
   ClipboardList,
+  FileText,
   ListTodo,
   NotebookPen,
   Scale,
@@ -177,6 +178,14 @@ export const EMPLOYEE_SECTIONS: EmployeeSection[] = [
     to: "/me/work-log",
     icon: NotebookPen,
     // bot: role != "boss" (BTN_WORK_LOG — Boshliqdan tashqari hammaga)
+    visible: (c) => c.role !== "boss",
+  },
+  {
+    key: "requests",
+    label: "Arizalarim",
+    to: "/me/requests",
+    icon: FileText,
+    // bot: role != "boss" (BTN_REQUESTS hubida — Boshliq qabul qiluvchi tomon)
     visible: (c) => c.role !== "boss",
   },
   {

@@ -562,7 +562,29 @@ tasdiqlanadi («01.09 — 10.09, 10 kun»).
 ko'rsatiladi va oraliqda ish kuni bo'lmasa ariza umuman yaratilmaydi
 («bu oraliqda ish kuni yo'q — ariza kerak emas»).
 
-**Bosqich 3 — web**: rahbar sahifasi + kabinet + nav sinxroni
+**Bosqich 3 — web** ✅ BAJARILDI (2026-08-13)
+- [x] `types.ts` (`EmployeeRequest`, `RequestDecideResult`, `RequestRevokeResult`,
+      `RequestCalc`), `endpoints.ts` (7 metod), `queries.ts` (3 kalit + 6 hook)
+- [x] `StatusBadge` ga `kind="employee_request"` (6 holat, `revoked` alohida)
+- [x] `pages/Requests.tsx` (rahbar): filtr, SLA yoshi, qaror dialogi,
+      **materializatsiya natijasi paneli** («📅 5 ta sababli kun yozildi»),
+      «Bekor qilish» + qaytarilgan yozuvlar hisoboti
+- [x] `pages/me/Requests.tsx` (xodim): 8 turli grid, turga qarab maydonlar,
+      **jonli kalkulyator** («7 kundan 5 tasi ish kuni»), to'qnashuv
+      ogohlantirishi, ro'yxat + «Qaytarib olish»
+- [x] `App.tsx` (`AppealsRoute` bilan bir xil guard), `Layout.tsx` NAV+badge,
+      `employeeNav.ts`, `mobile/lib/sections.ts` — nav UCH joyda sinxron
+- [x] Brauzerda tekshirildi: qaror → materializatsiya paneli, bekor qilish →
+      «5 ta sababli kun qaytarildi», kalkulyator jonli hisoblaydi, tur
+      almashtirilganda maydonlar to'g'ri o'zgaradi, ariza yuborish,
+      «Qaytarib olish», sidebar badge, mobil 375px skrollsiz, `/me/more`.
+- [x] `tsc` (web+mobile) va `npm run build` toza; jami **381 tekshiruv**.
+
+**Brauzer sinovida topilgan UI xatosi:** bekor qilish dialogida IKKITA
+«Bekor qilish» tugmasi bor edi (`ReasonDialog` ning yopish tugmasi va
+tasdiqlash tugmasi) — foydalanuvchi qaysi biri dialogni yopishini, qaysi
+biri ARIZANI bekor qilishini ajratolmasdi. Tasdiqlash tugmasi «Ha, arizani
+qaytarish» ga o'zgartirildi.
 
 **Bosqich 4 — zanjir, qoidalar, balans**: `RequestPolicy` (scope naqshi),
 ROP bosqichi, Boshliq chegarasi, sozlamalar sahifasi, ta'til balansi

@@ -89,6 +89,9 @@ export const qk = {
   workLogCoverage: (month?: string) => ["work-log", "coverage", month ?? "current"] as const,
   appeals: (params?: object) => ["appeals", "list", params ?? {}] as const,
   myAppeals: ["appeals", "me"] as const,
+  requests: (params?: object) => ["requests", "list", params ?? {}] as const,
+  myRequests: ["requests", "me"] as const,
+  requestCalc: (start: string, end: string) => ["requests", "calc", start, end] as const,
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
@@ -689,6 +692,55 @@ export const useDecideAppeal = () =>
     ({ itemId, decision, note }: { itemId: number; decision: string; note: string }) =>
       api.decideAppeal(itemId, { decision, note }),
     [["appeals"]]
+  );
+
+// ─── Arizalar ───
+export const useRequests = (
+  params?: { status_filter?: string; kind?: string },
+  enabled = true
+) =>
+  useQuery({
+    queryKey: qk.requests(params),
+    queryFn: () => api.listRequests(params),
+    enabled,
+    staleTime: 60_000,
+  });
+
+export const useMyRequests = () =>
+  useQuery({ queryKey: qk.myRequests, queryFn: api.myRequests });
+
+// Kalkulyator — sanalar to'liq bo'lgandagina so'raladi (`enabled`).
+export const useRequestCalc = (start: string, end: string, enabled: boolean) =>
+  useQuery({
+    queryKey: qk.requestCalc(start, end),
+    queryFn: () => api.calcRequestRange(start, end),
+    enabled,
+    staleTime: 5 * 60_000,
+    // Sana o'zgarganda eski javob qolib turadi — forma "sakramaydi".
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+
+export const useCreateMyRequest = () =>
+  useApiMutation(api.createMyRequest, [["requests"]]);
+
+export const useCancelMyRequest = () =>
+  useApiMutation((itemId: number) => api.cancelMyRequest(itemId), [["requests"]]);
+
+// Qaror davomat va oylikka ham tegadi (materializatsiya) — shuning uchun
+// ularning kalitlari ham invalidatsiya qilinadi.
+export const useDecideRequest = () =>
+  useApiMutation(
+    ({ itemId, decision, note }: { itemId: number; decision: string; note: string }) =>
+      api.decideRequest(itemId, { decision, note }),
+    [["requests"], ["excused-days"], ["attendance"], ["payroll"]]
+  );
+
+export const useRevokeRequest = () =>
+  useApiMutation(
+    ({ itemId, reason }: { itemId: number; reason: string }) =>
+      api.revokeRequest(itemId, reason),
+    [["requests"], ["excused-days"], ["attendance"], ["payroll"]]
   );
 
 // Muvaffaqiyatda ["tasks"] invalidatsiya qilinadi — ["tasks","me"] ham shunga

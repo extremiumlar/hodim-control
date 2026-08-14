@@ -4,6 +4,10 @@ import type {
   Appeal,
   AppealDecideResult,
   Attendance,
+  EmployeeRequest,
+  RequestCalc,
+  RequestDecideResult,
+  RequestRevokeResult,
   AttendanceDashboard,
   AttendanceMatrix,
   AttendanceReadiness,
@@ -495,6 +499,38 @@ export const api = {
     apiFetch<AppealDecideResult>(`/appeals/${itemId}/decide`, {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  // ── Arizalar ──
+  myRequests: () => apiFetch<EmployeeRequest[]>("/requests/me"),
+  // Ish kunlari kalkulyatori — forma to'ldirilayotganda chaqiriladi.
+  calcRequestRange: (start: string, end: string) =>
+    apiFetch<RequestCalc>(`/requests/me/calc?start=${start}&end=${end}`),
+  createMyRequest: (data: {
+    kind: string;
+    start_date?: string | null;
+    end_date?: string | null;
+    amount?: number | null;
+    reason: string;
+  }) => apiFetch<EmployeeRequest>("/requests/me", { method: "POST", body: JSON.stringify(data) }),
+  cancelMyRequest: (itemId: number) =>
+    apiFetch<EmployeeRequest>(`/requests/${itemId}/cancel`, { method: "POST" }),
+  listRequests: (params?: { status_filter?: string; kind?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status_filter) q.set("status_filter", params.status_filter);
+    if (params?.kind) q.set("kind", params.kind);
+    const s = q.toString();
+    return apiFetch<EmployeeRequest[]>(`/requests${s ? `?${s}` : ""}`);
+  },
+  decideRequest: (itemId: number, data: { decision: string; note: string }) =>
+    apiFetch<RequestDecideResult>(`/requests/${itemId}/decide`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  // Tasdiqlangan arizani bekor qilish — yozilgan qatorlar qaytariladi.
+  revokeRequest: (itemId: number, reason: string) =>
+    apiFetch<RequestRevokeResult>(`/requests/${itemId}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
     }),
   // Rahbar: bitta xodim oyi + butun jamoa qamrovi.
   workLogMonth: (userId: number, month?: string) =>

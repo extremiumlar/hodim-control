@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Clock,
   FileSpreadsheet,
+  FileText,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -28,7 +29,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "./lib/auth";
-import { useAppeals, useExcusedDays, useExplanations } from "./lib/queries";
+import { useAppeals, useExcusedDays, useExplanations, useRequests } from "./lib/queries";
 import { cn } from "./lib/utils";
 import { BRAND_NAME } from "./lib/brand";
 import { sectionTitle, splitSections } from "./lib/employeeNav";
@@ -114,6 +115,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/users", label: "Foydalanuvchilar", icon: Users },
       // ROP'da yo'q — `onlyPayrollManager` bilan bir xil qamrov (hr/boss/
       // dasturchi), backend `appeals.py: MANAGE_ROLES` ham shunday.
+      { to: "/requests", label: "Arizalar", icon: FileText, onlyPayrollManager: true },
       { to: "/appeals", label: "E'tiroz/Shikoyat", icon: Scale, onlyPayrollManager: true },
       { to: "/positions", label: "Lavozimlar", icon: Briefcase, onlyPositionsManager: true },
       { to: "/audit-logs", label: "Audit", icon: ScrollText },
@@ -318,9 +320,11 @@ export default function Layout() {
   // Murojaatlar badge'i: hali qaror chiqarilmagan («yangi») murojaatlar.
   // `in_review` sanalmaydi — u allaqachon qo'lga olingan.
   const pendingAppeals = useAppeals({ status_filter: "pending" }, canManagePayroll);
+  const pendingRequests = useRequests({ status_filter: "pending" }, canManagePayroll);
   const navBadges = {
     "/excused-days": excusedBadge,
     "/appeals": pendingAppeals.data?.length ?? 0,
+    "/requests": pendingRequests.data?.length ?? 0,
   };
 
   useEffect(() => {

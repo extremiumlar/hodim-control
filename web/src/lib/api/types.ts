@@ -920,6 +920,77 @@ export interface AppealDecideResult {
   next_step: string | null;
 }
 
+/** Ariza turi — API `RequestKind` bilan bir xil. Guruhlari OQIBATIGA qarab:
+    A (vacation/unpaid/sick) davomatga, B (advance) pulga, C qolgani — hech
+    narsa yozilmaydi (ARIZALAR_REJASI.md). */
+export type RequestKind =
+  | "vacation"
+  | "unpaid"
+  | "sick"
+  | "advance"
+  | "certificate"
+  | "schedule_change"
+  | "resignation"
+  | "other";
+
+export interface EmployeeRequest {
+  id: number;
+  user_id: number;
+  user_full_name: string | null;
+  kind: RequestKind;
+  start_date: string | null;
+  end_date: string | null;
+  amount: number | null;
+  payload: Record<string, unknown> | null;
+  reason: string;
+  file_id: string | null;
+  file_type: string | null;
+  status: "pending" | "manager_ok" | "approved" | "rejected" | "cancelled" | "revoked";
+  decided_by: number | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  /** Materializatsiya vaqti — `approved` bo'lsa to'lgan bo'lishi kerak. */
+  applied_at: string | null;
+  created_at: string;
+  /** Yaratilganda hisoblangan ish kunlari (faqat javobda). */
+  working_days: number | null;
+}
+
+/** Qaror javobi. `applied` — materializatsiya natijasi (nechta sababli kun
+    yozildi / avans qaysi davrga tushdi); `next_step` — C guruhda HR nima
+    qilishi kerakligi. */
+export interface RequestDecideResult {
+  request: EmployeeRequest;
+  next_step: string | null;
+  applied: {
+    excused_created?: number;
+    working_days?: number;
+    skipped?: number;
+    period?: string;
+    amount?: number;
+  } | null;
+}
+
+export interface RequestRevokeResult {
+  request: EmployeeRequest;
+  reverted: {
+    excused_reverted?: number;
+    advance_removed?: number;
+    warning?: string;
+  };
+}
+
+/** Ish kunlari kalkulyatori — ariza yuborishdan OLDIN ko'rsatiladi. */
+export interface RequestCalc {
+  start_date: string;
+  end_date: string;
+  total_days: number;
+  working_days: number;
+  off_days: number;
+  conflict_dates: string[];
+  summary: string;
+}
+
 /** Sababsiz kelmagan kun uchun tushuntirish xati. */
 export interface ExplanationRequestRow {
   id: number;

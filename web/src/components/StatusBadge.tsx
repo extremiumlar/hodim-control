@@ -5,7 +5,15 @@ import { cn } from "@/lib/utils";
  * rang xaritasi. "pending" ikki kontekstda har xil: vazifada ko'k
  * (jarayonda), so'rovda esa amber (qaror kutilmoqda) — shuning uchun kind.
  */
-type Kind = "attendance" | "task" | "request" | "payslip" | "overtime" | "appeal" | "advance";
+type Kind =
+  | "attendance"
+  | "task"
+  | "request"
+  | "payslip"
+  | "overtime"
+  | "appeal"
+  | "advance"
+  | "employee_request";
 
 const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   attendance: {
@@ -51,6 +59,16 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   },
   // E'tiroz/shikoyat: `request`dan farqli — oraliq «o'rganilmoqda» holati bor
   // va yakun ikki xil nomlanadi (e'tiroz qondiriladi, shikoyat hal qilinadi).
+  // Ariza — `appeal` dan farqli: tasdiqlangach REAL yozuv yaratiladi,
+  // shuning uchun «bekor qilingan» (revoked) alohida holat.
+  employee_request: {
+    pending: { text: "Yangi", cls: "bg-amber-100 text-amber-700" },
+    manager_ok: { text: "Rahbar tasdiqladi", cls: "bg-blue-100 text-blue-700" },
+    approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
+    rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
+    cancelled: { text: "Qaytarib olingan", cls: "bg-slate-200 text-slate-600" },
+    revoked: { text: "Bekor qilingan", cls: "bg-slate-200 text-slate-600" },
+  },
   appeal: {
     pending: { text: "Yangi", cls: "bg-amber-100 text-amber-700" },
     in_review: { text: "O'rganilmoqda", cls: "bg-blue-100 text-blue-700" },

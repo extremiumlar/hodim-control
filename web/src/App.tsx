@@ -27,6 +27,7 @@ const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 const WorkLog = lazy(() => import("./pages/WorkLog"));
 const Appeals = lazy(() => import("./pages/Appeals"));
+const Requests = lazy(() => import("./pages/Requests"));
 
 // Xodim kabineti. Bo'limlarning KO'RINISH shartlari lib/employeeNav.ts da —
 // bot menyusi (bot/keyboards.py: main_menu) bilan aynan bir xil.
@@ -43,6 +44,7 @@ const MeKpi = lazy(() => import("./pages/me/Kpi"));
 const MeExcused = lazy(() => import("./pages/me/Excused"));
 const MeWorkLog = lazy(() => import("./pages/me/WorkLog"));
 const MeAppeals = lazy(() => import("./pages/me/Appeals"));
+const MeRequests = lazy(() => import("./pages/me/Requests"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -192,6 +194,7 @@ export default function App() {
           <Route path="me/excused" element={<MeExcused />} />
           <Route path="me/work-log" element={<MeWorkLog />} />
           <Route path="me/appeals" element={<MeAppeals />} />
+          <Route path="me/requests" element={<MeRequests />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
@@ -206,6 +209,9 @@ export default function App() {
           {/* E'tiroz/shikoyat — ROP'da YO'Q (backend: appeals.py MANAGE_ROLES).
               Murojaatlarda oylik summasi va shaxsiy shikoyat bo'ladi. */}
           <Route path="appeals" element={<AppealsRoute><Appeals /></AppealsRoute>} />
+          {/* Arizalar ham e'tiroz bilan bir xil qamrov (hr/boss/dasturchi) —
+              backend `requests.py: MANAGE_ROLES` bilan mos. */}
+          <Route path="requests" element={<AppealsRoute><Requests /></AppealsRoute>} />
           <Route path="employees/:id" element={<ManagerRoute><EmployeeProfile /></ManagerRoute>} />
           <Route path="reports" element={<ManagerRoute><Reports /></ManagerRoute>} />
           <Route path="audit-logs" element={<ManagerRoute><AuditLogs /></ManagerRoute>} />
