@@ -3107,6 +3107,16 @@ def test_admin_override() -> None:
                 })
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={"user_ids": [emp_uid]})
                 check("payroll hisoblandi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                # Ikki bosqichli tasdiq (9a02004): HR «tayyor» demaguncha
+                # Boshliq qulflay OLMAYDI — aks holda bir odam butun pul
+                # jarayonini yakunlab qo'yardi.
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+                check("HR bosqichisiz yakuniy tasdiq -> 409", r.status_code == 409,
+                      f"kod={r.status_code}")
+
+                r = client.post(f"{API_BASE}/payroll/{PERIOD}/hr-approve", headers=auth(mgr_t))
+                check("HR «tekshirdim, tayyor» -> 200", r.status_code == 200, f"kod={r.status_code}")
+
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
                 check("payroll tasdiqlandi (qulflandi) -> 200", r.status_code == 200, f"kod={r.status_code}")
 
