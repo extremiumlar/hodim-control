@@ -73,26 +73,13 @@ export default function Norms() {
       {
         accessorKey: "full_name",
         header: "Xodim",
-        cell: ({ row }) => {
-          const hasAnyNorm = row.original.metrics.some((m) => m.norm !== null);
-          return (
-            <div className="flex flex-col gap-0.5">
-              <Link
-                to={`/employees/${row.original.user_id}`}
-                className="text-primary hover:underline"
-              >
-                {row.original.full_name}
-              </Link>
-              {/* Normasi yo'q xodimni ro'yxatdan darrov topish uchun — ilgari
-                  har bir maydonni ko'zdan kechirish kerak edi. */}
-              {row.original.metrics.length > 0 && !hasAnyNorm && (
-                <span className="w-fit rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
-                  norma yo'q
-                </span>
-              )}
-            </div>
-          );
-        },
+        // Normasi yo'qligini ALOHIDA bo'lim ko'rsatadi (pastga qarang) —
+        // shuning uchun bu yerda qo'shimcha belgi kerak emas.
+        cell: ({ row }) => (
+          <Link to={`/employees/${row.original.user_id}`} className="text-primary hover:underline">
+            {row.original.full_name}
+          </Link>
+        ),
       },
       {
         accessorKey: "position_name",
@@ -192,23 +179,81 @@ export default function Norms() {
     [drafts, savingKey] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  // Xodimlarni UCH guruhga ajratamiz — har birida qilinadigan ish BOSHQA,
+  // shuning uchun bitta uzun ro'yxatda aralashib yotmasin (egasining talabi
+  // 2026-08-14: "hali norma belgilanmaganlar boshqa joyda ko'rinib tursin").
+  const groups = useMemo(() => {
+    const withNorm: TeamNormRow[] = [];   // normasi bor — kundalik boshqaruv
+    const needsNorm: TeamNormRow[] = [];  // ko'rsatkichi bor, normasi yo'q — ISH SHU YERDA
+    const noMetrics: TeamNormRow[] = [];  // lavozimiga ko'rsatkich biriktirilmagan
+    (query.data ?? []).forEach((row) => {
+      if (row.metrics.length === 0) noMetrics.push(row);
+      else if (row.metrics.some((m) => m.norm !== null)) withNorm.push(row);
+      else needsNorm.push(row);
+    });
+    return { withNorm, needsNorm, noMetrics };
+  }, [query.data]);
+
+  const tableProps = {
+    columns,
+    isLoading: query.isLoading,
+    error: query.error ? query.error.message : null,
+    onRetry: () => query.refetch(),
+    searchPlaceholder: "Xodim bo'yicha qidirish...",
+  };
+
   return (
-    <div>
+    <div className="space-y-8">
       <PageHeader
         title="Xodimlar normalari"
         description={
-          'Har bir xodimga o\'z lavozimidagi ko\'rsatkichlar chiqadi ("Lavozimlar" bo\'limida sozlanadi). Chapdagi son — bugungi haqiqiy natija (CRM yoki qo\'lda kiritilgan), o\'ngdagi maydon — norma. Siz faqat o\'zingiz boshqaradigan xodimlarni tahrirlay olasiz.'
+          'Har bir xodimga FAQAT o\'z lavozimiga biriktirilgan ko\'rsatkichlar chiqadi ("Lavozimlar" bo\'limida sozlanadi). Chapdagi son — bugungi haqiqiy natija (CRM yoki qo\'lda kiritilgan), o\'ngdagi maydon — norma. Siz faqat o\'zingiz boshqaradigan xodimlarni tahrirlay olasiz.'
         }
       />
-      <DataTable
-        columns={columns}
-        data={query.data}
-        isLoading={query.isLoading}
-        error={query.error ? query.error.message : null}
-        onRetry={() => query.refetch()}
-        searchPlaceholder="Xodim bo'yicha qidirish..."
-        empty={{ icon: Target, text: "Hozircha xodimlar yo'q." }}
-      />
+
+      {/* Normasi yo'q — ENG TEPADA, chunki e'tibor talab qiladigan yagona ro'yxat */}
+      {groups.needsNorm.length > 0 && (
+        <section>
+          <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-700">
+            <span className="rounded bg-amber-100 px-2 py-0.5">
+              Norma belgilanmagan — {groups.needsNorm.length} ta
+            </span>
+          </h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Bu xodimlarning lavozimida ko'rsatkich bor, lekin norma hali qo'yilmagan.
+          </p>
+          <DataTable {...tableProps} data={groups.needsNorm} />
+        </section>
+      )}
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">
+          Normasi belgilangan{groups.withNorm.length > 0 ? ` — ${groups.withNorm.length} ta` : ""}
+        </h2>
+        <DataTable
+          {...tableProps}
+          data={groups.withNorm}
+          empty={{ icon: Target, text: "Hozircha normasi belgilangan xodim yo'q." }}
+        />
+      </section>
+
+      {/* Bu yerda ish norma qo'yish EMAS — avval lavozimga ko'rsatkich kerak */}
+      {groups.noMetrics.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-500">
+            Ko'rsatkich biriktirilmagan — {groups.noMetrics.length} ta
+          </h2>
+          <p className="mb-3 text-xs text-slate-500">
+            Bu xodimlarga norma qo'yib bo'lmaydi: lavozimi yo'q yoki lavozimiga
+            ko'rsatkich biriktirilmagan.{" "}
+            <Link to="/positions" className="text-primary hover:underline">
+              Lavozimlar bo'limi
+            </Link>
+            dan ko'rsatkich qo'shing.
+          </p>
+          <DataTable {...tableProps} data={groups.noMetrics} />
+        </section>
+      )}
     </div>
   );
 }

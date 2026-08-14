@@ -18,31 +18,31 @@ METRIC_LABELS = {
     "oddiy_video": "Oddiy videolar soni",
     "dumaloq_video": "Dumaloq (doira) videolar soni",
 }
-DEFAULT_METRICS = ["suhbat", "tashrif"]
 
 # Norma/hisob metrikasi kalitidan MobilografVideo.video_type qiymatiga moslash.
 VIDEO_METRIC_TYPES = {"oddiy_video": "oddiy", "dumaloq_video": "dumaloq"}
 
 
 def metrics_for(user: User) -> list[str]:
-    """Xodim lavozimiga biriktirilgan ko'rsatkichlar.
+    """Xodim lavozimiga BIRIKTIRILGAN ko'rsatkichlar (boshqa hech qanaqasi emas).
 
-    UCH HOLAT ATAYIN FARQLANADI (2026-08-13 tuzatish):
-      • lavozim yo'q YOKI `metrics` UMUMAN sozlanmagan (`None`) → standart
-        suhbat+tashrif (orqaga moslik: eski yozuvlar buzilmasin);
-      • `metrics` ATAYLAB BO'SH (`[]`) → BO'SH ro'yxat, ya'ni "bu lavozimda
-        ko'rsatkich kuzatilmaydi";
-      • to'ldirilgan → o'sha ko'rsatkichlar.
+    QOIDA (2026-08-14, egasining talabi): ko'rsatkich FAQAT lavozimga ataylab
+    biriktirilgan bo'lsa chiqadi. Lavozim yo'q yoki lavozimda ko'rsatkich
+    sozlanmagan bo'lsa — BO'SH ro'yxat.
 
-    NEGA MUHIM: ilgari `if ... and user.position.metrics` sharti bo'sh ro'yxatni
-    ham "sozlanmagan" deb hisoblardi va Bugalter/Kassir/Yurist kabi lavozimlarga
-    "Suhbatlar soni"/"Tashriflar soni" ko'rsatkichlari chiqib ketardi — ular bu
-    ish bilan umuman shug'ullanmaydi. Endi bunday xodimga hech qanday ko'rsatkich
-    ko'rsatilmaydi (xodim sahifasi "norma belgilanmagan" deydi)."""
+    NEGA STANDART TO'PLAM OLIB TASHLANDI: ilgari lavozimi yo'q yoki ko'rsatkichi
+    sozlanmagan xodimga avtomatik "Suhbatlar soni"+"Tashriflar soni" berilardi.
+    Natijada mansabi butunlay boshqa xodimlarda (bugalter, kassir, prorab
+    yordamchisi, hali lavozimi belgilanmaganlar) sotuvga oid ko'rsatkichlar
+    chiqib turardi — ular bu ish bilan shug'ullanmaydi.
+
+    XAVFSIZLIK: jonli bazada (2026-08-14) lavozim ro'yxatida yo'q ko'rsatkich
+    uchun qo'yilgan norma TOPILMADI (0 qator), ya'ni bu o'zgarish hech kimning
+    mavjud normasini ko'rinmas qilib qo'ymaydi."""
     position = user.position
-    if position is not None and position.metrics is not None:
-        return [m for m in position.metrics if m in METRIC_LABELS]
-    return DEFAULT_METRICS
+    if position is None or position.metrics is None:
+        return []
+    return [m for m in position.metrics if m in METRIC_LABELS]
 
 
 def is_orphan_employee(target: User) -> bool:
@@ -127,6 +127,15 @@ def _validate_metric(target: User, metric_type: str, actor: User | None = None) 
     if actor is not None and is_superadmin(actor):
         return
     allowed = metrics_for(target)
+    if not allowed:
+        # Ilgari bu holatda "Mavjud: " deb BO'SH ro'yxat bilan xabar chiqardi —
+        # foydalanuvchi nima qilishini bilmasdi. Endi aniq yo'l ko'rsatiladi.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Bu xodimning lavozimiga ko'rsatkich biriktirilmagan — avval "
+            "«Lavozimlar» bo'limidan lavozimga ko'rsatkich qo'shing "
+            "(yoki xodimga lavozim belgilang).",
+        )
     if metric_type not in allowed:
         labels = ", ".join(METRIC_LABELS.get(m, m) for m in allowed)
         raise HTTPException(

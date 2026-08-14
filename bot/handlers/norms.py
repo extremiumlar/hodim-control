@@ -15,7 +15,6 @@ METRIC_LABELS = {
     "oddiy_video": "Oddiy videolar soni",
     "dumaloq_video": "Dumaloq (doira) videolar soni",
 }
-DEFAULT_METRICS = ["suhbat", "tashrif"]
 
 # Norma belgilay oladigan rollar: ROP (o'z jamoasi), HR (o'ziga biriktirilgan
 # lavozimlar), Boshliq/Dasturchi (hamma) — aniq chegara backendda tekshiriladi.
@@ -29,19 +28,15 @@ class NormFSM(StatesGroup):
 
 
 def _metrics_of(emp: dict) -> list[str]:
-    """Xodim lavozimiga biriktirilgan ko'rsatkichlar.
+    """Xodim lavozimiga BIRIKTIRILGAN ko'rsatkichlar.
 
     Backend'dagi `metrics_for` bilan BIR XIL qoida (api/routers/norms.py):
-    `metrics` umuman sozlanmagan bo'lsa (`None`) — standart to'plam; ATAYLAB
-    bo'sh (`[]`) bo'lsa — bo'sh ro'yxat ("bu lavozimda ko'rsatkich kuzatilmaydi").
-    Ikkalasini farqlash SHART: aks holda bot Bugalter/Kassir kabi lavozimga
-    "Suhbatlar soni"ni taklif qilar, backend esa uni RAD etardi — foydalanuvchi
-    tushunarsiz xato ko'rardi."""
+    ko'rsatkich faqat lavozimga ataylab biriktirilgan bo'lsa chiqadi; lavozim
+    yo'q yoki sozlanmagan bo'lsa — BO'SH ro'yxat. Ikki tomon bir xil qoidada
+    bo'lishi SHART: aks holda bot ko'rsatkichni taklif qilar, backend esa uni
+    RAD etardi va foydalanuvchi tushunarsiz xato ko'rardi."""
     position = emp.get("position") or {}
-    raw = position.get("metrics")
-    if raw is None:
-        return DEFAULT_METRICS
-    return [m for m in raw if m in METRIC_LABELS]
+    return [m for m in (position.get("metrics") or []) if m in METRIC_LABELS]
 
 
 @router.message(Command("norma_ozgartir"))
@@ -76,7 +71,9 @@ async def cmd_norma_ozgartir(message: Message, state: FSMContext) -> None:
 async def choose_employee(callback: CallbackQuery, state: FSMContext) -> None:
     target_id = callback.data.split(":")[1]
     data = await state.get_data()
-    metrics = (data.get("metrics_by_id") or {}).get(target_id, DEFAULT_METRICS)
+    # Topilmasa BO'SH — soxta "suhbat/tashrif" taklif qilinmasin (backend
+    # baribir rad etadi). Pastda bo'sh ro'yxat uchun tushunarli xabar bor.
+    metrics = (data.get("metrics_by_id") or {}).get(target_id, [])
     name = (data.get("names_by_id") or {}).get(target_id, "?")
 
     await state.update_data(target_user_id=int(target_id))
