@@ -28,7 +28,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.telegram_notify import edit_reply_markup, inline_keyboard, send_file_id, send_message
+from api.telegram_notify import (
+    edit_reply_markup,
+    extract_file_id,
+    inline_keyboard,
+    send_file_id,
+    send_media_file,
+    send_message,
+)
 from api.timeutil import local_range_utc_naive
 from crm.config import CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS, CRM_UYSOT_VISIT_PIPE_STATUS_IDS
 from db.models import (
@@ -141,6 +148,74 @@ async def set_media(
     await db.commit()
     await db.refresh(media)
     return media
+
+
+
+# Telegram Bot API bir so'rovda 50 MB gacha fayl qabul qiladi — 45 MB da
+# to'xtatamiz, chunki multipart o'rami va sarlavhalar ham joy egallaydi.
+MAX_UPLOAD_BYTES = 45 * 1024 * 1024
+
+
+def guess_file_type(filename: str, content_type: str | None) -> str | None:
+    """Yuklangan fayl video mi, GIF mi — yoki umuman yaramaydimi.
+
+    GIF ALOHIDA: Telegram uni `sendAnimation` bilan yuboradi, `sendVideo`
+    bilan yuborilsa oddiy faylga aylanib qoladi (ovozsiz avto-o'ynash yo'q)."""
+    name = (filename or "").lower()
+    ctype = (content_type or "").lower()
+    if name.endswith(".gif") or ctype == "image/gif":
+        return "animation"
+    if ctype.startswith("video/") or name.endswith((".mp4", ".mov", ".m4v", ".webm")):
+        return "video"
+    return None
+
+
+async def upload_and_set(
+    db: AsyncSession,
+    kind: str,
+    content: bytes,
+    filename: str,
+    content_type: str | None,
+    caption: str | None,
+    actor: User,
+) -> dict:
+    """Sayt panelidan kelgan faylni Telegram'ga yuklab, `file_id` sini saqlaydi.
+
+    Fayl AKTYORNING SHAXSIY chatiga yuboriladi (guruhga emas) — bu ham
+    yuklashning tabiiy tasdig'i bo'ladi: rahbar videoni darhol ko'radi va
+    guruhga qanday chiqishini tasavvur qiladi."""
+    file_type = guess_file_type(filename, content_type)
+    if file_type is None:
+        return {"ok": False, "reason": "Faqat video (mp4/mov/webm) yoki GIF yuklash mumkin"}
+    if not content:
+        return {"ok": False, "reason": "Fayl bo'sh"}
+    if len(content) > MAX_UPLOAD_BYTES:
+        mb = len(content) / 1024 / 1024
+        return {"ok": False, "reason": f"Fayl juda katta ({mb:.0f} MB). Chegara — 45 MB"}
+    if not actor.telegram_id:
+        return {
+            "ok": False,
+            "reason": "Telegram hisobingiz bog'lanmagan — video Telegram orqali yuboriladi, "
+            "avval botga /start bosing",
+        }
+
+    resp = await send_media_file(
+        actor.telegram_id,
+        content,
+        filename or "tabrik.mp4",
+        file_type,
+        caption=f"🎬 <i>Tabrik videosi yuklandi — {_KIND_LABELS.get(kind, kind)}</i>",
+    )
+    file_id = extract_file_id(resp)
+    if not file_id:
+        return {
+            "ok": False,
+            "reason": "Telegram faylni qabul qilmadi. Botni bloklamaganingizni va fayl "
+            "hajmini tekshirib qayta urinib ko'ring",
+        }
+
+    media = await set_media(db, kind, file_id, file_type, caption, actor.id)
+    return {"ok": True, "kind": kind, "file_type": media.file_type}
 
 
 async def disable_media(db: AsyncSession, kind: str) -> int:

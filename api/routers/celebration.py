@@ -4,12 +4,12 @@ Ruxsat: video sozlash faqat Dasturchi / HR / Boshliq. Tekshiruv `telegram_id`
 orqali (bot yo'lida JWT yo'q) — `verify_bot_secret` bilan birga, ya'ni so'rov
 haqiqiy botdan kelgani ham, uni yuborgan odamning roli ham tekshiriladi.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, verify_bot_secret
+from api.deps import get_db, require_roles, verify_bot_secret
 from api.services import celebration
 from db.models import AuditLog, CelebrationKind, Role, User
 
@@ -97,6 +97,71 @@ async def clap(payload: CelebrationClapIn, db: AsyncSession = Depends(get_db)) -
     """Guruhdagi HAR KIM bosishi mumkin — rol tekshiruvi ataylab yo'q
     (tabrik ochiq, xodim ham hamkasbini tabriklay olsin)."""
     return await celebration.register_clap(db, payload.post_id, payload.telegram_id)
+
+
+# ─── Sayt paneli (JWT) ───────────────────────────────────────────────────
+# Bot yo'li `telegram_id` + bot siri bilan ishlaydi; sayt yo'lida esa oddiy
+# JWT va `require_roles` — ikkalasi ham AYNAN bir xil servisni chaqiradi,
+# ya'ni qoidalar (kim o'zgartira oladi, qaysi turlar bor) bir joyda qoladi.
+_web_actor = require_roles(Role.dasturchi.value, Role.hr.value, Role.boss.value)
+
+
+@router.get("/settings")
+async def web_settings(
+    _actor_user: User = Depends(_web_actor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return {"items": await celebration.media_overview(db)}
+
+
+@router.post("/settings/upload")
+async def web_upload(
+    kind: str = Form(...),
+    caption: str | None = Form(None),
+    file: UploadFile = File(...),
+    actor: User = Depends(_web_actor),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Saytdan video/GIF yuklash. Fayl serverda SAQLANMAYDI — Telegram'ga
+    uzatilib, qaytgan `file_id` bazaga yoziladi."""
+    _check_kind(kind)
+    content = await file.read()
+    res = await celebration.upload_and_set(
+        db, kind, content, file.filename or "", file.content_type, (caption or "").strip() or None, actor
+    )
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("reason") or "Yuklab bo'lmadi")
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="celebration_media_set",
+            after={"kind": kind, "file_type": res.get("file_type"), "source": "web"},
+        )
+    )
+    await db.commit()
+    return res
+
+
+@router.post("/settings/disable")
+async def web_disable(
+    kind: str, actor: User = Depends(_web_actor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    _check_kind(kind)
+    count = await celebration.disable_media(db, kind)
+    if count:
+        db.add(AuditLog(actor_id=actor.id, action="celebration_media_disabled", after={"kind": kind}))
+        await db.commit()
+    return {"ok": True, "kind": kind, "disabled": count}
+
+
+@router.post("/settings/test")
+async def web_test(
+    kind: str, actor: User = Depends(_web_actor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Sinov — guruhga EMAS, so'ragan rahbarning o'z Telegramiga."""
+    res = await celebration.send_test(db, _check_kind(kind), actor)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("reason") or "Yuborib bo'lmadi")
+    return res
 
 
 @router.post("/announce", dependencies=[Depends(verify_bot_secret)])

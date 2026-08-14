@@ -23,6 +23,7 @@ const Offices = lazy(() => import("./pages/Offices"));
 const CheckIn = lazy(() => import("./pages/CheckIn"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
+const Celebration = lazy(() => import("./pages/Celebration"));
 const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 const WorkLog = lazy(() => import("./pages/WorkLog"));
@@ -215,6 +216,9 @@ export default function App() {
           <Route path="employees/:id" element={<ManagerRoute><EmployeeProfile /></ManagerRoute>} />
           <Route path="reports" element={<ManagerRoute><Reports /></ManagerRoute>} />
           <Route path="audit-logs" element={<ManagerRoute><AuditLogs /></ManagerRoute>} />
+          {/* Tabrik videolari — hr/boss/dasturchi (backend
+              `celebration.py: _web_actor` bilan aynan bir xil qamrov). */}
+          <Route path="celebration" element={<AppealsRoute><Celebration /></AppealsRoute>} />
           <Route path="positions" element={<ManagerRoute><Positions /></ManagerRoute>} />
           <Route path="payroll" element={<ManagerRoute><Payroll /></ManagerRoute>} />
           <Route

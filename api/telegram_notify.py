@@ -77,6 +77,50 @@ async def send_file_id(
             return None
 
 
+async def send_media_file(
+    chat_id: int,
+    content: bytes,
+    filename: str,
+    file_type: str,
+    caption: str | None = None,
+) -> dict | None:
+    """Fayl BAYTLARINI Telegram'ga yuklaydi va javobni (file_id bilan) qaytaradi.
+
+    NEGA KERAK: sayt paneli faylni brauzerdan oladi, botdagi kabi tayyor
+    `file_id` yo'q. Telegram faylni bir marta qabul qilib, doimiy `file_id`
+    beradi — keyingi barcha yuborishlar (guruhga tabrik) o'sha `file_id`
+    bilan, ya'ni bayt qayta yuborilmaydi va serverda fayl saqlanmaydi.
+
+    Telegram Bot API cheklovi: yuklanadigan fayl 50 MB dan oshmasin."""
+    if not settings.bot_token:
+        return None
+
+    method, field = _MEDIA_METHODS.get(file_type, ("sendDocument", "document"))
+    url = TELEGRAM_API.format(token=settings.bot_token, method=method)
+    data: dict = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1024]
+        data["parse_mode"] = "HTML"
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        try:
+            resp = await client.post(url, data=data, files={field: (filename, content)})
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            return None
+
+
+def extract_file_id(response: dict | None) -> str | None:
+    """Telegram javobidan `file_id` ni ajratib oladi (video/animation/document)."""
+    result = (response or {}).get("result") or {}
+    for key in ("video", "animation", "document"):
+        item = result.get(key)
+        if isinstance(item, dict) and item.get("file_id"):
+            return item["file_id"]
+    return None
+
+
 async def edit_reply_markup(chat_id: int, message_id: int, reply_markup: dict) -> dict | None:
     """Yuborilgan xabarning inline tugmalarini yangilaydi (matnga tegmasdan).
 

@@ -1888,6 +1888,88 @@ def run_tests(ctx: dict) -> None:
                       len(edited) >= 2 and "(2)" in str(edited[-1].get("markup")),
                       f"tahrir={len(edited)}, {str(edited[-1].get('markup'))[:50] if edited else ''}")
 
+                # 8b) SAYT paneli: fayl -> Telegram -> file_id (bot bilan bir xil natija)
+                uploaded: list = []
+
+                async def _fake_upload(chat_id, content, filename, file_type, caption=None):
+                    uploaded.append(
+                        {"chat": chat_id, "bayt": len(content), "nom": filename, "tur": file_type})
+                    return {"result": {file_type: {"file_id": f"T-FILE-WEB-{file_type}"}}}
+
+                _orig_upload = _cel.send_media_file
+                _cel.send_media_file = _fake_upload
+                try:
+                    hr_tok_cel = token_for(u_hr, "hr")
+                    emp_tok_cel = token_for(u_emp, "employee")
+
+                    rweb = client.get(f"{API_BASE}/celebration/settings", headers=auth(hr_tok_cel))
+                    check("Tabrik(web): HR sozlamalarni ko'radi",
+                          rweb.status_code == 200 and len(rweb.json().get("items", [])) == 2,
+                          f"kod={rweb.status_code}")
+                    rweb_deny = client.get(f"{API_BASE}/celebration/settings",
+                                           headers=auth(emp_tok_cel))
+                    check("Tabrik(web): oddiy xodimga -> 403",
+                          rweb_deny.status_code == 403, f"kod={rweb_deny.status_code}")
+
+                    # Yuklash yo'li SERVISDA sinaladi: test alohida jarayonda,
+                    # API boshqasida — bu yerdagi almashtirish serverga ta'sir
+                    # qilmaydi va so'rov haqiqiy Telegram'ga ketib qolardi.
+                    from db.models import User as _UserModel
+
+                    async def _upload(kind, name, ctype, data, cap):
+                        async with _asess3() as s3:
+                            actor = await s3.get(_UserModel, u_hr)
+                            return await _cel.upload_and_set(
+                                s3, kind, data, name, ctype, cap, actor)
+
+                    rup = _aio3.run(_upload("visit", "tabrik.mp4", "video/mp4", b"x" * 2048, "Saytdan"))
+                    check("Tabrik(web): video yuklandi va file_id saqlandi",
+                          rup.get("ok") and rup.get("file_type") == "video" and len(uploaded) == 1,
+                          f"{rup}, yuklashlar={len(uploaded)}")
+                    saved = cur.execute(
+                        "select file_id, file_type, caption from celebration_media"
+                        " where kind='visit' and is_active=1").fetchone()
+                    check("Tabrik(web): faol yozuv Telegram file_id bilan almashdi",
+                          saved and saved[0] == "T-FILE-WEB-video" and saved[2] == "Saytdan",
+                          f"baza={saved}")
+
+                    rgif = _aio3.run(_upload("contract", "tabrik.gif", "image/gif", b"g" * 512, ""))
+                    check("Tabrik(web): GIF animation sifatida yuklanadi",
+                          rgif.get("ok") and rgif.get("file_type") == "animation", f"{rgif}")
+
+                    rnotg = _aio3.run(_upload("visit", "hujjat.pdf", "application/pdf", b"%PDF", ""))
+                    check("Tabrik(web): servis ham video bo'lmagan faylni rad etadi",
+                          not rnotg.get("ok"), f"{rnotg}")
+
+                    rbad = client.post(
+                        f"{API_BASE}/celebration/settings/upload", headers=auth(hr_tok_cel),
+                        data={"kind": "visit", "caption": ""},
+                        files={"file": ("hujjat.pdf", b"%PDF-1.4", "application/pdf")})
+                    check("Tabrik(web): video bo'lmagan fayl rad etiladi -> 400",
+                          rbad.status_code == 400, f"kod={rbad.status_code}")
+
+                    rbig = client.post(
+                        f"{API_BASE}/celebration/settings/upload", headers=auth(hr_tok_cel),
+                        data={"kind": "visit", "caption": ""},
+                        files={"file": ("katta.mp4", b"x" * (46 * 1024 * 1024), "video/mp4")})
+                    check("Tabrik(web): 45 MB dan katta fayl rad etiladi -> 400",
+                          rbig.status_code == 400, f"kod={rbig.status_code}")
+
+                    rup_deny = client.post(
+                        f"{API_BASE}/celebration/settings/upload", headers=auth(emp_tok_cel),
+                        data={"kind": "visit", "caption": ""},
+                        files={"file": ("tabrik.mp4", b"x" * 128, "video/mp4")})
+                    check("Tabrik(web): oddiy xodim yuklay OLMAYDI -> 403",
+                          rup_deny.status_code == 403, f"kod={rup_deny.status_code}")
+                finally:
+                    _cel.send_media_file = _orig_upload
+                    # Bot bloki davomi eski file_id larni kutadi — qaytaramiz
+                    cur.execute("update celebration_media set is_active=0"
+                                " where file_id like 'T-FILE-WEB-%'")
+                    cur.execute("update celebration_media set is_active=1"
+                                " where file_id in ('T-FILE-VISIT','T-FILE-CONTRACT')")
+                    conn.commit()
+
                 # 9) O'chirish -> yangi voqeaga video ketmaydi
                 client.post(f"{API_BASE}/celebration/media/disable", headers=bot_h_cel,
                             json={"telegram_id": 999778002, "kind": "visit"})
