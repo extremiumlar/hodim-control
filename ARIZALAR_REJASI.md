@@ -544,8 +544,23 @@ tasdiqlanadi («01.09 — 10.09, 10 kun»).
 - **SLA mantig'i `cron_jobs.py` da** — boshqa seans barcha ticklarni
   in-process ga ko'chirgan (sayt qotishi tuzatishi), shu naqshga moslashildi.
 
-**Bosqich 2 — bot**: menyuni «Murojaatlarim» ga birlashtirish + ariza oqimi
-+ kalkulyator javobi («10 kundan 8 tasi ish kuni»)
+**Bosqich 2 — bot** ✅ BAJARILDI (2026-08-13)
+- [x] Menyu hubi: `BTN_APPEAL` → `BTN_REQUESTS` («📮 Murojaatlarim»), uch
+      tur bitta inline menyuda. Eski tugma matni ALL_MENU_BUTTONS da qoldi
+      va handler ikkalasini ham ushlaydi — Telegram klaviaturani xodim
+      qurilmasida keshlab qo'yadi, eski tugma bosilsa ishlashi kerak.
+- [x] `bot/handlers/request.py` — 8 tur, uch xil shoxlanish (ta'til: sana →
+      kun → KALKULYATOR; avans: summa; qolgani: to'g'ridan-to'g'ri sabab)
+- [x] HR qarori: tasdiqlash/rad + majburiy izoh; javobda materializatsiya
+      natijasi ko'rsatiladi («5 ta sababli kun yozildi», «avans 2026-08
+      davriga qo'shildi») va C guruhda `next_step`
+- [x] `api_client.py`: 5 funksiya (create, my_list, calc, decide, cancel)
+- [x] Sinov: 51 tekshiruv, 0 xato. Mavjud to'plamlar regressiyasiz —
+      jami **381 tekshiruv**.
+
+**Ijro paytidagi qaror:** kalkulyator javobi ariza yuborishdan OLDIN
+ko'rsatiladi va oraliqda ish kuni bo'lmasa ariza umuman yaratilmaydi
+(«bu oraliqda ish kuni yo'q — ariza kerak emas»).
 
 **Bosqich 3 — web**: rahbar sahifasi + kabinet + nav sinxroni
 

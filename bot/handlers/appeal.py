@@ -31,7 +31,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import ALL_MENU_BUTTONS, BTN_APPEAL, BTN_CANCEL, cancel_menu, menu_for_user
+from bot.keyboards import (
+    ALL_MENU_BUTTONS,
+    BTN_APPEAL,
+    BTN_CANCEL,
+    BTN_REQUESTS,
+    cancel_menu,
+    menu_for_user,
+)
 
 router = Router(name="appeal")
 
@@ -84,6 +91,7 @@ def _local_dm(iso: str) -> str:
 def _start_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Ariza yozish", callback_data="request:new")],
             [InlineKeyboardButton(text="📣 E'tiroz bildirish", callback_data="appeal:new:objection")],
             [InlineKeyboardButton(text="📨 Shikoyat yozish", callback_data="appeal:new:complaint")],
             [InlineKeyboardButton(text="📋 Mening murojaatlarim", callback_data="appeal:my")],
@@ -91,15 +99,19 @@ def _start_kb() -> InlineKeyboardMarkup:
     )
 
 
+# Ikkala matn ham ushlanadi: `BTN_APPEAL` — xodim qurilmasidagi ESKI
+# klaviatura keshi (Telegram uni o'zi yangilamaydi), `BTN_REQUESTS` — yangi.
+@router.message(F.text == BTN_REQUESTS)
 @router.message(F.text == BTN_APPEAL)
 async def show_appeal_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
-        "⚖️ <b>E'tiroz va shikoyatlar</b>\n\n"
-        "<b>E'tiroz</b> — aniq qarorga qarshi (kechikish jarimasi, kelmagan kun, "
-        "oylik hisobi).\n"
-        "<b>Shikoyat</b> — erkin mavzu (ish sharoiti, jamoa va boshqalar). "
-        "Xohlasangiz anonim yuborasiz.",
+        "📮 <b>Murojaatlarim</b>\n\n"
+        "<b>Ariza</b> — kelajakka so'rov: ta'til, avans, ma'lumotnoma.\n"
+        "<b>E'tiroz</b> — allaqachon chiqarilgan qarorga qarshi (kechikish "
+        "jarimasi, kelmagan kun, oylik hisobi).\n"
+        "<b>Shikoyat</b> — erkin mavzu (ish sharoiti, jamoa). Xohlasangiz "
+        "anonim yuborasiz.",
         reply_markup=_start_kb(),
     )
 

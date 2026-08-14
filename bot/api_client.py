@@ -204,6 +204,54 @@ async def appeal_decide(item_id: int, telegram_id: int, decision: str, note: str
     return resp.json()
 
 
+async def request_create(telegram_id: int, payload: dict) -> dict:
+    """Ariza yaratadi (ta'til/avans/ma'lumotnoma...). 400 (spam limiti, ish
+    kuni yo'q) va 422 (shakl xatosi) chaqiruvchida ushlanadi."""
+    resp = await _get_client().post("/requests/bot", json={"telegram_id": telegram_id, **payload})
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def request_my_list(telegram_id: int) -> list | None:
+    resp = await _get_client().get(f"/requests/bot/my/{telegram_id}")
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def request_calc(telegram_id: int, start: str, end: str) -> dict | None:
+    """Ish kunlari kalkulyatori — ariza yuborishdan OLDIN ko'rsatiladi
+    («10 kundan 8 tasi ish kuni»)."""
+    resp = await _get_client().get(
+        f"/requests/bot/calc/{telegram_id}", params={"start": start, "end": end}
+    )
+    if resp.status_code in (400, 404):
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def request_decide(item_id: int, telegram_id: int, decision: str, note: str) -> dict:
+    """HR qarori. Qaytadi `{"request": ..., "next_step": ..., "applied": ...}` —
+    `applied` materializatsiya natijasi (nechta sababli kun yozildi)."""
+    resp = await _get_client().post(
+        f"/requests/{item_id}/decide/bot",
+        json={"telegram_id": telegram_id, "decision": decision, "note": note},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def request_cancel(item_id: int, telegram_id: int) -> dict:
+    """Xodim o'z arizasini qaytarib oladi (qaror chiqmagan bo'lsa)."""
+    resp = await _get_client().post(
+        f"/requests/{item_id}/cancel/bot", json={"telegram_id": telegram_id}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def answer_explanation(req_id: int, telegram_id: int, answer_text: str) -> dict:
     """Xodimning tushuntirish xati javobi. Shaxs `telegram_id`dan yechiladi —
     boshqa birov nomidan javob yozib bo'lmaydi (backend tekshiradi)."""

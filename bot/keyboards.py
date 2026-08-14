@@ -11,6 +11,13 @@ BTN_WORK_LOG = "📝 Ish kundaligi"
 # bilan ishlash» — MIJOZ e'tirozlari). Bu tugma esa XODIMNING o'z murojaati.
 # Matn ataylab farqli («/ Shikoyat» qo'shimchasi bilan) — chalkashmasin.
 BTN_APPEAL = "⚖️ E'tiroz / Shikoyat"
+# 2026-08-13: e'tiroz/shikoyatga ARIZA qo'shildi va uchalasi bitta hub
+# ostiga birlashtirildi — menyuda allaqachon 8-10 tugma bor, yana bittasi
+# qo'shilsa xodim adashadi.
+# ⚠️ BTN_APPEAL O'CHIRILMAYDI: Telegram klaviaturani xodim qurilmasida
+# KESHLAB qo'yadi, ya'ni eski tugmani bosaverishi mumkin. U menyudan
+# olib tashlandi, lekin handler ikkala matnni ham ushlaydi.
+BTN_REQUESTS = "📮 Murojaatlarim"
 BTN_ASSIGN_TASK = "📤 Vazifa berish"
 BTN_MY_STATS = "📈 Statistikam"
 BTN_GLOBAL_STATS = "📊 Umumiy statistika"
@@ -49,7 +56,7 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_LEAD_STATS, BTN_SCHEDULE, BTN_HOURLY_PLAN, BTN_HOURLY_PLAN_CONTROL,
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
-    BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL,
+    BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL, BTN_REQUESTS,
 })
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
@@ -108,7 +115,7 @@ def main_menu(
     # Sababli kun qatoridan keyin: ikkalasi ham «murojaat» turkumidagi
     # tugmalar, xodim ularni yonma-yon izlaydi.
     if role != "boss":
-        rows.append([KeyboardButton(text=BTN_APPEAL)])
+        rows.append([KeyboardButton(text=BTN_REQUESTS)])
 
     # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
     rows.append([KeyboardButton(text=BTN_SCHEDULE)])
