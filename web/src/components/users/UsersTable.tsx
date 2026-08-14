@@ -15,6 +15,7 @@ import {
   usePositions,
   useResetAccount,
   useUpdateCrmExternalId,
+  useUpdateHireDate,
   useUpdateRole,
   useUpdateUserPosition,
   useUpdateUserHotLead,
@@ -49,6 +50,7 @@ export default function UsersTable({
   const updateSeat = useUpdateUserSeat();
   const updateHotLead = useUpdateUserHotLead();
   const updateCrmId = useUpdateCrmExternalId();
+  const updateHireDate = useUpdateHireDate();
   const deactivate = useDeactivateUser();
   const activate = useActivateUser();
   const resetAccount = useResetAccount();
@@ -224,6 +226,33 @@ export default function UsersTable({
         ),
       },
     ];
+
+    // Ishga kirgan sana — migratsiya uni stavka sanasidan TAXMINAN to'ldirgan
+    // (ARIZALAR_REJASI.md Bosqich 0), ya'ni to'g'rilash yo'li kerak.
+    // Ta'til staji shunga tayanadi. HR ham ko'radi (kadr ma'lumoti).
+    cols.push({
+      id: "hire_date",
+      header: "Ishga kirgan",
+      enableSorting: false,
+      cell: ({ row }) => (
+        <Input
+          type="date"
+          className="h-7 w-36 text-xs"
+          defaultValue={row.original.hire_date ?? ""}
+          disabled={updateHireDate.isPending}
+          // `onBlur` — alohida «Saqlash» tugmasisiz: sana tanlagichda qiymat
+          // bir marta tanlanadi va fokus yo'qolganda saqlanadi.
+          onBlur={(e) => {
+            const next = e.target.value || null;
+            if (next === (row.original.hire_date ?? null)) return;
+            updateHireDate.mutate(
+              { userId: row.original.id, hireDate: next },
+              { onSuccess: () => toast.success("Ishga kirgan sana saqlandi") }
+            );
+          }}
+        />
+      ),
+    });
 
     if (hasFullControl) {
       cols.push({

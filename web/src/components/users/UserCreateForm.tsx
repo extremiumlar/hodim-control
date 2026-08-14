@@ -27,6 +27,9 @@ export default function UserCreateForm({
   const [role, setRole] = useState("employee");
   const [crmExternalId, setCrmExternalId] = useState("");
   const [isSeat, setIsSeat] = useState(false);
+  // Ishga kirgan sana — ta'til staji/balansi shundan hisoblanadi.
+  // Ixtiyoriy: bilinmasa keyin «Xodimlar» ro'yxatidan to'g'rilanadi.
+  const [hireDate, setHireDate] = useState("");
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -37,6 +40,7 @@ export default function UserCreateForm({
         role,
         crm_external_id: hasFullControl && crmExternalId ? crmExternalId.trim() : undefined,
         is_seat: isSeat,
+        hire_date: hireDate || undefined,
       },
       {
         onSuccess: ({ invite_link }) => {
@@ -45,6 +49,7 @@ export default function UserCreateForm({
           setFullName("");
           setCrmExternalId("");
           setIsSeat(false);
+          setHireDate("");
         },
       }
     );
@@ -81,6 +86,18 @@ export default function UserCreateForm({
                 biriktirilmaguncha uni zaxira qoida bo'yicha HR boshqaradi.
               </p>
             )}
+          </div>
+          <div>
+            <Label htmlFor="u-hire">Ishga kirgan sana (ixtiyoriy)</Label>
+            <Input
+              id="u-hire"
+              type="date"
+              value={hireDate}
+              onChange={(e) => setHireDate(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-slate-400">
+              Ta'til staji shundan hisoblanadi. Keyin ham to'g'rilash mumkin.
+            </p>
           </div>
           {hasFullControl && (
             <div>

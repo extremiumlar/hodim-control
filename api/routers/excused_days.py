@@ -234,7 +234,9 @@ async def record_excused_day_for_user_bot(
     target = await db.get(User, payload.target_user_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
-    return await _record_excused_day_for_user(db, target, actor, payload.reason, payload.date)
+    return await _record_excused_day_for_user(
+        db, target, actor, payload.reason, payload.date, payload.is_paid
+    )
 
 
 @router.post("", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])

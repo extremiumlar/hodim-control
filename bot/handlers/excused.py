@@ -276,16 +276,43 @@ async def receive_mark_excused_reason(message: Message, state: FSMContext) -> No
     if len(reason) < 3:
         await message.answer("Juda qisqa — sababni to'liqroq yozing.", reply_markup=cancel_menu())
         return
+    # Sabab yozildi — endi TO'LOV turini so'raymiz (2026-08-13). Alohida
+    # bosqich, chunki bu oylikka ta'sir qiladi va HR ongli tanlashi kerak.
+    # Holat SAQLANADI: `entering_reason` da qolamiz-u, sababni state'ga
+    # yozib, tugma kutamiz (yangi holat ochish shart emas — keyingi matn
+    # baribir sabab sifatida qayta yoziladi).
+    await state.update_data(mark_reason=reason)
+    await message.answer(
+        f"Sabab: {reason}\n\nBu kun to'lovlimi?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="💰 To'lovli", callback_data="mark_paid:1"),
+                    InlineKeyboardButton(text="🚫 O'z hisobidan", callback_data="mark_paid:0"),
+                ],
+                [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="excused_cancel")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(StateFilter(MarkExcusedFSM.entering_reason), F.data.startswith("mark_paid:"))
+async def finish_mark_excused(callback: CallbackQuery, state: FSMContext) -> None:
+    """To'lov turi tanlangach yozuvni yakunlaydi."""
+    is_paid = callback.data.split(":")[1] == "1"
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     excused_date = data.get("excused_date")
+    reason = data.get("mark_reason") or ""
     name = (data.get("names_by_id") or {}).get(str(target_user_id), "?")
     await state.clear()
 
-    user = await api_client.get_user_by_telegram(message.from_user.id)
+    message = callback.message
+    user = await api_client.get_user_by_telegram(callback.from_user.id)
     try:
         await api_client.record_excused_day_for_user(
-            message.from_user.id, target_user_id, reason, date_str=excused_date
+            callback.from_user.id, target_user_id, reason,
+            date_str=excused_date, is_paid=is_paid,
         )
     except httpx.HTTPStatusError as exc:
         detail = "Xatolik yuz berdi."
@@ -294,18 +321,22 @@ async def receive_mark_excused_reason(message: Message, state: FSMContext) -> No
         except Exception:
             pass
         await message.answer(f"⚠️ {detail}", reply_markup=menu_for_user(user))
+        await callback.answer()
         return
     except Exception:
         await message.answer(
             "⚠️ Xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.",
             reply_markup=menu_for_user(user),
         )
+        await callback.answer()
         return
 
+    tail = "" if is_paid else " (o'z hisobidan — oylikdan ayiriladi)"
     await message.answer(
-        f"✅ {name} uchun {excused_date or 'bugungi kun'} sababli kun sifatida belgilandi.",
+        f"✅ {name} uchun {excused_date or 'bugungi kun'} sababli kun sifatida belgilandi{tail}.",
         reply_markup=menu_for_user(user),
     )
+    await callback.answer("Saqlandi.")
 
 
 @router.message(StateFilter(MarkExcusedFSM.entering_reason), ~F.text)

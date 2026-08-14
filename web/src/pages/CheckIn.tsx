@@ -338,6 +338,12 @@ export default function CheckIn() {
           setStatusMsg("");
           setShowFace(null);
           setSuccess({ action, att: updated });
+          // Server ogohlantirishi (masalan «bugun sizga sababli kun
+          // belgilangan») — check-in bloklanmaydi, lekin xodim buni bilishi
+          // kerak. Uzoq turadi: muhim va o'qib ulgurilishi shart.
+          if (updated?.warning) {
+            toast.warning(updated.warning, { duration: 10_000 });
+          }
         },
         onError: (err: any) => {
           setStatusMsg("");

@@ -35,6 +35,7 @@ from api.schemas import (
     UserCreate,
     UserCreateOut,
     UserCrmIdUpdate,
+    UserHireDateUpdate,
     UserOut,
     UserPositionUpdate,
     UserRoleUpdate,
@@ -288,6 +289,7 @@ async def create_user(
         # is_seat — HR ham belgilay oladi (Mobilogrof kabi lavozimlarni odatda HR
         # boshqaradi), crm_external_iddan farqli bu unchalik nozik maydon emas.
         is_seat=payload.is_seat if actor.role in {Role.hr.value, Role.boss.value, Role.dasturchi.value} else False,
+        hire_date=payload.hire_date,
     )
     db.add(user)
     await db.flush()
@@ -549,6 +551,42 @@ async def update_seat(
             target_user_id=user.id,
             before={"is_seat": before_is_seat},
             after={"is_seat": user.is_seat},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/hire-date", response_model=UserOut)
+async def update_hire_date(
+    user_id: int,
+    payload: UserHireDateUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Ishga kirgan sanani to'g'rilash (HR/Boshliq/Dasturchi).
+
+    NEGA KERAK: migratsiya mavjud xodimlarga bu sanani `salary_rates.
+    effective_from` dan taxminan to'ldirdi (ARIZALAR_REJASI.md Bosqich 0).
+    Agar stavka kech kiritilgan bo'lsa, sana noto'g'ri chiqadi — ta'til staji
+    esa aynan shunga tayanadi, ya'ni tuzatish yo'li bo'lishi SHART.
+
+    ROP ataylab chetda: bu kadr ma'lumoti, jamoa boshqaruvi emas."""
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+
+    before = user.hire_date
+    user.hire_date = payload.hire_date
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_hire_date_changed",
+            target_user_id=user.id,
+            before={"hire_date": before.isoformat() if before else None},
+            after={"hire_date": user.hire_date.isoformat() if user.hire_date else None},
         )
     )
     await db.commit()

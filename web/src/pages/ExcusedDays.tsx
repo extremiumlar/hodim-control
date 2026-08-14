@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { CalendarX } from "lucide-react";
 import { toast } from "sonner";
@@ -44,7 +45,23 @@ function buildColumns(
       header: "Sana",
       cell: ({ row }) => format(new Date(row.original.date), "dd.MM.yyyy"),
     },
-    { accessorKey: "reason", header: "Sabab", enableSorting: false },
+    {
+      accessorKey: "reason",
+      header: "Sabab",
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div>
+          <span>{row.original.reason}</span>
+          {/* To'lovsiz kunlar ajratib turadi: oylikda ulushi ayiriladi,
+              HR buni ro'yxatda darhol ko'rishi kerak. */}
+          {row.original.is_paid === false && (
+            <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+              o'z hisobidan
+            </span>
+          )}
+        </div>
+      ),
+    },
     {
       accessorKey: "status",
       header: "Holat",
@@ -95,6 +112,11 @@ function MarkExcusedForm() {
   const [userId, setUserId] = useState<string>("");
   const [day, setDay] = useState(format(new Date(), "yyyy-MM-dd"));
   const [reason, setReason] = useState("");
+  // To'lovlimi (2026-08-13). Default — to'lovli (kasallik, mehnat ta'tili):
+  // bu tizimning avvalgi xatti-harakati. «O'z hisobidan» belgilansa, oylik
+  // hisobida shu kunning ulushi ayiriladi (faqat oylik stavkada — kunbay/
+  // soatbayda sababli kun allaqachon to'lanmaydi).
+  const [isPaid, setIsPaid] = useState(true);
   // UX2-qoldiq #3: 40 kishilik oddiy Select o'rniga QIDIRUVLI tanlagich —
   // HR ism yozib darhol topadi (skroll qilib o'tirmaydi).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -115,11 +137,14 @@ function MarkExcusedForm() {
       return;
     }
     record.mutate(
-      { user_id: Number(userId), date: day, reason: reason.trim() },
+      { user_id: Number(userId), date: day, reason: reason.trim(), is_paid: isPaid },
       {
         onSuccess: () => {
-          toast.success("Sababli kun belgilandi");
+          toast.success(
+            isPaid ? "Sababli kun belgilandi" : "Sababli kun belgilandi (o'z hisobidan)"
+          );
           setReason("");
+          setIsPaid(true);
         },
       }
     );
@@ -180,6 +205,29 @@ function MarkExcusedForm() {
               onChange={(e) => setReason(e.target.value)}
               placeholder="Masalan: kasallik, oilaviy holat"
             />
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-slate-500">To'lov</div>
+            <div className="flex gap-1.5">
+              {[
+                { v: true, label: "To'lovli" },
+                { v: false, label: "O'z hisobidan" },
+              ].map((o) => (
+                <button
+                  key={String(o.v)}
+                  type="button"
+                  onClick={() => setIsPaid(o.v)}
+                  className={cn(
+                    "h-10 rounded-md border px-3 text-sm font-medium",
+                    isPaid === o.v
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-slate-200 text-slate-600"
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
           </div>
           <Button onClick={onSubmit} disabled={record.isPending}>
             Belgilash

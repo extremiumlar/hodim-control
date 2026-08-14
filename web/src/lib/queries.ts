@@ -264,6 +264,13 @@ export const useCrmVisitOperators = () =>
 
 export const useCreateUser = () => useApiMutation(api.createUser, [["users"]]);
 
+export const useUpdateHireDate = () =>
+  useApiMutation(
+    ({ userId, hireDate }: { userId: number; hireDate: string | null }) =>
+      api.updateHireDate(userId, hireDate),
+    [["users"]]
+  );
+
 export const useUpdateCrmExternalId = () =>
   useApiMutation(
     ({ userId, crmExternalId }: { userId: number; crmExternalId: string | null }) =>
@@ -361,7 +368,8 @@ export const useDecideExcusedDay = () =>
 
 export const useRecordExcusedDayForUser = () =>
   useApiMutation(
-    (data: { user_id: number; reason: string; date?: string }) => api.recordExcusedDayForUser(data),
+    (data: { user_id: number; reason: string; date?: string; is_paid?: boolean }) =>
+      api.recordExcusedDayForUser(data),
     // Dashboard ham yangilanadi: xodim «Kelmagan»dan «Sababli»ga o'tishi
     // darhol ko'rinsin (UX2-W1 A5 — Bugun tabidan turib belgilash).
     [["excused-days"], ["attendance", "dashboard"], ["attendance", "readiness"]]

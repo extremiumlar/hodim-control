@@ -233,11 +233,20 @@ async def excused_day_targets(telegram_id: int) -> list[dict]:
 
 
 async def record_excused_day_for_user(
-    manager_telegram_id: int, target_user_id: int, reason: str, date_str: str | None = None
+    manager_telegram_id: int, target_user_id: int, reason: str,
+    date_str: str | None = None, is_paid: bool = True,
 ) -> dict:
     """HR/Boshliq/Dasturchi xodim nomidan sababli kunni to'g'ridan-to'g'ri
-    belgilaydi — `create_excused_day`dan farqli, darhol 'approved' bo'ladi."""
-    payload: dict = {"manager_telegram_id": manager_telegram_id, "target_user_id": target_user_id, "reason": reason}
+    belgilaydi — `create_excused_day`dan farqli, darhol 'approved' bo'ladi.
+
+    `is_paid=False` — «o'z hisobidan»: oylik stavkada shu kunning ulushi
+    payslipdan ayiriladi."""
+    payload: dict = {
+        "manager_telegram_id": manager_telegram_id,
+        "target_user_id": target_user_id,
+        "reason": reason,
+        "is_paid": is_paid,
+    }
     if date_str:
         payload["date"] = date_str
     resp = await _get_client().post("/excused-days/for-user/bot", json=payload)

@@ -39,6 +39,9 @@ export interface User {
   crm_external_id: string | null;
   crm_visit_external_id: string | null;
   has_face: boolean;
+  /** Ishga kirgan sana ("YYYY-MM-DD"). `created_at` bilan adashtirmang —
+      u tizimga qo'shilgan payt. Ta'til staji shundan hisoblanadi. */
+  hire_date: string | null;
   created_at: string;
 }
 
@@ -58,9 +61,12 @@ export interface Attendance {
   late_minutes: number;
   early_leave_minutes: number;
   worked_minutes: number;
-  status: "present" | "late" | "absent" | "weekend";
+  status: "present" | "late" | "absent" | "weekend" | "excused";
   is_weekend: boolean;
   note: string | null;
+  /** Check-in javobidagi ogohlantirish (masalan sababli kunda ishga kelish).
+      Bloklamaydi — faqat xabar beradi. */
+  warning?: string | null;
 }
 
 export interface ReadinessIssue {
@@ -271,6 +277,9 @@ export interface ExcusedDay {
   date: string;
   reason: string;
   status: "pending" | "approved" | "rejected";
+  /** To'lovli sababli kunmi. `false` — «o'z hisobidan»: oylik stavkada shu
+      kunning ulushi payslipdan ayiriladi (kunbay/soatbayda farqi yo'q). */
+  is_paid: boolean;
   decided_by: number | null;
   decided_at: string | null;
   created_at: string;

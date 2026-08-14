@@ -165,10 +165,18 @@ export const api = {
     manager_id?: number | null;
     crm_external_id?: string | null;
     is_seat?: boolean;
+    hire_date?: string | null;
   }) =>
     apiFetch<{ user: User; invite_link: string }>("/users", {
       method: "POST",
       body: JSON.stringify(data),
+    }),
+  // Ishga kirgan sanani to'g'rilash — migratsiya uni stavka sanasidan
+  // TAXMINAN to'ldirgan, ya'ni tuzatish yo'li kerak.
+  updateHireDate: (userId: number, hireDate: string | null) =>
+    apiFetch<User>(`/users/${userId}/hire-date`, {
+      method: "PATCH",
+      body: JSON.stringify({ hire_date: hireDate }),
     }),
   inviteLink: (userId: number) =>
     apiFetch<{ invite_link: string | null; already_started: boolean }>(`/users/${userId}/invite-link`),
@@ -249,7 +257,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  recordExcusedDayForUser: (data: { user_id: number; reason: string; date?: string }) =>
+  recordExcusedDayForUser: (data: {
+    user_id: number;
+    reason: string;
+    date?: string;
+    /** Berilmasa `true` — tizimning avvalgi xatti-harakati saqlanadi. */
+    is_paid?: boolean;
+  }) =>
     apiFetch<ExcusedDay>("/excused-days/for-user", { method: "POST", body: JSON.stringify(data) }),
   teamNorms: () => apiFetch<TeamNormRow[]>("/norms/team"),
   updateNorm: (data: { user_id: number; metric_type: string; value: number }) =>

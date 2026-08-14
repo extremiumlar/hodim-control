@@ -108,6 +108,9 @@ class UserOut(BaseModel):
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
+    # Ishga kirgan sana — `created_at` (tizimga qo'shilgan payt) bilan
+    # ADASHTIRMANG. Ta'til staji/balansi shundan hisoblanadi.
+    hire_date: dt.date | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -145,6 +148,16 @@ class UserCreate(BaseModel):
     # "O'rin" (masalan Mobilogrof) — faqat Boss/Dasturchi belgilay oladi (create_user
     # ichida tekshiriladi, xuddi crm_external_id kabi).
     is_seat: bool = False
+    # Ishga kirgan sana — ta'til staji/balansi uchun. Berilmasa NULL qoladi
+    # va keyin `PATCH /users/{id}/hire-date` bilan to'g'rilanadi.
+    hire_date: dt.date | None = None
+
+
+class UserHireDateUpdate(BaseModel):
+    """Ishga kirgan sanani to'g'rilash. `None` — tozalash (noto'g'ri
+    to'ldirilgan bo'lsa)."""
+
+    hire_date: dt.date | None = None
 
 
 class UserCreateOut(BaseModel):
@@ -379,6 +392,10 @@ class ExcusedDayForUserBotCreate(BaseModel):
     target_user_id: int
     date: dt.date | None = None
     reason: str = Field(min_length=3, max_length=500)
+    # Web varianti bilan bir xil (2026-08-13). Bot oqimida sabab yozilgach
+    # so'raladi; eski bot versiyalari yubormasa — default `True`, ya'ni
+    # xatti-harakat o'zgarmaydi.
+    is_paid: bool = True
 
 
 class ExcusedDayDecideMe(BaseModel):
@@ -825,6 +842,11 @@ class AttendanceOut(BaseModel):
     status: str
     is_weekend: bool
     note: str | None = None
+    # Check-in javobida ko'rsatiladigan ogohlantirish (ARIZALAR_REJASI.md
+    # Bosqich 0.2): masalan xodim TASDIQLANGAN sababli kunda ishga kelgan.
+    # Bloklamaydi — real hayotda ta'tildan chaqirib olinadi; lekin xodim ham,
+    # rahbar ham bu holatdan xabardor bo'lishi kerak.
+    warning: str | None = None
 
 
 class EmployeeAttendanceSummary(BaseModel):

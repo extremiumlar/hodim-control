@@ -162,7 +162,23 @@ async def my_check_in(
         )
     except CheckError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
-    return _att_out(att, user.full_name)
+
+    out = _att_out(att, user.full_name)
+    # Bosqich 0.2: sababli kunda ishga kelish BLOKLANMAYDI (real hayotda
+    # ta'tildan chaqirib olinadi), lekin jimgina o'tkazib ham yuborilmaydi —
+    # aks holda "ta'tildaman" deb hisoblangan xodim tizimda ishlab yuraveradi
+    # va bu faqat oylik hisoblanganda bilinadi.
+    #
+    # Eski Django variantida bu holat butunlay bloklangan edi
+    # (`verifix/backend/attendance/services.py`), lekin blok noto'g'ri:
+    # xodim ta'tilda bo'la turib ishga chaqirilishi normal holat.
+    if att.status == AttendanceStatus.excused.value:
+        out.warning = (
+            "Bugun siz uchun sababli kun belgilangan. Kelganingiz qayd etildi, "
+            "lekin kechikish hisoblanmaydi. Agar ta'tilingiz tugagan bo'lsa — "
+            "HR ga xabar bering."
+        )
+    return out
 
 
 @router.post("/me/check-out", response_model=AttendanceOut)
