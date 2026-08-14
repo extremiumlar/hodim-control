@@ -151,6 +151,8 @@ def _to_out(item: EmployeeRequest, full_name: str | None, working_days: int | No
         applied_at=item.applied_at,
         created_at=item.created_at,
         working_days=working_days,
+        interrupted_at=item.interrupted_at,
+        interrupt_decision=item.interrupt_decision,
     )
 
 
@@ -733,14 +735,22 @@ async def cancel_my_request_bot(
 async def list_requests(
     status_filter: str | None = None,
     kind: str | None = None,
-    _actor: User = Depends(require_roles(*MANAGE_ROLES)),
+    actor: User = Depends(require_roles(*MANAGE_ROLES, Role.rop.value)),
     db: AsyncSession = Depends(get_db),
 ) -> list[RequestOut]:
+    """ROP ham ko'radi, lekin FAQAT o'z jamoasini — zanjirning rahbar
+    qadami botdagina qolib ketmasin (Bosqich 4). Yakuniy qaror baribir
+    unga berilmaydi: `decide` da `MANAGE_ROLES` tekshiriladi."""
     query = select(EmployeeRequest).order_by(EmployeeRequest.created_at.desc())
     if status_filter:
         query = query.where(EmployeeRequest.status == status_filter)
     if kind:
         query = query.where(EmployeeRequest.kind == kind)
+    if actor.role == Role.rop.value:
+        team = list(await db.scalars(select(User.id).where(User.manager_id == actor.id)))
+        if not team:
+            return []
+        query = query.where(EmployeeRequest.user_id.in_(team))
     return await _to_out_many(list(await db.scalars(query)), db)
 
 

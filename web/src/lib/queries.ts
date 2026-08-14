@@ -80,6 +80,7 @@ export const qk = {
   locationExempt: ["admin", "location-exempt"] as const,
   finePolicyEditors: ["payroll", "fine-policy-editors"] as const,
   explanations: (statusFilter?: string) => ["explanations", statusFilter ?? "all"] as const,
+  celebrationSettings: ["celebration", "settings"] as const,
   // Ish kundaligi. Kalitlar "work-log" prefiksi ostida — mutatsiyalar
   // [["work-log"]] bilan invalidatsiya qilinadi va o'z oyim ham, rahbar
   // ko'rinishi ham, qamrov ham birdaniga yangilanadi.
@@ -736,6 +737,27 @@ export const useDecideRequest = () =>
     [["requests"], ["excused-days"], ["attendance"], ["payroll"]]
   );
 
+export const useManagerDecideRequest = () =>
+  useApiMutation(
+    ({ itemId, approve, note }: { itemId: number; approve: boolean; note?: string }) =>
+      api.managerDecideRequest(itemId, { approve, note }),
+    [["requests"]]
+  );
+
+// Ta'til qisqartirilsa sababli kunlar va davomat o'zgaradi — o'sha
+// kalitlar ham yangilanadi (oylik shu kunlardan hisoblanadi).
+export const useInterruptRequest = () =>
+  useApiMutation(
+    ({ itemId, cut }: { itemId: number; cut: boolean }) => api.interruptRequest(itemId, cut),
+    [["requests"], ["excused-days"], ["attendance"], ["payroll"]]
+  );
+
+export const useMyLeaveBalance = (year?: number) =>
+  useQuery({
+    queryKey: ["requests", "balance", "me", year ?? "cur"],
+    queryFn: () => api.myLeaveBalance(year),
+  });
+
 export const useRevokeRequest = () =>
   useApiMutation(
     ({ itemId, reason }: { itemId: number; reason: string }) =>
@@ -899,3 +921,22 @@ export const useSetLocationExempt = () =>
       api.setLocationExempt(userId, granted, reason),
     [qk.locationExempt, ["users"], qk.adminAudit]
   );
+
+// ─── Tabrik videolari (tashrif/shartnoma -> umumiy guruh) ───
+export const useCelebrationSettings = () =>
+  useQuery({ queryKey: qk.celebrationSettings, queryFn: api.celebrationSettings });
+
+// Yuklash uzoq davom etishi mumkin (fayl Telegram'ga uzatiladi) — shuning
+// uchun alohida mutation, sahifa `isPending` bilan tugmani bloklaydi.
+export const useUploadCelebrationMedia = () =>
+  useApiMutation(
+    (vars: { kind: string; file: File; caption: string }) =>
+      api.uploadCelebrationMedia(vars.kind, vars.file, vars.caption),
+    [qk.celebrationSettings]
+  );
+
+export const useDisableCelebrationMedia = () =>
+  useApiMutation((kind: string) => api.disableCelebrationMedia(kind), [qk.celebrationSettings]);
+
+export const useTestCelebrationMedia = () =>
+  useApiMutation((kind: string) => api.testCelebrationMedia(kind), []);

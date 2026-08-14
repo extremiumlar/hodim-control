@@ -1767,6 +1767,10 @@ class RequestOut(BaseModel):
     created_at: datetime
     # Ariza yaratilgandagi hisob — ro'yxatda qayta hisoblamaslik uchun.
     working_days: int | None = None
+    # «Ishdagi ta'tilchi»: ta'til vaqtida check-in qilingan payt va HR
+    # qarori (`pending` / `shortened` / `continued`).
+    interrupted_at: datetime | None = None
+    interrupt_decision: str | None = None
 
 
 class RequestDecide(BaseModel):

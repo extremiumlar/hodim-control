@@ -97,6 +97,17 @@ export interface ManualAttendancePayload {
   reason: string;
 }
 
+export interface CelebrationMediaRow {
+  kind: "visit" | "contract";
+  label: string;
+  configured: boolean;
+  file_type: "video" | "animation" | null;
+  caption: string | null;
+  updated_at: string | null;
+  posts_total: number;
+  stages_configured: boolean;
+}
+
 export interface Office {
   id: number;
   name: string;
@@ -959,7 +970,14 @@ export interface EmployeeRequest {
   reason: string;
   file_id: string | null;
   file_type: string | null;
-  status: "pending" | "manager_ok" | "approved" | "rejected" | "cancelled" | "revoked";
+  status:
+    | "pending"
+    | "manager_ok"
+    | "hr_ok"
+    | "approved"
+    | "rejected"
+    | "cancelled"
+    | "revoked";
   decided_by: number | null;
   decided_at: string | null;
   decision_note: string | null;
@@ -968,6 +986,9 @@ export interface EmployeeRequest {
   created_at: string;
   /** Yaratilganda hisoblangan ish kunlari (faqat javobda). */
   working_days: number | null;
+  /** Ta'til vaqtida ishga kelgan payt — to'lgan bo'lsa HR qarori kutiladi. */
+  interrupted_at?: string | null;
+  interrupt_decision?: "pending" | "shortened" | "continued" | null;
 }
 
 /** Qaror javobi. `applied` — materializatsiya natijasi (nechta sababli kun
@@ -983,6 +1004,25 @@ export interface RequestDecideResult {
     period?: string;
     amount?: number;
   } | null;
+}
+
+export interface RequestInterruptResult {
+  request: EmployeeRequest;
+  applied: {
+    excused_cancelled?: number;
+    new_end_date?: string;
+  };
+}
+
+/** Ta'til balansi — MASLAHAT (arizani bloklamaydi). */
+export interface LeaveBalance {
+  year: number;
+  entitled_days: number;
+  used_days: number;
+  remaining_days: number;
+  hire_date: string | null;
+  /** `hire_date` yo'q — staj hisoblanmadi, raqam taxminiy. */
+  estimated: boolean;
 }
 
 export interface RequestRevokeResult {

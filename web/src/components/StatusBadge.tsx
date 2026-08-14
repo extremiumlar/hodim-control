@@ -64,6 +64,7 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   employee_request: {
     pending: { text: "Yangi", cls: "bg-amber-100 text-amber-700" },
     manager_ok: { text: "Rahbar tasdiqladi", cls: "bg-blue-100 text-blue-700" },
+    hr_ok: { text: "Boshliq navbati", cls: "bg-violet-100 text-violet-700" },
     approved: { text: "Tasdiqlangan", cls: "bg-emerald-100 text-emerald-700" },
     rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
     cancelled: { text: "Qaytarib olingan", cls: "bg-slate-200 text-slate-600" },

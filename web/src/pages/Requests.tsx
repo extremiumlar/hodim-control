@@ -11,7 +11,7 @@
  */
 import { useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
-import { CheckCheck, FileText, Info, Undo2 } from "lucide-react";
+import { CheckCheck, FileText, Info, Scissors, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 
 import DataTable from "@/components/DataTable";
@@ -26,7 +26,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useDecideRequest, useRequests, useRevokeRequest } from "@/lib/queries";
+import {
+  useDecideRequest,
+  useInterruptRequest,
+  useRequests,
+  useRevokeRequest,
+} from "@/lib/queries";
 import type { EmployeeRequest, RequestKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +47,12 @@ const KIND_LABELS: Record<RequestKind, string> = {
 };
 
 function isOpen(r: EmployeeRequest): boolean {
-  return r.status === "pending" || r.status === "manager_ok";
+  return r.status === "pending" || r.status === "manager_ok" || r.status === "hr_ok";
+}
+
+/** Ta'tildagi xodim ishga kelgan va HR qarori hali yo'q. */
+function needsInterruptDecision(r: EmployeeRequest): boolean {
+  return !!r.interrupted_at && r.interrupt_decision === "pending";
 }
 
 function ageDays(iso: string): number {
@@ -91,6 +101,20 @@ function DetailCell({ item }: { item: EmployeeRequest }) {
           <b>Javob:</b> {item.decision_note}
         </p>
       )}
+      {/* «Ishdagi ta'tilchi» — tizim check-in paytida o'zi aniqlagan. */}
+      {needsInterruptDecision(item) && (
+        <p className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+          🏖 Xodim ta'til vaqtida ishga keldi — qolgan kunlar haqida qaror kutilmoqda.
+        </p>
+      )}
+      {item.interrupt_decision === "shortened" && (
+        <p className="mt-1 text-[11px] text-slate-500">✂️ Ta'til qisqartirilgan.</p>
+      )}
+      {item.interrupt_decision === "continued" && (
+        <p className="mt-1 text-[11px] text-slate-500">
+          ▶️ Ta'til davom etgan (ishga kelgani qayd etilgan).
+        </p>
+      )}
     </div>
   );
 }
@@ -98,6 +122,7 @@ function DetailCell({ item }: { item: EmployeeRequest }) {
 function buildColumns(
   onDecide: (item: EmployeeRequest) => void,
   onRevoke: (item: EmployeeRequest) => void,
+  onInterrupt: (item: EmployeeRequest, cut: boolean) => void,
   pending: boolean
 ): ColumnDef<EmployeeRequest>[] {
   return [
@@ -160,6 +185,25 @@ function buildColumns(
             </div>
           );
         }
+        // Uzilish qarori «Bekor qilish» dan USTUN — u kutib turgan savol.
+        if (needsInterruptDecision(r)) {
+          return (
+            <div className="flex justify-end gap-1.5">
+              <Button size="sm" disabled={pending} onClick={() => onInterrupt(r, true)}>
+                <Scissors className="mr-1 h-3.5 w-3.5" />
+                Qisqartirish
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => onInterrupt(r, false)}
+              >
+                Davom etsin
+              </Button>
+            </div>
+          );
+        }
         if (r.status === "approved") {
           return (
             <div className="flex justify-end">
@@ -191,13 +235,33 @@ export default function Requests() {
   });
   const decide = useDecideRequest();
   const revoke = useRevokeRequest();
+  const interrupt = useInterruptRequest();
 
-  const rows = (query.data ?? []).filter((r) => statusFilter !== "open" || isOpen(r));
+  // «Ochiq» filtri javob KUTAYOTGAN hamma narsani ko'rsatadi — shu jumladan
+  // tasdiqlangan, lekin uzilish qarori kutayotgan ta'tillarni. Aks holda HR
+  // savolni faqat Telegramda ko'rardi va sahifada yo'qolib qolardi.
+  const rows = (query.data ?? []).filter(
+    (r) => statusFilter !== "open" || isOpen(r) || needsInterruptDecision(r)
+  );
 
   const columns = buildColumns(
     (item) => setDecideTarget({ item, decision: "approved" }),
     (item) => setRevokeTarget(item),
-    decide.isPending || revoke.isPending
+    (item, cut) =>
+      interrupt.mutate(
+        { itemId: item.id, cut },
+        {
+          onSuccess: (res) =>
+            setBanner(
+              cut
+                ? `✂️ Ta'til qisqartirildi — ${res.applied?.excused_cancelled ?? 0} ta sababli kun bekor qilindi ` +
+                  `(yangi tugash sanasi: ${res.applied?.new_end_date ?? "—"}).`
+                : "▶️ Ta'til davom etadi. Xodimning kelgani qayd etildi."
+            ),
+          onError: (e) => toast.error(e.message),
+        }
+      ),
+    decide.isPending || revoke.isPending || interrupt.isPending
   );
 
   return (

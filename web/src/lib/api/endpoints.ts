@@ -1,12 +1,14 @@
-import { apiFetch, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
+import { apiFetch, apiUpload, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
 import type {
   AdminRecord,
   Appeal,
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  LeaveBalance,
   RequestCalc,
   RequestDecideResult,
+  RequestInterruptResult,
   RequestRevokeResult,
   AttendanceDashboard,
   AttendanceMatrix,
@@ -14,6 +16,7 @@ import type {
   FaceReregRequest,
   MyAttendanceHistory,
   AuditLog,
+  CelebrationMediaRow,
   Bonus,
   DailyResult,
   EmployeeAttendanceSummary,
@@ -526,6 +529,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  // Bevosita rahbar qadami — izoh faqat rad etishda majburiy.
+  managerDecideRequest: (itemId: number, data: { approve: boolean; note?: string }) =>
+    apiFetch<EmployeeRequest>(`/requests/${itemId}/manager-decide`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  // «Ishdagi ta'tilchi»: qolgan ta'til kunlari bekor qilinsinmi.
+  interruptRequest: (itemId: number, cut: boolean) =>
+    apiFetch<RequestInterruptResult>(`/requests/${itemId}/interrupt`, {
+      method: "POST",
+      body: JSON.stringify({ cut }),
+    }),
+  myLeaveBalance: (year?: number) =>
+    apiFetch<LeaveBalance>(`/requests/me/balance${year ? `?year=${year}` : ""}`),
+  leaveBalance: (userId: number, year?: number) =>
+    apiFetch<LeaveBalance>(`/requests/balance/${userId}${year ? `?year=${year}` : ""}`),
   // Tasdiqlangan arizani bekor qilish — yozilgan qatorlar qaytariladi.
   revokeRequest: (itemId: number, reason: string) =>
     apiFetch<RequestRevokeResult>(`/requests/${itemId}/revoke`, {
@@ -700,6 +719,27 @@ export const api = {
       `/payroll/fine-policy-editors/${userId}`,
       { method: "POST", body: JSON.stringify({ granted, reason }) }
     ),
+  // Tabrik videolari (tashrif/shartnoma -> umumiy guruh). Fayl serverda
+  // saqlanmaydi: backend uni Telegram'ga uzatib `file_id` oladi.
+  celebrationSettings: () =>
+    apiFetch<{ items: CelebrationMediaRow[] }>("/celebration/settings"),
+  uploadCelebrationMedia: (kind: string, file: File, caption: string) => {
+    const form = new FormData();
+    form.append("kind", kind);
+    form.append("caption", caption);
+    form.append("file", file);
+    return apiUpload<{ ok: boolean; kind: string; file_type: string }>(
+      "/celebration/settings/upload",
+      form
+    );
+  },
+  disableCelebrationMedia: (kind: string) =>
+    apiFetch<{ ok: boolean; disabled: number }>(
+      `/celebration/settings/disable?kind=${kind}`,
+      { method: "POST" }
+    ),
+  testCelebrationMedia: (kind: string) =>
+    apiFetch<{ ok: boolean }>(`/celebration/settings/test?kind=${kind}`, { method: "POST" }),
   // Joylashuvsiz («bez lokatsiya») check-in ruxsati.
   listLocationExempt: () => apiFetch<LocationExemptRow[]>("/admin/location-exempt"),
   setLocationExempt: (userId: number, granted: boolean, reason: string) =>

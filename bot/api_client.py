@@ -243,6 +243,28 @@ async def request_decide(item_id: int, telegram_id: int, decision: str, note: st
     return resp.json()
 
 
+async def request_manager_decide(
+    item_id: int, telegram_id: int, approve: bool, note: str = ""
+) -> dict:
+    """Bevosita rahbar qadami (Bosqich 4). Izoh faqat RAD etishda majburiy —
+    tasdiqda rahbarni ortiqcha yozishga majburlamaymiz (zanjir sekinlashardi)."""
+    resp = await _get_client().post(
+        f"/requests/{item_id}/manager-decide/bot",
+        json={"telegram_id": telegram_id, "approve": approve, "note": note},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def request_interrupt(item_id: int, telegram_id: int, cut: bool) -> dict:
+    """«Ishdagi ta'tilchi» qarori (Bosqich 5): ta'til qisqartirilsinmi."""
+    resp = await _get_client().post(
+        f"/requests/{item_id}/interrupt/bot", json={"telegram_id": telegram_id, "cut": cut}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def request_cancel(item_id: int, telegram_id: int) -> dict:
     """Xodim o'z arizasini qaytarib oladi (qaror chiqmagan bo'lsa)."""
     resp = await _get_client().post(

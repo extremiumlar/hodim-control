@@ -55,6 +55,7 @@ _KIND_LABELS = {
 _STATUS_LABELS = {
     "pending": "🕓 Ko'rib chiqilmoqda",
     "manager_ok": "👤 Rahbar tasdiqladi",
+    "hr_ok": "🧑‍💼 HR tasdiqladi — Boshliq navbati",
     "approved": "✅ Tasdiqlangan",
     "rejected": "❌ Rad etilgan",
     "cancelled": "↩️ Qaytarib olingan",
@@ -70,6 +71,13 @@ class RequestFSM(StatesGroup):
 
 
 class RequestDecideFSM(StatesGroup):
+    waiting_note = State()
+
+
+class RequestManagerFSM(StatesGroup):
+    """Rahbarning RAD etish izohi. Tasdiqda FSM ishlatilmaydi — bir bosishda
+    ketadi, aks holda zanjir sekinlashardi."""
+
     waiting_note = State()
 
 
@@ -501,3 +509,122 @@ async def on_note(message: Message, state: FSMContext) -> None:
 @router.message(StateFilter(RequestDecideFSM.waiting_note), ~F.text)
 async def non_text_note(message: Message) -> None:
     await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
+
+
+# ─── Bevosita rahbar qadami (Bosqich 4) ────────────────────────────────────────
+
+
+def _api_error(exc: httpx.HTTPStatusError) -> str:
+    if exc.response.status_code == 403:
+        return "Bu amal uchun ruxsatingiz yo'q."
+    try:
+        body = exc.response.json()
+        if isinstance(body.get("detail"), str):
+            return body["detail"]
+    except Exception:
+        pass
+    return "Xatolik yuz berdi."
+
+
+@router.callback_query(F.data.startswith("request_mgr:"))
+async def on_manager_verdict(callback: CallbackQuery, state: FSMContext) -> None:
+    _, raw_id, ok = callback.data.split(":")
+    item_id = int(raw_id)
+
+    if ok == "0":
+        # Rad etishda izoh MAJBURIY — xodim nega to'xtaganini bilishi kerak.
+        await state.clear()
+        await state.update_data(mgr_request_id=item_id)
+        await state.set_state(RequestManagerFSM.waiting_note)
+        await callback.message.answer(
+            f"Rad etish SABABINI yozing (kamida {MIN_NOTE} belgi). Xodim uni to'liq ko'radi.",
+            reply_markup=cancel_menu(),
+        )
+        await callback.answer()
+        return
+
+    try:
+        await api_client.request_manager_decide(item_id, callback.from_user.id, True)
+    except httpx.HTTPStatusError as exc:
+        await callback.answer(_api_error(exc), show_alert=True)
+        return
+    except Exception:
+        await callback.answer("Xatolik yuz berdi. Qayta urinib ko'ring.", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        "✅ Siz tasdiqladingiz. Ariza HR ga yuborildi.", reply_markup=None
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(RequestManagerFSM.waiting_note), F.text, ~F.text.in_(ALL_MENU_BUTTONS))
+async def on_manager_note(message: Message, state: FSMContext) -> None:
+    note = (message.text or "").strip()
+    if len(note) < MIN_NOTE:
+        await message.answer(f"Juda qisqa — kamida {MIN_NOTE} belgi.", reply_markup=cancel_menu())
+        return
+
+    data = await state.get_data()
+    item_id = data.get("mgr_request_id")
+    await state.clear()
+    user = await api_client.get_user_by_telegram(message.from_user.id)
+    if not item_id:
+        await message.answer(
+            "Sessiya topilmadi. Xabardagi tugmani qayta bosing.", reply_markup=menu_for_user(user)
+        )
+        return
+
+    try:
+        await api_client.request_manager_decide(item_id, message.from_user.id, False, note)
+    except httpx.HTTPStatusError as exc:
+        await message.answer(f"⚠️ {_api_error(exc)}", reply_markup=menu_for_user(user))
+        return
+    except Exception:
+        await message.answer(
+            "⚠️ Xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.",
+            reply_markup=menu_for_user(user),
+        )
+        return
+
+    await message.answer(
+        "❌ Ariza rad etildi, xodimga xabar yuborildi.", reply_markup=menu_for_user(user)
+    )
+
+
+@router.message(StateFilter(RequestManagerFSM.waiting_note), ~F.text)
+async def mgr_non_text_note(message: Message) -> None:
+    await message.answer("Iltimos, matn kiriting yoki bekor qiling.", reply_markup=cancel_menu())
+
+
+# ─── «Ishdagi ta'tilchi» (Bosqich 5) ───────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("request_interrupt:"))
+async def on_interrupt(callback: CallbackQuery) -> None:
+    """Ta'tildagi xodim ishga kelganda HR ning bir bosishli qarori.
+
+    Izoh so'ralmaydi: bu ariza ustidan qaror emas, faqat qolgan kunlarni
+    saqlash yoki bekor qilish. Har ikkala yo'l ham xodimga xabar qiladi."""
+    _, raw_id, action = callback.data.split(":")
+    try:
+        result = await api_client.request_interrupt(
+            int(raw_id), callback.from_user.id, action == "cut"
+        )
+    except httpx.HTTPStatusError as exc:
+        await callback.answer(_api_error(exc), show_alert=True)
+        return
+    except Exception:
+        await callback.answer("Xatolik yuz berdi. Qayta urinib ko'ring.", show_alert=True)
+        return
+
+    applied = result.get("applied") or {}
+    if action == "cut":
+        text = (
+            f"✂️ Ta'til qisqartirildi — {applied.get('excused_cancelled', 0)} ta sababli kun "
+            f"bekor qilindi (yangi tugash sanasi: {applied.get('new_end_date', '—')})."
+        )
+    else:
+        text = "▶️ Ta'til davom etadi. Kelgani qayd etildi."
+    await callback.message.edit_text(text, reply_markup=None)
+    await callback.answer()

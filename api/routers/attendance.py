@@ -192,6 +192,8 @@ async def my_check_in(
                 out.warning += " Rahbariyatga xabar berildi."
         except Exception:  # noqa: BLE001
             logger.exception("Ta'til uzilishini qayd etib bo'lmadi (check-in davom etdi)")
+            # Sessiya yarim holatda qolmasin — javob baribir qaytadi.
+            await db.rollback()
     return out
 
 

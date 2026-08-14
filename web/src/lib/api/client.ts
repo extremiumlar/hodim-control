@@ -50,3 +50,35 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   }
   return (await resp.json()) as T;
 }
+
+/**
+ * Fayl yuklash (multipart). `apiFetch` dan alohida, chunki u har doim
+ * `Content-Type: application/json` qo'yadi — FormData bilan bu chegarani
+ * (boundary) buzadi va server faylni umuman ko'rmaydi. Bu yerda Content-Type
+ * ATAYLAB qo'yilmaydi: brauzer o'zi to'g'ri boundary bilan qo'yadi.
+ */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${API_BASE_URL}${path}`, { method: "POST", body: form, headers });
+  } catch {
+    throw new ApiError(0, "Internet aloqasi yo'q. Tarmoqni tekshirib qayta urinib ko'ring.");
+  }
+
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      detail = body.detail || detail;
+    } catch {
+      // ignore
+    }
+    if (resp.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    throw new ApiError(resp.status, detail);
+  }
+  return (await resp.json()) as T;
+}

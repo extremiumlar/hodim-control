@@ -586,12 +586,40 @@ tasdiqlash tugmasi) — foydalanuvchi qaysi biri dialogni yopishini, qaysi
 biri ARIZANI bekor qilishini ajratolmasdi. Tasdiqlash tugmasi «Ha, arizani
 qaytarish» ga o'zgartirildi.
 
-**Bosqich 4 — zanjir, qoidalar, balans**: `RequestPolicy` (scope naqshi),
-ROP bosqichi, Boshliq chegarasi, sozlamalar sahifasi, ta'til balansi
-(hisoblab olinadigan, bloklamaydi)
+**Bosqich 4 — zanjir, qoidalar, balans** ✅ BAJARILDI (2026-08-14)
 
-**Bosqich 5 — «ishdagi ta'tilchi»**: inline tugmali HR qarori, ta'tilni
-qisqartirish + `recompute_attendance`, davr qulfi tekshiruvi
+- `RequestPolicy` — `FinePolicy` scope naqshi ayni holicha (`user >
+  position > global`, aniq `kind` NULL `kind` dan kuchli). Migratsiya
+  `l1m2n3o4p5q6` global qatorni ham urug'laydi: rahbar tasdig'i YOQIQ,
+  ta'til 7 ish kunidan, avans 2 000 000 so'mdan oshsa Boshliq qo'shiladi.
+- Zanjir: `pending` → (xodimda `manager_id` bo'lsa) ROP → `manager_ok` →
+  HR → chegaradan oshsa `hr_ok` → Boshliq → `approved`. Materializatsiya
+  FAQAT `approved` da bo'ladi — `hr_ok` da hech nima yozilmaydi.
+- Rahbar RAD etsa zanjir shu yerda to'xtaydi (HR umuman bezovta qilinmaydi).
+- ROP yakuniy `decide` dan bloklangan va begona jamoaga tegolmaydi; endi
+  `GET /requests` ni KO'RADI, lekin faqat o'z bo'ysunuvchilarini — aks
+  holda rahbar qadami faqat botda qolib ketardi.
+- Ta'til balansi (`/requests/me/balance`, `/requests/balance/{id}`) —
+  MASLAHAT, arizani BLOKLAMAYDI: `hire_date` migratsiyada taxminan
+  to'ldirilgan, noto'g'ri sana butun oqimni to'xtatib qo'ymasligi kerak.
+  Ishlatilgan kunlar tasdiqlangan ARIZALARDAN sanaladi (`ExcusedDay` dan
+  emas — u kasallikni ham qamrab, natijani buzardi).
+
+**Bosqich 5 — «ishdagi ta'tilchi»** ✅ BAJARILDI (2026-08-14)
+
+- Check-in paytida (`/attendance/me/check-in`) sababli kun ta'til
+  arizasidan kelgan bo'lsa, tizim `interrupted_at` yozadi va HR ga inline
+  tugmali savol yuboradi: «✂️ Qisqartirish» / «▶️ Davom etsin».
+- Iz bir marta qo'yiladi — xodim har kelganda HR qayta so'roqqa tutilmaydi.
+- Qisqartirishda faqat BUGUNDAN keyingi `ExcusedDay` lar `rejected` bo'ladi
+  va o'sha kunlar `recompute_attendance` dan o'tadi; o'tgan kunlarga
+  tegilmaydi (ular haqiqatan ta'til edi). `end_date` kechagi kunga suriladi.
+- Payroll davri qulflangan bo'lsa qisqartirish RAD etiladi — o'zgarish
+  oylikka kirmay jimgina yo'qolib ketmasin.
+- Qaror bir martalik: ikkinchi urinish 400 qaytaradi.
+- 2.1-banddagi `TaskModel` varianti RAD etildi: u xodimga beriladigan
+  ish topshirig'i va vazifa statistikasiga kiradi — tizim xabarlari HR ning
+  «bajarilmagan vazifalar» raqamini buzardi.
 
 **Bosqich 6 — ⭐ ixtiyoriy**: ma'lumotnoma .docx shabloni (`zipfile` +
 placeholder — yangi kutubxonasiz), arizalar Excel reestri, bayramlarni

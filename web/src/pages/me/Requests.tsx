@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   useCancelMyRequest,
   useCreateMyRequest,
+  useMyLeaveBalance,
   useMyRequests,
   useRequestCalc,
 } from "@/lib/queries";
@@ -79,6 +80,7 @@ export default function MeRequests() {
   // Kalkulyator faqat ta'til turlarida va sanalar to'g'ri bo'lganda.
   const calcEnabled = isLeave && !!startDate && !!endDate && endDate >= startDate;
   const calc = useRequestCalc(startDate, endDate, calcEnabled);
+  const balance = useMyLeaveBalance();
 
   const canSubmit = useMemo(() => {
     if (reason.trim().length < MIN_REASON || create.isPending) return false;
@@ -181,6 +183,24 @@ export default function MeRequests() {
                     )}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Ta'til balansi — faqat mehnat ta'tilida va faqat MASLAHAT
+                sifatida: `hire_date` taxminiy bo'lishi mumkin, shuning
+                uchun ariza yuborish BLOKLANMAYDI. */}
+            {kind === "vacation" && balance.data && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                <span className="font-medium">{balance.data.year}-yil ta'til balansi:</span>{" "}
+                {balance.data.used_days} / {balance.data.entitled_days} kun ishlatilgan —{" "}
+                <b className={cn(balance.data.remaining_days === 0 && "text-rose-700")}>
+                  {balance.data.remaining_days} kun qoldi
+                </b>
+                {balance.data.estimated && (
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    Ishga kirgan sana kiritilmagan — raqam taxminiy. HR aniqlashtiradi.
+                  </div>
+                )}
               </div>
             )}
           </>
