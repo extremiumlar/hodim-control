@@ -107,8 +107,11 @@ android {
         // KO'RSATA OLMAYDI. Natijada ilovadan kirish umuman ishlamay qolgan.
         // versionCode HAR BIR tarqatilgan APK'da oshirilishi kerak: ba'zi
         // o'rnatuvchilar bir xil versionCode ustiga o'rnatishni rad etadi.
-        versionCode 8
-        versionName "1.5.0"
+        // 1.5.1 — «Ish kundaligi» va «E'tiroz/Shikoyat» bo'limlari ilovaning
+        // O'Z bundle'ida (mobile/lib/sections.ts), ya'ni WebView orqali
+        // yetkazib bo'lmaydi: eski APK'da bu tugmalar umuman yo'q.
+        versionCode 9
+        versionName "1.5.1"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
