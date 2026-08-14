@@ -38,6 +38,7 @@ async def _to_out(item: ExcusedDay, db: AsyncSession) -> ExcusedDayOut:
         date=item.date,
         reason=item.reason,
         status=item.status,
+        is_paid=item.is_paid,
         decided_by=item.decided_by,
         decided_at=item.decided_at,
         created_at=item.created_at,
@@ -58,6 +59,7 @@ async def _to_out_many(items: list[ExcusedDay], db: AsyncSession) -> list[Excuse
             date=i.date,
             reason=i.reason,
             status=i.status,
+            is_paid=i.is_paid,
             decided_by=i.decided_by,
             decided_at=i.decided_at,
             created_at=i.created_at,
@@ -124,7 +126,8 @@ async def _request_excused_day_for_user(
 
 
 async def _record_excused_day_for_user(
-    db: AsyncSession, target: User, actor: User, reason: str, day_in: date | None
+    db: AsyncSession, target: User, actor: User, reason: str, day_in: date | None,
+    is_paid: bool = True,
 ) -> ExcusedDayOut:
     """HR/Boshliq/Dasturchi boshqa xodim NOMIDAN sababli kunni to'g'ridan-to'g'ri
     BELGILAYDI — `_request_excused_day_for_user`dan farqli, HR'ga xabar
@@ -159,6 +162,7 @@ async def _record_excused_day_for_user(
         status=ExcusedStatus.approved.value,
         decided_by=actor.id,
         decided_at=datetime.utcnow(),
+        is_paid=is_paid,
     )
     db.add(item)
     await db.flush()
@@ -169,7 +173,7 @@ async def _record_excused_day_for_user(
             action="excused_day_recorded_by_manager",
             target_user_id=target.id,
             before=None,
-            after={"date": item.date.isoformat(), "reason": item.reason},
+            after={"date": item.date.isoformat(), "reason": item.reason, "is_paid": is_paid},
         )
     )
     await db.commit()
@@ -214,7 +218,9 @@ async def record_excused_day_for_user(
     target = await db.get(User, payload.user_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
-    return await _record_excused_day_for_user(db, target, actor, payload.reason, payload.date)
+    return await _record_excused_day_for_user(
+        db, target, actor, payload.reason, payload.date, payload.is_paid
+    )
 
 
 @router.post("/for-user/bot", response_model=ExcusedDayOut, dependencies=[Depends(verify_bot_secret)])

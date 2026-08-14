@@ -2167,7 +2167,8 @@ def test_payroll_engine() -> None:
             first_rate = await pr._first_rate(s, u1.id)
             # Uchinchi qiymat — kelmagan kunlar ayirmasi (2026-08-08). Bu yerda
             # qoida `fixed` rejimda, ya'ni ayirma bo'lmasligi kerak.
-            base_amount, base_item, absent_item = pr.compute_base(
+            # To'rtinchi — to'lovsiz ta'til ayirmasi (2026-08-13).
+            base_amount, base_item, absent_item, unpaid_item = pr.compute_base(
                 rate, first_rate, days, date(2020, 1, 1), policy
             )
             check("Payroll: base_amount to'liq oylik (prorata yo'q, 6/6 kun)",
@@ -4681,7 +4682,7 @@ def test_absent_deduct_daily() -> None:
         monthly_cap_percent=20, is_active=True,
     )
 
-    base, item, absent_item = pr.compute_base(_Rate(), _Rate(), days, _date(2020, 1, 1), pol)
+    base, item, absent_item, _unpaid = pr.compute_base(_Rate(), _Rate(), days, _date(2020, 1, 1), pol)
 
     kunlik = _D("3000000") / _D(10)          # 300 000
     kutilgan = _D("3000000") - kunlik * 2    # 2 400 000

@@ -39,7 +39,7 @@ from api.schemas import (
     AppealSlaTick,
 )
 from api.services.push import Category
-from api.telegram_notify import inline_keyboard
+from api.telegram_notify import inline_keyboard, send_file_id
 from api.timeutil import today_local
 from db.models import (
     APPEAL_OPEN_STATUSES,
@@ -279,6 +279,19 @@ async def _create_appeal(db: AsyncSession, user: User, payload: AppealCreateBase
             db, rec, Category.APPEALS, _header(item, author),
             reply_markup=keyboard, force_telegram=True, data={"path": "/appeals"},
         )
+        # Biriktirilgan ilova — ALOHIDA xabar bilan (2026-08-13 tuzatishi).
+        # Ilgari `file_id` bazaga yozilardi-yu hech qachon yuborilmasdi: xodim
+        # skrinshot biriktirar, HR uni ko'rmasdi. Matndan KEYIN yuboriladi —
+        # avval kontekst, keyin ilova. Yiqilsa jim o'tadi (`send_file_id`
+        # None qaytaradi): asosiy xabar allaqachon ketgan, ilova yo'qligi
+        # butun murojaatni to'sib qo'ymasligi kerak.
+        if item.file_id and rec.telegram_id:
+            await send_file_id(
+                rec.telegram_id,
+                item.file_id,
+                item.file_type or "document",
+                caption=f"📎 Murojaat #{item.id} ilovasi",
+            )
 
     # Javob MUALLIFNING o'ziga qaytadi — anonim bo'lsa ham o'zini ko'radi
     # (`/appeals/me` ro'yxati bilan bir xil ko'rinish; aks holda yaratilgan

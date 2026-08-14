@@ -25,6 +25,44 @@ async def send_message(chat_id: int, text: str, reply_markup: dict | None = None
             return None
 
 
+async def send_file_id(
+    chat_id: int, file_id: str, file_type: str, caption: str | None = None
+) -> dict | None:
+    """Telegram'da ALLAQACHON mavjud faylni `file_id` bo'yicha qayta yuborish.
+
+    NEGA KERAK (2026-08-13, jonli xato): xodim e'tirozga skrinshot biriktirsa,
+    `file_id` bazaga yozilardi-yu, HR ga faqat MATN ketardi — ya'ni ilova
+    hech qachon ko'rinmasdi va xodim "rasmni yubordim" deb o'ylab yurardi.
+
+    Fayl BAYTLARI yuborilmaydi: Telegram'ning o'z `file_id` si qayta
+    ishlatiladi, shuning uchun so'rov oddiy JSON (`send_message` bilan bir xil
+    og'irlikda) va serverda fayl saqlash umuman kerak emas.
+
+    `file_type`: "photo" -> sendPhoto, qolgani -> sendDocument.
+    """
+    if not settings.bot_token:
+        return None
+
+    method = "sendPhoto" if file_type == "photo" else "sendDocument"
+    field = "photo" if file_type == "photo" else "document"
+    url = TELEGRAM_API.format(token=settings.bot_token, method=method)
+    payload: dict = {"chat_id": chat_id, field: file_id}
+    if caption:
+        # Telegram caption chegarasi 1024 belgi — uzun murojaat matni bu yerga
+        # sig'maydi, shuning uchun qisqartiriladi (to'liq matn alohida
+        # xabarda allaqachon ketgan).
+        payload["caption"] = caption[:1024]
+        payload["parse_mode"] = "HTML"
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            return None
+
+
 def inline_keyboard(buttons: list[list[tuple[str, str]]]) -> dict:
     """buttons: [[(matn, callback_data), ...], ...]"""
     return {

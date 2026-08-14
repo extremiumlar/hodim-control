@@ -243,8 +243,10 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
             )
         )
     }
-    excused_dates = {
-        e.date
+    # `is_paid=False` — «o'z hisobidan» ta'til: kun sababli, lekin haqi
+    # to'lanmaydi (`compute_base` monthly stavkadan ayiradi). Sana → to'lovlimi.
+    excused_paid_by_date = {
+        e.date: e.is_paid
         for e in await db.scalars(
             select(ExcusedDay).where(
                 ExcusedDay.user_id == user.id,
@@ -254,6 +256,7 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
             )
         )
     }
+    excused_dates = set(excused_paid_by_date)
 
     days: list[dict] = []
     for row in schedule:
@@ -278,6 +281,10 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
                 **row,
                 "attendance": att,
                 "excused": excused,
+                # Faqat `ExcusedDay` yozuvi bor kunlar to'lovsiz bo'lishi
+                # mumkin. `Attendance.status == 'excused'` bo'lib yozuvi
+                # yo'q kun (qo'lda tuzatish) — avvalgidek to'lovli.
+                "excused_paid": excused_paid_by_date.get(d, True),
                 "status": status,
                 "late_minutes": att.late_minutes if att else 0,
                 "worked_minutes": att.worked_minutes if att else 0,
@@ -421,12 +428,18 @@ def compute_base(
     olardi. Bazadan ayirilgani uchun cheklov unga tegmaydi.
 
     Sababli kunlar (`excused`) AYIRILMAYDI — ular tasdiqlangan (kasallik va
-    h.k.) va haqi saqlanadi.
+    h.k.) va haqi saqlanadi. ISTISNO (2026-08-13): `is_paid=False` bo'lgan
+    sababli kun («o'z hisobidan» ta'til) monthly stavkadan AYIRILADI —
+    kelmagan kun bilan bir xil kunlik ulush bo'yicha. Ilgari bunday farq
+    yo'q edi va oyliklilarga o'z hisobidan ta'til bepul dam bo'lib qolardi
+    (daily/hourly da esa sababli kun hech qachon to'lanmaydi — u yerda
+    o'zgarish kerak emas).
 
-    Qaytaradi: (summa, asosiy qator, ayirma qatori | None).
+    Qaytaradi: (summa, asosiy qator, kelmagan-kun ayirmasi | None,
+    to'lovsiz-ta'til ayirmasi | None).
     """
     if rate is None:
-        return Decimal("0"), None, None
+        return Decimal("0"), None, None, None
     amount = _dec(rate.amount)
     basis = rate.pay_basis
 
@@ -442,8 +455,9 @@ def compute_base(
             "amount": base,
         }
         # Soatbay allaqachon faqat ISHLANGAN daqiqa bo'yicha — kelmagan kun
-        # o'z-o'zidan to'lanmaydi, alohida ayirma kerak emas.
-        return base, item, None
+        # ham, sababli kun ham o'z-o'zidan to'lanmaydi (ikkalasi `present`/
+        # `late` emas), alohida ayirma kerak emas.
+        return base, item, None, None
 
     if basis == PayBasis.daily.value:
         worked_days = sum(1 for d in days if d["status"] in ("present", "late"))
@@ -456,7 +470,7 @@ def compute_base(
             "amount": base,
         }
         # Kunbay ham o'z-o'zidan proratali.
-        return base, item, None
+        return base, item, None, None
 
     # monthly (default)
     full_scheduled = sum(1 for d in days if d["is_working"])
@@ -476,6 +490,30 @@ def compute_base(
         label = f"Asosiy oylik (prorata — {prorated_scheduled}/{full_scheduled} kun)"
 
     item = {"kind": "base", "label": label, "quantity": None, "rate": amount, "amount": base}
+
+    # ── To'lovsiz sababli kunlar («o'z hisobidan») ──
+    # Kelmagan kundan farqi: bu JAZO EMAS va `policy` ga bog'liq emas —
+    # xodim o'zi so'ragan, tizim faqat haq to'lamaydi. Shuning uchun
+    # `absent_mode` sozlamasidan mustaqil ishlaydi.
+    unpaid_item = None
+    if full_scheduled > 0:
+        unpaid_days = sum(
+            1
+            for d in days
+            if d["is_working"] and d["status"] == "excused" and not d.get("excused_paid", True)
+        )
+        if unpaid_days:
+            daily_share = base / Decimal(full_scheduled)
+            deduction = min(daily_share * Decimal(unpaid_days), base)
+            base = base - deduction
+            unpaid_item = {
+                "kind": "unpaid_leave_deduction",
+                "label": f"O'z hisobidan ta'til — {unpaid_days} kun × {round_money(daily_share):,.0f}".replace(",", " "),
+                "quantity": Decimal(unpaid_days),
+                "rate": round_money(daily_share),
+                "amount": -round_money(deduction),
+            }
+            item["amount"] = base
 
     # ── Kelmagan kunlar uchun kunlik ulushni ayirish ──
     absent_item = None
@@ -502,7 +540,7 @@ def compute_base(
                 "rate": round_money(daily_share),
                 "amount": -round_money(deduction),
             }
-    return base, item, absent_item
+    return base, item, absent_item, unpaid_item
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -634,7 +672,7 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     first_rate = await _first_rate(db, user.id)
     overtime_profile = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user.id))
 
-    base_amount, base_item, absent_deduct_item = compute_base(
+    base_amount, base_item, absent_deduct_item, unpaid_leave_item = compute_base(
         rate, first_rate, days, period_start, policy
     )
     late = compute_late_fine(days, policy)
@@ -686,6 +724,11 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     # `fine_*` qatorlari bilan aralashmaydi va cheklovga tushmaydi.
     if absent_deduct_item is not None:
         items.append(absent_deduct_item)
+    # To'lovsiz («o'z hisobidan») ta'til ayirmasi — kelmagan kun bilan bir
+    # xil joyda, lekin alohida qator: xodim payslip'da nega kam olganini
+    # aniq ko'rsin (jazo emas, o'zi so'ragan kun).
+    if unpaid_leave_item is not None:
+        items.append(unpaid_leave_item)
     if overtime["amount"] > 0:
         hrs = Decimal(overtime["minutes"]) / Decimal(60)
         items.append(

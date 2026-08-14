@@ -337,6 +337,9 @@ class ExcusedDayOut(BaseModel):
     date: date
     reason: str
     status: str
+    # To'lovlimi — payslipdagi ayirmani tushuntirish uchun ro'yxatda ham
+    # ko'rinadi («o'z hisobidan» kunlar ajratib turadi).
+    is_paid: bool = True
     decided_by: int | None
     decided_at: datetime | None
     created_at: datetime
@@ -361,6 +364,11 @@ class ExcusedDayForUserCreate(BaseModel):
     user_id: int
     date: dt.date | None = None
     reason: str = Field(min_length=3, max_length=500)
+    # To'lovlimi (2026-08-13). Default `True` — bugungi xatti-harakat.
+    # `False` («o'z hisobidan») bo'lsa monthly stavkadan kunlik ulush
+    # ayiriladi (`payroll.compute_base`). Xodim O'ZI so'raganda bu maydon
+    # YO'Q — to'lov qarorini faqat HR chiqaradi.
+    is_paid: bool = True
 
 
 class ExcusedDayForUserBotCreate(BaseModel):

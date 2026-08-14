@@ -285,6 +285,16 @@ class User(Base):
     # birlashtirilgan yagona backend qismi).
     face_descriptor: Mapped[str | None] = mapped_column(Text, nullable=True)
     face_registered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Ishga kirgan sana (2026-08-13, ARIZALAR_REJASI.md Bosqich 0).
+    # `created_at` dan FARQI: u — tizimga qo'shilgan payt (xodim allaqachon
+    # bir yil ishlagan bo'lishi mumkin). Ta'til stajini/balansini hisoblash
+    # uchun haqiqiy ishga kirish sanasi kerak.
+    #
+    # Migratsiyada mavjud xodimlarga `SalaryRate.effective_from` ning eng
+    # kichigidan to'ldirildi — payroll allaqachon shu sanani de-fakto
+    # "ish boshlangan kun" sifatida ishlatadi (`compute_base` prorata,
+    # api/services/payroll.py). Stavkasi yo'qlarda NULL qoladi.
+    hire_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
@@ -479,12 +489,31 @@ class MobilografVideo(Base):
 
 
 class ExcusedDay(Base):
+    """Sababli kun. Bitta xodim + bitta sana — UNIKAL.
+
+    NEGA UNIQUE (2026-08-13, ARIZALAR_REJASI.md Bosqich 0.1): ilgari cheklov
+    faqat KODDA edi (`excused_days.py` dublikatni qo'lda tekshiradi). Bu
+    yagona so'rovda yetarli, lekin ariza moduli ta'til oralig'idagi 10 kunni
+    BIRVARAKAYIGA yozadi — poyga holatida (ikki HR yoki takroriy tasdiq)
+    dublikat paydo bo'lardi va sababli kun ikki marta hisoblanardi.
+    Bazaviy cheklov `IntegrityError` beradi va takror yozuv jimgina
+    o'tkazib yuboriladi (`AttendanceReminder` bilan bir xil himoya)."""
+
     __tablename__ = "excused_days"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_excused_day_user_date"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)
     reason: Mapped[str] = mapped_column(Text)
+    # To'lovli sababli kunmi (2026-08-13, Bosqich 0.3). `True` — bugungi
+    # xatti-harakat: `monthly` stavkada sababli kun to'liq to'lanadi
+    # (kasallik, mehnat ta'tili). `False` — «o'z hisobidan» ta'til: monthly
+    # stavkadan kunlik ulush AYIRILADI (`compute_base`).
+    #
+    # `daily`/`hourly` stavkaga ta'sir qilmaydi — u yerda sababli kun
+    # allaqachon to'lanmaydi (faqat `present`/`late` kunlar sanaladi).
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     status: Mapped[str] = mapped_column(String(20), default=ExcusedStatus.pending.value)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
