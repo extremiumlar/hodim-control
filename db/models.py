@@ -922,6 +922,7 @@ class GroupPostConfig(Base):
     last_posted_calls: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_posted_leads: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_posted_visits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_posted_contracts: Mapped[int | None] = mapped_column(Integer, nullable=True)
     correction_last_posted: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1165,7 +1166,8 @@ UNPAID_KINDS = (RequestKind.unpaid.value,)
 
 class RequestStatus(str, enum.Enum):
     pending = "pending"  # yangi, qaror kutilmoqda
-    manager_ok = "manager_ok"  # ⭐ Bosqich 4: ROP tasdiqladi, HR kutilmoqda
+    manager_ok = "manager_ok"  # ROP tasdiqladi, HR kutilmoqda (Bosqich 4)
+    hr_ok = "hr_ok"  # HR tasdiqladi, Boshliq kutilmoqda (chegaradan oshgan)
     approved = "approved"  # tasdiqlandi VA materializatsiya qilindi
     rejected = "rejected"
     cancelled = "cancelled"  # xodim o'zi qaytarib oldi (qarordan OLDIN)
@@ -1174,7 +1176,11 @@ class RequestStatus(str, enum.Enum):
 
 # Hali yopilmagan arizalar — SLA tick, spam limiti va to'qnashuv tekshiruvi
 # shu ikkitasini sanaydi.
-REQUEST_OPEN_STATUSES = (RequestStatus.pending.value, RequestStatus.manager_ok.value)
+REQUEST_OPEN_STATUSES = (
+    RequestStatus.pending.value,
+    RequestStatus.manager_ok.value,
+    RequestStatus.hr_ok.value,
+)
 
 
 class EmployeeRequest(Base):
@@ -1235,6 +1241,48 @@ class EmployeeRequest(Base):
     sla_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RequestPolicy(Base):
+    """Ariza tasdiqlash qoidasi — `FinePolicy` scoping naqshida
+    (ARIZALAR_REJASI.md 3.6/3: yangi «Global Settings» dvigateli qurish
+    shart emas, loyihada tayyor naqsh bor).
+
+    Prioritet: user > position > global (`resolve_request_policy`). Ya'ni HR
+    keyinchalik «rahbarlarga 30 kun, qolganlarga 21» desa yangi kod kerak
+    bo'lmaydi.
+
+    ZANJIR ATAYLAB SODDA: taklif qilingan «ixtiyoriy tasdiqlovchilar
+    ketma-ketligi» ortiqcha — amalda ikki naqsh bor (ROP→HR va
+    ROP→HR→Boshliq), ularni ikki maydon qoplaydi. 8-50 kishilik
+    kompaniyada undan murakkabrog'i sozlanmaydi, lekin
+    qo'llab-quvvatlash xarajati doimiy bo'lib qolardi."""
+
+    __tablename__ = "request_policies"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_id", "kind", name="uq_request_policy_scope_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # global | position | user (FinePolicyScope bilan bir xil qiymatlar)
+    scope: Mapped[str] = mapped_column(String(20), default=FinePolicyScope.global_.value)
+    scope_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NULL — barcha turlar uchun; aks holda aniq tur (`RequestKind`)
+    kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Bevosita rahbar (`User.manager_id`) tasdig'i kerakmi. Xodimda
+    # `manager_id` bo'lmasa bosqich baribir o'tkazib yuboriladi.
+    requires_manager: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Shu KUNDAN oshsa Boshliq ham tasdiqlashi kerak (ta'til turlari uchun).
+    boss_threshold_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Shu SUMMADAN oshsa Boshliq ham (avans uchun).
+    boss_threshold_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class FsmState(Base):
@@ -1921,3 +1969,75 @@ class SystemHealthState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class CelebrationKind(str, enum.Enum):
+    """Guruhga tabrik yuboriladigan hodisa turi."""
+
+    visit = "visit"        # lid «Tashrif» bosqichiga o'tdi
+    contract = "contract"  # lid «Shartnoma qilindi» bosqichiga o'tdi
+
+
+class CelebrationMedia(Base):
+    """Tashrif/shartnoma bo'lganda guruhga yuboriladigan tabrik videosi.
+
+    NEGA JADVAL, NEGA FAYL EMAS: video Telegram'ning O'ZIDA qoladi — biz faqat
+    `file_id` ni saqlaymiz (xuddi `telegram_notify.send_file_id` naqshi kabi).
+    Serverda video fayli saqlanmaydi, qayta yuborish oddiy JSON so'rov.
+
+    Kim boshqaradi: Dasturchi / HR / Boshliq botdan yangi video (yoki GIF)
+    yuboradi — eski qator `is_active=False` bo'lib tarixda qoladi, yangisi
+    faol bo'ladi. HAR TUR uchun alohida video (`kind`).
+
+    Faol video YO'Q bo'lsa — guruhga hech narsa yuborilmaydi. Ya'ni funksiya
+    "o'chiq" holatda tug'iladi va faqat rahbar video yuklagach jonlanadi
+    (deploy'dan keyin guruh kutilmaganda xabarga to'lib ketmasin)."""
+
+    __tablename__ = "celebration_media"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    file_id: Mapped[str] = mapped_column(String(512))
+    # "video" -> sendVideo, "animation" -> sendAnimation (GIF)
+    file_type: Mapped[str] = mapped_column(String(16), default="video")
+    # Rahbar xohlasa o'z matnini qo'shadi (bo'sh bo'lsa standart matn ishlatiladi)
+    caption: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CelebrationPost(Base):
+    """Guruhga YUBORILGAN bitta tabrik — takroriy yuborishning oldini oladi.
+
+    `lead_event_id` UNIQUE: bir voqea uchun faqat bitta post. Bu shart, chunki
+    voqealarni IKKI manba yozadi (webhook va diff-skaner) va e'lon qiluvchi
+    har daqiqada ishlaydi — takrorlanish xavfi real."""
+
+    __tablename__ = "celebration_posts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    lead_event_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    crm_lead_id: Mapped[int] = mapped_column(Integer, index=True)
+    # Tizimdagi xodim (CRM mas'uli bog'lanmagan bo'lsa — NULL)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    claps: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CelebrationClap(Base):
+    """«👏 Tabriklash» bosilishi — bitta odam bitta postga bir marta.
+
+    Nega alohida jadval: tugmani bosgan har kim sanoqni oshiraversa, bitta
+    odam 50 marta bosib "50 tabrik" qilib qo'yardi."""
+
+    __tablename__ = "celebration_claps"
+    __table_args__ = (UniqueConstraint("post_id", "telegram_id", name="uq_celebration_clap"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("celebration_posts.id", ondelete="CASCADE"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

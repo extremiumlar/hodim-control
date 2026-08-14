@@ -18,6 +18,7 @@ from bot.handlers import (
     appeal,
     assign_task,
     attendance_stats,
+    celebration,
     busy_period,
     knowledge,
     excused,
@@ -112,6 +113,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(knowledge.router)
     dp.include_router(playbook.router)
     dp.include_router(sales_ai.router)
+    dp.include_router(celebration.router)
     # ENG OXIRIDA ikki "erkin matn" ushlagichi, tartib muhim:
     # 1) anketa javoblari — API'da faol savol kutilmayotgan bo'lsa SkipHandler
     #    bilan keyingisiga o'tkazadi;

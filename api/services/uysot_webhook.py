@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services import celebration
 from db.base import async_session
 from db.models import CrmLeadState, CrmWebhookLog, LeadEvent
 
@@ -325,3 +326,13 @@ async def process_log_entry(log_id: int) -> None:
         # o'qib, operatorga DM ~1 sekundda ketadi (2 daqiqalik polling o'rniga).
         if new_lead_seen or not records:
             await _maybe_trigger_hot_lead(db)
+
+        # Tashrif/shartnoma tabrigi — voqealar yozilgandan KEYIN. Bu yerda
+        # chaqirilgani uchun guruhga video CRM'dagi o'zgarishdan bir necha
+        # soniyada boradi (cron zaxira bo'lib qoladi, u har daqiqada ishlaydi).
+        # Xato tabrik yo'lida qolsin — webhook qayta ishlashini yiqitmasin.
+        if any(r in {"stage_change", "responsible_change"} for r in results):
+            try:
+                await celebration.announce_pending(db)
+            except Exception:  # noqa: BLE001
+                logger.exception("Webhook'dan tabrik e'lon qilishda xato")

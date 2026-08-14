@@ -1188,3 +1188,54 @@ async def admin_restore_record(token: str, entity: str, record_id: int, reason: 
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ─── Tabrik videolari (tashrif / shartnoma) ───
+async def celebration_media(telegram_id: int) -> list[dict]:
+    resp = await _get_client().get("/celebration/media", params={"telegram_id": telegram_id})
+    if resp.status_code == 403:
+        return []
+    resp.raise_for_status()
+    return resp.json().get("items", [])
+
+
+async def set_celebration_media(
+    telegram_id: int, kind: str, file_id: str, file_type: str, caption: str | None
+) -> dict:
+    resp = await _get_client().post(
+        "/celebration/media",
+        json={
+            "telegram_id": telegram_id,
+            "kind": kind,
+            "file_id": file_id,
+            "file_type": file_type,
+            "caption": caption,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def disable_celebration(telegram_id: int, kind: str) -> dict:
+    resp = await _get_client().post(
+        "/celebration/media/disable", json={"telegram_id": telegram_id, "kind": kind}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def test_celebration(telegram_id: int, kind: str) -> dict:
+    resp = await _get_client().post(
+        "/celebration/test", json={"telegram_id": telegram_id, "kind": kind}
+    )
+    if resp.status_code >= 400:
+        return {"ok": False, "reason": "Yuborib bo'lmadi"}
+    return resp.json()
+
+
+async def celebration_clap(post_id: int, telegram_id: int) -> dict:
+    resp = await _get_client().post(
+        "/celebration/clap", json={"post_id": post_id, "telegram_id": telegram_id}
+    )
+    resp.raise_for_status()
+    return resp.json()

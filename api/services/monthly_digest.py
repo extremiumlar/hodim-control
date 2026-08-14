@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services import lead_diff
 from api.services.daily_digest import digest_group_targets
 from api.services.weekly_digest import _pct_change, _pct_str, _range_by_operator, _tasks_by_user
 from api.telegram_notify import send_message
@@ -72,9 +73,10 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
         except (TypeError, ValueError):
             continue
 
-    active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"]}
+    active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"] or a["contracts"]}
     if not active:
         return {"text": None, "operators": 0}
+    show_contracts = bool(lead_diff.contract_pipe_status_ids())
 
     # Bosqich 7 (OYLIK_JARIMA_REJASI.md): "jami ish haqi fondi" — FAQAT Boshliqqa,
     # guruh matnida hech qachon ko'rsatilmaydi (moliyaviy maxfiylik). Joriy oy
@@ -104,6 +106,8 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
             parts.append(f"🗣 {_fmt_talk(talk_by_user[user.id])}")
         parts.append(f"🧲 {a['leads']}")
         parts.append(f"🏠 {a['visits']}")
+        if show_contracts:
+            parts.append(f"🤝 {a['contracts']}")
         if user is not None and user.id in tasks:
             done, total = tasks[user.id]
             parts.append(f"{'✅' if done == total else '🕓'} {done}/{total}")
@@ -126,6 +130,8 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
     if total_talk:
         totals += f" · 🗣 {_fmt_talk(total_talk)}"
     totals += f" · 🧲 {total_leads} · 🏠 {total_visits}"
+    if show_contracts:
+        totals += f" · 🤝 {sum(a['contracts'] for a in active.values())}"
 
     month_name = MONTH_NAMES_UZ.get(ref_day.month, period_key)
     parts = [
@@ -150,7 +156,9 @@ async def build_monthly_digest(db: AsyncSession, ref_day: date | None = None) ->
     parts.append("")
     parts.append(
         "<i>📞 qo'ng'iroq (o'tgan oyga nisbatan) · 🗣 gaplashgan vaqt · 🧲 ishlangan lid · "
-        "🏠 tashrif · ✅ vazifa · 💰 bonus (hisoblangan bo'lsa)</i>"
+        "🏠 tashrif · "
+        + ("🤝 shartnoma · " if show_contracts else "")
+        + "✅ vazifa · 💰 bonus (hisoblangan bo'lsa)</i>"
     )
 
     return {"text": "\n".join(parts), "operators": len(active), "payroll_fund": payroll_fund}

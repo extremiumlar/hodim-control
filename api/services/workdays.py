@@ -103,6 +103,81 @@ async def calc_range(db: AsyncSession, user: User, start: date, end: date) -> di
     }
 
 
+async def resolve_request_policy(db: AsyncSession, user: User, kind: str):
+    """Ariza qoidasini topadi: user > position > global (`FinePolicy`
+    naqshi). Hech biri bo'lmasa None — u holda zanjir yo'q, to'g'ridan
+    to'g'ri HR hal qiladi (orqaga moslik)."""
+    from db.models import FinePolicyScope, RequestPolicy
+
+    rows = list(
+        await db.scalars(
+            select(RequestPolicy).where(RequestPolicy.is_active.is_(True))
+        )
+    )
+
+    def match(scope: str, scope_id: int | None) -> object | None:
+        # Aniq tur ustun turadi: `kind='vacation'` qoidasi `kind=NULL`
+        # (barcha turlar) qoidasidan kuchliroq.
+        exact = [r for r in rows if r.scope == scope and r.scope_id == scope_id and r.kind == kind]
+        if exact:
+            return exact[0]
+        anyk = [r for r in rows if r.scope == scope and r.scope_id == scope_id and r.kind is None]
+        return anyk[0] if anyk else None
+
+    return (
+        match(FinePolicyScope.user.value, user.id)
+        or match(FinePolicyScope.position.value, user.position_id)
+        or match(FinePolicyScope.global_.value, None)
+    )
+
+
+async def leave_balance(db: AsyncSession, user: User, year: int, annual_days: int) -> dict:
+    """Ta'til balansi — MASLAHAT sifatida (arizani BLOKLAMAYDI).
+
+    Nega bloklamaydi: `hire_date` migratsiyada stavka sanasidan TAXMINAN
+    to'ldirilgan va noto'g'ri bo'lishi mumkin. Noto'g'ri sana butun oqimni
+    to'xtatib qo'ymasligi kerak — HR ko'radi va o'zi qaror qiladi.
+
+    Ishlatilgan kunlar TASDIQLANGAN ARIZALARDAN sanaladi (`ExcusedDay` dan
+    EMAS): u kasallikni ham qamraydi va natija noto'g'ri chiqardi."""
+    from db.models import RequestKind, RequestStatus, EmployeeRequest
+
+    start, end = date(year, 1, 1), date(year, 12, 31)
+    rows = list(
+        await db.scalars(
+            select(EmployeeRequest).where(
+                EmployeeRequest.user_id == user.id,
+                EmployeeRequest.kind == RequestKind.vacation.value,
+                EmployeeRequest.status == RequestStatus.approved.value,
+                EmployeeRequest.start_date.isnot(None),
+                EmployeeRequest.start_date >= start,
+                EmployeeRequest.start_date <= end,
+            )
+        )
+    )
+    used = 0
+    for r in rows:
+        days = await range_days(db, user, r.start_date, r.end_date or r.start_date)
+        used += sum(1 for d in days if d["is_working"])
+
+    # Staj: hire_date bo'lsa shu yildagi ulushi (yil o'rtasida ishga
+    # kirgan xodimga to'liq norma berilmaydi).
+    entitled = annual_days
+    if user.hire_date and user.hire_date > start:
+        remaining_months = max(0, 12 - user.hire_date.month + 1)
+        entitled = round(annual_days * remaining_months / 12)
+
+    return {
+        "year": year,
+        "entitled_days": entitled,
+        "used_days": used,
+        "remaining_days": max(0, entitled - used),
+        "hire_date": user.hire_date,
+        # `hire_date` yo'q bo'lsa staj hisoblanmadi — UI shuni aytadi.
+        "estimated": user.hire_date is None,
+    }
+
+
 def human_summary(calc: dict) -> str:
     """Bot/sayt uchun bir qatorlik xulosa."""
     total, working, off = calc["total_days"], calc["working_days"], calc["off_days"]

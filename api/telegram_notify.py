@@ -25,8 +25,20 @@ async def send_message(chat_id: int, text: str, reply_markup: dict | None = None
             return None
 
 
+# file_type -> (Telegram metodi, so'rovdagi maydon nomi)
+_MEDIA_METHODS = {
+    "photo": ("sendPhoto", "photo"),
+    "video": ("sendVideo", "video"),
+    "animation": ("sendAnimation", "animation"),
+}
+
+
 async def send_file_id(
-    chat_id: int, file_id: str, file_type: str, caption: str | None = None
+    chat_id: int,
+    file_id: str,
+    file_type: str,
+    caption: str | None = None,
+    reply_markup: dict | None = None,
 ) -> dict | None:
     """Telegram'da ALLAQACHON mavjud faylni `file_id` bo'yicha qayta yuborish.
 
@@ -38,15 +50,17 @@ async def send_file_id(
     ishlatiladi, shuning uchun so'rov oddiy JSON (`send_message` bilan bir xil
     og'irlikda) va serverda fayl saqlash umuman kerak emas.
 
-    `file_type`: "photo" -> sendPhoto, qolgani -> sendDocument.
+    `file_type`: "photo" -> sendPhoto, "video" -> sendVideo,
+    "animation" -> sendAnimation (GIF), qolgani -> sendDocument.
     """
     if not settings.bot_token:
         return None
 
-    method = "sendPhoto" if file_type == "photo" else "sendDocument"
-    field = "photo" if file_type == "photo" else "document"
+    method, field = _MEDIA_METHODS.get(file_type, ("sendDocument", "document"))
     url = TELEGRAM_API.format(token=settings.bot_token, method=method)
     payload: dict = {"chat_id": chat_id, field: file_id}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     if caption:
         # Telegram caption chegarasi 1024 belgi — uzun murojaat matni bu yerga
         # sig'maydi, shuning uchun qisqartiriladi (to'liq matn alohida
@@ -55,6 +69,25 @@ async def send_file_id(
         payload["parse_mode"] = "HTML"
 
     async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+        except httpx.HTTPError:
+            return None
+
+
+async def edit_reply_markup(chat_id: int, message_id: int, reply_markup: dict) -> dict | None:
+    """Yuborilgan xabarning inline tugmalarini yangilaydi (matnga tegmasdan).
+
+    Tabrik postidagi «👏 Tabriklash (N)» sanog'i shu orqali o'sadi — video
+    qayta yuborilmaydi, faqat tugma almashadi."""
+    if not settings.bot_token:
+        return None
+
+    url = TELEGRAM_API.format(token=settings.bot_token, method="editMessageReplyMarkup")
+    payload = {"chat_id": chat_id, "message_id": message_id, "reply_markup": reply_markup}
+    async with httpx.AsyncClient(timeout=10) as client:
         try:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()

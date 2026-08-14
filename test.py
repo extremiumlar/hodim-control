@@ -1706,6 +1706,241 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Tashrif hisobi tekshiruvi", False, traceback.format_exc(limit=1).strip())
 
+        print("\n-- TABRIK VIDEOLARI: tashrif/shartnoma -> guruh + tugma --")
+        try:
+            import asyncio as _aio3
+
+            from db.base import async_session as _asess3
+            from api.services import celebration as _cel
+
+            conn = db()
+            cur = conn.cursor()
+            # Oldingi UZILGAN yugurishdan qolgan izlar (UNIQUE xatosi bermasin)
+            cur.execute("delete from celebration_claps where post_id in (select id from"
+                        " celebration_posts where crm_lead_id between 970601 and 970606)")
+            cur.execute("delete from celebration_posts where crm_lead_id between 970601 and 970606")
+            cur.execute("delete from celebration_media where file_id like 'T-FILE-%'")
+            cur.execute("delete from lead_events where crm_lead_id between 970601 and 970606")
+            cur.execute("delete from monitored_groups where chat_id=-100999778")
+            cur.execute("delete from users where telegram_id in (999778001,999778002,999778003)")
+            conn.commit()
+            V_ID = 8787          # tashrif bosqichi
+            C_ID = 999888        # test uchun "shartnoma" bosqichi
+            OTHER = 7136
+
+            # Telegram'ga HECH NARSA ketmasin — yuboruvchilarni almashtiramiz
+            sent_calls: list = []
+            edited: list = []
+
+            async def _fake_send_file(chat_id, file_id, file_type, caption=None, reply_markup=None):
+                sent_calls.append(
+                    {"chat": chat_id, "file_id": file_id, "type": file_type,
+                     "caption": caption, "markup": reply_markup})
+                return {"result": {"message_id": 5550 + len(sent_calls)}}
+
+            async def _fake_send_msg(chat_id, text, reply_markup=None):
+                sent_calls.append({"chat": chat_id, "file_id": None, "caption": text})
+                return {"result": {"message_id": 6660 + len(sent_calls)}}
+
+            async def _fake_edit(chat_id, message_id, reply_markup):
+                edited.append({"chat": chat_id, "msg": message_id, "markup": reply_markup})
+                return {"ok": True}
+
+            _orig = (_cel.send_file_id, _cel.send_message, _cel.edit_reply_markup,
+                     list(_cel.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS))
+            _cel.send_file_id = _fake_send_file
+            _cel.send_message = _fake_send_msg
+            _cel.edit_reply_markup = _fake_edit
+            _cel.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [C_ID]
+
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " crm_visit_external_id, created_at)"
+                " values (999778001,'T-Menejer','employee',1,1,'970501',datetime('now'))")
+            u_men = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999778002,'T-HRcel','hr',1,1,datetime('now'))")
+            u_hr = cur.lastrowid
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+                " values (999778003,'T-Xodimcel','employee',1,1,datetime('now'))")
+            u_emp = cur.lastrowid
+
+            # Umumiy guruh: jonli yozuvga TEGMAYMIZ — bo'lsa o'chirib turamiz,
+            # oxirida asl holiga qaytariladi.
+            live_main = cur.execute(
+                "select id from monitored_groups where purpose='main' and is_active=1").fetchall()
+            for (gid,) in live_main:
+                cur.execute("update monitored_groups set is_active=0 where id=?", (gid,))
+            cur.execute(
+                "insert into monitored_groups (purpose, chat_id, title, is_active, created_at)"
+                " values ('main', -100999778, 'T-Guruh', 1, datetime('now'))")
+            g_id = cur.lastrowid
+            conn.commit()
+
+            cel_now = datetime.utcnow()
+            cel_ts = int(cel_now.timestamp())
+
+            def add_ev(lead_id, etype, frm, to, rid):
+                cur.execute(
+                    "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                    " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                    " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                    " values (?,?,?,'T-eski',?,'T-bosqich',?,'T-crm-nom',?,?,?)",
+                    (lead_id, etype, frm, to, rid, rid, cel_ts,
+                     cel_now.isoformat(sep=" ", timespec="seconds")))
+                conn.commit()
+
+            async def _announce(dry=False):
+                async with _asess3() as s:
+                    return await _cel.announce_pending(s, dry_run=dry)
+
+            try:
+                # 1) Video YO'Q -> guruhga hech nima ketmaydi (funksiya o'chiq tug'iladi)
+                add_ev(970601, "stage_change", OTHER, V_ID, 970501)
+                res0 = _aio3.run(_announce())
+                check("Tabrik: video yuklanmagan bo'lsa guruhga hech narsa ketmaydi",
+                      res0.get("sent") == 0 and not sent_calls, f"{res0}, chaqiruv={len(sent_calls)}")
+
+                # 2) HR botdan video yuklaydi
+                with open("D:/Project/hodimlar_tizimi/.env", encoding="utf-8") as _f:
+                    _cel_secret = next(
+                        (ln.strip().split("=", 1)[1] for ln in _f
+                         if ln.startswith("BOT_SHARED_SECRET=")), "")
+                bot_h_cel = {"X-Bot-Secret": _cel_secret}
+                rset = client.post(f"{API_BASE}/celebration/media", headers=bot_h_cel, json={
+                    "telegram_id": 999778002, "kind": "visit",
+                    "file_id": "T-FILE-VISIT", "file_type": "video", "caption": "Zo'r ish!"})
+                check("Tabrik: HR video yuklay oladi", rset.status_code == 200, f"kod={rset.status_code}")
+
+                rdeny = client.post(f"{API_BASE}/celebration/media", headers=bot_h_cel, json={
+                    "telegram_id": 999778003, "kind": "visit", "file_id": "X", "file_type": "video"})
+                check("Tabrik: oddiy xodim video yuklay OLMAYDI -> 403",
+                      rdeny.status_code == 403, f"kod={rdeny.status_code}")
+
+                # 3) Endi o'sha voqea uchun video guruhga ketadi
+                res1 = _aio3.run(_announce())
+                check("Tabrik: tashrif voqeasida guruhga video yuboriladi",
+                      res1.get("sent") == 1 and len(sent_calls) == 1, f"{res1}, {len(sent_calls)}")
+                first = sent_calls[0] if sent_calls else {}
+                check("Tabrik: to'g'ri guruh + to'g'ri fayl",
+                      first.get("chat") == -100999778 and first.get("file_id") == "T-FILE-VISIT",
+                      f"{first.get('chat')}, {first.get('file_id')}")
+                check("Tabrik: izohda xodim ismi va rahbar matni bor",
+                      "T-Menejer" in (first.get("caption") or "")
+                      and "Zo'r ish!" in (first.get("caption") or ""),
+                      f"izoh={(first.get('caption') or '')[:60]}")
+                check("Tabrik: tabriklash tugmasi qo'yiladi",
+                      "Tabriklash" in str(first.get("markup")), f"markup={str(first.get('markup'))[:60]}")
+
+                # 4) TAKROR yuborilmaydi (webhook + cron ikkalasi chaqirsa ham)
+                res2 = _aio3.run(_announce())
+                check("Tabrik: bir voqea IKKI marta e'lon qilinmaydi",
+                      res2.get("sent") == 0 and len(sent_calls) == 1, f"{res2}, {len(sent_calls)}")
+
+                # 5) first_seen tabrik BERMAYDI (tashrif hisobidagi qoida bilan bir xil)
+                add_ev(970602, "first_seen", None, V_ID, 970501)
+                res3 = _aio3.run(_announce())
+                check("Tabrik: first_seen uchun video yuborilmaydi",
+                      res3.get("sent") == 0 and len(sent_calls) == 1, f"{res3}, {len(sent_calls)}")
+
+                # 6) Tashrif ichida ko'chish ham tabrik emas
+                add_ev(970603, "stage_change", V_ID, V_ID, 970501)
+                res4 = _aio3.run(_announce())
+                check("Tabrik: Tashrif->Tashrif ko'chishi tabrik bermaydi",
+                      res4.get("sent") == 0, f"{res4}")
+
+                # 7) Shartnoma — alohida video, alohida sarlavha
+                add_ev(970604, "stage_change", V_ID, C_ID, 970501)
+                res5 = _aio3.run(_announce())
+                check("Tabrik: shartnoma videosi yuklanmagan -> yuborilmaydi",
+                      res5.get("sent") == 0 and res5.get("skipped_no_media") == 1, f"{res5}")
+
+                client.post(f"{API_BASE}/celebration/media", headers=bot_h_cel, json={
+                    "telegram_id": 999778002, "kind": "contract",
+                    "file_id": "T-FILE-CONTRACT", "file_type": "animation"})
+                res6 = _aio3.run(_announce())
+                last = sent_calls[-1] if sent_calls else {}
+                check("Tabrik: shartnomada BOSHQA video (GIF) ketadi",
+                      res6.get("sent") == 1 and last.get("file_id") == "T-FILE-CONTRACT"
+                      and last.get("type") == "animation", f"{res6}, {last.get('file_id')}")
+                check("Tabrik: shartnoma sarlavhasi tashrifdan farq qiladi",
+                      "SHARTNOMA" in (last.get("caption") or ""),
+                      f"izoh={(last.get('caption') or '')[:40]}")
+
+                # 8) Tabriklash tugmasi: bir odam bir marta
+                post_id = cur.execute(
+                    "select id from celebration_posts where crm_lead_id=970601").fetchone()[0]
+
+                async def _clap(tg):
+                    async with _asess3() as s:
+                        return await _cel.register_clap(s, post_id, tg)
+
+                c1 = _aio3.run(_clap(555001))
+                c2 = _aio3.run(_clap(555001))
+                c3 = _aio3.run(_clap(555002))
+                check("Tabrik: tabrik sanog'i oshadi", c1.get("claps") == 1, f"{c1}")
+                check("Tabrik: bitta odam ikki marta tabriklay olmaydi",
+                      c2.get("already") is True and c2.get("claps") == 1, f"{c2}")
+                check("Tabrik: boshqa odam bossa sanoq 2 bo'ladi", c3.get("claps") == 2, f"{c3}")
+                check("Tabrik: tugma matni yangilanadi (editMessageReplyMarkup)",
+                      len(edited) >= 2 and "(2)" in str(edited[-1].get("markup")),
+                      f"tahrir={len(edited)}, {str(edited[-1].get('markup'))[:50] if edited else ''}")
+
+                # 9) O'chirish -> yangi voqeaga video ketmaydi
+                client.post(f"{API_BASE}/celebration/media/disable", headers=bot_h_cel,
+                            json={"telegram_id": 999778002, "kind": "visit"})
+                add_ev(970605, "stage_change", OTHER, V_ID, 970501)
+                before_n = len(sent_calls)
+                res7 = _aio3.run(_announce())
+                check("Tabrik: o'chirilgan turda video yuborilmaydi",
+                      res7.get("sent") == 0 and len(sent_calls) == before_n, f"{res7}")
+
+                # 10) Eski voqea (lookback tashqarisi) guruhga to'kilmaydi
+                client.post(f"{API_BASE}/celebration/media", headers=bot_h_cel, json={
+                    "telegram_id": 999778002, "kind": "visit", "file_id": "T-FILE-VISIT2",
+                    "file_type": "video"})
+                old_dt = (cel_now - timedelta(hours=48)).isoformat(sep=" ", timespec="seconds")
+                cur.execute(
+                    "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                    " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                    " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                    " values (970606,'stage_change',?,'T-eski',?,'T-bosqich',970501,'T',970501,?,?)",
+                    (OTHER, V_ID, cel_ts, old_dt))
+                conn.commit()
+                before_n2 = len(sent_calls)
+                res8 = _aio3.run(_announce())
+                sent_leads = [r[0] for r in cur.execute(
+                    "select crm_lead_id from celebration_posts").fetchall()]
+                check("Tabrik: eski (48 soatlik) voqea guruhga to'kilmaydi",
+                      970606 not in sent_leads, f"postlar={sent_leads}")
+                check("Tabrik: lekin YANGI voqea (970605) endi yuboriladi",
+                      res8.get("sent") == 1 and len(sent_calls) == before_n2 + 1, f"{res8}")
+
+            finally:
+                # ── tozalash: HAR QANDAY holatda (xato bo'lsa ham) ──
+                # Aks holda ochiq SQLite ulanishi keyingi bloklarni
+                # "database is locked" bilan yiqitadi (jonli uchradi).
+                try:
+                    cur.execute("delete from celebration_claps where post_id in (select id"
+                                " from celebration_posts where crm_lead_id between 970601 and 970606)")
+                    cur.execute("delete from celebration_posts where crm_lead_id between 970601 and 970606")
+                    cur.execute("delete from celebration_media where file_id like 'T-FILE-%'")
+                    cur.execute("delete from lead_events where crm_lead_id between 970601 and 970606")
+                    cur.execute("delete from monitored_groups where id=?", (g_id,))
+                    for (gid,) in live_main:
+                        cur.execute("update monitored_groups set is_active=1 where id=?", (gid,))
+                    cur.execute("delete from audit_logs where actor_id in (?,?,?)", (u_men, u_hr, u_emp))
+                    cur.execute("delete from users where id in (?,?,?)", (u_men, u_hr, u_emp))
+                    conn.commit()
+                finally:
+                    conn.close()
+                    (_cel.send_file_id, _cel.send_message, _cel.edit_reply_markup,
+                     _cel.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _orig
+        except Exception:
+            check("Tabrik videolari tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio
@@ -5306,6 +5541,8 @@ def test_visit_counting() -> None:
       3. Mas'ulsiz tashrif operator kesimiga kirmaydi, jamida yo'qolmaydi.
       4. Tashrif bosqichlari ORASIDA ko'chish qayta sanalmaydi.
       5. Keyingi kunning voqeasi bu kunga kirmaydi.
+      6. (2026-08-14) Shartnoma AYNI qoida bilan sanaladi, lekin DUAL-KREDITSIZ —
+         faqat yopgan mas'ulga; operator yig'indisi = jami.
     Sinov ma'lumoti o'tmish sanada (2020-06-10) va 9998xxxxx lid ID bilan —
     jonli hisobga ta'sir qilmaydi, oxirida to'liq o'chiriladi."""
     import asyncio as _asyncio
@@ -5323,6 +5560,7 @@ def test_visit_counting() -> None:
 
     DAY = date(2020, 6, 10)
     VISIT_IDS = {990001, 990002}
+    CONTRACT_IDS = {990009}
     L = 999800000  # sinov lid ID bazasi (jonli ID'lardan ancha yuqori)
     # 2020-06-10 Tashkent kuni = UTC 06-09 19:00 .. 06-10 19:00; CRM vaqti sifatida
     # kun o'rtasi (12:00 mahalliy = 07:00 UTC) olinadi
@@ -5361,16 +5599,20 @@ def test_visit_counting() -> None:
                 ev(L + 6, "stage_change", 111, 990001, 991001, 991001, 991003, datetime(2020, 6, 10, 12, 0), day_epoch),
                 # E: KEYINGI kun voqeasi (CRM vaqti 06-11) — bu kunga kirmasin
                 ev(L + 5, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 11, 9, 0), day_epoch + 86400),
+                # G: SHARTNOMA — yopgan 991002, olib kelgan 991003 (dual-kredit BO'LMASIN)
+                ev(L + 8, "stage_change", 111, 990009, 991002, 991002, 991003, datetime(2020, 6, 10, 13, 0), day_epoch),
+                # H: shartnoma bosqichi ICHIDA harakat — qayta sanalmasin
+                ev(L + 8, "responsible_change", 990009, 990009, 991002, 991004, 991003, datetime(2020, 6, 10, 14, 0), day_epoch),
             ])
             await s.commit()
             try:
-                return await lead_diff.daily_operator_breakdown(s, DAY, VISIT_IDS)
+                return await lead_diff.daily_operator_breakdown(s, DAY, VISIT_IDS, CONTRACT_IDS)
             finally:
                 await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
                 await s.commit()
 
     try:
-        agg, unique = _asyncio.run(_run())
+        agg, unique, contracts_total = _asyncio.run(_run())
         credits = sum(a["visits"] for a in agg.values())
         check("kechikib aniqlangan tashrif o'z kuniga tushdi (991001=2: A+F)",
               agg.get(991001, {}).get("visits") == 2, f"991001={agg.get(991001)}")
@@ -5386,6 +5628,15 @@ def test_visit_counting() -> None:
               agg.get(991001, {}).get("leads_touched") == 3, f"991001={agg.get(991001)}")
         check("first_seen tashrif bermaydi (991009 = 0 kredit)",
               agg.get(991009, {}).get("visits", 0) == 0, f"991009={agg.get(991009)}")
+        check("shartnoma faqat YOPGANGA (991002 = 1)",
+              agg.get(991002, {}).get("contracts") == 1, f"991002={agg.get(991002)}")
+        check("shartnomada dual-kredit YO'Q (olib kelgan 991003 = 0)",
+              agg.get(991003, {}).get("contracts", 0) == 0, f"991003={agg.get(991003)}")
+        check("shartnoma jami = 1 (bosqich ichidagi harakat qayta sanalmadi)",
+              contracts_total == 1, f"contracts_total={contracts_total}")
+        check("shartnoma operator yig'indisi = jami",
+              sum(a["contracts"] for a in agg.values()) == contracts_total,
+              f"yig'indi={sum(a['contracts'] for a in agg.values())}, jami={contracts_total}")
     except Exception:
         check("tashrif hisoblash testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
@@ -5404,6 +5655,8 @@ def test_visit_counting() -> None:
             s.add_all([
                 ev(L + 1, "stage_change", 111, 990001, 991001, 991001, 991001, datetime(2020, 6, 10, 9, 0), day_epoch),
                 ev(L + 2, "stage_change", 111, 990002, 991001, 991001, 991001, datetime(2020, 6, 10, 10, 0), day_epoch),
+                # Shartnoma: yopgan 991001 (statistika builderlarida ham ko'rinishi kerak)
+                ev(L + 3, "stage_change", 111, 990009, 991001, 991001, 991002, datetime(2020, 6, 10, 11, 0), day_epoch),
             ])
             # Snapshot esa shishgan: DAY kuni Tashrifda 5 lid "ko'ringan"
             s.add_all([
@@ -5420,11 +5673,14 @@ def test_visit_counting() -> None:
                 # Builderlar sozlamadagi haqiqiy Tashrif ID'lariga qaraydi — testda soxta
                 # ID'lar (990001/990002) ishlatilgani uchun vaqtincha almashtiramiz
                 orig = stats_router._visit_ids
+                orig_contract = stats_router._contract_ids
                 stats_router._visit_ids = lambda: VISIT_IDS
+                stats_router._contract_ids = lambda: CONTRACT_IDS
                 day_out = await stats_router._build_lead_day(s, DAY, None)
                 old_out = await stats_router._build_lead_day(s, OLD_DAY, None)
                 month_out = await stats_router._build_lead_month(s, "2020-06", None)
                 stats_router._visit_ids = orig
+                stats_router._contract_ids = orig_contract
                 return day_out, old_out, month_out
             finally:
                 await s.execute(_delete(LeadEvent).where(LeadEvent.crm_lead_id >= L))
@@ -5443,6 +5699,16 @@ def test_visit_counting() -> None:
         check("oylik ko'rinish: DAY qatori voqea-asosli (2)",
               any(d.date == DAY and d.visits == 2 for d in month_out.days),
               f"days={[(str(d.date), d.visits) for d in month_out.days]}")
+        check("kunlik ko'rinish: shartnoma (1) va bayroq yoniq",
+              day_out.contracts == 1 and day_out.contracts_enabled,
+              f"contracts={day_out.contracts}, enabled={day_out.contracts_enabled}")
+        check("kunlik ko'rinish: shartnoma operator qatorida (991001=1)",
+              any(o.responsible_id == 991001 and o.contracts == 1 for o in day_out.operators),
+              f"ops={[(o.responsible_id, o.contracts) for o in day_out.operators]}")
+        check("oylik ko'rinish: shartnoma jami = 1",
+              month_out.contracts == 1, f"contracts={month_out.contracts}")
+        check("jurnalsiz eski kun: shartnoma 0 (snapshot fallback YO'Q)",
+              old_out.contracts == 0, f"contracts={old_out.contracts}")
     except Exception:
         check("statistika builder testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 

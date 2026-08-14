@@ -49,6 +49,13 @@ def _visit_pipe_status_ids() -> set[int]:
     return set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS)
 
 
+def _contract_pipe_status_ids() -> set[int]:
+    """«Shartnoma qilindi» bosqichi ID'lari — yagona manba `lead_diff`da.
+    Bo'sh — shartnoma hisobi o'chiq: digestda 🤝 umuman ko'rinmaydi (raqamlar
+    0 bo'lib chalg'itmasligi uchun)."""
+    return lead_diff.contract_pipe_status_ids()
+
+
 async def digest_group_targets(db: AsyncSession, chat_id: int | None = None) -> list[int]:
     """Statistika digesti yuboriladigan guruh(lar). `chat_id` aniq berilsa (rahbar
     shaxsiy chatda so'raganda) — faqat o'sha. Aks holda: "main" maqsadli faol
@@ -91,34 +98,38 @@ async def _talk_by_user(db: AsyncSession, day: date) -> dict[int, int]:
     return {uid: int(talk or 0) for uid, talk in rows.all()}
 
 
-async def _day_by_operator(db: AsyncSession, day: date) -> tuple[dict[int, dict], int]:
-    """Bir kunning operator kesimi: ({responsible_id: {name, calls, leads, visits}},
-    jami_noyob_tashrif). Qo'ng'iroqlar — `OperatorCallsDaily` snapshotidan (tez,
-    CRM call-history asosida). Lid/tashrif — diff-engine `LeadEvent` jurnalidan
-    (`lead_diff.py`): HAQIQIY bosqich/mas'ul o'zgarish voqealari.
+async def _day_by_operator(db: AsyncSession, day: date) -> tuple[dict[int, dict], int, int]:
+    """Bir kunning operator kesimi: ({responsible_id: {name, calls, leads, visits,
+    contracts}}, jami_noyob_tashrif, jami_shartnoma). Qo'ng'iroqlar —
+    `OperatorCallsDaily` snapshotidan (tez, CRM call-history asosida).
+    Lid/tashrif/shartnoma — diff-engine `LeadEvent` jurnalidan (`lead_diff.py`):
+    HAQIQIY bosqich/mas'ul o'zgarish voqealari.
 
     `jami_noyob_tashrif` — dual-kreditsiz: operator kesimida bitta tashrif
     ikki odamga (olib kelgan + yopgan) yozilishi mumkin, tashkilot jami esa
-    haqiqiy tashriflar sonini ko'rsatishi kerak."""
+    haqiqiy tashriflar sonini ko'rsatishi kerak. `jami_shartnoma` da bunday
+    farq yo'q — shartnoma faqat yopgan mas'ulga yoziladi."""
     agg: dict[int, dict] = {}
 
-    event_agg, total_visits = await lead_diff.daily_operator_breakdown(
-        db, day, _visit_pipe_status_ids()
+    def _blank(name: str | None) -> dict:
+        return {"name": name, "calls": 0, "leads": 0, "visits": 0, "contracts": 0}
+
+    event_agg, total_visits, total_contracts = await lead_diff.daily_operator_breakdown(
+        db, day, _visit_pipe_status_ids(), _contract_pipe_status_ids()
     )
     for rid, a in event_agg.items():
-        entry = agg.setdefault(rid, {"name": a["name"], "calls": 0, "leads": 0, "visits": 0})
+        entry = agg.setdefault(rid, _blank(a["name"]))
         entry["leads"] = a["leads_touched"]
         entry["visits"] = a["visits"]
+        entry["contracts"] = a["contracts"]
 
     for c in await db.scalars(select(OperatorCallsDaily).where(OperatorCallsDaily.date == day)):
-        a = agg.setdefault(
-            c.responsible_id, {"name": c.responsible_name, "calls": 0, "leads": 0, "visits": 0}
-        )
+        a = agg.setdefault(c.responsible_id, _blank(c.responsible_name))
         a["calls"] += c.calls_in + c.calls_out
         if not a.get("name"):
             a["name"] = c.responsible_name
 
-    return agg, total_visits
+    return agg, total_visits, total_contracts
 
 
 async def _freshness_line(db: AsyncSession) -> str | None:
@@ -198,8 +209,9 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     """Digest matnini quradi (yubormaydi). Qaytaradi: {"text", "operators"} —
     bugun umuman faoliyat bo'lmasa text=None."""
     day = day or today_local()
-    today_ops, today_unique_visits = await _day_by_operator(db, day)
-    yesterday_ops, _ = await _day_by_operator(db, day - timedelta(days=1))
+    today_ops, today_unique_visits, today_contracts = await _day_by_operator(db, day)
+    yesterday_ops, _, _ = await _day_by_operator(db, day - timedelta(days=1))
+    show_contracts = bool(_contract_pipe_status_ids())
     tasks = await _tasks_by_user(db, day)
     talk_by_user = await _talk_by_user(db, day)
 
@@ -245,15 +257,20 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     # "yoki visits" — 5-band dual-kredit: lidni olib kelgan operator o'sha kun
     # boshqa qo'ng'iroq/lid faoliyatisiz, faqat tashrif krediti bilan ham
     # ro'yxatda ko'rinishi kerak (aks holda kredit hisoblansa-yu ko'rinmasdi).
-    active = {rid: a for rid, a in today_ops.items() if a["calls"] or a["leads"] or a["visits"]}
+    active = {
+        rid: a
+        for rid, a in today_ops.items()
+        if a["calls"] or a["leads"] or a["visits"] or a["contracts"]
+    }
     lines: list[str] = []
     for rid, a in sorted(active.items(), key=lambda x: -(x[1]["calls"] + x[1]["leads"])):
         user = user_by_rid.get(rid)
         name = html.escape((user.full_name if user else a["name"]) or str(rid))
         delta = _delta(a["calls"], yesterday_ops.get(rid))
+        contract_part = f" · 🤝 {a['contracts']}" if show_contracts else ""
         lines.append(
             f"• <b>{name}</b> — 📞 {a['calls']}{delta}{_talk_part(user)} · "
-            f"🧲 {a['leads']} · 🏠 {a['visits']}{_task_part(user)}"
+            f"🧲 {a['leads']} · 🏠 {a['visits']}{contract_part}{_task_part(user)}"
         )
 
     # CRM faoliyati yo'q, lekin bugun vazifa olgan xodimlar (masalan mobilograf)
@@ -284,6 +301,8 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     if total_talk:
         totals += f" · 🗣 {_fmt_talk(total_talk)}"
     totals += f" · 🧲 {total_leads} · 🏠 {total_visits}"
+    if show_contracts:
+        totals += f" · 🤝 {today_contracts}"
 
     excused_names = [html.escape(u.full_name) for u in employees if u.id in excused_ids]
     idle_names = [
@@ -304,10 +323,13 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     if hot_lead_line:
         parts.append(hot_lead_line)
     parts.append("")
-    parts.append(
+    legend = (
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "
-        "🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>"
+        "🧲 ishlangan lid · 🏠 tashrif · "
     )
+    if show_contracts:
+        legend += "🤝 shartnoma · "
+    parts.append(legend + "✅ vazifa</i>")
     if visit_credits > total_visits:
         # Dual-kredit ishlagan kun: operator 🏠 yig'indisi jamidan katta — nima
         # uchunligini o'quvchi bilsin (aks holda "raqamlar to'g'ri kelmayapti" bo'ladi)
@@ -328,7 +350,12 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
         "operators": len(active),
         # Digest yuborilgan paytdagi jami — ertangi "kecha yakuni" tuzatish xabari
         # yakuniy raqamlarni shu bilan solishtiradi (group_post_tick saqlaydi).
-        "totals": {"calls": total_calls, "leads": total_leads, "visits": total_visits},
+        "totals": {
+            "calls": total_calls,
+            "leads": total_leads,
+            "visits": total_visits,
+            "contracts": today_contracts,
+        },
     }
 
 
@@ -400,17 +427,23 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
     if not dry_run and cfg.correction_last_posted == today:
         return {"sent": False, "reason": "Bugun allaqachon tekshirilgan"}
 
-    final_ops, final_unique_visits = await _day_by_operator(db, yesterday)
-    active = {rid: a for rid, a in final_ops.items() if a["calls"] or a["leads"] or a["visits"]}
+    final_ops, final_unique_visits, final_contracts = await _day_by_operator(db, yesterday)
+    active = {
+        rid: a
+        for rid, a in final_ops.items()
+        if a["calls"] or a["leads"] or a["visits"] or a["contracts"]
+    }
     final = {
         "calls": sum(a["calls"] for a in active.values()),
         "leads": sum(a["leads"] for a in active.values()),
         "visits": final_unique_visits,
+        "contracts": final_contracts,
     }
     posted = {
         "calls": cfg.last_posted_calls or 0,
         "leads": cfg.last_posted_leads or 0,
         "visits": cfg.last_posted_visits or 0,
+        "contracts": cfg.last_posted_contracts or 0,
     }
 
     diff_calls = final["calls"] - posted["calls"]
@@ -418,8 +451,13 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
     # Tashrif farqi HAR DOIM sezilarli: soni kichik, qiymati katta — kechikib
     # aniqlangan tashrif (tungi to'liq skan, skan uzilishi) ertalab albatta
     # ko'rinsin (ilgari faqat qo'ng'iroq farqi trigger edi, tashrif o'zgarishi
-    # jimgina yo'qolardi).
-    significant = diff_calls >= threshold or final["visits"] != posted["visits"]
+    # jimgina yo'qolardi). Shartnoma ham AYNAN shunday — soni kam, qiymati eng
+    # katta ko'rsatkich.
+    significant = (
+        diff_calls >= threshold
+        or final["visits"] != posted["visits"]
+        or final["contracts"] != posted["contracts"]
+    )
 
     if not dry_run:
         # Qo'riqchi natijadan qat'i nazar yoziladi — bir kunda bitta tekshiruv
@@ -439,6 +477,8 @@ async def send_yesterday_correction(db: AsyncSession, dry_run: bool = False) -> 
         pieces.append(f"🧲 {posted['leads']} → {final['leads']}")
     if final["visits"] != posted["visits"]:
         pieces.append(f"🏠 {posted['visits']} → {final['visits']}")
+    if final["contracts"] != posted["contracts"]:
+        pieces.append(f"🤝 {posted['contracts']} → {final['contracts']}")
     text = (
         f"🌙 <b>Kecha yakuni (to'liq) — {yesterday:%d.%m.%Y}</b>\n"
         "Kechagi digestdan keyin ham faollik davom etgan; yakuniy raqamlar:\n"

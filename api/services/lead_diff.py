@@ -31,9 +31,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive
 from crm import get_crm_adapter
+from crm.config import CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS
 from db.models import CrmLeadState, LeadEvent
 
 logger = logging.getLogger(__name__)
+
+
+def contract_pipe_status_ids() -> set[int]:
+    """«Shartnoma qilindi» bosqich ID'lari — statistikaning BARCHA yuzalari
+    (guruh digestlari, bot «Lidlar statistikasi», sayt paneli) shu YAGONA
+    manbadan o'qiydi. Tashrifda uchta modulda uchta nusxa bor (tarixiy) va
+    ular bir-biridan uzilib qolishi mumkin edi — yangi ko'rsatkich shu xatoni
+    takrorlamasin.
+
+    Bo'sh ro'yxat = funksiya o'chiq: hech qayerda 🤝 ko'rsatilmaydi."""
+    return set(CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS)
 
 # Diff natijasi bilan bitta commit'ga sig'adigan xavfsiz chegara — undan katta
 # bo'lsa ham ishlaydi, faqat xotira/vaqt jihatidan diagnostika uchun log qilinadi.
@@ -215,9 +227,12 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
 _DETECTION_LAG_DAYS = 3
 
 
-def _is_visit_event(ev: LeadEvent, visit_ids: set[int]) -> bool:
-    """Bu voqea HAQIQIY tashrifmi — ya'ni lid boshqa bosqichdan «Tashrif»ga
-    KO'CHIRILGANmi.
+def _is_stage_entry_event(ev: LeadEvent, stage_ids: set[int]) -> bool:
+    """Bu voqea kuzatilayotgan bosqichga HAQIQIY KIRISHmi — ya'ni lid boshqa
+    bosqichdan `stage_ids`dan biriga KO'CHIRILGANmi. Tashrif uchun ham,
+    «Shartnoma qilindi» uchun ham AYNAN BIR XIL qoida (2026-08-14: shartnoma
+    hisobi qo'shilganda umumiylashtirildi — ikki xil hisob qoidasi bo'lsa
+    guruhdagi va saytdagi raqamlar bir-biriga mos kelmay qolardi).
 
     ⚠️ `first_seen` ATAYLAB CHIQARIB TASHLANDI (2026-08-13, egasining qarori).
     `first_seen` — bu CRM'dagi hodisa EMAS, bu bizning skanerimiz lidni
@@ -232,10 +247,10 @@ def _is_visit_event(ev: LeadEvent, visit_ids: set[int]) -> bool:
     `responsible_change` ham hisoblanmaydi: unda bosqich o'zgarmaydi (mas'ul
     almashadi), ya'ni `from == to` bo'lib quyidagi shart o'zi rad etadi."""
     return (
-        bool(visit_ids)
+        bool(stage_ids)
         and ev.event_type != "first_seen"
-        and ev.to_pipe_status_id in visit_ids
-        and ev.from_pipe_status_id not in visit_ids
+        and ev.to_pipe_status_id in stage_ids
+        and ev.from_pipe_status_id not in stage_ids
     )
 
 
@@ -258,15 +273,25 @@ def _event_effective_utc(ev: LeadEvent) -> datetime:
 
 
 async def daily_operator_breakdown(
-    db: AsyncSession, day: date, visit_pipe_status_ids: set[int] | None
-) -> tuple[dict[int, dict], int]:
+    db: AsyncSession,
+    day: date,
+    visit_pipe_status_ids: set[int] | None,
+    contract_pipe_status_ids: set[int] | None = None,
+) -> tuple[dict[int, dict], int, int]:
     """Kunlik operator kesimi — `LeadEvent`dan (taxminiy `updatedTimestamp`
     emas, haqiqiy voqealardan). Qaytaradi: ({responsible_id: {name,
-    leads_touched, visits}}, jami_noyob_tashrif).
+    leads_touched, visits, contracts}}, jami_noyob_tashrif, jami_shartnoma).
 
     `jami_noyob_tashrif` — shu kuni Tashrifga KIRGAN voqealar soni, dual-kreditsiz
     (tashkilot "Jami" qatori uchun; kreditlar yig'indisi bitta tashrifni ikki
     odamga yozgani uchun jami sifatida ishlatilsa raqam shishardi).
+
+    `contracts` — lid «Shartnoma qilindi» bosqich(lar)iga kirgan voqealar
+    (2026-08-14, egasining qarori): tashrifdan FARQLI o'laroq DUAL-KREDIT YO'Q —
+    shartnoma faqat uni YOPGAN mas'ulga (`to_responsible_id`) yoziladi. Shu
+    sababli operator yig'indisi `jami_shartnoma` ga teng (mas'ulsiz voqeadan
+    boshqa holatda) va qo'shimcha "kreditlar" izohi kerak emas. Shartnoma
+    bosqichlari sozlanmagan bo'lsa hamma joyda 0 qaytadi.
 
     Voqea KUNGA `_event_effective_utc` bo'yicha biriktiriladi (`detected_at`
     emas) — skan kechikkanda ham tashrif haqiqatda bo'lgan kuniga tushadi.
@@ -304,28 +329,38 @@ async def daily_operator_breakdown(
         )
     )
     visit_ids = visit_pipe_status_ids or set()
+    contract_ids = contract_pipe_status_ids or set()
 
     def _bucket(rid: int, name: str | None) -> dict:
-        return agg.setdefault(rid, {"name": name or str(rid), "leads_touched": 0, "visits": 0})
+        return agg.setdefault(
+            rid, {"name": name or str(rid), "leads_touched": 0, "visits": 0, "contracts": 0}
+        )
 
     agg: dict[int, dict] = {}
     total_visits = 0
+    total_contracts = 0
     for ev in rows:
         eff = _event_effective_utc(ev)
         if not (day_start <= eff < day_end):
             continue
 
-        is_new_visit = _is_visit_event(ev, visit_ids)
+        is_new_visit = _is_stage_entry_event(ev, visit_ids)
         if is_new_visit:
             # Mas'ulsiz voqea operator kesimiga tushmaydi, lekin tashkilot
             # jamida baribir haqiqiy tashrif — yo'qolmasin.
             total_visits += 1
+        is_new_contract = _is_stage_entry_event(ev, contract_ids)
+        if is_new_contract:
+            total_contracts += 1
 
         rid = ev.to_responsible_id
         if rid is None:
             continue
         a = _bucket(rid, ev.to_responsible_name)
         a["leads_touched"] += 1
+        if is_new_contract:
+            # Shartnoma — faqat yopgan mas'ulga (dual-kredit YO'Q)
+            a["contracts"] += 1
 
         if not is_new_visit:
             continue
@@ -337,18 +372,27 @@ async def daily_operator_breakdown(
             # User.crm_visit_external_id orqali haqiqiy ismga almashtiriladi
             # (boshqa "Boshqa operatorlar" holatlari bilan bir xil naqsh).
             _bucket(ev.first_responsible_id, None)["visits"] += 1
-    return agg, total_visits
+    return agg, total_visits, total_contracts
 
 
 async def visit_stats_range(
-    db: AsyncSession, day_from: date, day_to: date, visit_pipe_status_ids: set[int] | None
+    db: AsyncSession,
+    day_from: date,
+    day_to: date,
+    visit_pipe_status_ids: set[int] | None,
+    contract_pipe_status_ids: set[int] | None = None,
 ) -> dict:
     """[day_from..day_to] (mahalliy kunlar) uchun tashrif seriyasi — bitta o'qish:
     {
       "daily_unique":      {date: int},        # tashkilot: Tashrifga KIRGAN noyob voqealar
       "daily_by_operator": {date: {rid: int}}, # dual-kredit (digest qoidasi bilan bir xil)
       "days_with_events":  set[date],          # umuman voqea bo'lgan kunlar
+      "daily_contracts":            {date: int},        # «Shartnoma qilindi»ga kirgan voqealar
+      "daily_contracts_by_operator": {date: {rid: int}}, # faqat yopgan mas'ul (dual-kredit yo'q)
     }
+    Shartnoma kalitlari `contract_pipe_status_ids` berilmasa bo'sh qaytadi —
+    eski chaqiruvchilar (crm_sync, /daily-results/recalc-visits) o'zgarishsiz
+    ishlayveradi.
     `days_with_events` fallback uchun: LeadEvent jurnali 2026-07-22 dan boshlangan —
     undan oldingi (yoki tizim o'chiq bo'lgan) kunlarda voqea yo'q, lekin bu "tashrif
     bo'lmagan" degani emas; chaqiruvchi bunday kunlar uchun eski snapshot hisobiga
@@ -362,9 +406,12 @@ async def visit_stats_range(
         )
     )
     visit_ids = visit_pipe_status_ids or set()
+    contract_ids = contract_pipe_status_ids or set()
 
     daily_unique: dict[date, int] = {}
     daily_by_operator: dict[date, dict[int, int]] = {}
+    daily_contracts: dict[date, int] = {}
+    daily_contracts_by_operator: dict[date, dict[int, int]] = {}
     days_with_events: set[date] = set()
     for ev in rows:
         eff = _event_effective_utc(ev)
@@ -372,11 +419,17 @@ async def visit_stats_range(
             continue
         local_day = eff.replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ).date()
         days_with_events.add(local_day)
+        rid = ev.to_responsible_id
 
-        if not _is_visit_event(ev, visit_ids):
+        if _is_stage_entry_event(ev, contract_ids):
+            daily_contracts[local_day] = daily_contracts.get(local_day, 0) + 1
+            if rid is not None:
+                c_ops = daily_contracts_by_operator.setdefault(local_day, {})
+                c_ops[rid] = c_ops.get(rid, 0) + 1
+
+        if not _is_stage_entry_event(ev, visit_ids):
             continue
         daily_unique[local_day] = daily_unique.get(local_day, 0) + 1
-        rid = ev.to_responsible_id
         if rid is None:
             continue
         ops = daily_by_operator.setdefault(local_day, {})
@@ -387,6 +440,8 @@ async def visit_stats_range(
         "daily_unique": daily_unique,
         "daily_by_operator": daily_by_operator,
         "days_with_events": days_with_events,
+        "daily_contracts": daily_contracts,
+        "daily_contracts_by_operator": daily_contracts_by_operator,
     }
 
 

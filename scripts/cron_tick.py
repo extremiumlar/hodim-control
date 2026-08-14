@@ -558,6 +558,9 @@ async def main() -> None:
         await _run_misc_inprocess(now, "muddati o'tgan vazifalar", "mark_overdue")
     if now.minute % 5 == 3:
         await _run_misc_inprocess(now, "bilim bazasi", "knowledge_tick")
+    # Tabrik videolari — HAR DAQIQA: guruhga tashrif/shartnoma xabari kech
+    # bormasin. Ish yengil (bitta indeksli SELECT, odatda bo'sh javob).
+    await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")
     if now.minute == 0:
         await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
         await _run_hourly_plan_inprocess(now)

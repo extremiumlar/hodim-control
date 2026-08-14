@@ -3,6 +3,7 @@ Keldim/Ketdim qiladi (`/attendance/me/*`); rahbar (boss/rop/hr/dasturchi) barcha
 xodimlar davomatini ko'radi va ofislarni sozlaydi. verifix (hodim_crm Django)
 `attendance/views.py` dan birlashtirildi."""
 import json
+import logging
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -67,6 +68,8 @@ from db.models import (
     WorkScheduleOverride,
     WorkScheduleWeekly,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -178,6 +181,17 @@ async def my_check_in(
             "lekin kechikish hisoblanmaydi. Agar ta'tilingiz tugagan bo'lsa — "
             "HR ga xabar bering."
         )
+        # Bosqich 5: agar bu sababli kun TA'TIL ARIZASIDAN kelgan bo'lsa,
+        # HR dan qaror so'raymiz (ta'til qisqartirilsinmi?). Davomat oqimini
+        # bloklamaydi — xato bo'lsa ham check-in allaqachon yozilgan.
+        try:
+            from api.routers.requests import note_interruption
+
+            req = await note_interruption(db, user, att.date)
+            if req is not None:
+                out.warning += " Rahbariyatga xabar berildi."
+        except Exception:  # noqa: BLE001
+            logger.exception("Ta'til uzilishini qayd etib bo'lmadi (check-in davom etdi)")
     return out
 
 

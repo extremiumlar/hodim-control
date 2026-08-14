@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Home, Magnet, MessageSquare, Phone } from "lucide-react";
+import { Handshake, Home, Magnet, MessageSquare, Phone } from "lucide-react";
 import OperatorTable from "@/components/statistics/OperatorTable";
 import ReasonsFeed from "@/components/statistics/ReasonsFeed";
 import TrendChart from "@/components/statistics/TrendChart";
@@ -87,9 +87,13 @@ export default function Statistics() {
       talk: acc.talk + p.talk_sec,
       leads: acc.leads + p.leads,
       visits: acc.visits + p.visits,
+      contracts: acc.contracts + (p.contracts ?? 0),
     }),
-    { calls: 0, talk: 0, leads: 0, visits: 0 }
+    { calls: 0, talk: 0, leads: 0, visits: 0, contracts: 0 }
   );
+  // Shartnoma bosqichlari .env da sozlanmagan bo'lsa — kartochka ham, grafik
+  // chizig'i ham chiqmaydi (har joyda "0" turib "buzuq" taassurot qoldirmasin)
+  const showContracts = overview.contracts_enabled;
 
   return (
     <div className="space-y-4">
@@ -106,7 +110,7 @@ export default function Statistics() {
       </PageHeader>
 
       {/* Yuqori kartalar — davr jami */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className={cn("grid grid-cols-2 gap-3", showContracts ? "md:grid-cols-5" : "md:grid-cols-4")}>
         <StatCard
           label={`Qo'ng'iroqlar (${rangeLabel})`}
           value={totals.calls}
@@ -131,6 +135,14 @@ export default function Statistics() {
           icon={Home}
           hint={`${lastLabel}: ${last?.visits ?? 0}`}
         />
+        {showContracts && (
+          <StatCard
+            label={`Shartnomalar (${rangeLabel})`}
+            value={totals.contracts}
+            icon={Handshake}
+            hint={`${lastLabel}: ${last?.contracts ?? 0}`}
+          />
+        )}
       </div>
 
       {/* Trend grafigi — sonlar */}
@@ -145,6 +157,9 @@ export default function Statistics() {
               { key: "calls", label: "Qo'ng'iroq", color: "#6366f1" },
               { key: "leads", label: "Lid", color: "#10b981" },
               { key: "visits", label: "Tashrif", color: "#f59e0b" },
+              ...(showContracts
+                ? [{ key: "contracts" as const, label: "Shartnoma", color: "#e11d48" }]
+                : []),
             ]}
           />
         </CardContent>

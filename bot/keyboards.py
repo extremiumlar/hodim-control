@@ -32,6 +32,7 @@ BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
 BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_AI_CENTER = "🧠 Sotuv AI markazi"
+BTN_CELEBRATION = "🎬 Tabrik videolari"
 BTN_SET_BUSY = "⏸ Band qilish"
 BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 # Eski alohida tugmalar — endi asosiy menyuda ko'rinmaydi (BTN_AI_CENTER
@@ -57,6 +58,7 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
     BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL, BTN_REQUESTS,
+    BTN_CELEBRATION,
 })
 
 # Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
@@ -166,8 +168,13 @@ def main_menu(
             # (ilgari ikkita alohida tugma edi; anketani boshlashni faqat
             # Dasturchi qila oladi, backend shu cheklovni saqlaydi).
             rows.append([KeyboardButton(text=BTN_AI_CENTER)])
+            # Tashrif/shartnoma tabrik videosi — Boshliq/Dasturchi (HR uchun
+            # pastda alohida qo'shiladi, chunki u bu shoxga kirmaydi)
+            rows.append([KeyboardButton(text=BTN_CELEBRATION)])
         else:
             rows.append([KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PANEL)])
+            if role == "hr":
+                rows.append([KeyboardButton(text=BTN_CELEBRATION)])
 
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 

@@ -44,14 +44,18 @@ function PctBadge({ pct }: { pct: number | null }) {
  * ikkalasi ham shu ro'yxatdan quriladi. Aks holda ustun qo'shilganda biri
  * yangilanib, ikkinchisi jimgina eskirib qolardi.
  */
-const FIELDS: { key: keyof OperatorRow; label: string }[] = [
-  { key: "name", label: "Xodim" },
-  { key: "calls", label: "📞 Qo'ng'iroq" },
-  { key: "talk", label: "🗣 Gaplashgan" },
-  { key: "leads", label: "🧲 Lid" },
-  { key: "visits", label: "🏠 Tashrif" },
-  { key: "tasks", label: "✅ Vazifa" },
-];
+function fields(showContracts: boolean): { key: keyof OperatorRow; label: string }[] {
+  return [
+    { key: "name", label: "Xodim" },
+    { key: "calls", label: "📞 Qo'ng'iroq" },
+    { key: "talk", label: "🗣 Gaplashgan" },
+    { key: "leads", label: "🧲 Lid" },
+    { key: "visits", label: "🏠 Tashrif" },
+    // Shartnoma bosqichlari sozlanmagan bo'lsa ustun umuman chiqmaydi
+    ...(showContracts ? [{ key: "contracts" as const, label: "🤝 Shartnoma" }] : []),
+    { key: "tasks", label: "✅ Vazifa" },
+  ];
+}
 
 type OperatorRow = {
   id: string;
@@ -60,6 +64,7 @@ type OperatorRow = {
   talk: ReactNode;
   leads: ReactNode;
   visits: ReactNode;
+  contracts: ReactNode;
   tasks: ReactNode;
 };
 
@@ -85,6 +90,8 @@ export default function OperatorTable({
     return <p className="py-4 text-center text-sm text-slate-400">Bu davr uchun ma'lumot yo'q.</p>;
   }
 
+  const FIELDS = fields(summary.contracts_enabled);
+
   const rows: OperatorRow[] = summary.operators.map((op) => ({
     id: String(op.responsible_id),
     name: (
@@ -109,6 +116,7 @@ export default function OperatorTable({
     talk: op.talk_sec ? fmtTalk(op.talk_sec) : "—",
     leads: op.leads,
     visits: op.visits,
+    contracts: op.contracts,
     tasks: op.tasks_total != null ? `${op.tasks_done}/${op.tasks_total}` : "—",
   }));
 
@@ -124,6 +132,7 @@ export default function OperatorTable({
     talk: fmtTalk(summary.totals.talk_sec),
     leads: summary.totals.leads,
     visits: summary.totals.visits,
+    contracts: summary.totals.contracts,
     tasks: null,
   };
 

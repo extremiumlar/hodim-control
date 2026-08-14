@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { format } from "date-fns";
-import { CalendarDays, Home, Magnet, Phone } from "lucide-react";
+import { CalendarDays, Handshake, Home, Magnet, Phone } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import { currentMonthKey, MonthPicker } from "@/components/PeriodPicker";
 import StatCard from "@/components/StatCard";
@@ -102,10 +102,18 @@ export default function LeadStats() {
         <MonthPicker value={month} onChange={setMonth} />
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div
+        className={cn(
+          "grid grid-cols-2 gap-3",
+          monthData.contracts_enabled ? "md:grid-cols-5" : "md:grid-cols-4"
+        )}
+      >
         <StatCard label="Gaplashilgan lidlar" value={monthData.calls} icon={Phone} />
         <StatCard label="Ishlangan lidlar" value={monthData.total} icon={Magnet} />
         <StatCard label="Tashriflar" value={monthData.visits} icon={Home} />
+        {monthData.contracts_enabled && (
+          <StatCard label="Shartnomalar" value={monthData.contracts} icon={Handshake} />
+        )}
         <StatCard label="Ma'lumotli kunlar" value={monthData.days.length} icon={CalendarDays} />
       </div>
 
@@ -162,6 +170,12 @@ export default function LeadStats() {
                     </div>
                     <div>
                       🧲 Ishlangan lidlar: <b>{dayData.total}</b> · Tashrif: <b>{dayData.visits}</b>
+                      {dayData.contracts_enabled && (
+                        <>
+                          {" "}
+                          · 🤝 Shartnoma: <b>{dayData.contracts}</b>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -225,6 +239,7 @@ export default function LeadStats() {
                           )}
                         >
                           📞{op.calls} · 🧲{op.total}
+                          {op.contracts > 0 && ` · 🤝${op.contracts}`}
                         </span>
                       </button>
                     ))}

@@ -25,7 +25,7 @@ umuman qo'llab-quvvatlamaydi (`OperationalError: near "for"`), ya'ni kafolat
 faqat productionda ko'r-ko'rona yashardi va testlar yozib bo'lmasdi.
 """
 import html
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -35,12 +35,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.notify import notify_user
 from api.schemas import (
+    LeaveBalanceOut,
     RequestActorBot,
     RequestBotCreate,
     RequestCalcOut,
     RequestCreateBase,
     RequestDecide,
     RequestDecideBot,
+    RequestInterruptDecide,
+    RequestInterruptDecideBot,
+    RequestManagerDecide,
+    RequestManagerDecideBot,
     RequestMeCreate,
     RequestOut,
     RequestRevoke,
@@ -48,7 +53,14 @@ from api.schemas import (
 )
 from api.services.attendance import recompute_attendance
 from api.services.push import Category
-from api.services.workdays import MAX_RANGE_DAYS, calc_range, human_summary, range_days
+from api.services.workdays import (
+    MAX_RANGE_DAYS,
+    calc_range,
+    human_summary,
+    leave_balance,
+    range_days,
+    resolve_request_policy,
+)
 from api.telegram_notify import inline_keyboard, send_file_id
 from api.timeutil import today_local
 from db.models import (
@@ -84,6 +96,11 @@ MAX_OPEN_PER_USER = 3
 
 SLA_REMIND_DAYS = 3
 SLA_ESCALATE_DAYS = 5
+
+# Ta'til normasi (kun/yil) — balans MASLAHAT sifatida ko'rsatiladi, arizani
+# bloklamaydi (ARIZALAR_REJASI.md 3.4). Kelajakda `RequestPolicy` ga
+# ko'chirilishi mumkin, hozircha bitta qiymat yetadi.
+ANNUAL_LEAVE_DAYS = 21
 
 _KIND_LABELS = {
     RequestKind.vacation.value: "Mehnat ta'tili",
@@ -143,6 +160,34 @@ async def _to_out_many(items: list[EmployeeRequest], db: AsyncSession) -> list[R
         u.id: u.full_name for u in await db.scalars(select(User).where(User.id.in_(ids or {0})))
     }
     return [_to_out(i, names.get(i.user_id)) for i in items]
+
+
+async def _needs_boss(db: AsyncSession, item: EmployeeRequest, user: User) -> bool:
+    """Chegaradan oshganda Boshliq tasdig'i ham kerakmi (Bosqich 4).
+
+    Ta'tilda ISH KUNLARI bo'yicha o'lchanadi (kalendar kun emas): 10 kunlik
+    oraliqning 5 tasi dam olish bo'lsa, u aslida 5 kunlik ta'til."""
+    policy = await resolve_request_policy(db, user, item.kind)
+    if policy is None:
+        return False
+    if item.amount is not None and policy.boss_threshold_amount is not None:
+        return float(item.amount) > float(policy.boss_threshold_amount)
+    if item.start_date and policy.boss_threshold_days is not None:
+        days = await range_days(db, user, item.start_date, item.end_date or item.start_date)
+        return sum(1 for d in days if d["is_working"]) > policy.boss_threshold_days
+    return False
+
+
+async def _bosses(db: AsyncSession) -> list[User]:
+    return list(
+        await db.scalars(
+            select(User).where(
+                User.role == Role.boss.value,
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
 
 
 async def _recipients(db: AsyncSession) -> list[User]:
@@ -429,18 +474,104 @@ async def _create(db: AsyncSession, user: User, payload: RequestCreateBase) -> R
     keyboard = inline_keyboard(
         [[("✅ Hal qilish", f"request_decide:{item.id}")]]
     )
-    for rec in await _recipients(db):
+
+    # ── Zanjir (Bosqich 4): avval BEVOSITA RAHBAR ──
+    # Nega: ta'tilda birinchi «ha» aynan rahbardan kelishi kerak — u
+    # jamoaning ish yukini biladi. Xodimda `manager_id` bo'lmasa yoki qoida
+    # o'chirilgan bo'lsa bosqich o'tkazib yuboriladi (avvalgi xatti-harakat).
+    policy = await resolve_request_policy(db, user, item.kind)
+    manager = await db.get(User, user.manager_id) if user.manager_id else None
+    to_manager = (
+        policy is not None
+        and policy.requires_manager
+        and manager is not None
+        and manager.is_active
+        and manager.telegram_id is not None
+    )
+
+    if to_manager:
         await notify_user(
-            db, rec, Category.APPEALS, _header(item, user.full_name, extra),
-            reply_markup=keyboard, force_telegram=True, data={"path": "/requests"},
+            db, manager, Category.APPEALS,
+            _header(item, user.full_name, extra) + "\n\n<i>Sizning tasdig'ingiz kutilmoqda.</i>",
+            reply_markup=inline_keyboard(
+                [[("✅ Tasdiqlayman", f"request_mgr:{item.id}:1"),
+                  ("❌ Rad etaman", f"request_mgr:{item.id}:0")]]
+            ),
+            force_telegram=True, data={"path": "/requests"},
         )
-        if item.file_id and rec.telegram_id:
+        if item.file_id and manager.telegram_id:
             await send_file_id(
-                rec.telegram_id, item.file_id, item.file_type or "document",
+                manager.telegram_id, item.file_id, item.file_type or "document",
                 caption=f"📎 Ariza #{item.id} ilovasi",
             )
+    else:
+        for rec in await _recipients(db):
+            await notify_user(
+                db, rec, Category.APPEALS, _header(item, user.full_name, extra),
+                reply_markup=keyboard, force_telegram=True, data={"path": "/requests"},
+            )
+            if item.file_id and rec.telegram_id:
+                await send_file_id(
+                    rec.telegram_id, item.file_id, item.file_type or "document",
+                    caption=f"📎 Ariza #{item.id} ilovasi",
+                )
 
     return _to_out(item, user.full_name, working_days)
+
+
+async def _manager_decide(
+    db: AsyncSession, item: EmployeeRequest, actor: User, approve: bool, note: str
+) -> RequestOut:
+    """Bevosita rahbar (ROP) bosqichi — YAKUNIY qaror EMAS.
+
+    Tasdiqlasa ariza HR ga o'tadi (`manager_ok`); rad etsa shu yerda
+    to'xtaydi va HR ni umuman bezovta qilmaydi."""
+    if item.status != RequestStatus.pending.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu ariza allaqachon ko'rib chiqilgan")
+    # Faqat O'SHA xodimning rahbari (yoki boss/dasturchi — ular hamma joyda
+    # o'tadi). ROP boshqa jamoaning arizasiga tegolmasin.
+    target = await db.get(User, item.user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    if actor.role not in (Role.boss.value, Role.dasturchi.value) and target.manager_id != actor.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ariza sizning jamoangizdan emas")
+
+    item.manager_decided_by = actor.id
+    item.manager_decided_at = datetime.utcnow()
+    item.manager_note = note.strip() or None
+    item.status = RequestStatus.manager_ok.value if approve else RequestStatus.rejected.value
+    if not approve:
+        item.decided_by = actor.id
+        item.decided_at = datetime.utcnow()
+        item.decision_note = f"[Rahbar rad etdi] {note.strip()}"
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id, action="request_manager_decided", target_user_id=item.user_id,
+            before={"status": RequestStatus.pending.value},
+            after={"id": item.id, "approve": approve, "status": item.status},
+        )
+    )
+    await db.commit()
+    await db.refresh(item)
+
+    if approve:
+        # Endi HR navbati — xabar zanjir bosqichini ham ko'rsatadi.
+        head = _header(item, target.full_name, f"✅ Rahbar tasdiqladi: {actor.full_name}")
+        for rec in await _recipients(db):
+            await notify_user(
+                db, rec, Category.APPEALS, head,
+                reply_markup=inline_keyboard([[("✅ Hal qilish", f"request_decide:{item.id}")]]),
+                force_telegram=True, data={"path": "/requests"},
+            )
+    else:
+        await notify_user(
+            db, target, Category.DECISIONS,
+            f"❌ Arizangizni bevosita rahbaringiz rad etdi.\n"
+            f"{_KIND_LABELS.get(item.kind, item.kind)}\nIzoh: {html.escape(item.manager_note or '')}",
+            data={"path": "/me/requests"},
+        )
+    return _to_out(item, target.full_name)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -626,6 +757,45 @@ async def _decide(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
 
     before_status = item.status
+    # ── Boshliq chegarasi (Bosqich 4) ──
+    # HR tasdiqlaganda ariza chegaradan oshgan bo'lsa, u DARHOL tasdiqlanmaydi:
+    # `hr_ok` holatiga o'tadi va Boshliq navbati keladi. Boshliqning o'zi
+    # (yoki Dasturchi) tasdiqlasa — yakuniy.
+    if (
+        decision == RequestStatus.approved.value
+        and actor.role == Role.hr.value
+        and item.status != RequestStatus.hr_ok.value
+        and await _needs_boss(db, item, target)
+    ):
+        item.status = RequestStatus.hr_ok.value
+        item.decided_by = actor.id
+        item.decided_at = datetime.utcnow()
+        item.decision_note = note.strip()
+        db.add(
+            AuditLog(
+                actor_id=actor.id, action="request_hr_approved", target_user_id=item.user_id,
+                before={"status": before_status},
+                after={"id": item.id, "status": item.status},
+            )
+        )
+        await db.commit()
+        await db.refresh(item)
+
+        head = _header(item, target.full_name, f"✅ HR tasdiqladi: {actor.full_name}")
+        for boss in await _bosses(db):
+            await notify_user(
+                db, boss, Category.APPEALS,
+                head + "\n\n<i>Chegaradan oshgan — yakuniy tasdiq sizda.</i>",
+                reply_markup=inline_keyboard([[("✅ Hal qilish", f"request_decide:{item.id}")]]),
+                force_telegram=True, data={"path": "/requests"},
+            )
+        out = _to_out(item, target.full_name)
+        return {
+            "request": out.model_dump(mode="json"),
+            "next_step": "Chegaradan oshgan — yakuniy tasdiq Boshliqda. Xabar yuborildi.",
+            "applied": {},
+        }
+
     item.status = decision
     item.decided_by = actor.id
     item.decided_at = datetime.utcnow()
@@ -667,6 +837,62 @@ async def _decide(
 
     out = _to_out(item, target.full_name)
     return {"request": out.model_dump(mode="json"), "next_step": next_step, "applied": info}
+
+
+@router.post("/{item_id}/manager-decide", response_model=RequestOut)
+async def manager_decide_request(
+    item_id: int,
+    payload: RequestManagerDecide,
+    actor: User = Depends(
+        require_roles(Role.rop.value, Role.hr.value, Role.boss.value, Role.dasturchi.value)
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> RequestOut:
+    """Bevosita rahbar bosqichi (Bosqich 4). ROP shu yerda qatnashadi —
+    yakuniy qarorda esa yo'q (`MANAGE_ROLES`)."""
+    item = await db.get(EmployeeRequest, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ariza topilmadi")
+    return await _manager_decide(db, item, actor, payload.approve, payload.note)
+
+
+@router.post("/{item_id}/manager-decide/bot", response_model=RequestOut, dependencies=[Depends(verify_bot_secret)])
+async def manager_decide_request_bot(
+    item_id: int, payload: RequestManagerDecideBot, db: AsyncSession = Depends(get_db)
+) -> RequestOut:
+    actor = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    allowed = (Role.rop.value, Role.hr.value, Role.boss.value, Role.dasturchi.value)
+    if not actor or not actor.is_active or actor.role not in allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    item = await db.get(EmployeeRequest, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ariza topilmadi")
+    return await _manager_decide(db, item, actor, payload.approve, payload.note)
+
+
+@router.get("/me/balance", response_model=LeaveBalanceOut)
+async def my_leave_balance(
+    year: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LeaveBalanceOut:
+    """Ta'til balansi — MASLAHAT (arizani bloklamaydi, 3.4-band)."""
+    y = year or today_local().year
+    return LeaveBalanceOut(**await leave_balance(db, user, y, ANNUAL_LEAVE_DAYS))
+
+
+@router.get("/balance/{user_id}", response_model=LeaveBalanceOut)
+async def user_leave_balance(
+    user_id: int,
+    year: int | None = None,
+    _actor: User = Depends(require_roles(*MANAGE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> LeaveBalanceOut:
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    y = year or today_local().year
+    return LeaveBalanceOut(**await leave_balance(db, target, y, ANNUAL_LEAVE_DAYS))
 
 
 @router.post("/{item_id}/decide")
@@ -742,6 +968,171 @@ async def revoke_request(
 
     out = _to_out(item, target.full_name)
     return {"request": out.model_dump(mode="json"), "reverted": info}
+
+
+# ─────────────────────────────────────────────────────────────
+# «Ishdagi ta'tilchi» (Bosqich 5)
+# ─────────────────────────────────────────────────────────────
+
+
+async def note_interruption(db: AsyncSession, user: User, day: date) -> EmployeeRequest | None:
+    """Ta'til vaqtida ishga kelish faktini qayd etadi va HR dan QAROR so'raydi.
+
+    NEGA OGOHLANTIRISH YETARLI EMAS (3.6/2.1): xodim ta'tildan chaqirib
+    olinsa, qolgan kunlar tizimda «sababli» bo'lib turaveradi — bu oylikda
+    va davomatda faqat oy oxirida bilinadi. Shuning uchun tizim HR ga aniq
+    savol beradi: ta'til qisqartirilsinmi yoki davom etsinmi.
+
+    NEGA `TaskModel` EMAS: u xodimga beriladigan ish topshirig'i va vazifa
+    statistikasi/muddat nazoratiga kiradi — tizim xabarlari u yerga tushsa
+    HR ning «bajarilmagan vazifalar» raqami buzilardi. O'rniga arizada iz
+    (`interrupted_at`) + inline tugmali xabar + rahbar sahifasidagi badge.
+
+    Chaqiriladi: `perform_check_in` dan keyin (davomat oqimini BLOKLAMAYDI).
+    Iz `interrupted_at` bilan bir marta — har kelishda qayta so'ralmaydi."""
+    item = await db.scalar(
+        select(EmployeeRequest).where(
+            EmployeeRequest.user_id == user.id,
+            EmployeeRequest.status == RequestStatus.approved.value,
+            EmployeeRequest.kind.in_(LEAVE_KINDS),
+            EmployeeRequest.start_date <= day,
+            EmployeeRequest.end_date >= day,
+            EmployeeRequest.interrupted_at.is_(None),
+        )
+    )
+    if item is None:
+        return None
+
+    item.interrupted_at = datetime.utcnow()
+    item.interrupt_decision = "pending"
+    db.add(
+        AuditLog(
+            actor_id=user.id, action="request_interrupted", target_user_id=user.id,
+            before=None, after={"id": item.id, "date": day.isoformat()},
+        )
+    )
+    await db.commit()
+    await db.refresh(item)
+
+    kb = inline_keyboard(
+        [[("✂️ Qisqartirish", f"request_interrupt:{item.id}:cut"),
+          ("▶️ Davom etsin", f"request_interrupt:{item.id}:keep")]]
+    )
+    for rec in await _recipients(db):
+        await notify_user(
+            db, rec, Category.APPEALS,
+            f"🏖 <b>Ta'tildagi xodim ishga keldi</b>\n"
+            f"{user.full_name} — {item.start_date} — {item.end_date}\n\n"
+            f"Ta'tilning qolgan kunlari bekor qilinsinmi?",
+            reply_markup=kb, force_telegram=True, data={"path": "/requests"},
+        )
+    return item
+
+
+async def _resolve_interruption(
+    db: AsyncSession, item: EmployeeRequest, actor: User, cut: bool
+) -> dict:
+    """HR qarori: ta'tilni QISQARTIRISH yoki davom ettirish.
+
+    Qisqartirishda BUGUNDAN keyingi sababli kunlar `rejected` qilinadi va
+    o'sha kunlar davomati qayta hisoblanadi. O'tgan kunlarga TEGILMAYDI —
+    ular allaqachon ta'til edi."""
+    if item.interrupt_decision != "pending":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu holat allaqachon hal qilingan")
+
+    target = await db.get(User, item.user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+
+    info: dict = {}
+    if cut:
+        today = today_local()
+        # Payroll qulfi — ta'tilni qisqartirish oylikka tegadi (sababli
+        # kunlar kamayadi). Qulflangan davrda o'zgartirish jimgina
+        # yo'qolardi, shuning uchun rad etamiz.
+        period_row = await db.scalar(
+            select(PayrollPeriod).where(PayrollPeriod.period == today.strftime("%Y-%m"))
+        )
+        if period_row is not None and period_row.locked:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Joriy davr qulflangan — qisqartirish oylikka kirmaydi. "
+                "Avval Dasturchi davrni ochishi kerak.",
+            )
+
+        rows = list(
+            await db.scalars(
+                select(ExcusedDay).where(
+                    ExcusedDay.source_request_id == item.id,
+                    ExcusedDay.date >= today,
+                    ExcusedDay.status == ExcusedStatus.approved.value,
+                )
+            )
+        )
+        for e in rows:
+            e.status = ExcusedStatus.rejected.value
+        await db.flush()
+        if rows:
+            atts = list(
+                await db.scalars(
+                    select(Attendance).where(
+                        Attendance.user_id == target.id,
+                        Attendance.date.in_([e.date for e in rows]),
+                    )
+                )
+            )
+            for att in atts:
+                await recompute_attendance(db, att, target)
+        # Ta'til oxiri kechagi kunga suriladi (tarixda ko'rinib tursin).
+        item.end_date = today - timedelta(days=1)
+        info = {"excused_cancelled": len(rows), "new_end_date": item.end_date.isoformat()}
+
+    item.interrupt_decision = "shortened" if cut else "continued"
+    db.add(
+        AuditLog(
+            actor_id=actor.id, action="request_interrupt_decided", target_user_id=item.user_id,
+            before={"decision": "pending"},
+            after={"id": item.id, "decision": item.interrupt_decision, **info},
+        )
+    )
+    await db.commit()
+    await db.refresh(item)
+
+    text = (
+        f"✂️ Ta'tilingiz qisqartirildi — {info.get('new_end_date')} gacha."
+        if cut
+        else "▶️ Ta'tilingiz davom etadi (ishga kelganingiz qayd etildi)."
+    )
+    await notify_user(db, target, Category.DECISIONS, text, data={"path": "/me/requests"})
+
+    out = _to_out(item, target.full_name)
+    return {"request": out.model_dump(mode="json"), "applied": info}
+
+
+@router.post("/{item_id}/interrupt")
+async def decide_interruption(
+    item_id: int,
+    payload: RequestInterruptDecide,
+    actor: User = Depends(require_roles(*MANAGE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    item = await db.get(EmployeeRequest, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ariza topilmadi")
+    return await _resolve_interruption(db, item, actor, payload.cut)
+
+
+@router.post("/{item_id}/interrupt/bot", dependencies=[Depends(verify_bot_secret)])
+async def decide_interruption_bot(
+    item_id: int, payload: RequestInterruptDecideBot, db: AsyncSession = Depends(get_db)
+) -> dict:
+    actor = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if not actor or not actor.is_active or actor.role not in MANAGE_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu amal uchun ruxsat yo'q")
+    item = await db.get(EmployeeRequest, item_id)
+    if item is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ariza topilmadi")
+    return await _resolve_interruption(db, item, actor, payload.cut)
 
 
 # ─────────────────────────────────────────────────────────────

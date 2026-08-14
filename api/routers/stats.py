@@ -462,6 +462,20 @@ def _visit_ids() -> set[int]:
     return set(CRM_UYSOT_VISIT_PIPE_STATUS_IDS)
 
 
+def _contract_ids() -> set[int]:
+    """«Shartnoma qilindi» bosqich ID'lari (yagona manba — `lead_diff`da,
+    digestlar ham aynan shuni o'qiydi). Bo'sh bo'lsa — shartnoma hisobi
+    o'chiq: javoblarda `contracts_enabled=false` keladi va bot/sayt 🤝 ustunini
+    umuman ko'rsatmaydi.
+
+    Shartnoma FAQAT voqea jurnalidan (LeadEvent) hisoblanadi — tashrifdagi
+    "snapshot fallback" bu yerda ATAYLAB yo'q: snapshot "shu kuni o'sha
+    bosqichda turgan lidlar"ni sanaydi va shartnoma uchun bu son har kuni
+    qayta-qayta sanalib shishardi. Amaliy oqibat: jurnal boshlangan sanadan
+    (2026-07-22) oldingi kunlar uchun shartnoma 0 ko'rinadi."""
+    return lead_diff.contract_pipe_status_ids()
+
+
 # 2026-08-03: bot/web statistikadagi "Tashriflar" soni endi LeadEvent'dan —
 # guruh digesti bilan BIR XIL qoida: tashkilot = Tashrifga KIRGAN noyob voqealar,
 # operator = dual-kredit (yopgan + olib kelgan). Eski snapshot-hisob ("bugun
@@ -514,11 +528,15 @@ async def _build_lead_month(
     call_rows = (await db.execute(call_q)).all()
     calls_by_day = {d: int(c) for d, c in call_rows}
 
-    # Tashrif — voqea-asosli (digest qoidasi); voqeasiz kunlar snapshotdan qoladi
+    # Tashrif/shartnoma — voqea-asosli (digest qoidasi); tashrif uchun voqeasiz
+    # kunlar snapshotdan qoladi, shartnoma uchun fallback yo'q (_contract_ids izohi).
     vstats = (
-        await lead_diff.visit_stats_range(db, month_start, last_day, _visit_ids())
+        await lead_diff.visit_stats_range(db, month_start, last_day, _visit_ids(), _contract_ids())
         if month_start <= today
-        else {"daily_unique": {}, "daily_by_operator": {}, "days_with_events": set()}
+        else {
+            "daily_unique": {}, "daily_by_operator": {}, "days_with_events": set(),
+            "daily_contracts": {}, "daily_contracts_by_operator": {},
+        }
     )
 
     def _event_visits(d: date) -> int | None:
@@ -529,23 +547,35 @@ async def _build_lead_month(
             return vstats["daily_by_operator"].get(d, {}).get(responsible_id, 0)
         return vstats["daily_unique"].get(d, 0)
 
+    def _contracts(d: date) -> int:
+        if responsible_id is not None:
+            return vstats["daily_contracts_by_operator"].get(d, {}).get(responsible_id, 0)
+        return vstats["daily_contracts"].get(d, 0)
+
     days = []
     for d, total, visits in lead_rows:
         ev = _event_visits(d)
         days.append(LeadStageDaySummary(
             date=d, calls=calls_by_day.get(d, 0), total=int(total),
-            visits=int(visits) if ev is None else ev,
+            visits=int(visits) if ev is None else ev, contracts=_contracts(d),
         ))
     # Faqat qo'ng'iroq bo'lgan (lid snapshotisiz) kunlar ham ko'rinsin
     lead_days = {d.date for d in days}
     for d, c in calls_by_day.items():
         if d not in lead_days:
-            days.append(LeadStageDaySummary(date=d, calls=c, total=0, visits=_event_visits(d) or 0))
-    # Snapshot ham, qo'ng'iroq ham yo'q, lekin tashrif-voqeasi bor kun yo'qolmasin
+            days.append(LeadStageDaySummary(
+                date=d, calls=c, total=0, visits=_event_visits(d) or 0, contracts=_contracts(d)
+            ))
+    # Snapshot ham, qo'ng'iroq ham yo'q, lekin tashrif/shartnoma voqeasi bor kun yo'qolmasin
     covered = lead_days | set(calls_by_day)
-    for d in sorted(vstats["daily_unique"]):
-        if d not in covered and (ev := _event_visits(d)):
-            days.append(LeadStageDaySummary(date=d, calls=0, total=0, visits=ev))
+    for d in sorted(set(vstats["daily_unique"]) | set(vstats["daily_contracts"])):
+        if d in covered:
+            continue
+        ev, contracts = _event_visits(d) or 0, _contracts(d)
+        if ev or contracts:
+            days.append(
+                LeadStageDaySummary(date=d, calls=0, total=0, visits=ev, contracts=contracts)
+            )
     days.sort(key=lambda x: x.date)
 
     return LeadStageMonthOut(
@@ -553,6 +583,8 @@ async def _build_lead_month(
         calls=sum(d.calls for d in days),
         total=sum(d.total for d in days),
         visits=sum(d.visits for d in days),
+        contracts=sum(d.contracts for d in days),
+        contracts_enabled=bool(_contract_ids()),
         days=days,
         last_updated=await _last_updated_for(db, month_start, last_day),
     )
@@ -572,9 +604,10 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
 
     # Tashrif — voqea-asosli (digest bilan bir xil); jurnal qamramagan kun uchun
     # eski snapshot hisobi qoladi (yuqoridagi izohga qarang).
-    vstats = await lead_diff.visit_stats_range(db, day, day, _visit_ids())
+    vstats = await lead_diff.visit_stats_range(db, day, day, _visit_ids(), _contract_ids())
     has_events = day in vstats["days_with_events"]
     ev_ops: dict[int, int] = vstats["daily_by_operator"].get(day, {})
+    contract_ops: dict[int, int] = vstats["daily_contracts_by_operator"].get(day, {})
 
     # Bosqichlarni nom bo'yicha birlashtiramiz.
     stage_agg: dict[str, int] = {}
@@ -599,13 +632,17 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
     else:
         # Operatorlarni lidlar va qo'ng'iroqlardan birlashtiramiz (responsible_id bo'yicha)
         op_agg: dict[int, dict] = {}
+
+        def _blank(name: str | None) -> dict:
+            return {"name": name, "total": 0, "visits": 0, "contracts": 0, "cin": 0, "cout": 0}
+
         for r in records:
-            a = op_agg.setdefault(r.responsible_id, {"name": r.responsible_name, "total": 0, "visits": 0, "cin": 0, "cout": 0})
+            a = op_agg.setdefault(r.responsible_id, _blank(r.responsible_name))
             a["total"] += r.leads_count
             if _is_visit_name(r.stage_name):
                 a["visits"] += r.leads_count
         for c in call_records:
-            a = op_agg.setdefault(c.responsible_id, {"name": c.responsible_name, "total": 0, "visits": 0, "cin": 0, "cout": 0})
+            a = op_agg.setdefault(c.responsible_id, _blank(c.responsible_name))
             a["cin"] += c.calls_in
             a["cout"] += c.calls_out
             if not a.get("name"):
@@ -617,7 +654,10 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
                 a["visits"] = ev_ops.get(rid_, 0)
             for rid_, v in ev_ops.items():
                 if rid_ not in op_agg:
-                    op_agg[rid_] = {"name": str(rid_), "total": 0, "visits": v, "cin": 0, "cout": 0}
+                    op_agg[rid_] = {**_blank(str(rid_)), "visits": v}
+        # Shartnoma har doim voqeadan (snapshot taxmini yo'q)
+        for rid_, c in contract_ops.items():
+            op_agg.setdefault(rid_, _blank(str(rid_)))["contracts"] = c
         operators = [
             LeadOperatorRow(
                 responsible_id=rid,
@@ -627,6 +667,7 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
                 calls_out=a["cout"],
                 total=a["total"],
                 visits=a["visits"],
+                contracts=a["contracts"],
             )
             for rid, a in sorted(op_agg.items(), key=lambda x: -(x[1]["cin"] + x[1]["cout"] + x[1]["total"]))
         ]
@@ -641,6 +682,12 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
     else:
         day_visits = snapshot_visits
 
+    day_contracts = (
+        contract_ops.get(responsible_id, 0)
+        if responsible_id is not None
+        else vstats["daily_contracts"].get(day, 0)
+    )
+
     return LeadStageDayOut(
         date=day,
         calls=calls_in + calls_out,
@@ -648,6 +695,8 @@ async def _build_lead_day(db: AsyncSession, day: date, responsible_id: int | Non
         calls_out=calls_out,
         total=sum(r.leads_count for r in records),
         visits=day_visits,
+        contracts=day_contracts,
+        contracts_enabled=bool(_contract_ids()),
         stages=stages,
         operators=operators,
         responsible_id=responsible_id,
@@ -807,7 +856,7 @@ async def web_stats_overview(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Sayt statistika paneli: kunlik trend seriyasi (qo'ng'iroq / gaplashgan vaqt /
-    lid / tashrif) + sabablar. Hammasi bazadagi kunlik snapshotlardan (CRM'ga murojaat
+    lid / tashrif / shartnoma) + sabablar. Hammasi bazadagi kunlik snapshotlardan (CRM'ga murojaat
     yo'q) — 3 ta grouped so'rov. month (YYYY-MM) berilsa — o'sha kalendar oy (days
     e'tiborga olinmaydi), sabablar ham butun oy uchun; aks holda oxirgi `days` kun,
     sabablar oxirgi 7 kun."""
@@ -847,6 +896,13 @@ async def web_stats_overview(
     calls_by = {d: int(v or 0) for d, v in call_rows.all()}
     leads_by = {d: (int(t or 0), int(v or 0)) for d, t, v in lead_rows.all()}
     talk_by = {d: int(v or 0) for d, v in talk_rows.all()}
+    # Shartnoma — voqea jurnalidan (snapshotdan emas), digest bilan bir xil qoida
+    contract_ids = _contract_ids()
+    contracts_by = (
+        (await lead_diff.visit_stats_range(db, start, end, set(), contract_ids))["daily_contracts"]
+        if contract_ids
+        else {}
+    )
 
     series = []
     for i in range(days):
@@ -859,6 +915,7 @@ async def web_stats_overview(
                 "talk_sec": talk_by.get(d, 0),
                 "leads": leads,
                 "visits": visits,
+                "contracts": contracts_by.get(d, 0),
             }
         )
 
@@ -887,7 +944,7 @@ async def web_stats_overview(
     ]
 
     return {"days": days, "date_from": start.isoformat(), "date_to": end.isoformat(),
-            "series": series, "reasons": reasons}
+            "contracts_enabled": bool(contract_ids), "series": series, "reasons": reasons}
 
 
 @router.get("/web/operator-summary")
@@ -898,7 +955,7 @@ async def web_operator_summary(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Davr kesimida operator jadvali: qo'ng'iroq (oldingi teng davrga % farq bilan),
-    gaplashgan vaqt, lid, tashrif, vazifa. period: today (bugun vs kecha) | week
+    gaplashgan vaqt, lid, tashrif, shartnoma, vazifa. period: today (bugun vs kecha) | week
     (oxirgi 7 kun vs oldingi 7) | month (oxirgi 30 kun vs oldingi 30). month (YYYY-MM)
     berilsa — o'sha kalendar oy (period e'tiborga olinmaydi), % — oldingi teng
     uzunlikdagi davrga nisbatan."""
@@ -943,7 +1000,7 @@ async def web_operator_summary(
         except (TypeError, ValueError):
             continue
 
-    active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"]}
+    active = {rid: a for rid, a in current.items() if a["calls"] or a["leads"] or a["contracts"]}
     operators = []
     for rid, a in sorted(active.items(), key=lambda x: -(x[1]["calls"] + x[1]["leads"])):
         user = user_by_rid.get(rid)
@@ -959,6 +1016,7 @@ async def web_operator_summary(
             "talk_sec": talk_by_user.get(user.id, 0) if user else 0,
             "leads": a["leads"],
             "visits": a["visits"],
+            "contracts": a["contracts"],
             "tasks_done": None,
             "tasks_total": None,
         }
@@ -976,6 +1034,7 @@ async def web_operator_summary(
         "talk_sec": sum(sec for uid, sec in talk_by_user.items() if uid in active_uids),
         "leads": sum(a["leads"] for a in active.values()),
         "visits": sum(a["visits"] for a in active.values()),
+        "contracts": sum(a["contracts"] for a in active.values()),
     }
 
     return {
@@ -984,6 +1043,7 @@ async def web_operator_summary(
         "date_to": cur_end.isoformat(),
         "prev_from": prev_start.isoformat(),
         "prev_to": prev_end.isoformat(),
+        "contracts_enabled": bool(_contract_ids()),
         "operators": operators,
         "totals": totals,
     }

@@ -349,6 +349,8 @@ export interface LeadOperatorRow {
   calls_out: number;
   total: number;
   visits: number;
+  /** «Shartnoma qilindi» bosqichiga kirgan lidlar (faqat yopgan mas'ulga) */
+  contracts: number;
 }
 
 export interface LeadStageDaySummary {
@@ -356,6 +358,7 @@ export interface LeadStageDaySummary {
   calls: number;
   total: number;
   visits: number;
+  contracts: number;
 }
 
 export interface LeadStageMonth {
@@ -363,6 +366,9 @@ export interface LeadStageMonth {
   calls: number;
   total: number;
   visits: number;
+  contracts: number;
+  /** Shartnoma bosqichlari sozlanmagan bo'lsa — 🤝 umuman ko'rsatilmaydi */
+  contracts_enabled: boolean;
   days: LeadStageDaySummary[];
   last_updated: string | null;
 }
@@ -374,6 +380,8 @@ export interface LeadStageDay {
   calls_out: number;
   total: number;
   visits: number;
+  contracts: number;
+  contracts_enabled: boolean;
   stages: LeadStageRow[];
   operators: LeadOperatorRow[];
   responsible_id: number | null;
@@ -389,6 +397,7 @@ export interface StatsSeriesPoint {
   talk_sec: number;
   leads: number;
   visits: number;
+  contracts: number;
 }
 
 export interface StatsReason {
@@ -406,6 +415,8 @@ export interface StatsOverview {
   days: number;
   date_from: string;
   date_to: string;
+  /** Shartnoma bosqichlari (.env) sozlanmagan bo'lsa — kartochka/grafik/ustun chiqmaydi */
+  contracts_enabled: boolean;
   series: StatsSeriesPoint[];
   reasons: StatsReason[];
 }
@@ -420,6 +431,7 @@ export interface OperatorSummaryRow {
   talk_sec: number;
   leads: number;
   visits: number;
+  contracts: number;
   tasks_done: number | null;
   tasks_total: number | null;
 }
@@ -430,6 +442,7 @@ export interface OperatorSummary {
   date_to: string;
   prev_from: string;
   prev_to: string;
+  contracts_enabled: boolean;
   operators: OperatorSummaryRow[];
   totals: {
     calls: number;
@@ -438,6 +451,7 @@ export interface OperatorSummary {
     talk_sec: number;
     leads: number;
     visits: number;
+    contracts: number;
   };
 }
 

@@ -582,6 +582,9 @@ class LeadOperatorRow(BaseModel):
     calls_out: int
     total: int  # ishlangan (yangilangan) lidlar
     visits: int
+    # «Shartnoma qilindi» bosqichiga shu kuni KIRGAN lidlar — faqat yopgan
+    # mas'ulga yoziladi (tashrifdagi dual-kredit bu yerda YO'Q)
+    contracts: int = 0
 
 
 class LeadStageDayOut(BaseModel):
@@ -595,6 +598,10 @@ class LeadStageDayOut(BaseModel):
     calls_out: int
     total: int  # shu kunda ishlangan (yangilangan) lidlar jami
     visits: int  # "Tashrif" bosqichidagi lidlar
+    contracts: int = 0  # "Shartnoma qilindi" bosqichiga kirgan lidlar
+    # Shartnoma bosqichlari sozlanganmi — sozlanmagan bo'lsa bot/sayt 🤝 ni
+    # umuman ko'rsatmaydi (har joyda "0" turib chalg'itmasligi uchun)
+    contracts_enabled: bool = False
     stages: list[LeadStageRow]
     operators: list[LeadOperatorRow] = []
     responsible_id: int | None = None
@@ -607,15 +614,19 @@ class LeadStageDaySummary(BaseModel):
     calls: int
     total: int
     visits: int
+    contracts: int = 0
 
 
 class LeadStageMonthOut(BaseModel):
-    """Oylik ko'rinish: har kun uchun gaplashilgan (qo'ng'iroq), lidlar va tashriflar."""
+    """Oylik ko'rinish: har kun uchun gaplashilgan (qo'ng'iroq), lidlar, tashriflar
+    va shartnomalar."""
 
     month: str  # "YYYY-MM"
     calls: int
     total: int
     visits: int
+    contracts: int = 0
+    contracts_enabled: bool = False
     days: list[LeadStageDaySummary]
     last_updated: datetime | None = None
 
@@ -1797,6 +1808,49 @@ class RequestCalcOut(BaseModel):
     off_days: int
     conflict_dates: list[dt.date]
     summary: str
+
+
+class RequestManagerDecide(BaseModel):
+    """Bevosita rahbar bosqichi — yakuniy qaror EMAS. Rad etishda izoh
+    majburiy (xodim nega to'xtaganini bilishi kerak); tasdiqlashda
+    ixtiyoriy."""
+
+    approve: bool
+    note: str = Field(default="", max_length=1000)
+
+    @model_validator(mode="after")
+    def _note_required_on_reject(self):
+        if not self.approve and len(self.note.strip()) < 5:
+            raise ValueError("Rad etish uchun izoh kerak (kamida 5 belgi)")
+        return self
+
+
+class RequestManagerDecideBot(RequestManagerDecide):
+    telegram_id: int
+
+
+class LeaveBalanceOut(BaseModel):
+    """Ta'til balansi — MASLAHAT sifatida (arizani bloklamaydi)."""
+
+    year: int
+    entitled_days: int
+    used_days: int
+    remaining_days: int
+    hire_date: dt.date | None
+    # `hire_date` yo'q — staj hisoblanmadi, raqam taxminiy.
+    estimated: bool
+
+
+class RequestInterruptDecide(BaseModel):
+    """«Ishdagi ta'tilchi» qarori: `cut=True` — ta'tilning QOLGAN kunlari
+    bekor qilinadi; `False` — ta'til davom etadi (kelgani faqat qayd
+    etilgan)."""
+
+    cut: bool
+
+
+class RequestInterruptDecideBot(RequestInterruptDecide):
+    telegram_id: int
 
 
 class RequestSlaTick(BaseModel):

@@ -40,6 +40,15 @@ CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS = [
     int(x) for x in os.getenv("CRM_UYSOT_HOT_LEAD_TERMINAL_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
     if x.strip().isdigit()
 ]
+# «Shartnoma qilindi» bosqichlari — guruhga tabrik videosi shu bosqichga
+# o'tganda yuboriladi (api/services/celebration.py). Tashrifdagi kabi bir
+# nechta voronkada bir xil nomli bosqich bor: jonli hisobda 8060 (Pipeline) va
+# 8788 (Nurli Diyor) — 2026-08-14 da `/pipe/all` javobidan tasdiqlangan.
+# Bo'sh bo'lsa — shartnoma tabriklari umuman yuborilmaydi.
+CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [
+    int(x) for x in os.getenv("CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
+    if x.strip().isdigit()
+]
 
 # Diff-engine (kunlik statistika, lead_diff.py): chegaralangan tez skan qancha
 # kun orqaga yaratilgan lidlarni qamrab olishi kerak — undan eskilari kamdan-kam

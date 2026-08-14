@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services import lead_diff
 from api.services.daily_digest import digest_group_targets
 from api.telegram_notify import send_message
 from api.timeutil import local_range_utc_naive, today_local
@@ -36,7 +37,13 @@ _MIN_PREV_CALLS_FOR_PCT = 10
 
 async def _range_by_operator(db: AsyncSession, day_from: date, day_to: date) -> dict[int, dict]:
     """[day_from, day_to] oralig'ining operator kesimi:
-    {responsible_id: {name, calls, leads, visits}} — ikkita grouped so'rov."""
+    {responsible_id: {name, calls, leads, visits, contracts}} — ikkita grouped
+    so'rov + (shartnoma sozlangan bo'lsa) voqea jurnalidan bitta o'qish.
+
+    `contracts` snapshotdan EMAS, `LeadEvent`dan olinadi (kunlik digest bilan
+    bir xil qoida: bosqichga KIRISH voqeasi, faqat yopgan mas'ulga) — snapshot
+    "shu kuni o'sha bosqichda turgan lidlar"ni sanaydi va shartnoma uchun bu
+    raqamni shishirardi."""
     agg: dict[int, dict] = {}
 
     is_visit = func.lower(func.trim(LeadStageDaily.stage_name)) == _VISIT_STAGE_NAME
@@ -51,7 +58,13 @@ async def _range_by_operator(db: AsyncSession, day_from: date, day_to: date) -> 
         .group_by(LeadStageDaily.responsible_id)
     )
     for rid, name, leads, visits in lead_rows.all():
-        agg[rid] = {"name": name, "calls": 0, "leads": int(leads or 0), "visits": int(visits or 0)}
+        agg[rid] = {
+            "name": name,
+            "calls": 0,
+            "leads": int(leads or 0),
+            "visits": int(visits or 0),
+            "contracts": 0,
+        }
 
     call_rows = await db.execute(
         select(
@@ -63,10 +76,22 @@ async def _range_by_operator(db: AsyncSession, day_from: date, day_to: date) -> 
         .group_by(OperatorCallsDaily.responsible_id)
     )
     for rid, name, calls in call_rows.all():
-        a = agg.setdefault(rid, {"name": name, "calls": 0, "leads": 0, "visits": 0})
+        a = agg.setdefault(
+            rid, {"name": name, "calls": 0, "leads": 0, "visits": 0, "contracts": 0}
+        )
         a["calls"] += int(calls or 0)
         if not a.get("name"):
             a["name"] = name
+
+    contract_ids = lead_diff.contract_pipe_status_ids()
+    if contract_ids:
+        series = await lead_diff.visit_stats_range(db, day_from, day_to, set(), contract_ids)
+        for day_ops in series["daily_contracts_by_operator"].values():
+            for rid, count in day_ops.items():
+                a = agg.setdefault(
+                    rid, {"name": None, "calls": 0, "leads": 0, "visits": 0, "contracts": 0}
+                )
+                a["contracts"] += count
 
     return agg
 
@@ -125,9 +150,10 @@ async def build_weekly_digest(db: AsyncSession, ref_day: date | None = None) -> 
         except (TypeError, ValueError):
             continue
 
-    active = {rid: a for rid, a in this_week.items() if a["calls"] or a["leads"]}
+    active = {rid: a for rid, a in this_week.items() if a["calls"] or a["leads"] or a["contracts"]}
     if not active:
         return {"text": None, "operators": 0}
+    show_contracts = bool(lead_diff.contract_pipe_status_ids())
 
     lines: list[str] = []
     changes: list[tuple[str, int]] = []  # (ism, %-o'zgarish) — eng o'sish/pasayish uchun
@@ -144,8 +170,10 @@ async def build_weekly_digest(db: AsyncSession, ref_day: date | None = None) -> 
             done, total = tasks[user.id]
             mark = "✅" if done == total else "🕓"
             task_part = f" · {mark} {done}/{total}"
+        contract_part = f" · 🤝 {a['contracts']}" if show_contracts else ""
         lines.append(
-            f"• <b>{name}</b> — 📞 {a['calls']}{_pct_str(pct)} · 🧲 {a['leads']} · 🏠 {a['visits']}{task_part}"
+            f"• <b>{name}</b> — 📞 {a['calls']}{_pct_str(pct)} · 🧲 {a['leads']} · "
+            f"🏠 {a['visits']}{contract_part}{task_part}"
         )
 
     total_calls = sum(a["calls"] for a in active.values())
@@ -157,6 +185,8 @@ async def build_weekly_digest(db: AsyncSession, ref_day: date | None = None) -> 
     if prev_week:
         totals += f" (o'tgan hafta {prev_total_calls}{_pct_str(total_pct)})"
     totals += f" · 🧲 {total_leads} · 🏠 {total_visits}"
+    if show_contracts:
+        totals += f" · 🤝 {sum(a['contracts'] for a in active.values())}"
 
     parts = [
         f"📈 <b>Haftalik yakun — {this_start:%d.%m} – {ref_day:%d.%m.%Y}</b>",
@@ -176,7 +206,11 @@ async def build_weekly_digest(db: AsyncSession, ref_day: date | None = None) -> 
         if rating:
             parts.append(" · ".join(rating))
     parts.append("")
-    parts.append("<i>📞 qo'ng'iroq (o'tgan haftaga nisbatan) · 🧲 ishlangan lid · 🏠 tashrif · ✅ vazifa</i>")
+    parts.append(
+        "<i>📞 qo'ng'iroq (o'tgan haftaga nisbatan) · 🧲 ishlangan lid · 🏠 tashrif · "
+        + ("🤝 shartnoma · " if show_contracts else "")
+        + "✅ vazifa</i>"
+    )
 
     return {"text": "\n".join(parts), "operators": len(active)}
 

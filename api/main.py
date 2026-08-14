@@ -61,6 +61,7 @@ from api.routers import (
     auto_plan,
     bonuses,
     busy_period,
+    celebration,
     system_health,
     daily_results,
     excused_days,
@@ -147,6 +148,7 @@ app.include_router(tasks.router)
 app.include_router(excused_days.router)
 app.include_router(norms.router)
 app.include_router(mobilograf.router)
+app.include_router(celebration.router)
 app.include_router(monitored_groups.router)
 app.include_router(reports.router)
 app.include_router(daily_results.router)

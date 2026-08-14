@@ -92,6 +92,19 @@ async def cleanup_login_security(db: AsyncSession) -> dict:
     }
 
 
+async def celebration_tick(db: AsyncSession) -> dict:
+    """Tashrif/shartnoma tabriklarini guruhga e'lon qilish — ZAXIRA yo'l.
+
+    Asosiy yo'l — Uysot webhook'i (`uysot_webhook.process_log_entry` voqealarni
+    yozgach darhol chaqiradi). Bu tick webhook jim qolgan yoki voqeani
+    diff-skaner topgan holat uchun. Yuborilganini `celebration_posts`
+    UNIQUE cheklovi eslab qoladi, shuning uchun ikki yo'l bir-birini
+    takrorlamaydi."""
+    from api.services import celebration
+
+    return await celebration.announce_pending(db)
+
+
 async def knowledge_tick(db: AsyncSession) -> dict:
     """Draft bilim yozuvlarini chegaralangan AI to'plamida qayta ishlaydi.
 
@@ -148,6 +161,7 @@ async def group_digest_tick(db: AsyncSession) -> dict:
     cfg.last_posted_calls = totals.get("calls")
     cfg.last_posted_leads = totals.get("leads")
     cfg.last_posted_visits = totals.get("visits")
+    cfg.last_posted_contracts = totals.get("contracts")
     await db.commit()
     return {"fired": True, **result}
 

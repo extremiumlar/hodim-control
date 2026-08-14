@@ -41,17 +41,29 @@ def _last_updated_line(iso: str | None) -> str:
     return f"🕐 Oxirgi yangilanish: {dt:%d.%m %H:%M}"
 
 
+def _contracts_part(data: dict) -> str:
+    """« | 🤝 Shartnomalar: N» — faqat shartnoma bosqichlari sozlangan bo'lsa
+    (`contracts_enabled`), aks holda bo'sh satr: har joyda "0" turib
+    chalg'itmasin."""
+    return f" | 🤝 Shartnomalar: <b>{data.get('contracts', 0)}</b>" if data.get("contracts_enabled") else ""
+
+
 def _month_text(data: dict) -> str:
     lines = [
         f"🧲 <b>Lidlar statistikasi — {_month_title(data['month'])}</b>",
-        f"📞 Gaplashilgan lidlar: <b>{data['calls']}</b> | 🧲 Ishlangan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
+        f"📞 Gaplashilgan lidlar: <b>{data['calls']}</b> | 🧲 Ishlangan lidlar: <b>{data['total']}</b> | "
+        f"Tashriflar: <b>{data['visits']}</b>{_contracts_part(data)}",
     ]
     if data["days"]:
         lines.append("")
         for day_row in data["days"]:
             d = date.fromisoformat(day_row["date"])
             visits_part = f", {day_row['visits']} tashrif" if day_row["visits"] else ""
-            lines.append(f"{d:%d.%m} — {day_row['calls']} gaplashildi, {day_row['total']} lid{visits_part}")
+            contract_part = f", {day_row['contracts']} shartnoma" if day_row.get("contracts") else ""
+            lines.append(
+                f"{d:%d.%m} — {day_row['calls']} gaplashildi, {day_row['total']} lid"
+                f"{visits_part}{contract_part}"
+            )
         lines.append("")
         lines.append("Kun tafsiloti uchun sanani tanlang:")
     else:
@@ -84,7 +96,8 @@ def _summary_lines(data: dict) -> list[str]:
     return [
         f"📞 Gaplashilgan lidlar: <b>{data['calls']}</b> "
         f"(kiruvchi {data['calls_in']}, chiquvchi {data['calls_out']})",
-        f"🧲 Ishlangan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>",
+        f"🧲 Ishlangan lidlar: <b>{data['total']}</b> | Tashriflar: <b>{data['visits']}</b>"
+        f"{_contracts_part(data)}",
     ]
 
 
@@ -127,6 +140,10 @@ def _day_keyboard(data: dict, personal: bool = False) -> InlineKeyboardMarkup:
     else:
         for op in data.get("operators", []):
             label = f"{op['responsible_name']} — {op['calls']} gaplashildi, {op['total']} lid"
+            if op.get("contracts"):
+                # Shartnoma kam uchraydigan, eng qimmatli hodisa — tugmada
+                # faqat bo'lgan operatorda ko'rinadi (nol bilan shovqin qilmasin)
+                label += f", 🤝{op['contracts']}"
             rows.append(
                 [InlineKeyboardButton(text=label, callback_data=f"leadstats:op:{d}:{op['responsible_id']}")]
             )
