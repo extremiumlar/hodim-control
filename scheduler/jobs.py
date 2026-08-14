@@ -162,6 +162,17 @@ async def appeals_sla_tick() -> None:
         )
 
 
+async def requests_sla_tick() -> None:
+    """Ariza SLA: 3 kundan javobsizga HR eslatmasi, 5 kundan Boshliqqa
+    eskalatsiya (murojaat SLA'si bilan bir xil naqsh, iz ustunlari bilan)."""
+    body = await call_api("/requests/sla-tick", json={}, timeout=60, label="Ariza SLA")
+    if body is not None and (body.get("reminded") or body.get("escalated")):
+        logger.info(
+            "Ariza SLA: %s eslatma, %s eskalatsiya (ochiq %s)",
+            body.get("reminded"), body.get("escalated"), body.get("open"),
+        )
+
+
 async def work_log_reminder_tick() -> None:
     """Ish kundaligi eslatmasi — ish tugashiga yaqin, bugun ishlagan-u hali
     hech narsa yozmaganlarga. API dam kuni/sababli kun/kelmagan/yozgan

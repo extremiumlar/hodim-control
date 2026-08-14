@@ -97,6 +97,7 @@ HOURLY_PLAN_LOCK_STALE_MINUTES = 5
 WORK_LOG_REMINDER_LOCK = ROOT / "logs" / "work_log_reminder.lock"
 WORK_LOG_REMINDER_LOCK_STALE_MINUTES = 5
 APPEALS_SLA_LOCK = ROOT / "logs" / "appeals_sla.lock"
+REQUESTS_SLA_LOCK = ROOT / "logs" / "requests_sla.lock"
 APPEALS_SLA_LOCK_STALE_MINUTES = 10
 
 
@@ -452,6 +453,18 @@ async def _run_work_log_reminder_inprocess(now: datetime) -> None:
     )
 
 
+async def _run_requests_sla_inprocess(now: datetime) -> None:
+    """Ariza SLA: 3 kunlik eslatma, 5 kunlik eskalatsiya — murojaat SLA'si
+    bilan bir xil naqsh (iz ustunlari har birini bir marta kafolatlaydi)."""
+    async def runner(db):
+        from api.services.cron_jobs import requests_sla_tick
+        return await requests_sla_tick(db)
+
+    await _run_service_inprocess(
+        now, "ariza SLA", REQUESTS_SLA_LOCK, APPEALS_SLA_LOCK_STALE_MINUTES, runner
+    )
+
+
 async def _run_appeals_sla_inprocess(now: datetime) -> None:
     """Murojaat SLA: 3 kunlik eslatma, 5 kunlik eskalatsiya. Iz ustunlari
     (`sla_reminded_at`/`escalated_at`) har birini bir marta yuborishni
@@ -559,6 +572,10 @@ async def main() -> None:
         await _run_work_log_reminder_inprocess(now)
     if now.hour == cfg.APPEALS_SLA_HOUR and now.minute == cfg.APPEALS_SLA_MINUTE:
         await _run_appeals_sla_inprocess(now)
+    # Ariza SLA — ataylab boshqa daqiqada: ikki og'ir ish bitta daqiqada
+    # to'planmasin (cPanel'da yagona ishchi).
+    if now.hour == cfg.APPEALS_SLA_HOUR and now.minute == cfg.REQUESTS_SLA_MINUTE:
+        await _run_requests_sla_inprocess(now)
 
     # Og'ir lid skaneri — HTTP jobs'dan KEYIN (yengil ticklar kechikmasin)
     if _lead_sync_due(now):

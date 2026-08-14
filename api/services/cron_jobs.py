@@ -474,6 +474,87 @@ async def work_log_reminder_tick(db: AsyncSession, dry_run: bool = False) -> dic
     return {"date": day.isoformat(), "candidates": len(planned), "sent": sent}
 
 
+async def requests_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Javobsiz qolgan ARIZALAR: 3 kundan keyin HR ga eslatma, 5 kundan keyin
+    Boshliqqa eskalatsiya.
+
+    `appeals_sla_tick` bilan bir xil naqsh: iz ustunlari (`sla_reminded_at` /
+    `escalated_at`) YUBORISHDAN OLDIN yoziladi va darhol commit qilinadi —
+    cPanel'da cron ikki jarayonda ishlasa ham xabar bir marta ketadi."""
+    from api.notify import notify_user
+    from api.routers.requests import (
+        SLA_ESCALATE_DAYS,
+        SLA_REMIND_DAYS,
+        _KIND_LABELS,
+        _recipients,
+    )
+    from api.services.push import Category
+    from db.models import REQUEST_OPEN_STATUSES, EmployeeRequest
+
+    now = datetime.utcnow()
+    open_items = list(
+        await db.scalars(
+            select(EmployeeRequest)
+            .where(EmployeeRequest.status.in_(REQUEST_OPEN_STATUSES))
+            .order_by(EmployeeRequest.created_at.asc())
+        )
+    )
+    to_remind = [
+        i for i in open_items
+        if i.sla_reminded_at is None and i.created_at <= now - timedelta(days=SLA_REMIND_DAYS)
+    ]
+    to_escalate = [
+        i for i in open_items
+        if i.escalated_at is None and i.created_at <= now - timedelta(days=SLA_ESCALATE_DAYS)
+    ]
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "remind": [i.id for i in to_remind],
+            "escalate": [i.id for i in to_escalate],
+        }
+
+    reminded = 0
+    for item in to_remind:
+        item.sla_reminded_at = now
+        await db.commit()
+        days = (now - item.created_at).days
+        for rec in await _recipients(db):
+            await notify_user(
+                db, rec, Category.APPEALS,
+                f"⏳ <b>Javobsiz ariza</b> ({days} kun)\n"
+                f"{_KIND_LABELS.get(item.kind, item.kind)} — ko'rib chiqing.",
+                data={"path": "/requests"},
+            )
+        reminded += 1
+
+    escalated = 0
+    bosses = list(
+        await db.scalars(
+            select(User).where(
+                User.role == Role.boss.value,
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+    for item in to_escalate:
+        item.escalated_at = now
+        await db.commit()
+        days = (now - item.created_at).days
+        for boss in bosses:
+            await notify_user(
+                db, boss, Category.APPEALS,
+                f"🚨 <b>Ariza {days} kundan beri javobsiz</b>\n"
+                f"{_KIND_LABELS.get(item.kind, item.kind)}.",
+                data={"path": "/requests"},
+            )
+        escalated += 1
+
+    return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}
+
+
 async def appeals_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
     """Javobsiz qolgan murojaatlar: 3 kundan keyin qabul qiluvchiga eslatma,
     5 kundan keyin Boshliqqa eskalatsiya.

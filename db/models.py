@@ -514,6 +514,13 @@ class ExcusedDay(Base):
     # `daily`/`hourly` stavkaga ta'sir qilmaydi — u yerda sababli kun
     # allaqachon to'lanmaydi (faqat `present`/`late` kunlar sanaladi).
     is_paid: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Qaysi arizadan tug'ilgan (ARIZALAR_REJASI.md 3.2). Ariza bekor
+    # qilinganda aynan shu bog'liqlik bo'yicha topib qaytariladi; teskari
+    # savolga ham javob beradi: «bu sababli kun qayerdan paydo bo'lgan?».
+    # NULL — qo'lda kiritilgan (HR yoki xodim so'rovi).
+    source_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employee_requests.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(String(20), default=ExcusedStatus.pending.value)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -888,6 +895,11 @@ class WorkScheduleOverride(Base):
     start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     end_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Ariza materializatsiyasi izi — `ExcusedDay.source_request_id` bilan
+    # bir xil maqsad (bekor qilishda qaytarish).
+    source_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employee_requests.id"), nullable=True, index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -1124,6 +1136,104 @@ class Appeal(Base):
     sla_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class RequestKind(str, enum.Enum):
+    """Ariza turi. Guruhlari — TASDIQLANGANDA nima bo'lishi bo'yicha
+    (ARIZALAR_REJASI.md 3.1): bu modulning markaziy g'oyasi."""
+
+    # A guruh — davomatga yoziladi (ExcusedDay qatorlari)
+    vacation = "vacation"  # mehnat ta'tili (to'lovli)
+    unpaid = "unpaid"  # o'z hisobidan (to'lovsiz)
+    sick = "sick"  # kasallik
+    # B guruh — pulga yoziladi (PayrollAdjustment)
+    advance = "advance"  # avans
+    # C guruh — tizim hech nima yozmaydi, HR qo'lda bajaradi
+    certificate = "certificate"  # ma'lumotnoma
+    schedule_change = "schedule_change"  # ish jadvalini o'zgartirish
+    resignation = "resignation"  # ishdan bo'shash
+    other = "other"
+
+
+# Guruhlar — `_apply` shu ro'yxatlarga qarab ish tutadi.
+LEAVE_KINDS = (RequestKind.vacation.value, RequestKind.unpaid.value, RequestKind.sick.value)
+MONEY_KINDS = (RequestKind.advance.value,)
+# To'lovsiz yagona tur — `ExcusedDay.is_paid=False` bilan yoziladi.
+UNPAID_KINDS = (RequestKind.unpaid.value,)
+
+
+class RequestStatus(str, enum.Enum):
+    pending = "pending"  # yangi, qaror kutilmoqda
+    manager_ok = "manager_ok"  # ⭐ Bosqich 4: ROP tasdiqladi, HR kutilmoqda
+    approved = "approved"  # tasdiqlandi VA materializatsiya qilindi
+    rejected = "rejected"
+    cancelled = "cancelled"  # xodim o'zi qaytarib oldi (qarordan OLDIN)
+    revoked = "revoked"  # tasdiqlangach bekor qilindi (yozuvlar qaytarildi)
+
+
+# Hali yopilmagan arizalar — SLA tick, spam limiti va to'qnashuv tekshiruvi
+# shu ikkitasini sanaydi.
+REQUEST_OPEN_STATUSES = (RequestStatus.pending.value, RequestStatus.manager_ok.value)
+
+
+class EmployeeRequest(Base):
+    """Xodim arizasi — KELAJAKKA qaratilgan so'rov (ARIZALAR_REJASI.md).
+
+    `Appeal` dan TUB FARQI (models.py izohiga qarang): u ataylab hech narsani
+    hisoblamaydi, bu esa tasdiqlanganda REAL o'zgarish YOZADI —
+    ta'til `ExcusedDay` qatorlariga, avans `PayrollAdjustment` ga aylanadi.
+
+    QAYTARISH: yozilgan qatorlar arizaga TESKARI bog'langan
+    (`source_request_id`) — bekor qilinganda aynan shular topib qaytariladi.
+    JSON ro'yxat saqlashdan farqi: «bu sababli kun qayerdan paydo bo'lgan?»
+    degan teskari savolga ham javob beradi va yetim qator qolmaydi.
+
+    MAYDONLAR: `start_date`/`end_date`/`amount` — ALOHIDA ustun (JSON'da emas),
+    chunki ular QIDIRILADI: to'qnashuv tekshiruvi, avans chegarasi, ta'til
+    balansi — uchalasi ham shu maydonlar bo'yicha filtrlaydi va JSON ichida
+    indeks bo'lmaydi. `payload` esa faqat qidirilmaydigan, turga xos
+    qo'shimchalar uchun (ma'lumotnoma maqsadi, jadval o'zgartirish tafsiloti).
+    """
+
+    __tablename__ = "employee_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+
+    # ── Qidiriladigan maydonlar ──
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    # ── Turga xos, qidirilmaydigan qo'shimchalar ──
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    reason: Mapped[str] = mapped_column(Text)  # 10..2000 (sxema tekshiradi)
+    file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    status: Mapped[str] = mapped_column(String(20), default=RequestStatus.pending.value, index=True)
+
+    # ⭐ Bosqich 4 (zanjir) uchun joy — hozircha to'ldirilmaydi.
+    manager_id_at_creation: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    manager_decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    manager_decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    manager_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Materializatsiya vaqti — `approved` bo'lgan, lekin yozuvlar hali
+    # yaratilmagan holat bo'lmasligi kerak; NULL bo'lsa nimadir noto'g'ri.
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # ⭐ Bosqich 5: ta'til vaqtida ishga kelish izi.
+    interrupted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    interrupt_decision: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    sla_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
@@ -1696,6 +1806,10 @@ class PayrollAdjustment(Base):
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     decided_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Avans arizasidan tug'ilgan bo'lsa — manba (ARIZALAR_REJASI.md 3.2).
+    source_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employee_requests.id"), nullable=True, index=True
+    )
 
 
 class PushToken(Base):

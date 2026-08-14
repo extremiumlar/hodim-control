@@ -154,6 +154,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(hour=cfg.APPEALS_SLA_HOUR, minute=cfg.APPEALS_SLA_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Ariza SLA — murojaat SLA'sidan 3 daqiqa keyin (bitta daqiqada ikki
+        # og'ir so'rov to'planmasin; cPanel'da yagona ishchi bor).
+        JobSpec(
+            "requests_sla", jobs.requests_sla_tick,
+            _cron(hour=cfg.APPEALS_SLA_HOUR, minute=cfg.REQUESTS_SLA_MINUTE),
+            misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
+        ),
         # ─── Telegram login xavfsizligi (replay himoyasi + rate-limit) ───────────
         # Eskirgan hash/urinish yozuvlarini tozalash — vaqtinchalik jadvallar
         JobSpec(

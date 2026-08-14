@@ -1681,6 +1681,128 @@ class AppealSlaTick(BaseModel):
     dry_run: bool = False
 
 
+# ─── Arizalar (ARIZALAR_REJASI.md, Bosqich 1) ──────────────────────────────────
+
+_REQUEST_KINDS = {
+    "vacation", "unpaid", "sick", "advance",
+    "certificate", "schedule_change", "resignation", "other",
+}
+_LEAVE_KINDS = {"vacation", "unpaid", "sick"}
+_MONEY_KINDS = {"advance"}
+
+
+class RequestCreateBase(BaseModel):
+    """Bot va web sxemalarining umumiy tanasi (`telegram_id` faqat botda)."""
+
+    kind: str
+    start_date: dt.date | None = None
+    end_date: dt.date | None = None
+    amount: float | None = Field(default=None, gt=0)
+    payload: dict | None = None
+    reason: str = Field(min_length=10, max_length=2000)
+    file_id: str | None = Field(default=None, max_length=200)
+    file_type: str | None = Field(default=None, pattern="^(photo|document)$")
+
+    @field_validator("kind")
+    @classmethod
+    def _check_kind(cls, v: str) -> str:
+        if v not in _REQUEST_KINDS:
+            raise ValueError(f"Noma'lum ariza turi: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def _check_shape(self):
+        """Tur bo'yicha MAJBURIY maydonlar. Ariza tasdiqlanganda tizim real
+        yozuv yaratadi — ma'lumot to'liq bo'lmasa materializatsiya paytida
+        emas, ARIZA YARATILAYOTGANDA to'xtatish kerak."""
+        if self.kind in _LEAVE_KINDS:
+            if self.start_date is None or self.end_date is None:
+                raise ValueError("Ta'til/kasallik arizasida sana oralig'i ko'rsatilishi shart")
+            if self.end_date < self.start_date:
+                raise ValueError("Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas")
+            if (self.end_date - self.start_date).days > 366:
+                raise ValueError("Oraliq juda uzun (bir yildan ko'p) — sanani tekshiring")
+        elif self.kind in _MONEY_KINDS:
+            if self.amount is None:
+                raise ValueError("Avans arizasida summa ko'rsatilishi shart")
+        return self
+
+
+class RequestBotCreate(RequestCreateBase):
+    telegram_id: int
+
+
+class RequestMeCreate(RequestCreateBase):
+    """Web/mobil (JWT) — `telegram_id` YO'Q, shaxs tokendan olinadi."""
+
+
+class RequestOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str | None
+    kind: str
+    start_date: dt.date | None
+    end_date: dt.date | None
+    amount: float | None
+    payload: dict | None
+    reason: str
+    file_id: str | None
+    file_type: str | None
+    status: str
+    decided_by: int | None
+    decided_at: datetime | None
+    decision_note: str | None
+    applied_at: datetime | None
+    created_at: datetime
+    # Ariza yaratilgandagi hisob — ro'yxatda qayta hisoblamaslik uchun.
+    working_days: int | None = None
+
+
+class RequestDecide(BaseModel):
+    """Qaror + MAJBURIY izoh (Appeal bilan bir xil qoida: xodim nega shunday
+    hal qilinganini bilishi kerak)."""
+
+    decision: str
+    note: str = Field(min_length=5, max_length=2000)
+
+    @field_validator("decision")
+    @classmethod
+    def _check_decision(cls, v: str) -> str:
+        if v not in {"approved", "rejected"}:
+            raise ValueError("decision: approved yoki rejected")
+        return v
+
+
+class RequestDecideBot(RequestDecide):
+    telegram_id: int
+
+
+class RequestActorBot(BaseModel):
+    telegram_id: int
+
+
+class RequestRevoke(BaseModel):
+    """Tasdiqlangan arizani bekor qilish — yozilgan qatorlar qaytariladi."""
+
+    reason: str = Field(min_length=5, max_length=500)
+
+
+class RequestCalcOut(BaseModel):
+    """Ish kunlari kalkulyatori javobi (arizadan OLDIN ko'rsatiladi)."""
+
+    start_date: dt.date
+    end_date: dt.date
+    total_days: int
+    working_days: int
+    off_days: int
+    conflict_dates: list[dt.date]
+    summary: str
+
+
+class RequestSlaTick(BaseModel):
+    dry_run: bool = False
+
+
 class WorkLogReminderTick(BaseModel):
     """Scheduler tick. `dry_run` — hech kimga YUBORMASDAN kimga ketishini
     qaytaradi (attendance reminder-tick bilan bir xil sinov naqshi)."""

@@ -514,9 +514,35 @@ tasdiqlanadi («01.09 — 10.09, 10 kun»).
       default` — **uchala joyga birga** (`hourly_plan.py`, `work_schedule.py`,
       `payroll.py`)
 
-**Bosqich 1 — ariza yadrosi**: model + migratsiya + `_apply` (bitta
-tranzaksiya, idempotent holat o'tishi) + `CalculationService` (ish kunlari
-kalkulyatori) + API (bir bosqichli: faqat HR) + audit + SLA
+**Bosqich 1 — ariza yadrosi** ✅ BAJARILDI (2026-08-13)
+- [x] `EmployeeRequest` modeli (gibrid: `start_date`/`end_date`/`amount`
+      alohida ustun + `payload` JSON) + `RequestKind`/`RequestStatus`
+- [x] `source_request_id` — `excused_days`, `work_schedule_override`,
+      `payroll_adjustments` (migratsiyada oddiy Integer + indeks; FK faqat
+      modelda — SQLite batch tuzog'i)
+- [x] Migratsiya `i8j9k0l1m2n3` (teskari yo'l sinaldi)
+- [x] `api/services/workdays.py` — ish kunlari kalkulyatori (bulk, bir
+      so'rovda) + to'qnashuv aniqlash
+- [x] `api/routers/requests.py` — 14 endpoint, `_apply`/`_revert`
+- [x] `api/services/cron_jobs.py: requests_sla_tick` + cron in-process
+      ulanishi (`REQUESTS_SLA_MINUTE=10` — murojaat SLA'sidan 3 daqiqa keyin)
+- [x] Sinov: 69 tekshiruv, 0 xato
+
+**Ijro paytidagi qarorlar:**
+- **Ta'til faqat ISH kunlariga yoziladi** — dam kunlariga `ExcusedDay`
+  yozish shovqin bo'lardi (kalendarda «sababli» bo'lib chiqardi).
+- **Mavjud sababli kunga TEGILMAYDI** — xodim o'zi so'rab olgan bo'lsa,
+  arizaga «o'g'irlab» qo'yilmaydi (bekor qilinganda begona yozuv o'chib
+  ketardi). UNIQUE baribir ruxsat bermaydi.
+- **Bekor qilishda `ExcusedDay` o'chirilmaydi, `rejected` qilinadi** —
+  tarix qoladi va «nega bu kun sababli edi» savoliga javob bo'ladi.
+  `PayrollAdjustment` esa `pending` bo'lsa o'chiriladi; `approved` bo'lsa
+  TEGILMAYDI (pul berilgan bo'lishi mumkin) va ogohlantirish qaytariladi.
+- **Avansda davr qulfi tekshiriladi** — qulflangan davrga yozuv qo'shilsa
+  u hech qachon hisobga kirmasdi va «avans berildi-yu payslipda yo'q»
+  degan chalkashlik chiqardi.
+- **SLA mantig'i `cron_jobs.py` da** — boshqa seans barcha ticklarni
+  in-process ga ko'chirgan (sayt qotishi tuzatishi), shu naqshga moslashildi.
 
 **Bosqich 2 — bot**: menyuni «Murojaatlarim» ga birlashtirish + ariza oqimi
 + kalkulyator javobi («10 kundan 8 tasi ish kuni»)

@@ -117,6 +117,9 @@ WORK_LOG_REMINDER_INTERVAL_MINUTES = 10
 # KUN). Ish kuni boshida, HR stoliga o'tirganda ko'rsin.
 APPEALS_SLA_HOUR = 10
 APPEALS_SLA_MINUTE = 7
+# Ariza SLA — o'sha soatda, lekin 3 daqiqa keyin: cPanel'da Passenger'ning
+# yagona ishchisi bitta daqiqada ikki og'ir so'rovni ko'tarmasin.
+REQUESTS_SLA_MINUTE = 10
 
 # Telegram login xavfsizligi: replay-himoya hash'lari va rate-limit urinish
 # yozuvlarini tozalash chastotasi — vaqtinchalik jadvallar, shoshilinch emas.

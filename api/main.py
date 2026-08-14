@@ -77,6 +77,7 @@ from api.routers import (
     positions,
     push,
     reports,
+    requests as requests_router,
     sales_ai,
     stats,
     tasks,
@@ -156,6 +157,7 @@ app.include_router(stats.router)
 app.include_router(work_schedule.router)
 app.include_router(work_log.router)
 app.include_router(appeals.router)
+app.include_router(requests_router.router)
 app.include_router(payroll.router)
 app.include_router(admin_override.router)
 app.include_router(hourly_plan.router)
