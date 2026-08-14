@@ -29,10 +29,19 @@ class NormFSM(StatesGroup):
 
 
 def _metrics_of(emp: dict) -> list[str]:
-    """Xodim lavozimiga biriktirilgan ko'rsatkichlar (bo'lmasa standart to'plam)."""
+    """Xodim lavozimiga biriktirilgan ko'rsatkichlar.
+
+    Backend'dagi `metrics_for` bilan BIR XIL qoida (api/routers/norms.py):
+    `metrics` umuman sozlanmagan bo'lsa (`None`) — standart to'plam; ATAYLAB
+    bo'sh (`[]`) bo'lsa — bo'sh ro'yxat ("bu lavozimda ko'rsatkich kuzatilmaydi").
+    Ikkalasini farqlash SHART: aks holda bot Bugalter/Kassir kabi lavozimga
+    "Suhbatlar soni"ni taklif qilar, backend esa uni RAD etardi — foydalanuvchi
+    tushunarsiz xato ko'rardi."""
     position = emp.get("position") or {}
-    metrics = [m for m in (position.get("metrics") or []) if m in METRIC_LABELS]
-    return metrics or DEFAULT_METRICS
+    raw = position.get("metrics")
+    if raw is None:
+        return DEFAULT_METRICS
+    return [m for m in raw if m in METRIC_LABELS]
 
 
 @router.message(Command("norma_ozgartir"))
@@ -71,6 +80,20 @@ async def choose_employee(callback: CallbackQuery, state: FSMContext) -> None:
     name = (data.get("names_by_id") or {}).get(target_id, "?")
 
     await state.update_data(target_user_id=int(target_id))
+
+    # Lavozimida ko'rsatkich belgilanmagan bo'lsa — bo'sh tugmalar ro'yxati
+    # o'rniga tushunarli xabar (aks holda foydalanuvchi bo'sh oynaga qarab
+    # qolardi va nima qilishni bilmasdi).
+    if not metrics:
+        await state.clear()
+        await callback.message.edit_text(
+            f"{name} lavozimida kuzatiladigan ko'rsatkich belgilanmagan — "
+            "unga norma qo'yib bo'lmaydi.\n\n"
+            "Avval saytdagi «Lavozimlar» bo'limidan shu lavozimga ko'rsatkich "
+            "qo'shing (masalan suhbat/tashrif yoki video)."
+        )
+        await callback.answer()
+        return
 
     # Faqat shu xodim lavozimida kuzatiladigan ko'rsatkichlar tugma bo'lib chiqadi
     buttons = [

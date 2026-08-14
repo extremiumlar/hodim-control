@@ -25,10 +25,23 @@ VIDEO_METRIC_TYPES = {"oddiy_video": "oddiy", "dumaloq_video": "dumaloq"}
 
 
 def metrics_for(user: User) -> list[str]:
-    """Xodim lavozimiga biriktirilgan ko'rsatkichlar; lavozim yo'q bo'lsa —
-    standart suhbat+tashrif (orqaga moslik)."""
-    if user.position and user.position.metrics:
-        return [m for m in user.position.metrics if m in METRIC_LABELS]
+    """Xodim lavozimiga biriktirilgan ko'rsatkichlar.
+
+    UCH HOLAT ATAYIN FARQLANADI (2026-08-13 tuzatish):
+      • lavozim yo'q YOKI `metrics` UMUMAN sozlanmagan (`None`) → standart
+        suhbat+tashrif (orqaga moslik: eski yozuvlar buzilmasin);
+      • `metrics` ATAYLAB BO'SH (`[]`) → BO'SH ro'yxat, ya'ni "bu lavozimda
+        ko'rsatkich kuzatilmaydi";
+      • to'ldirilgan → o'sha ko'rsatkichlar.
+
+    NEGA MUHIM: ilgari `if ... and user.position.metrics` sharti bo'sh ro'yxatni
+    ham "sozlanmagan" deb hisoblardi va Bugalter/Kassir/Yurist kabi lavozimlarga
+    "Suhbatlar soni"/"Tashriflar soni" ko'rsatkichlari chiqib ketardi — ular bu
+    ish bilan umuman shug'ullanmaydi. Endi bunday xodimga hech qanday ko'rsatkich
+    ko'rsatilmaydi (xodim sahifasi "norma belgilanmagan" deydi)."""
+    position = user.position
+    if position is not None and position.metrics is not None:
+        return [m for m in position.metrics if m in METRIC_LABELS]
     return DEFAULT_METRICS
 
 
