@@ -515,14 +515,19 @@ async def non_text_note(message: Message) -> None:
 
 
 def _api_error(exc: httpx.HTTPStatusError) -> str:
-    if exc.response.status_code == 403:
-        return "Bu amal uchun ruxsatingiz yo'q."
+    """Serverning ANIQ sababini afzal ko'ramiz.
+
+    403 ni darhol «ruxsatingiz yo'q» ga aylantirmaymiz: backend «Bu ariza
+    sizning jamoangizdan emas» kabi foydali matn qaytaradi va uni generic
+    xabar bilan bosib ketish rahbarni sababsiz qoldirardi."""
     try:
         body = exc.response.json()
-        if isinstance(body.get("detail"), str):
+        if isinstance(body.get("detail"), str) and body["detail"].strip():
             return body["detail"]
     except Exception:
         pass
+    if exc.response.status_code == 403:
+        return "Bu amal uchun ruxsatingiz yo'q."
     return "Xatolik yuz berdi."
 
 
