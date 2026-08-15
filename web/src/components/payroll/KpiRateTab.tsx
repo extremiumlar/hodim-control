@@ -12,7 +12,7 @@
  * o'zgarmaydi.
  */
 import { useMemo, useState } from "react";
-import { format } from "date-fns";
+import { format, startOfMonth } from "date-fns";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -52,7 +52,17 @@ export default function KpiRateTab() {
   const [scopeId, setScopeId] = useState<string>("");
   const [metric, setMetric] = useState<KpiMetric>("suhbat");
   const [amount, setAmount] = useState("");
-  const [effectiveFrom, setEffectiveFrom] = useState(format(new Date(), "yyyy-MM-dd"));
+  // Default — JORIY OY BOSHI, bugungi kun EMAS.
+  //
+  // NEGA (§2.4): KPI bonusi stavkani OY BOSHIGA qarab aniqlaydi
+  // (`bonus.py: resolve_kpi_rate(..., period_start)`). Default bugun bo'lsa,
+  // HR 15-avgustda stavka kiritganda avgust uchun stavka TOPILMAYDI va
+  // bonus 0 chiqadi — HR uchun bu «stavka kiritdim, lekin ishlamadi» bo'lib
+  // ko'rinardi. Oy boshi esa shu oyning butun hisobiga qo'llanadi.
+  const [effectiveFrom, setEffectiveFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  // Oy boshidan KEYINGI sana tanlansa — shu oy hisobiga kirmasligi haqida
+  // ogohlantirish (jim qolish HRni chalkashtiradi).
+  const kpiLateStart = effectiveFrom > format(startOfMonth(new Date()), "yyyy-MM-dd");
   const [note, setNote] = useState("");
 
   const rows = ratesQuery.data ?? [];
@@ -172,6 +182,16 @@ export default function KpiRateTab() {
                 value={effectiveFrom}
                 onChange={(e) => setEffectiveFrom(e.target.value)}
               />
+              {kpiLateStart ? (
+                <p className="text-xs text-amber-700">
+                  ⚠️ Bu stavka <b>shu oy bonusiga KIRMAYDI</b> — bonus oy boshidagi
+                  stavkaga qarab hisoblanadi. Shu oyga qo'llanishi uchun oy boshini tanlang.
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Odatda oy boshi qo'yiladi — shu oyning butun bonus hisobiga qo'llanadi.
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">

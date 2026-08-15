@@ -18,7 +18,7 @@
  * hisoblanganda kuchga kiradi.
  */
 import { useState, type FormEvent } from "react";
-import { format } from "date-fns";
+import { format, startOfMonth } from "date-fns";
 import { Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
@@ -198,8 +198,16 @@ export default function SalaryRateTab() {
 
   const [amount, setAmount] = useState("");
   const [payBasis, setPayBasis] = useState("monthly");
-  const [effectiveFrom, setEffectiveFrom] = useState(format(new Date(), "yyyy-MM-dd"));
+  // Default — JORIY OY BOSHI, bugungi kun EMAS.
+  //
+  // NEGA (§5.2): `monthly` stavkada oylik PRORATA qilinadi — birinchi
+  // stavkaning `effective_from` sanasidan boshlab. Default bugun bo'lsa,
+  // HR 14-avgustda stavka kiritganda avgust oyligi ~13/26 ulushga bo'linib,
+  // xodim yarim oylik oladi. Oy boshi esa to'liq oylik beradi.
+  const [effectiveFrom, setEffectiveFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
   const [note, setNote] = useState("");
+  // Oy boshidan keyingi sana — prorata ogohlantirishi (jim qolmasin)
+  const rateLateStart = effectiveFrom > format(startOfMonth(new Date()), "yyyy-MM-dd");
 
   const rateColumns: ColumnDef<SalaryRate>[] = [
     {
@@ -347,6 +355,16 @@ export default function SalaryRateTab() {
                 onChange={(e) => setEffectiveFrom(e.target.value)}
                 required
               />
+              {rateLateStart ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  ⚠️ Bu xodimning <b>shu oylik oyligi TO'LIQ bo'lmaydi</b> — oylik shu
+                  sanadan boshlab proratalanadi. To'liq oylik uchun oy boshini tanlang.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">
+                  Odatda oy boshi qo'yiladi — shunda oylik to'liq hisoblanadi.
+                </p>
+              )}
             </div>
             <div>
               <Label htmlFor="sr-note">Izoh (ixtiyoriy)</Label>
