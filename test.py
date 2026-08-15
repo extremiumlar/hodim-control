@@ -2677,6 +2677,158 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Teskari kalkulyator tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: targetni xodimlarga tarqatish (5-bosqich) --")
+        try:
+            import asyncio as _aio8
+
+            from db.base import async_session as _asess8
+            from api.services import target_split as _ts
+            from db.models import User as _U8
+
+            conn = db()
+            cur = conn.cursor()
+            S_PERIOD = "2021-11"
+            S_TG = 999779001
+            cur.execute("delete from funnel_month where period=?", (S_PERIOD,))
+            cur.execute("delete from users where telegram_id between ? and ?", (S_TG, S_TG + 9))
+            conn.commit()
+
+            try:
+                # Lavozim: «tashrif» ko'rsatkichi biriktirilgan
+                cur.execute(
+                    "insert into positions (name, metrics, is_active, created_at)"
+                    " values ('T-Menejer5', '[\"tashrif\"]', 1, datetime('now'))")
+                s_pos = cur.lastrowid
+                s_users = []
+                for i in range(2):
+                    cur.execute(
+                        "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                        " position_id, created_at) values (?,?,'employee',1,1,?,datetime('now'))",
+                        (S_TG + i, f"T-Split{i}", s_pos))
+                    s_users.append(cur.lastrowid)
+                # Ikkalasiga ham HAR KUNI ishlaydigan jadval (7/7) — oy 30 kun
+                for uid in s_users:
+                    for wd in range(7):
+                        cur.execute(
+                            "insert into work_schedule_weekly (user_id, weekday, is_working,"
+                            " start_time, end_time, updated_at)"
+                            " values (?,?,1,'09:00','18:00',datetime('now'))", (uid, wd))
+                # 2-xodim 10 kun ta'tilda (tasdiqlangan sababli kun)
+                for d in range(1, 11):
+                    cur.execute(
+                        "insert into excused_days (user_id, date, reason, status, created_at)"
+                        " values (?,?,'T-tatil','approved',datetime('now'))",
+                        (s_users[1], f"2021-11-{d:02d}"))
+                # Maqsad: 6 shartnoma; tashrif->shartnoma 10% -> 60 tashrif
+                cur.execute(
+                    "insert into funnel_month (period, target_contracts, assumptions, updated_at)"
+                    " values (?,?,?,datetime('now'))",
+                    (S_PERIOD, 6, '{"visit_to_contract": 10.0, "lead_to_visit": 5.0}'))
+                conn.commit()
+
+                async def _sug():
+                    async with _asess8() as s:
+                        return await _ts.suggest(s, S_PERIOD)
+
+                sug = _aio8.run(_sug())
+                grp = next(g for g in sug["groups"] if g["metric"] == "tashrif")
+                emp = {e["full_name"]: e for e in grp["employees"]}
+                check("Tarqatish: oylik maqsad zanjirdan olinadi (60 tashrif)",
+                      grp["monthly_target"] == 60, f"={grp['monthly_target']}")
+                check("Tarqatish: ta'til ish kunidan CHIQARILADI (30 va 20)",
+                      emp["T-Split0"]["working_days"] == 30
+                      and emp["T-Split1"]["working_days"] == 20,
+                      f"{emp['T-Split0']['working_days']}, {emp['T-Split1']['working_days']}")
+                # DIQQAT: guruhda JONLI xodimlar ham bor (ularning lavozimida
+                # ham «tashrif» bor), shuning uchun kutilgan qiymat guruhning
+                # o'z sonlaridan hisoblanadi — aks holda test jonli bazadagi
+                # xodimlar soniga bog'lanib qolardi.
+                import math as _math8
+                kutilgan_kunlik = _math8.ceil(grp["monthly_target"] / grp["person_days"])
+                check("Tarqatish: kunlik norma = maqsad / jami ish kuni",
+                      grp["suggested_daily"] == kutilgan_kunlik,
+                      f"={grp['suggested_daily']}, kutilgan={kutilgan_kunlik}")
+                check("Tarqatish: kunlik norma HAMMAGA bir xil",
+                      emp["T-Split0"]["suggested_daily"]
+                      == emp["T-Split1"]["suggested_daily"] == kutilgan_kunlik,
+                      f"{emp['T-Split0']['suggested_daily']}, {emp['T-Split1']['suggested_daily']}")
+                check("Tarqatish: OYLIK ulush ish kuniga proporsional (30 kun > 20 kun)",
+                      emp["T-Split0"]["month_total"] == kutilgan_kunlik * 30
+                      and emp["T-Split1"]["month_total"] == kutilgan_kunlik * 20,
+                      f"{emp['T-Split0']['month_total']}, {emp['T-Split1']['month_total']}")
+
+                # Tavsiya HECH NARSA yozmasligi kerak
+                norms_before = cur.execute(
+                    "select count(*) from norms where user_id in (?,?)", tuple(s_users)).fetchone()[0]
+                check("Tarqatish: tavsiya bazaga norma YOZMAYDI",
+                      norms_before == 0, f"normalar={norms_before}")
+
+                # Tasdiqlangandan keyin yoziladi
+                # ⚠️ FAQAT test xodimlariga — `user_ids`siz chaqiruv JONLI
+                # xodimlarga ham norma yozib yuborardi (birinchi yugurishda
+                # aynan shunday bo'ldi va 4 ta haqiqiy xodimning normasi
+                # o'zgardi).
+                async def _apply(actor_id):
+                    async with _asess8() as s:
+                        actor = await s.get(_U8, actor_id)
+                        return await _ts.apply_suggestion(
+                            s, S_PERIOD, "tashrif", actor, user_ids=s_users)
+
+                boss_id = cur.execute(
+                    "select id from users where role='boss' and is_active=1 limit 1").fetchone()[0]
+                res = _aio8.run(_apply(boss_id))
+                conn.commit()
+                check("Tarqatish: tasdiqlangach norma yoziladi (2 xodim)",
+                      res.get("applied") == 2, f"{res}")
+                vals = [r[0] for r in cur.execute(
+                    "select value from norms where user_id in (?,?)", tuple(s_users)).fetchall()]
+                check("Tarqatish: yozilgan norma kunlik tavsiyaga teng",
+                      sorted(vals) == [kutilgan_kunlik, kutilgan_kunlik], f"={vals}")
+
+                # Maqsadsiz oy — tavsiya yo'q
+                async def _nosug():
+                    async with _asess8() as s:
+                        return await _ts.suggest(s, "2021-12")
+                ns = _aio8.run(_nosug())
+                check("Tarqatish: maqsad qo'yilmagan oyda tavsiya yo'q",
+                      ns["ready"] is False and ns["reason"], f"{ns.get('reason')}")
+
+                # API
+                r_get = client.get(f"{API_BASE}/funnel/target/split?period={S_PERIOD}",
+                                   headers=auth(boss_t))
+                check("Tarqatish(API): 200", r_get.status_code == 200, f"kod={r_get.status_code}")
+                s_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1"
+                    " and telegram_id not between ? and ? limit 1", (S_TG, S_TG + 9)).fetchone()
+                if s_emp:
+                    r_deny = client.post(
+                        f"{API_BASE}/funnel/target/split/apply",
+                        headers=auth(token_for(s_emp[0], "employee")),
+                        json={"period": S_PERIOD, "metric": "tashrif"})
+                    check("Tarqatish(API): oddiy xodim tarqata OLMAYDI -> 403",
+                          r_deny.status_code == 403, f"kod={r_deny.status_code}")
+                r_bad = client.post(
+                    f"{API_BASE}/funnel/target/split/apply", headers=auth(boss_t),
+                    json={"period": S_PERIOD, "metric": "yolgon"})
+                check("Tarqatish(API): noma'lum ko'rsatkich -> 400",
+                      r_bad.status_code == 400, f"kod={r_bad.status_code}")
+            finally:
+                cur.execute("delete from norms where user_id in (select id from users"
+                            " where telegram_id between ? and ?)", (S_TG, S_TG + 9))
+                cur.execute("delete from audit_logs where target_user_id in (select id from users"
+                            " where telegram_id between ? and ?)", (S_TG, S_TG + 9))
+                cur.execute("delete from excused_days where user_id in (select id from users"
+                            " where telegram_id between ? and ?)", (S_TG, S_TG + 9))
+                cur.execute("delete from work_schedule_weekly where user_id in (select id from users"
+                            " where telegram_id between ? and ?)", (S_TG, S_TG + 9))
+                cur.execute("delete from users where telegram_id between ? and ?", (S_TG, S_TG + 9))
+                cur.execute("delete from positions where name='T-Menejer5'")
+                cur.execute("delete from funnel_month where period in (?,?)", (S_PERIOD, "2021-12"))
+                conn.commit()
+                conn.close()
+        except Exception:
+            check("Target tarqatish tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio
@@ -3008,7 +3160,7 @@ def test_payroll_engine() -> None:
         from sqlalchemy import delete, select
         from db.base import async_session
         from db.models import (
-            Attendance, AuditLog, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
+            Attendance, AuditLog, Bonus, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
             PayrollAdjustment, PayrollPeriod, Payslip, PayslipItem, SalaryRate,
             User, WorkScheduleOverride, WorkScheduleWeekly,
         )
@@ -3276,6 +3428,10 @@ def test_payroll_engine() -> None:
                 await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == uid))
             await s.execute(delete(FinePolicy).where(FinePolicy.scope == "global",
                                                        FinePolicy.free_late_minutes_per_month == 999_999))
+            # §2.3 dan keyin oylik hisobi bonus qatorini ham yaratadi —
+            # tozalanmasa `delete(User)` FOREIGN KEY bilan yiqiladi.
+            await s.execute(delete(Bonus).where(Bonus.user_id.in_([u1.id, u2.id])))
+            await s.execute(delete(ExcusedDay).where(ExcusedDay.user_id.in_([u1.id, u2.id])))
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
             await s.execute(
                 delete(AuditLog).where(
@@ -3314,7 +3470,7 @@ def test_payroll_api() -> None:
         if pslip_ids:
             qm2 = ",".join("?" * len(pslip_ids))
             cur.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
-        for tbl in ("payslips", "overtime_entries", "overtime_profiles", "payroll_adjustments",
+        for tbl in ("payslips", "bonuses", "overtime_entries", "overtime_profiles", "payroll_adjustments",
                     "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
             cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
         cur.execute(f"delete from fine_policies where scope_id in ({qm})", stale)
@@ -3355,7 +3511,7 @@ def test_payroll_api() -> None:
             if pslip_ids:
                 qm2 = ",".join("?" * len(pslip_ids))
                 c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
-            for tbl in ("payslips", "overtime_entries", "overtime_profiles", "payroll_adjustments",
+            for tbl in ("payslips", "bonuses", "overtime_entries", "overtime_profiles", "payroll_adjustments",
                         "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
                 c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
             c2.execute(f"delete from fine_policies where scope_id in ({qm})", uids)
@@ -3608,7 +3764,7 @@ def test_admin_override() -> None:
         if pslip_ids:
             qm2 = ",".join("?" * len(pslip_ids))
             cur.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
-        for tbl in ("payslips", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+        for tbl in ("payslips", "bonuses", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
             cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
         cur.execute(f"delete from norms where user_id in ({qm})", stale)
         # actor_id HAM tozalanadi — bu test dasturchi (T-Admin-Dev) sifatida
@@ -3652,7 +3808,7 @@ def test_admin_override() -> None:
             if pslip_ids:
                 qm2 = ",".join("?" * len(pslip_ids))
                 c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslip_ids)
-            for tbl in ("payslips", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
+            for tbl in ("payslips", "bonuses", "salary_rates", "attendance", "work_schedule_override", "work_schedule_weekly"):
                 c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
             c2.execute(f"delete from norms where user_id in ({qm})", uids)
             c2.execute(f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})", uids + uids)
@@ -3939,12 +4095,21 @@ def test_payroll_automation() -> None:
                                             start_time="09:00", end_time="18:00"))
             s.add(OvertimeProfile(user_id=uot.id, enabled=True, mode="fixed_rate",
                                    fixed_rate_per_hour=10_000, min_minutes=15))
-            s.add(Attendance(user_id=uot.id, date=day_over, status="present", worked_minutes=WINDOW_MIN,
-                              check_out_time=local_hm_to_utc(day_over, "18:30")))  # 30 daq keyin -> nomzod
-            s.add(Attendance(user_id=uot.id, date=day_within, status="present", worked_minutes=WINDOW_MIN,
-                              check_out_time=local_hm_to_utc(day_within, "17:50")))  # oyna ichida -> yo'q
-            s.add(Attendance(user_id=uot.id, date=day_http, status="present", worked_minutes=WINDOW_MIN,
-                              check_out_time=local_hm_to_utc(day_http, "18:25")))  # HTTP orqali tekshiriladi
+            # 2026-08-15: nomzod endi SOF FARQ bo'yicha aniqlanadi
+            # (`worked_minutes` − rejadagi daqiqa), ilgari esa faqat
+            # `check_out − ish oynasi tugashi` qaralardi. Farqi muhim: xodim
+            # kech kelib kech ketsa eski usul buni «qo'shimcha ish» deb
+            # yozardi, aslida u KAM ishlagan bo'lishi mumkin edi. Shuning
+            # uchun sinov ma'lumoti ham `worked_minutes` bilan beriladi.
+            s.add(Attendance(user_id=uot.id, date=day_over, status="present",
+                              worked_minutes=WINDOW_MIN + 30,  # +30 daq ORTIQCHA -> nomzod
+                              check_out_time=local_hm_to_utc(day_over, "18:30")))
+            s.add(Attendance(user_id=uot.id, date=day_within, status="present",
+                              worked_minutes=WINDOW_MIN - 10,  # sezgirlik chegarasi (15) ichida -> yo'q
+                              check_out_time=local_hm_to_utc(day_within, "17:50")))
+            s.add(Attendance(user_id=uot.id, date=day_http, status="present",
+                              worked_minutes=WINDOW_MIN + 25,  # HTTP orqali tekshiriladi
+                              check_out_time=local_hm_to_utc(day_http, "18:25")))
             await s.commit()
 
             created1 = await pr.detect_overtime_candidates(s, day_over)

@@ -123,6 +123,36 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface TargetSplitEmployee {
+  user_id: number;
+  full_name: string;
+  working_days: number;
+  current_daily: number | null;
+  suggested_daily: number;
+  month_total: number;
+  diff: number | null;
+}
+
+export interface TargetSplitGroup {
+  metric: string;
+  label: string;
+  monthly_target: number | null;
+  source: string | null;
+  person_days: number;
+  suggested_daily: number | null;
+  employees: TargetSplitEmployee[];
+  problem: string | null;
+}
+
+export interface TargetSplit {
+  period: string;
+  ready: boolean;
+  reason?: string;
+  target_contracts?: number;
+  baseline_confidence?: string;
+  groups: TargetSplitGroup[];
+}
+
 export interface TargetChainRow {
   key: string;
   label: string;
@@ -794,9 +824,13 @@ export interface SalaryRate {
 }
 
 export interface OvertimeProfile {
-  user_id: number;
+  /** `scope: "global"` qatorida null — bu barcha xodimga default profil. */
+  user_id: number | null;
   user_full_name: string | null;
+  scope: "user" | "global";
   enabled: boolean;
+  /** Nomzod yaratilishi bilan tasdiqlangan bo'lsinmi. */
+  auto_approve: boolean;
   mode: "derived" | "fixed_rate";
   fixed_rate_per_hour: number | null;
   multiplier: number | null;
@@ -810,6 +844,7 @@ export interface OvertimeProfile {
 
 export interface OvertimeProfileInput {
   enabled: boolean;
+  auto_approve: boolean;
   mode: "derived" | "fixed_rate";
   fixed_rate_per_hour?: number | null;
   multiplier?: number | null;

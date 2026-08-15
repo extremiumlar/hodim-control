@@ -19,6 +19,7 @@ import type {
   CelebrationMediaRow,
   Economics,
   TargetPlan,
+  TargetSplit,
   FunnelChannels,
   FunnelData,
   FunnelMonths,
@@ -402,6 +403,12 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  // Barcha xodimga default profil (§3.2) — xodim qatori bo'lsa u bosadi.
+  upsertGlobalOvertimeProfile: (data: OvertimeProfileInput) =>
+    apiFetch<OvertimeProfile>("/payroll/overtime-profiles/global", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   listOvertimeEntries: (params: { period?: string; status_filter?: string } = {}) => {
     const q = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "") as [string, string][]
@@ -414,6 +421,18 @@ export const api = {
     apiFetch<OvertimeEntry>(`/payroll/overtime/${entryId}/decide`, {
       method: "POST",
       body: JSON.stringify({ status: decision }),
+    }),
+  // Bir oydagi BARCHA kutilayotgan yozuvni bir bosishda hal qilish.
+  bulkDecideOvertime: (period: string, decision: "approved" | "rejected") =>
+    apiFetch<{ period: string; status: string; decided: number }>("/payroll/overtime/bulk-decide", {
+      method: "POST",
+      body: JSON.stringify({ period, status: decision }),
+    }),
+  // «Hozir hisoblab ber» — cronni (01:00) kutmasdan nomzod yaratish.
+  detectOvertimeNow: (targetDate?: string) =>
+    apiFetch<{ date: string; created: number }>("/payroll/overtime/detect-now", {
+      method: "POST",
+      body: JSON.stringify({ target_date: targetDate ?? null }),
     }),
   createPayrollAdjustment: (data: { user_id: number; period: string; kind: "plus" | "minus"; amount: number; reason: string }) =>
     apiFetch<PayrollAdjustment>("/payroll/adjustments", { method: "POST", body: JSON.stringify(data) }),
@@ -734,6 +753,13 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelTargetSplit: (period: string) =>
+    apiFetch<TargetSplit>(`/funnel/target/split?period=${period}`),
+  applyTargetSplit: (body: { period: string; metric: string; user_ids?: number[] | null }) =>
+    apiFetch<{ ok: boolean; applied: number; skipped_no_permission: number; daily: number }>(
+      "/funnel/target/split/apply",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
   funnelTarget: (period: string, targetContracts?: number) =>
     apiFetch<TargetPlan>(
       `/funnel/target?period=${period}${

@@ -84,6 +84,7 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  targetSplit: (period: string) => ["funnel", "target", "split", period] as const,
   funnelTarget: (period: string, target?: number) =>
     ["funnel", "target", period, target ?? null] as const,
   funnelEconomics: (period: string, groupBy: string) =>
@@ -558,6 +559,24 @@ export const useDecideOvertimeEntry = () =>
     [["payroll", "overtime"]]
   );
 
+export const useUpsertGlobalOvertimeProfile = () =>
+  useApiMutation(api.upsertGlobalOvertimeProfile, [qk.overtimeProfiles]);
+
+export const useBulkDecideOvertime = () =>
+  useApiMutation(
+    ({ period, decision }: { period: string; decision: "approved" | "rejected" }) =>
+      api.bulkDecideOvertime(period, decision),
+    // `preflight` ham yangilanadi: u «tasdiqlanmagan qo'shimcha ish»
+    // ro'yxatini beradi va ommaviy tasdiqdan keyin bo'shashi kerak.
+    [["payroll", "overtime"], ["payroll", "preflight"]]
+  );
+
+export const useDetectOvertimeNow = () =>
+  useApiMutation(
+    (targetDate?: string) => api.detectOvertimeNow(targetDate),
+    [["payroll", "overtime"], ["payroll", "preflight"]]
+  );
+
 export const useCreatePayrollAdjustment = () =>
   useApiMutation(api.createPayrollAdjustment, [["payroll", "payslips"], ["payroll", "payslip"]]);
 
@@ -1027,3 +1046,11 @@ export const useSaveFunnelTarget = (period: string) =>
     qk.funnelTarget(period, undefined),
     ["funnel", "target", period] as const,
   ]);
+
+// ─── Targetni xodimlarga tarqatish (5-bosqich) ───
+export const useTargetSplit = (period: string) =>
+  useQuery({ queryKey: qk.targetSplit(period), queryFn: () => api.funnelTargetSplit(period) });
+
+// Norma yozilgani uchun jamoa normalari ro'yxati ham yangilanadi
+export const useApplyTargetSplit = (period: string) =>
+  useApiMutation(api.applyTargetSplit, [qk.targetSplit(period), qk.teamNorms]);

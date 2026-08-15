@@ -18,6 +18,7 @@ from api.deps import get_db, require_roles
 from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
 from api.services import target_calc
+from api.services import target_split
 from db.models import AuditLog, Role, User
 
 router = APIRouter(prefix="/funnel", tags=["funnel"])
@@ -293,3 +294,55 @@ async def save_target(
     )
     await db.commit()
     return {"ok": True}
+
+
+class ApplyTargetIn(BaseModel):
+    period: str
+    metric: str
+    # Bo'sh -> guruhdagi HAMMA xodimga; ro'yxat berilsa faqat tanlanganlarga
+    user_ids: list[int] | None = None
+
+
+@router.get("/target/split")
+async def get_target_split(
+    period: str,
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Oylik maqsad xodimlarga qanday bo'linadi — TAVSIYA (5-bosqich).
+
+    Hech narsa yozilmaydi: bu faqat «shunday qilsak qanday bo'ladi»
+    ko'rinishi. Yozish uchun `POST /funnel/target/split/apply`."""
+    _resolve_range(period, None, None)
+    return await target_split.suggest(db, period)
+
+
+@router.post("/target/split/apply")
+async def apply_target_split(
+    payload: ApplyTargetIn, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Tavsiyani haqiqiy normaga aylantiradi (rahbar tasdig'i)."""
+    _resolve_range(payload.period, None, None)
+    if payload.metric not in target_split.CHAIN_TO_METRIC.values():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum ko'rsatkich")
+    result = await target_split.apply_suggestion(
+        db, payload.period, payload.metric, actor, payload.user_ids
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, result.get("reason") or "Tarqatib bo'lmadi"
+        )
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="funnel_target_distributed",
+            after={
+                "period": payload.period,
+                "metric": payload.metric,
+                "daily": result["daily"],
+                "applied": result["applied"],
+            },
+        )
+    )
+    await db.commit()
+    return result
