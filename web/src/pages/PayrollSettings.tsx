@@ -40,6 +40,7 @@ import {
   usePositions,
   useSetFinePolicyEditor,
   useUpsertFinePolicy,
+  useUpsertGlobalOvertimeProfile,
   useUpsertOvertimeProfile,
   useUsers,
 } from "@/lib/queries";
@@ -468,16 +469,20 @@ function FinePolicyTab() {
 // ─────────────────────────────────────────────
 
 function OvertimeProfileDialog({
-  userId,
+  target,
   initial,
   onClose,
 }: {
-  userId: number | null;
+  /** `{scope:"global"}` — barchaga default; `{scope:"user"}` — istisno. */
+  target: { scope: "global" } | { scope: "user"; userId: number } | null;
   initial: OvertimeProfile | null;
   onClose: () => void;
 }) {
   const upsert = useUpsertOvertimeProfile();
+  const upsertGlobal = useUpsertGlobalOvertimeProfile();
+  const isGlobal = target?.scope === "global";
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
+  const [autoApprove, setAutoApprove] = useState(initial?.auto_approve ?? false);
   const [mode, setMode] = useState<"derived" | "fixed_rate">(initial?.mode ?? "derived");
   const [multiplier, setMultiplier] = useState(initial?.multiplier != null ? String(initial.multiplier) : "1.5");
   const [fixedRate, setFixedRate] = useState(
@@ -487,7 +492,7 @@ function OvertimeProfileDialog({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!userId) return;
+    if (!target) return;
     if (mode === "derived" && !multiplier) {
       toast.error("Koeffitsient kiriting (masalan 1.5)");
       return;
@@ -496,33 +501,55 @@ function OvertimeProfileDialog({
       toast.error("So'm/soat kiriting");
       return;
     }
-    upsert.mutate(
-      {
-        userId,
-        data: {
-          enabled,
-          mode,
-          multiplier: mode === "derived" ? Number(multiplier) : null,
-          fixed_rate_per_hour: mode === "fixed_rate" ? Number(fixedRate) : null,
-          norm_hours_source: "schedule",
-          min_minutes: Number(minMinutes) || 0,
-        },
-      },
-      { onSuccess: () => { toast.success("Profil saqlandi"); onClose(); } }
-    );
+    const data = {
+      enabled,
+      auto_approve: autoApprove,
+      mode,
+      multiplier: mode === "derived" ? Number(multiplier) : null,
+      fixed_rate_per_hour: mode === "fixed_rate" ? Number(fixedRate) : null,
+      norm_hours_source: "schedule" as const,
+      min_minutes: Number(minMinutes) || 0,
+    };
+    const ok = { onSuccess: () => { toast.success("Profil saqlandi"); onClose(); } };
+    if (target.scope === "global") upsertGlobal.mutate(data, ok);
+    else upsert.mutate({ userId: target.userId, data }, ok);
   };
 
   return (
-    <Dialog open={userId !== null} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Qo'shimcha ish profili</DialogTitle>
-          <DialogDescription>Faqat shu xodimga yoqilgan bo'lsa qo'shimcha ish hisoblanadi.</DialogDescription>
+          <DialogTitle>
+            {isGlobal ? "Hamma uchun qo'shimcha ish" : "Qo'shimcha ish profili (istisno)"}
+          </DialogTitle>
+          <DialogDescription>
+            {isGlobal
+              ? "Bu sozlama BARCHA xodimga amal qiladi — yangi ishga kirganlar ham avtomatik qamrab olinadi."
+              : "Bu xodimga alohida qoida. Kiritilsa, hamma uchun sozlamadan USTUN turadi."}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
             Yoqilgan
+          </label>
+
+          {/* Tasdiq bosqichi ATAYLAB saqlanadi (tasdiqsiz pul payslip'ga
+              kirmasin), lekin HR xohlasa uni avtomatlashtira oladi. */}
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={autoApprove}
+              onChange={(e) => setAutoApprove(e.target.checked)}
+            />
+            <span>
+              Avtomatik tasdiqlansin
+              <span className="block text-xs text-slate-500">
+                Yoqilmasa har kunlik farq «kutilmoqda» bo'lib turadi va tasdiqlanmaguncha
+                oylikka KIRMAYDI.
+              </span>
+            </span>
           </label>
 
           <div>
@@ -580,8 +607,8 @@ function OvertimeProfileDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               Bekor qilish
             </Button>
-            <Button type="submit" disabled={upsert.isPending}>
-              {upsert.isPending ? "Saqlanmoqda..." : "Saqlash"}
+            <Button type="submit" disabled={upsert.isPending || upsertGlobal.isPending}>
+              {upsert.isPending || upsertGlobal.isPending ? "Saqlanmoqda..." : "Saqlash"}
             </Button>
           </DialogFooter>
         </form>
@@ -593,10 +620,20 @@ function OvertimeProfileDialog({
 function OvertimeProfileTab() {
   const profilesQuery = useOvertimeProfiles();
   const usersQuery = useUsers();
-  const [editingUserId, setEditingUserId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<
+    { scope: "global" } | { scope: "user"; userId: number } | null
+  >(null);
   const [addUserId, setAddUserId] = useState<number | null>(null);
 
-  const profiledIds = new Set((profilesQuery.data ?? []).map((p) => p.user_id));
+  const rows = profilesQuery.data ?? [];
+  // §3.2: profil endi IKKI DARAJALI. Global qator — barchaga default,
+  // xodim qatorlari esa istisno. Ilgari faqat ikkinchisi bor edi va
+  // `enabled` default o'chiq bo'lgani uchun jonli bazada yoqilgan profil
+  // 0 ta edi — ya'ni qo'shimcha ish umuman hisoblanmasdi.
+  const globalProfile = rows.find((p) => p.scope === "global") ?? null;
+  const userProfiles = rows.filter((p) => p.scope !== "global");
+
+  const profiledIds = new Set(userProfiles.map((p) => p.user_id));
   const addableUsers = (usersQuery.data ?? []).filter((u) => !profiledIds.has(u.id));
 
   const columns: ColumnDef<OvertimeProfile>[] = [
@@ -619,12 +656,29 @@ function OvertimeProfileTab() {
           ? `O'z oyligidan × ${row.original.multiplier ?? "?"}`
           : `${fmtMoney(row.original.fixed_rate_per_hour ?? 0)}/soat`,
     },
+    {
+      accessorKey: "auto_approve",
+      header: "Tasdiq",
+      cell: ({ row }) =>
+        row.original.auto_approve ? (
+          <span className="text-emerald-600">Avtomatik</span>
+        ) : (
+          <span className="text-slate-500">Qo'lda</span>
+        ),
+    },
     { accessorKey: "min_minutes", header: "Min. daqiqa" },
     {
       id: "actions",
       header: "",
       cell: ({ row }) => (
-        <Button variant="ghost" size="sm" onClick={() => setEditingUserId(row.original.user_id)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            row.original.user_id != null &&
+            setEditing({ scope: "user", userId: row.original.user_id })
+          }
+        >
           <Pencil className="mr-1 h-3.5 w-3.5" />
           Tahrirlash
         </Button>
@@ -632,51 +686,112 @@ function OvertimeProfileTab() {
     },
   ];
 
-  const editingProfile = profilesQuery.data?.find((p) => p.user_id === editingUserId) ?? null;
+  const editingProfile =
+    editing === null
+      ? null
+      : editing.scope === "global"
+        ? globalProfile
+        : (userProfiles.find((p) => p.user_id === editing.userId) ?? null);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end gap-2">
-        <Select value={addUserId ? String(addUserId) : undefined} onValueChange={(v) => setAddUserId(Number(v))}>
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="Xodim tanlang..." />
-          </SelectTrigger>
-          <SelectContent>
-            {addableUsers.map((u) => (
-              <SelectItem key={u.id} value={String(u.id)}>
-                {u.full_name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          size="sm"
-          disabled={!addUserId}
-          onClick={() => {
-            setEditingUserId(addUserId);
-            setAddUserId(null);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Yoqish
-        </Button>
+      {/* ── Hamma uchun default ── */}
+      <div
+        className={`rounded-xl border p-4 ${
+          globalProfile?.enabled
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-amber-200 bg-amber-50"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-medium">
+              {globalProfile?.enabled
+                ? "Qo'shimcha ish HAMMA uchun yoqilgan"
+                : "Qo'shimcha ish hali hech kimga yoqilmagan"}
+            </div>
+            <p className="mt-1 max-w-2xl text-xs text-slate-600">
+              {globalProfile?.enabled ? (
+                <>
+                  Har kuni ishlangan vaqt reja bilan solishtiriladi; ortiqcha va kam vaqt oy
+                  bo'yicha <b>qo'shilib-ayirilib</b> bitta summaga aylanadi.{" "}
+                  {globalProfile.mode === "derived"
+                    ? `Soatlik stavka = oylik ÷ norma soat × ${globalProfile.multiplier ?? "?"}.`
+                    : `${fmtMoney(globalProfile.fixed_rate_per_hour ?? 0)}/soat.`}{" "}
+                  {globalProfile.auto_approve
+                    ? "Yozuvlar avtomatik tasdiqlanadi."
+                    : "Yozuvlar tasdiqlanmaguncha oylikka kirmaydi."}
+                </>
+              ) : (
+                <>
+                  Shu sababli oylik hisobida qo'shimcha ish <b>doim 0</b> chiqadi. Bir marta
+                  yoqing — yangi ishga kirgan xodimlar ham avtomatik qamrab olinadi.
+                </>
+              )}
+            </p>
+          </div>
+          <Button size="sm" onClick={() => setEditing({ scope: "global" })}>
+            {globalProfile ? "O'zgartirish" : "Hammaga yoqish"}
+          </Button>
+        </div>
       </div>
+
+      {/* ── Istisnolar ── */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-medium text-slate-600">
+          Alohida qoidalar
+          <span className="ml-2 font-normal text-xs text-slate-500">
+            — faqat umumiy sozlamadan farq qiladigan xodimlar uchun
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select
+            value={addUserId ? String(addUserId) : undefined}
+            onValueChange={(v) => setAddUserId(Number(v))}
+          >
+            <SelectTrigger className="w-56">
+              <SelectValue placeholder="Xodim tanlang..." />
+            </SelectTrigger>
+            <SelectContent>
+              {addableUsers.map((u) => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.full_name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!addUserId}
+            onClick={() => {
+              if (addUserId) setEditing({ scope: "user", userId: addUserId });
+              setAddUserId(null);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Qo'shish
+          </Button>
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
-        data={profilesQuery.data}
+        data={userProfiles}
         isLoading={profilesQuery.isLoading}
         error={profilesQuery.error ? profilesQuery.error.message : null}
         onRetry={() => profilesQuery.refetch()}
-        empty={{ text: "Hali hech kimga qo'shimcha ish yoqilmagan." }}
+        empty={{ text: "Istisno yo'q — hammaga umumiy sozlama amal qiladi." }}
       />
       <OvertimeProfileDialog
-        userId={editingUserId}
+        target={editing}
         initial={editingProfile}
-        onClose={() => setEditingUserId(null)}
+        onClose={() => setEditing(null)}
       />
     </div>
   );
 }
+
 
 /**
  * Kechikish normasi huquqini boshqarish — FAQAT Boshliq/Dasturchi ko'radi.

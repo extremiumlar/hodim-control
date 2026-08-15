@@ -5819,6 +5819,173 @@ def test_kpi_rates() -> None:
         conn.close()
 
 
+def test_overtime_global_profile() -> None:
+    """§3.2 — qo'shimcha ish nihoyat AVTOMATIK hisoblanadimi.
+
+    MUAMMO EDI: `OvertimeProfile` faqat xodim bo'yicha edi va `enabled`
+    default `False`. Ya'ni HR har bir xodimga QO'LDA profil ochmaguncha
+    qo'shimcha ish umuman hisoblanmasdi — jonli bazada yoqilgan profil 0 ta
+    edi. Endi `scope='global'` qatori barchaga default bo'ladi.
+
+    Tekshiriladi:
+      (a) profilsiz xodim -> 0 (regressiya qo'riqchisi);
+      (b) GLOBAL profil yoqilgach o'sha xodimga nomzod yaratiladi;
+      (c) xodimning O'Z qatori global'dan USTUN (hatto o'chirilgan bo'lsa ham);
+      (d) `auto_approve` -> nomzod darhol `approved`;
+      (e) `/overtime/detect-now` — rahbarga 200, xodimga 403;
+      (f) `/overtime/bulk-decide` bir bosishda hammasini tasdiqlaydi.
+    """
+    import asyncio as _aio
+    import httpx
+    from datetime import date as _date
+
+    print("\n" + "=" * 60)
+    print("QO'SHIMCHA ISH: GLOBAL PROFIL (3.2)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+    if not mgr_t:
+        return
+
+    KUN = "2019-09-10"
+    WINDOW_MIN = 480
+    conn = db()
+    cur = conn.cursor()
+    a_uid = b_uid = None
+    try:
+        for nom, tg in (("T-OtGlobalA", 999700601), ("T-OtGlobalB", 999700602)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " created_at) values (?,?,'employee',0,1,datetime('now'))", (tg, nom))
+        a_uid, b_uid = [r[0] for r in cur.execute(
+            "select id from users where full_name in ('T-OtGlobalA','T-OtGlobalB') order by id")]
+        for uid in (a_uid, b_uid):
+            for wd in range(7):
+                cur.execute("insert into work_schedule_weekly (user_id, weekday, is_working,"
+                            " updated_at) values (?,?,0,datetime('now'))", (uid, wd))
+            cur.execute("insert into work_schedule_override (user_id, date, is_working,"
+                        " start_time, end_time, updated_at)"
+                        " values (?,?,1,'09:00','18:00',datetime('now'))", (uid, KUN))
+            # +40 daqiqa ORTIQCHA ishlangan
+            # `check_out_time` SHART: aniqlash faqat ishdan chiqqani qayd
+            # etilgan kunlarni qaraydi (aks holda kun hali tugamagan bo'lishi
+            # mumkin). 13:40 UTC = 18:40 Toshkent.
+            cur.execute("insert into attendance (user_id, date, status, late_minutes,"
+                        " early_leave_minutes, worked_minutes, is_weekend, check_out_time,"
+                        " created_at, updated_at)"
+                        " values (?,?,'present',0,0,?,0,?,datetime('now'),datetime('now'))",
+                        (uid, KUN, WINDOW_MIN + 40, KUN + " 13:40:00"))
+        conn.commit()
+        emp_t = token_for(a_uid, "employee")
+
+        from api.services import payroll as pr
+        from db.base import async_session
+
+        async def _detect():
+            async with async_session() as s2:
+                created = await pr.detect_overtime_candidates(s2, _date(2019, 9, 10))
+                await s2.commit()
+                return [(e.user_id, e.minutes, e.status) for e in created]
+
+        # (a) profil umuman yo'q -> nomzod yo'q
+        yoq = _aio.run(_detect())
+        check("profilsiz xodimga nomzod YARATILMAYDI (regressiya)",
+              all(u not in (a_uid, b_uid) for u, _, _ in yoq), "=" + str(yoq))
+
+        with httpx.Client(base_url=API_BASE, timeout=60) as c:
+            # (e) huquqlar — detect-now
+            r = c.post("/payroll/overtime/detect-now", headers=auth(emp_t), json={"target_date": KUN})
+            check("/overtime/detect-now oddiy xodimga -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+
+            # (b) GLOBAL profil yoqiladi
+            r = c.put("/payroll/overtime-profiles/global", headers=auth(mgr_t), json={
+                "enabled": True, "auto_approve": False, "mode": "fixed_rate",
+                "fixed_rate_per_hour": 10000, "norm_hours_source": "schedule",
+                "min_minutes": 15})
+            check("global profil yaratildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            check("global profil scope='global', user_id yo'q",
+                  r.status_code == 200 and r.json().get("scope") == "global"
+                  and r.json().get("user_id") is None, "=" + r.text[:120])
+
+            r = c.post("/payroll/overtime/detect-now", headers=auth(mgr_t), json={"target_date": KUN})
+            check("/overtime/detect-now rahbarga -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            rows = cur.execute("select user_id, minutes, status from overtime_entries"
+                               " where date=? and user_id in (?,?)", (KUN, a_uid, b_uid)).fetchall()
+            check("GLOBAL profil bilan IKKALA xodimga ham nomzod yaratildi",
+                  len(rows) == 2, "=" + str(rows))
+            check("nomzod +40 daqiqa (sof farq)",
+                  all(r2[1] == 40 for r2 in rows), "=" + str(rows))
+            check("nomzod 'pending' (auto_approve o'chiq)",
+                  all(r2[2] == "pending" for r2 in rows), "=" + str(rows))
+
+            # (f) ommaviy tasdiq
+            r = c.post("/payroll/overtime/bulk-decide", headers=auth(mgr_t),
+                       json={"period": "2019-09", "status": "approved"})
+            check("/overtime/bulk-decide -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            check("bulk-decide kamida 2 ta yozuvni tasdiqladi",
+                  r.status_code == 200 and r.json().get("decided", 0) >= 2, "=" + r.text[:120])
+            qolgan = cur.execute("select count(*) from overtime_entries where date=?"
+                                 " and status='pending'", (KUN,)).fetchone()
+            check("kutilayotgan yozuv qolmadi", qolgan[0] == 0, "=" + str(qolgan))
+
+            # (c) xodim qatori global'dan USTUN — B ga O'CHIRILGAN profil
+            cur.execute("delete from overtime_entries where date=?", (KUN,))
+            conn.commit()
+            r = c.put("/payroll/overtime-profiles/" + str(b_uid), headers=auth(mgr_t), json={
+                "enabled": False, "auto_approve": False, "mode": "fixed_rate",
+                "fixed_rate_per_hour": 10000, "norm_hours_source": "schedule",
+                "min_minutes": 15})
+            check("xodimga o'chirilgan profil yozildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            c.post("/payroll/overtime/detect-now", headers=auth(mgr_t), json={"target_date": KUN})
+            rows2 = [r2[0] for r2 in cur.execute(
+                "select user_id from overtime_entries where date=? and user_id in (?,?)",
+                (KUN, a_uid, b_uid)).fetchall()]
+            check("xodim qatori GLOBAL'dan ustun — o'chirilgan xodimga nomzod YO'Q",
+                  a_uid in rows2 and b_uid not in rows2, "=" + str(rows2))
+
+            # (d) auto_approve
+            cur.execute("delete from overtime_entries where date=?", (KUN,))
+            conn.commit()
+            r = c.put("/payroll/overtime-profiles/" + str(b_uid), headers=auth(mgr_t), json={
+                "enabled": True, "auto_approve": True, "mode": "fixed_rate",
+                "fixed_rate_per_hour": 10000, "norm_hours_source": "schedule",
+                "min_minutes": 15})
+            check("auto_approve yoqilgan profil -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            c.post("/payroll/overtime/detect-now", headers=auth(mgr_t), json={"target_date": KUN})
+            st = cur.execute("select status from overtime_entries where date=? and user_id=?",
+                             (KUN, b_uid)).fetchone()
+            check("auto_approve -> nomzod DARHOL tasdiqlangan",
+                  st is not None and st[0] == "approved", "=" + str(st))
+    except Exception:
+        check("Global qo'shimcha ish profili (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cur.execute("delete from overtime_entries where date=?", (KUN,))
+        cur.execute("delete from overtime_profiles where scope='global'")
+        if a_uid is not None:
+            ids = [a_uid, b_uid]
+            qm = ",".join("?" * len(ids))
+            for t in ("overtime_entries", "overtime_profiles", "attendance",
+                      "work_schedule_override", "work_schedule_weekly", "bonuses", "payslips"):
+                cur.execute("delete from " + t + " where user_id in (" + qm + ")", ids)
+            cur.execute("delete from audit_logs where target_user_id in (" + qm + ")"
+                        " or actor_id in (" + qm + ")", ids + ids)
+            cur.execute("delete from users where id in (" + qm + ")", ids)
+        cur.execute("delete from audit_logs where action in ('overtime_profile_global_upserted',"
+                    "'overtime_bulk_decided','overtime_detect_now')")
+        conn.commit()
+        conn.close()
+
+
 def test_kpi_in_payroll() -> None:
     """§2.3 — KPI bonusi OYLIK bilan birga hisoblanadimi.
 
@@ -6511,6 +6678,11 @@ def main() -> None:
         test_kpi_in_payroll()
     except Exception:
         print("KPI+oylik testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_overtime_global_profile()
+    except Exception:
+        print("Global overtime testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_dasturchi_bot_bridge()

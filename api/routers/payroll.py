@@ -545,8 +545,10 @@ async def create_kpi_rate(
 async def list_overtime_profiles(
     _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
 ) -> list[OvertimeProfileOut]:
+    # `outerjoin` — global qatorda `user_id` NULL, `join` uni tashlab
+    # yuborardi va sozlamalar sahifasi «global profil yo'q» deb ko'rsatardi.
     result = await db.execute(
-        select(OvertimeProfile, User.full_name).join(User, OvertimeProfile.user_id == User.id)
+        select(OvertimeProfile, User.full_name).outerjoin(User, OvertimeProfile.user_id == User.id)
     )
     out = []
     for profile, full_name in result.all():
@@ -554,6 +556,45 @@ async def list_overtime_profiles(
         row.user_full_name = full_name
         out.append(row)
     return out
+
+
+@router.put("/overtime-profiles/global", response_model=OvertimeProfileOut)
+async def upsert_global_overtime_profile(
+    payload: OvertimeProfileIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> OvertimeProfileOut:
+    """BARCHA xodimga amal qiladigan default qo'shimcha ish profili (§3.2).
+
+    NEGA KERAK: profil har bir xodim uchun alohida edi va `enabled` default
+    `False` — ya'ni HR har kimga qo'lda profil ochmaguncha qo'shimcha ish
+    UMUMAN hisoblanmasdi. Jonli bazada yoqilgan profil 0 ta edi, shu sababli
+    «avtomat hisoblab bersin» talabi bajarilmayotgan edi.
+
+    Bu route `/{user_id}` dan OLDIN e'lon qilinishi shart — aks holda
+    FastAPI «global» so'zini `user_id` deb talqin qilib 422 qaytarardi."""
+    existing = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.scope == "global"))
+    before = None
+    if existing is not None:
+        before = row_to_dict(existing, exclude=("id",))
+        for field, value in payload.model_dump().items():
+            setattr(existing, field, value)
+        profile = existing
+    else:
+        profile = OvertimeProfile(user_id=None, scope="global", **payload.model_dump())
+        db.add(profile)
+    profile.updated_by = actor.id
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="overtime_profile_global_upserted",
+            target_user_id=None,
+            before=before,
+            after=payload.model_dump(),
+        )
+    )
+    await db.commit()
+    await db.refresh(profile)
+    return OvertimeProfileOut.model_validate(profile, from_attributes=True)
 
 
 @router.put("/overtime-profiles/{user_id}", response_model=OvertimeProfileOut)
@@ -564,7 +605,11 @@ async def upsert_overtime_profile(
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
 
-    existing = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user_id))
+    existing = await db.scalar(
+        select(OvertimeProfile).where(
+            OvertimeProfile.user_id == user_id, OvertimeProfile.scope == "user"
+        )
+    )
     before = None
     if existing is not None:
         # Yuqoridagi bilan bir xil sabab: `multiplier`/`fixed_rate_per_hour`
@@ -574,7 +619,7 @@ async def upsert_overtime_profile(
             setattr(existing, field, value)
         profile = existing
     else:
-        profile = OvertimeProfile(user_id=user_id, **payload.model_dump())
+        profile = OvertimeProfile(user_id=user_id, scope="user", **payload.model_dump())
         db.add(profile)
     profile.updated_by = actor.id
 
@@ -688,6 +733,103 @@ async def decide_overtime(
     row = OvertimeEntryOut.model_validate(entry, from_attributes=True)
     row.user_full_name = target.full_name if target else None
     return row
+
+
+class PayrollDateTickRequest(BaseModel):
+    # E'TIBOR: maydon nomi ataylab `target_date` (`date` EMAS) — pydantic
+    # forward-ref baholashda maydon nomi o'z turi bilan bir xil bo'lsa
+    # (`date: date | None`), sinf nazomasida `date` maydon qiymati bilan
+    # SOYALANIB, tur eval'i "NoneType | NoneType" xatosini beradi.
+    target_date: date | None = None  # berilmasa "kecha" (scheduler kunlik ishlatadi)
+
+
+class OvertimeBulkDecide(BaseModel):
+    period: str  # "YYYY-MM"
+    status: str = OvertimeEntryStatus.approved.value
+
+
+@router.post("/overtime/bulk-decide")
+async def bulk_decide_overtime(
+    payload: OvertimeBulkDecide, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Bir oydagi BARCHA kutilayotgan qo'shimcha ish yozuvini bir bosishda
+    hal qiladi (§3.2 to'siq C).
+
+    NEGA: nomzodlar har kuni avtomatik yaratiladi va `pending` bo'lib
+    tug'iladi. 20 xodim × 22 ish kuni = ~440 yozuv — HR ularni birma-bir
+    bosolmaydi, natijada hech biri tasdiqlanmay qolib «qo'shimcha ish
+    ishlamayapti» degan taassurot tug'ilardi.
+
+    Tasdiq bosqichining O'ZI qoladi (pul xavfsizligi) — faqat mehnati
+    kamayadi. Kim tasdiqlagani har bir yozuvda va auditda saqlanadi."""
+    if payload.status not in (OvertimeEntryStatus.approved.value, OvertimeEntryStatus.rejected.value):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "status 'approved' yoki 'rejected' bo'lishi kerak")
+    start, end = _period_bounds(payload.period)
+
+    rows = list(
+        await db.scalars(
+            select(OvertimeEntry).where(
+                OvertimeEntry.date >= start,
+                OvertimeEntry.date < end,
+                OvertimeEntry.status == OvertimeEntryStatus.pending.value,
+            )
+        )
+    )
+    now = datetime.utcnow()
+    for entry in rows:
+        entry.status = payload.status
+        entry.decided_by = actor.id
+        entry.decided_at = now
+
+    if rows:
+        # Audit BITTA yozuv — 440 ta alohida qator audit jurnalini
+        # ishlatib bo'lmas holga keltirardi. Tafsilot uchun daqiqalar jami
+        # va xodimlar soni saqlanadi.
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="overtime_bulk_decided",
+                target_user_id=None,
+                before={"pending": len(rows)},
+                after={
+                    "period": payload.period,
+                    "status": payload.status,
+                    "count": len(rows),
+                    "users": len({e.user_id for e in rows}),
+                    "total_minutes": sum(e.minutes for e in rows),
+                },
+            )
+        )
+    await db.commit()
+    return {"period": payload.period, "status": payload.status, "decided": len(rows)}
+
+
+@router.post("/overtime/detect-now")
+async def overtime_detect_now(
+    payload: PayrollDateTickRequest, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """«Hozir hisoblab ber» — saytdan (JWT bilan) qo'shimcha ish nomzodlarini
+    darhol yaratadi (§3.2 to'siq B).
+
+    NEGA: avtomatik aniqlash cron orqali KECHASI 01:00 da ishlaydi, ya'ni
+    bugungi farq ertaga ertalab paydo bo'ladi. Buni bilmagan HR «ishlamayapti»
+    deb o'ylardi. Endi kutmasdan bosib ko'rish mumkin.
+
+    Default sana — KECHA (cron bilan bir xil): bugungi kun hali tugamagan,
+    xodim ishdan chiqmagan bo'lishi mumkin."""
+    target_date = payload.target_date or date.fromordinal(today_local().toordinal() - 1)
+    created = await detect_overtime_candidates(db, target_date)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="overtime_detect_now",
+            target_user_id=None,
+            before=None,
+            after={"date": target_date.isoformat(), "created": len(created)},
+        )
+    )
+    await db.commit()
+    return {"date": target_date.isoformat(), "created": len(created)}
 
 
 # ─────────────────────────────────────────────
@@ -1453,14 +1595,6 @@ async def calculate_monthly_cron(
     )
     await db.commit()
     return result
-
-
-class PayrollDateTickRequest(BaseModel):
-    # E'TIBOR: maydon nomi ataylab `target_date` (`date` EMAS) — pydantic
-    # forward-ref baholashda maydon nomi o'z turi bilan bir xil bo'lsa
-    # (`date: date | None`), sinf nazomasida `date` maydon qiymati bilan
-    # SOYALANIB, tur eval'i "NoneType | NoneType" xatosini beradi.
-    target_date: date | None = None  # berilmasa "kecha" (scheduler kunlik ishlatadi)
 
 
 @router.post("/late-warnings-tick", dependencies=[Depends(verify_bot_secret)])

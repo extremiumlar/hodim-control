@@ -183,6 +183,28 @@ def policy_from_index(index: dict, user: User) -> FinePolicy | None:
     return index["global"]
 
 
+async def resolve_overtime_profile(db: AsyncSession, user_id: int) -> OvertimeProfile | None:
+    """Qo'shimcha ish profili — 2 DARAJALI: xodim > global (§3.2).
+
+    NEGA: ilgari profil FAQAT xodim bo'yicha edi va `enabled` default False.
+    Ya'ni HR har bir xodimga qo'lda profil ochmaguncha qo'shimcha ish umuman
+    hisoblanmasdi — jonli bazada yoqilgan profillar soni 0 edi va shu sababli
+    «avtomat hisoblab bersin» talabi bajarilmayotgan edi. Global daraja bilan
+    yangi xodim ham o'z-o'zidan qamrab olinadi.
+
+    Xodim qatori TOPILSA — global'ga umuman qaralmaydi, hatto u qator
+    `enabled=False` bo'lsa ham: bu «bu xodimga ATAYLAB o'chirilgan» degani
+    (aks holda global yoqiq bo'lsa istisnoni yozib bo'lmasdi)."""
+    own = await db.scalar(
+        select(OvertimeProfile).where(
+            OvertimeProfile.user_id == user_id, OvertimeProfile.scope == "user"
+        )
+    )
+    if own is not None:
+        return own
+    return await db.scalar(select(OvertimeProfile).where(OvertimeProfile.scope == "global"))
+
+
 async def resolve_rate(db: AsyncSession, user_id: int, on_date: date) -> SalaryRate | None:
     """Amaldagi oylik stavka: `effective_from <= on_date` bo'yicha eng
     so'nggisi (`Norm`dagi bilan bir xil "tarixiy versiya" naqshi). Yumshoq
@@ -758,7 +780,7 @@ async def build_payslip(
     )
     rate = await resolve_rate(db, user.id, period_start)
     first_rate = await _first_rate(db, user.id)
-    overtime_profile = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user.id))
+    overtime_profile = await resolve_overtime_profile(db, user.id)
 
     base_amount, base_item, absent_deduct_item, unpaid_leave_item = compute_base(
         rate, first_rate, days, period_start, policy
@@ -1059,9 +1081,26 @@ async def detect_overtime_candidates(db: AsyncSession, for_date: date) -> list[O
     hisобi noto'g'ri (kichik) chiqib, nomzod yaratilmay qoladi. Bu xavfsiz
     tomonga og'adi (nomzod o'tkazib yuboriladi, noto'g'ri katta summa
     yaratilmaydi) — to'liq yechim kelajakka qoldirilgan."""
-    profiles = {
-        p.user_id: p for p in await db.scalars(select(OvertimeProfile).where(OvertimeProfile.enabled.is_(True)))
-    }
+    # §3.2: qamrov endi GLOBAL profildan ham keladi. Ilgari faqat shaxsiy
+    # `enabled=True` qatorlar qaralardi — ya'ni HR har bir xodimga qo'lda
+    # profil ochmaguncha nomzod umuman yaratilmasdi (jonli bazada yoqilgan
+    # profil 0 ta edi).
+    rows = list(await db.scalars(select(OvertimeProfile)))
+    global_profile = next((r for r in rows if r.scope == "global"), None)
+    own = {r.user_id: r for r in rows if r.scope == "user" and r.user_id is not None}
+
+    tracked = list(
+        await db.scalars(
+            select(User).where(User.role.in_(PAYROLL_TRACKED_ROLES), User.is_active.is_(True))
+        )
+    )
+    # Xodim qatori bo'lsa u HAL QILADI (hatto o'chiq bo'lsa ham — bu ataylab
+    # qo'yilgan istisno); bo'lmasa global qoida qo'llanadi.
+    profiles = {}
+    for u in tracked:
+        profile = own.get(u.id, global_profile)
+        if profile is not None and profile.enabled:
+            profiles[u.id] = profile
     if not profiles:
         return []
 
@@ -1076,7 +1115,7 @@ async def detect_overtime_candidates(db: AsyncSession, for_date: date) -> list[O
     if not candidate_ids:
         return []
 
-    users = {u.id: u for u in await db.scalars(select(User).where(User.id.in_(candidate_ids)))}
+    users = {u.id: u for u in tracked if u.id in candidate_ids}
     atts = {
         a.user_id: a
         for a in await db.scalars(
@@ -1119,12 +1158,18 @@ async def detect_overtime_candidates(db: AsyncSession, for_date: date) -> list[O
             izoh = f"Avtomatik: rejadagi {scheduled_minutes} daq o'rniga {att.worked_minutes} daq — {delta_minutes} daq ORTIQCHA"
         else:
             izoh = f"Avtomatik: rejadagi {scheduled_minutes} daq o'rniga {att.worked_minutes} daq — {-delta_minutes} daq KAM"
+        # `auto_approve` — HR xohlasa nomzod darhol tasdiqlangan tug'iladi
+        # (§3.2 to'siq C). Default O'CHIQ: tasdiqsiz pul payslip'ga kirmasin.
         entry = OvertimeEntry(
             user_id=user_id,
             date=for_date,
             minutes=delta_minutes,
             source="auto_attendance",
-            status=OvertimeEntryStatus.pending.value,
+            status=(
+                OvertimeEntryStatus.approved.value
+                if getattr(profile, "auto_approve", False)
+                else OvertimeEntryStatus.pending.value
+            ),
             note=izoh,
         )
         db.add(entry)

@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     fcm_project_id: str = ""
     fcm_service_account_file: str = ""
 
+    # ── Xabar yuborishning YAGONA kalitini o'chirish (2026-08-15) ──
+    # `false` bo'lsa `notify_user` hech kimga hech narsa yubormaydi — na push,
+    # na Telegram. FAQAT sinov uchun.
+    #
+    # NEGA KERAK: lokal testlar bazadagi HAQIQIY xodimlarga xabar yuborardi —
+    # sinov davri (masalan «2022-03») uchun Boshliq/Dasturchi telefoniga
+    # «oylikni tekshirdi» xabari borib qolardi. `BOT_TOKEN` ni bo'shatish
+    # yetarli emas: push alohida kanal va u ham ochiq qolardi. Endi bitta
+    # kalit ikkovini ham yopadi.
+    notifications_enabled: bool = True
+
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
     jwt_secret: str = _PLACEHOLDER_JWT_SECRET

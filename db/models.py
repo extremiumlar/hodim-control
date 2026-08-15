@@ -1652,16 +1652,34 @@ class KpiRate(Base):
 
 
 class OvertimeProfile(Base):
-    """Kimga qo'shimcha ish (overtime) yoqilgani va qanday hisoblanishi — faqat
-    HR belgilagan xodimlarga (`enabled`). `multiplier`da tizim darajasidagi
-    default YO'Q (2026-07-27 QAROR, 9-bo'lim savol 6) — `derived` rejimda HR
-    har xodim/lavozim uchun MAJBURIY o'zi kiritadi."""
+    """Kimga qo'shimcha ish (overtime) yoqilgani va qanday hisoblanishi.
+    `multiplier`da tizim darajasidagi default YO'Q (2026-07-27 QAROR,
+    9-bo'lim savol 6) — `derived` rejimda HR MAJBURIY o'zi kiritadi.
+
+    2026-08-15 (§3.2): IKKI DARAJALI bo'ldi — `scope='global'` (user_id NULL)
+    barcha xodimga default, `scope='user'` esa uni bosadi
+    (`resolve_overtime_profile`, `FinePolicy` naqshi bilan bir xil ruh).
+
+    NEGA: ilgari profil faqat xodim bo'yicha edi va `enabled` default False —
+    ya'ni HR har bir xodimga qo'lda profil ochmaguncha qo'shimcha ish UMUMAN
+    hisoblanmasdi. Jonli bazada `enabled=true` profillar soni 0 edi, shu
+    sababli «avtomat hisoblab bersin» talabi bajarilmayotgan edi. Global
+    daraja bilan yangi ishga kirgan xodim ham o'z-o'zidan qamrab olinadi."""
 
     __tablename__ = "overtime_profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    # `scope='global'` bo'lsa NULL. Unikallik migratsiyadagi QISMAN
+    # indekslar bilan ta'minlanadi (oddiy UNIQUE NULL'larni farqli sanaydi,
+    # ya'ni bir nechta global qator sig'ib ketardi).
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    scope: Mapped[str] = mapped_column(String(10), default="user", server_default="user")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Nomzod yaratilishi bilan `approved` bo'lsinmi. Default O'CHIQ —
+    # tasdiqsiz pul payslip'ga kirmaydi (1.3-band).
+    auto_approve: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     mode: Mapped[str] = mapped_column(String(20), default=OvertimeMode.derived.value)
     fixed_rate_per_hour: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     multiplier: Mapped[float | None] = mapped_column(Numeric(3, 2), nullable=True)

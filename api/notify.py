@@ -17,6 +17,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import settings
 from api.services import push as push_service
 from api.telegram_notify import send_message
 from db.models import User
@@ -73,6 +74,13 @@ async def notify_user(
 
     Qaytaradi: `{"push": <nechta qurilma>, "telegram": <yuborildimi>}`.
     """
+    # Sinov rejimi qo'riqchisi (`NOTIFICATIONS_ENABLED=false`). Bu YAGONA
+    # nuqta — barcha xabarlar shu funksiyadan o'tadi, ya'ni testda birorta
+    # kanal ochiq qolib ketmaydi. `BOT_TOKEN` ni bo'shatish yetarli emasdi:
+    # push alohida kanal edi va haqiqiy telefonlarga borardi.
+    if not settings.notifications_enabled:
+        return {"push": 0, "telegram": False, "disabled": True}
+
     push_title, push_body = _split_title_body(text, title)
     sent_push = await push_service.send_push(
         db, user, category, push_title, push_body, data=data

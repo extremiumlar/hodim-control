@@ -1157,6 +1157,9 @@ class SalaryRateOut(BaseModel):
 
 class OvertimeProfileIn(BaseModel):
     enabled: bool = False
+    # Nomzod yaratilishi bilan tasdiqlangan bo'lsinmi (§3.2 to'siq C).
+    # Default O'CHIQ — tasdiqsiz summa payslip'ga kirmasin.
+    auto_approve: bool = False
     mode: str = "derived"
     fixed_rate_per_hour: float | None = Field(default=None, ge=0)
     multiplier: float | None = Field(default=None, gt=0)
@@ -1185,9 +1188,12 @@ class OvertimeProfileIn(BaseModel):
 
 
 class OvertimeProfileOut(BaseModel):
-    user_id: int
+    # `scope='global'` qatorida NULL — bu barcha xodimga default profil.
+    user_id: int | None = None
     user_full_name: str | None = None
+    scope: str = "user"
     enabled: bool
+    auto_approve: bool = False
     mode: str
     fixed_rate_per_hour: float | None
     multiplier: float | None
