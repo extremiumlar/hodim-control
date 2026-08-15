@@ -84,6 +84,8 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  funnelTarget: (period: string, target?: number) =>
+    ["funnel", "target", period, target ?? null] as const,
   funnelEconomics: (period: string, groupBy: string) =>
     ["funnel", "economics", period, groupBy] as const,
   funnelKnownChannels: (period: string, groupBy: string) =>
@@ -1011,3 +1013,17 @@ export const useSetAvgDealProfit = (period: string, groupBy: "tag" | "source") =
       api.setAvgDealProfit(vars.period, vars.value),
     [qk.funnelEconomics(period, groupBy)]
   );
+
+// ─── Teskari kalkulyator (4-bosqich) ───
+export const useFunnelTarget = (period: string, target?: number) =>
+  useQuery({
+    queryKey: qk.funnelTarget(period, target),
+    queryFn: () => api.funnelTarget(period, target),
+    placeholderData: keepPreviousData,
+  });
+
+export const useSaveFunnelTarget = (period: string) =>
+  useApiMutation(api.saveFunnelTarget, [
+    qk.funnelTarget(period, undefined),
+    ["funnel", "target", period] as const,
+  ]);

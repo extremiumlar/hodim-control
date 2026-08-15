@@ -2126,6 +2126,15 @@ class FunnelMonth(Base):
 
     period: Mapped[str] = mapped_column(String(7), primary_key=True)  # "YYYY-MM"
     avg_deal_profit: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    # ── Teskari kalkulyator (4-bosqich) ──
+    # Oylik maqsad: nechta shartnoma (= nechta uy). Shundan yuqoriga qarab
+    # kerakli tashrif/suhbat/lid/byudjet hisoblanadi.
+    target_contracts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Rahbar QO'LDA o'zgartirgan farazlar, masalan
+    # {"visit_to_contract": 8.0, "cpl": 45000}. Bo'sh kalitlar o'lchangan
+    # qiymat bilan to'ldiriladi — ya'ni bu «ustiga yozish» qatlami, to'liq
+    # nusxa emas: o'lchov yangilansa, tegilmagan farazlar ham yangilanadi.
+    assumptions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     note: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from api.deps import get_db, require_roles
 from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
+from api.services import target_calc
 from db.models import AuditLog, Role, User
 
 router = APIRouter(prefix="/funnel", tags=["funnel"])
@@ -223,4 +224,72 @@ async def set_avg_profit(
     await ad_spend_service.set_avg_deal_profit(
         db, payload.period, payload.avg_deal_profit, actor.id
     )
+    return {"ok": True}
+
+
+class TargetIn(BaseModel):
+    period: str
+    target_contracts: int | None = None
+    # Faqat o'zgartirilgan farazlar (bo'shlari o'lchangan qiymatdan olinadi)
+    assumptions: dict | None = None
+
+
+@router.get("/target")
+async def get_target(
+    period: str,
+    target_contracts: int | None = None,
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Teskari kalkulyator: maqsaddan kerakli lid/suhbat/byudjet (4-bosqich).
+
+    `target_contracts` berilmasa — shu oy uchun SAQLANGAN maqsad olinadi;
+    u ham bo'lmasa faqat farazlar qaytariladi (hisob yo'q)."""
+    _resolve_range(period, None, None)
+    saved = await target_calc.get_target(db, period)
+    target = target_contracts if target_contracts is not None else (
+        saved.target_contracts if saved else None
+    )
+    overrides = (saved.assumptions if saved else None) or {}
+
+    if target is None or target <= 0:
+        base = await target_calc.baseline(db)
+        return {
+            "period": period,
+            "target_contracts": None,
+            "saved_assumptions": overrides,
+            "baseline": base,
+            "chain": [],
+            "hint": "Maqsad kiritilmagan — nechta uy sotmoqchisiz?",
+        }
+
+    result = await target_calc.calculate(db, period, target, overrides)
+    result["saved_assumptions"] = overrides
+    result["saved_target"] = saved.target_contracts if saved else None
+    return result
+
+
+@router.post("/target")
+async def save_target(
+    payload: TargetIn, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Oylik maqsadni va qo'lda o'zgartirilgan farazlarni saqlaydi."""
+    _resolve_range(payload.period, None, None)
+    if payload.target_contracts is not None and payload.target_contracts < 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Maqsad manfiy bo'lmasin")
+    row = await target_calc.save_target(
+        db, payload.period, payload.target_contracts, payload.assumptions, actor.id
+    )
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="funnel_target_set",
+            after={
+                "period": payload.period,
+                "target_contracts": row.target_contracts,
+                "assumptions": row.assumptions,
+            },
+        )
+    )
+    await db.commit()
     return {"ok": True}

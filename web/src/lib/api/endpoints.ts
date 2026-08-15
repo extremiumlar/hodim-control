@@ -18,6 +18,7 @@ import type {
   AuditLog,
   CelebrationMediaRow,
   Economics,
+  TargetPlan,
   FunnelChannels,
   FunnelData,
   FunnelMonths,
@@ -733,6 +734,20 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelTarget: (period: string, targetContracts?: number) =>
+    apiFetch<TargetPlan>(
+      `/funnel/target?period=${period}${
+        targetContracts ? `&target_contracts=${targetContracts}` : ""
+      }`
+    ),
+  saveFunnelTarget: (body: {
+    period: string;
+    target_contracts: number | null;
+    assumptions: Record<string, number> | null;
+  }) => apiFetch<{ ok: boolean }>("/funnel/target", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   funnelEconomics: (period: string, groupBy: "tag" | "source" = "tag") =>
     apiFetch<Economics>(`/funnel/economics?period=${period}&group_by=${groupBy}`),
   funnelKnownChannels: (period: string, groupBy: "tag" | "source" = "tag") =>

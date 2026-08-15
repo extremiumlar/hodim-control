@@ -2532,6 +2532,121 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Reklama xarajati tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: teskari kalkulyator (4-bosqich) --")
+        try:
+            import asyncio as _aio7
+
+            from db.base import async_session as _asess7
+            from api.services import target_calc as _tc
+
+            conn = db()
+            cur = conn.cursor()
+            T_PERIOD = "2021-09"
+            cur.execute("delete from funnel_month where period=?", (T_PERIOD,))
+            conn.commit()
+
+            try:
+                async def _calc(target, ov=None):
+                    async with _asess7() as s:
+                        return await _tc.calculate(s, T_PERIOD, target, ov)
+
+                # To'liq faraz to'plami bilan: arifmetika aniq tekshiriladi
+                ov = {
+                    "lead_to_visit": 5.0,        # 5%
+                    "visit_to_contract": 10.0,   # 10%
+                    "talks_per_lead": 2.0,
+                    "pickup_rate": 50.0,
+                    "cpl": 40000.0,
+                    "reach_to_lead": 1.0,        # 1%
+                }
+                r = _aio7.run(_calc(10, ov))
+                chain = {c["key"]: c["value"] for c in r["chain"]}
+                # 10 shartnoma / 10% = 100 tashrif; /5% = 2000 lid;
+                # ×2 = 4000 suhbat; /50% = 8000 urinish; /1% = 200 000 qamrov
+                check("Kalkulyator: tashrif = maqsad / (tashrif->shartnoma)",
+                      chain["visits"] == 100, f"={chain['visits']}")
+                check("Kalkulyator: lid = tashrif / (lid->tashrif)",
+                      chain["leads"] == 2000, f"={chain['leads']}")
+                check("Kalkulyator: suhbat = lid × lid boshiga suhbat",
+                      chain["talks"] == 4000, f"={chain['talks']}")
+                check("Kalkulyator: urinish = suhbat / ko'tarish foizi",
+                      chain["tries"] == 8000, f"={chain['tries']}")
+                check("Kalkulyator: auditoriya = lid / (qamrov->lid)",
+                      chain["reach"] == 200000, f"={chain['reach']}")
+                check("Kalkulyator: byudjet = lid × CPL (2000 × 40 000)",
+                      r["budget"] == 80_000_000, f"={r['budget']}")
+                check("Kalkulyator: qo'lda kiritilgan faraz «override» deb belgilanadi",
+                      r["assumptions"]["cpl"]["source"] == "override",
+                      f"={r['assumptions']['cpl']['source']}")
+
+                # Yuqoriga yaxlitlash: 7 shartnoma / 10% = 70 tashrif,
+                # /3% = 2333.3 lid -> 2334 (yarim lid bo'lmaydi)
+                r2 = _aio7.run(_calc(7, {**ov, "lead_to_visit": 3.0}))
+                c2 = {c["key"]: c["value"] for c in r2["chain"]}
+                check("Kalkulyator: kasr son YUQORIGA yaxlitlanadi (2334)",
+                      c2["leads"] == 2334, f"={c2['leads']}")
+
+                # CPL yo'q bo'lsa byudjet hisoblanmaydi (0 emas!)
+                r3 = _aio7.run(_calc(10, {**ov, "cpl": None}))
+                check("Kalkulyator: CPL bo'lmasa byudjet «hisoblanmadi» (None)",
+                      r3["budget"] is None and "cpl" in r3["missing"], f"{r3['budget']}")
+
+                # Sezgirlik: tashrif->shartnoma 10% -> 11% bo'lsa lid kamayadi
+                sens = {s["label"]: s for s in r["sensitivity"]}
+                key = "Tashrif→shartnoma +1 punkt"
+                # 10/11% = 90.9 tashrif; /5% = 1818.2 lid; 2000 - 1818.2 = 181.8 -> 182
+                check("Kalkulyator: sezgirlik — +1 punkt 182 ta lid tejaydi",
+                      sens[key]["leads_saved"] == 182, f"={sens.get(key)}")
+                check("Kalkulyator: sezgirlik byudjet tejamini ham beradi",
+                      sens[key]["budget_saved"] == round(181.818181 * 40000),
+                      f"={sens[key]['budget_saved']}")
+
+                # Saqlash: faqat to'ldirilgan farazlar yoziladi
+                async def _save(target, assumptions):
+                    async with _asess7() as s:
+                        return await _tc.save_target(s, T_PERIOD, target, assumptions, None)
+
+                row = _aio7.run(_save(12, {"visit_to_contract": 8.0, "cpl": None}))
+                check("Kalkulyator: maqsad saqlanadi", row.target_contracts == 12,
+                      f"={row.target_contracts}")
+                check("Kalkulyator: bo'sh farazlar SAQLANMAYDI (o'lchovdan olinadi)",
+                      row.assumptions == {"visit_to_contract": 8.0}, f"={row.assumptions}")
+
+                # API
+                r_api = client.get(f"{API_BASE}/funnel/target?period={T_PERIOD}",
+                                   headers=auth(boss_t))
+                check("Kalkulyator(API): saqlangan maqsad bilan hisob qaytadi",
+                      r_api.status_code == 200
+                      and r_api.json().get("target_contracts") == 12,
+                      f"kod={r_api.status_code}, {r_api.text[:90]}")
+                r_no = client.get(f"{API_BASE}/funnel/target?period=2021-10",
+                                  headers=auth(boss_t))
+                check("Kalkulyator(API): maqsadsiz oyda hisob yo'q, maslahat bor",
+                      r_no.status_code == 200 and r_no.json().get("chain") == []
+                      and r_no.json().get("hint"), f"kod={r_no.status_code}")
+                t_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+                if t_emp:
+                    r_deny = client.post(
+                        f"{API_BASE}/funnel/target", headers=auth(token_for(t_emp[0], "employee")),
+                        json={"period": T_PERIOD, "target_contracts": 5})
+                    check("Kalkulyator(API): oddiy xodim maqsad qo'ya OLMAYDI -> 403",
+                          r_deny.status_code == 403, f"kod={r_deny.status_code}")
+                t_rop = cur.execute(
+                    "select id from users where role='rop' and is_active=1 limit 1").fetchone()
+                if t_rop:
+                    r_rop = client.post(
+                        f"{API_BASE}/funnel/target", headers=auth(token_for(t_rop[0], "rop")),
+                        json={"period": T_PERIOD, "target_contracts": 12})
+                    check("Kalkulyator(API): ROP maqsad qo'ya oladi -> 200",
+                          r_rop.status_code == 200, f"kod={r_rop.status_code}")
+            finally:
+                cur.execute("delete from funnel_month where period in (?,?)", (T_PERIOD, "2021-10"))
+                conn.commit()
+                conn.close()
+        except Exception:
+            check("Teskari kalkulyator tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

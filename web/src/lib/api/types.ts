@@ -123,6 +123,34 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface TargetChainRow {
+  key: string;
+  label: string;
+  value: number | null;
+  source: string;
+}
+
+export interface TargetAssumption {
+  value: number | null;
+  source: string;
+  unit: string;
+}
+
+export interface TargetPlan {
+  period: string;
+  target_contracts: number | null;
+  saved_target?: number | null;
+  saved_assumptions: Record<string, number>;
+  chain: TargetChainRow[];
+  assumptions: Record<string, TargetAssumption>;
+  missing: string[];
+  budget: number | null;
+  baseline_confidence: string;
+  baseline_months: number;
+  sensitivity: { label: string; leads_saved: number; budget_saved: number | null }[];
+  hint?: string;
+}
+
 export interface EconomicsRow {
   id: number;
   channel: string;
