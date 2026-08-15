@@ -41,8 +41,13 @@ from db.models import AdSpend, FunnelMonth, HourlyActual
 # «haqiqat» EMAS — shunchaki kalkulyator ishga tushishi uchun. Har biri
 # javobda `source="default"` bilan belgilanadi.
 DEFAULTS = {
-    "lead_to_invite": 25.0,      # lidning qanchasi ofisga taklif qilinadi
-    "invite_to_visit": 30.0,     # taklifning qanchasi haqiqiy tashrifga aylanadi
+    # ⚠️ Kalkulyator taklif bosqichini ALOHIDA ishlatmaydi: oylik qatorda u
+    # o'lchanmaydi va lid→tashrif dan ajratib bo'lmaydi. Shuning uchun zaxira
+    # qiymat ham BIRLASHTIRILGAN bo'lishi shart — ilgari bu yerda ikkita
+    # alohida kalit turardi va `lead_to_visit` uchun zaxira UMUMAN yo'q edi,
+    # ya'ni o'lchov bo'lmasa butun zanjir «hisoblanmadi» bo'lib qolardi.
+    # 25% (taklif) × 30% (tashrif) ≈ 7.5%.
+    "lead_to_visit": 7.5,        # lidning qanchasi ofisga kelib tashrif bo'ladi
     "visit_to_contract": 10.0,   # tashrifning qanchasi shartnoma bo'ladi
     "talks_per_lead": 1.5,       # bitta lidga o'rtacha nechta SUHBAT
     "pickup_rate": 45.0,         # urinishning qanchasi javob beriladi
@@ -52,6 +57,13 @@ DEFAULTS = {
 
 # O'rtacha hisoblashda nechta oy qaraladi (yetilganlaridan).
 BASELINE_MONTHS = 6
+
+# Oy o'rtachaga kirishi uchun kamida shuncha lid bo'lishi kerak. NEGA:
+# jonli tekshiruvda (2026-08-15) bir necha eski oyda 1-2 tadan lid bor edi
+# (kogorta ustuni to'lib borayotgani sababli) va ularning tashrifi 0 —
+# natijada «o'lchangan konversiya 0%» chiqib, butun hisob to'xtab qoldi.
+# Kichik namuna o'lchov emas.
+MIN_LEADS_FOR_BASELINE = 20
 
 
 def _avg(values: list[float]) -> float | None:
@@ -132,7 +144,9 @@ async def _measured_reach_to_lead(db: AsyncSession, months: int) -> float | None
 async def baseline(db: AsyncSession, months: int = BASELINE_MONTHS) -> dict:
     """O'lchangan farazlar + ular qancha ishonchli ekani."""
     series = await funnel_service.monthly_series(db, months)
-    mature = [m for m in series if m["mature"] and m["leads"] > 0]
+    mature = [
+        m for m in series if m["mature"] and m["leads"] >= MIN_LEADS_FOR_BASELINE
+    ]
 
     lead_to_visit = _avg([m["lead_to_visit"] for m in mature])
     visit_to_contract = _avg([m["visit_to_contract"] for m in mature])
@@ -160,10 +174,18 @@ async def baseline(db: AsyncSession, months: int = BASELINE_MONTHS) -> dict:
 
 
 def _resolve(key: str, overrides: dict, measured: dict) -> tuple[float | None, str]:
+    """Faraz qiymati va uning manbai.
+
+    ⚠️ NOL O'LCHOV ISHLATILMAYDI: konversiya aynan 0 bo'lsa, u bo'linuvchi
+    sifatida butun zanjirni to'xtatadi («0 ga bo'lish»). Amalda bu «bu oy
+    hech kim sotmagan» degani emas, «bu oyda o'lchash uchun ma'lumot
+    yetarli emas» degani — shuning uchun zaxira farazga o'tiladi va manba
+    `default` deb ko'rsatiladi (foydalanuvchi buni ko'rib turadi)."""
     if overrides.get(key) is not None:
         return float(overrides[key]), "override"
-    if measured.get(key) is not None:
-        return float(measured[key]), "measured"
+    value = measured.get(key)
+    if value is not None and float(value) > 0:
+        return float(value), "measured"
     fallback = DEFAULTS.get(key)
     return (float(fallback), "default") if fallback is not None else (None, "yo'q")
 

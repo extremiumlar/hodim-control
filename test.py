@@ -2601,6 +2601,36 @@ def run_tests(ctx: dict) -> None:
                       sens[key]["budget_saved"] == round(181.818181 * 40000),
                       f"={sens[key]['budget_saved']}")
 
+                # Nol o'lchov ishlatilmasin — u butun zanjirni to'xtatadi
+                _base_orig = _tc.baseline
+
+                async def _fake_base(db, months=6):
+                    return {
+                        "months_used": 1,
+                        "values": {
+                            "lead_to_visit": 0.0,          # soxta «o'lchov»
+                            "visit_to_contract": 12.0,
+                            "talks_per_lead": None,
+                            "pickup_rate": None,
+                            "cpl": None,
+                            "reach_to_lead": None,
+                        },
+                        "confidence": "past",
+                    }
+
+                _tc.baseline = _fake_base
+                try:
+                    r0 = _aio7.run(_calc(10, {}))
+                    a0 = r0["assumptions"]["lead_to_visit"]
+                    check("Kalkulyator: 0% «o'lchov» rad etiladi, zaxira faraz olinadi",
+                          a0["source"] == "default" and a0["value"] == _tc.DEFAULTS["lead_to_visit"],
+                          f"={a0}")
+                    c0 = {c["key"]: c["value"] for c in r0["chain"]}
+                    check("Kalkulyator: shu sabab zanjir to'xtamaydi (lid hisoblandi)",
+                          c0["leads"] is not None and c0["leads"] > 0, f"lid={c0['leads']}")
+                finally:
+                    _tc.baseline = _base_orig
+
                 # Saqlash: faqat to'ldirilgan farazlar yoziladi
                 async def _save(target, assumptions):
                     async with _asess7() as s:
