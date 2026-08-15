@@ -12,8 +12,18 @@ sababdan bajarilmayotgan edi.
 
 Endi `FinePolicy` dagi bilan bir xil naqsh: `scope='global'` qatori
 BARCHA xodimga default bo'lib xizmat qiladi, xodim qatori esa uni bosadi
-(`resolve_overtime_profile`). Yangi ishga kirgan xodim ham avtomatik
-qamrab olinadi — «tugmani yana bosishni unutish» xatosi mumkin emas.
+(`resolve_overtime_profile`).
+
+⚠️ MAVJUD INDEKSLARGA TEGILMAYDI (2026-08-15 da o'rganilgan dars). Birinchi
+variantda eski indeksni `try/except` bilan o'chirishga urinilgan edi —
+SQLite'da bu zararsiz, Postgres'da esa BUTUN TRANZAKSIYANI bekor qiladi
+(`InFailedSQLTransactionError`) va migratsiya jonli bazada yiqilib qoldi.
+Aslida eski `UNIQUE(user_id)` cheklovi bizga xalaqit ham bermaydi: ikkala
+bazada ham NULL'lar bir-biridan farqli hisoblanadi, ya'ni `user_id IS NULL`
+bo'lgan global qator unga umuman to'qnashmaydi.
+
+Global qatorning BITTA bo'lishini esa alohida QISMAN unikal indeks
+kafolatlaydi.
 
 `down_revision` ATAYLAB `p5q6r7s8t9u0` (parallel ish `q6r7s8t9u0v1` ni
 o'sha nuqtadan tortgan) — ikki bosh hosil bo'ladi, shuning uchun deploy'da
@@ -29,8 +39,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # `user_id` endi NULL bo'lishi mumkin (global qator uchun) va eski
-    # unikal indeks o'rniga (scope, user_id) juftligi ishlatiladi.
     # `batch_alter_table` — SQLite'da ustun turini o'zgartirish uchun shart
     # (jadval qayta yaratiladi); Postgres'da oddiy ALTER'ga aylanadi.
     with op.batch_alter_table("overtime_profiles") as batch:
@@ -44,32 +52,12 @@ def upgrade() -> None:
                 "auto_approve", sa.Boolean(), nullable=False, server_default=sa.false()
             )
         )
+        # Global qator uchun `user_id` NULL bo'lishi kerak.
         batch.alter_column("user_id", existing_type=sa.Integer(), nullable=True)
 
-    # Eski unikal indeksni yangisi bilan almashtiramiz. Nomi muhitga qarab
-    # farq qilishi mumkin — topilmasa jim o'tkazib yuboriladi (indeks
-    # bo'lmasa ham yangi cheklovlar to'g'ri ishlaydi).
-    for nom in ("ix_overtime_profiles_user_id", "uq_overtime_profiles_user_id"):
-        try:
-            op.drop_index(nom, table_name="overtime_profiles")
-        except Exception:  # noqa: BLE001 — indeks yo'q bo'lsa muammo emas
-            pass
-
-    op.create_index(
-        "ix_overtime_profiles_user_id", "overtime_profiles", ["user_id"], unique=False
-    )
-    # Xodim bo'yicha bitta qator (avvalgi kafolat saqlanadi).
-    op.create_index(
-        "uq_overtime_profiles_user",
-        "overtime_profiles",
-        ["user_id"],
-        unique=True,
-        sqlite_where=sa.text("user_id IS NOT NULL"),
-        postgresql_where=sa.text("user_id IS NOT NULL"),
-    )
-    # Global qator FAQAT BITTA bo'lishi kerak. Oddiy UNIQUE(user_id) buni
-    # kafolatlamaydi: ikkala bazada ham NULL'lar bir-biridan FARQLI
-    # hisoblanadi, ya'ni bir nechta global qator sig'ib ketardi.
+    # Global qator FAQAT BITTA bo'lsin. Oddiy UNIQUE buni kafolatlamaydi:
+    # NULL'lar farqli hisoblanadi, ya'ni bir nechta global qator sig'ib
+    # ketardi. Qisman indeksni ikkala baza ham qo'llab-quvvatlaydi.
     op.create_index(
         "uq_overtime_profiles_global",
         "overtime_profiles",
@@ -82,7 +70,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_overtime_profiles_global", table_name="overtime_profiles")
-    op.drop_index("uq_overtime_profiles_user", table_name="overtime_profiles")
     with op.batch_alter_table("overtime_profiles") as batch:
         batch.drop_column("auto_approve")
         batch.drop_column("scope")
