@@ -1021,50 +1021,101 @@ async def preflight(
     )
 
 
-@router.post("/{period}/calculate")
+class PayrollCalcStatusOut(BaseModel):
+    """Fon rejimidagi hisoblash holati — sayt shu endpointni 3 soniyada bir
+    so'rab «12/20 xodim» progressini ko'rsatadi."""
+
+    period: str
+    state: str  # idle | queued | running | done | error
+    progress: int
+    total: int
+    error: str | None = None
+    started_at: datetime | None = None
+    calculated_at: datetime | None = None
+
+
+@router.post("/{period}/calculate", status_code=status.HTTP_202_ACCEPTED)
 async def calculate(
     period: str,
     payload: PayrollCalculateRequest,
     actor: User = Depends(_require_manage),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    try:
-        result = await run_payroll(db, period, user_ids=payload.user_ids)
-    except PayrollLocked as e:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(e))
+    """Hisoblashni NAVBATGA qo'yadi va DARHOL qaytadi (§4.3).
 
-    # HR/Boshliqqa "tayyor, tasdiqlaysizmi" xabari — GURUHGA EMAS, shaxsiy DM
-    # (faqat rahbarlarga, individual xodim summasi ko'rsatilmaydi — jami
-    # jamg'arma OK, chunki bu tashkilot darajasidagi raqam).
-    rows = list(await db.scalars(select(Payslip).where(Payslip.period == period)))
-    total = sum(float(p.net) for p in rows)
-    managers = list(
-        await db.scalars(
-            select(User).where(User.role.in_((Role.hr.value, Role.boss.value)), User.telegram_id.isnot(None))
+    Ilgari bu endpoint ishning o'zini bajarardi — 20 xodim × ~12 SQL, keyin
+    har rahbarga Telegram/FCM. cPanel'da Passenger konkurentligi = 1, ya'ni
+    tugma bosilgan zahoti BUTUN sayt 10-40 soniyaga navbatga tushardi.
+
+    Endi bu yerda faqat yengil UPDATE bor; og'ir ishni alohida cron JARAYONI
+    (`api/services/payroll_jobs.py::payroll_tick`) bajaradi. Sayt esa
+    `GET /payroll/{period}/status` orqali progressni kuzatadi."""
+    # Qulf tekshiruvi ATAYLAB shu yerda: HR «qulflangan» xabarini navbatni
+    # kutmasdan, darhol ko'rishi kerak.
+    period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
+    if period_row is not None and period_row.locked:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"«{period}» davri qulflangan — avval qulfni ochish kerak"
         )
+    if period_row is not None and period_row.calc_state in ("queued", "running"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"«{period}» allaqachon hisoblanmoqda — tugashini kuting"
+        )
+
+    if period_row is None:
+        period_row = PayrollPeriod(period=period, status=PayrollPeriodStatus.draft.value)
+        db.add(period_row)
+        await db.flush()
+
+    # Jami xodim sonini OLDINDAN bilib qo'yamiz — sahifa «0/15» ni darhol
+    # ko'rsatsin, birinchi xodim hisoblanguncha «0/0» turmasin.
+    count_query = select(func.count(User.id)).where(
+        User.role.in_(PAYROLL_TRACKED_ROLES), User.is_active.is_(True)
     )
-    for m in managers:
-        await notify_user(
-            db,
-            m,
-            Category.APPROVALS,
-            f"💰 Payroll tayyor ({period}): {result['calculated']} xodim, jami ~{total:,.0f} so'm. "
-            f"Tasdiqlash uchun saytga kiring.".replace(",", " "),
-            data={"path": "/payroll"},
-        )
-    # 8-bo'lim (Bosqich 7): barcha pul o'zgarishlari audit qilinadi — hisoblash
-    # o'zi pul figurasini o'zgartiradi (garchi qulflamasa ham).
-    db.add(
-        AuditLog(
-            actor_id=actor.id,
-            action="payroll_calculated",
-            target_user_id=None,
-            before=None,
-            after={"period": period, "calculated": result["calculated"], "total_net": total},
-        )
-    )
+    if payload.user_ids is not None:
+        count_query = count_query.where(User.id.in_(payload.user_ids))
+    total = int(await db.scalar(count_query) or 0)
+
+    period_row.calc_state = "queued"
+    period_row.calc_requested_by = actor.id
+    period_row.calc_requested_at = datetime.utcnow()
+    period_row.calc_started_at = None
+    period_row.calc_progress = 0
+    period_row.calc_total = total
+    period_row.calc_error = None
+    period_row.calc_user_ids = list(payload.user_ids) if payload.user_ids is not None else None
     await db.commit()
-    return result
+    return {"period": period, "queued": True, "total": total}
+
+
+@router.get("/{period}/status", response_model=PayrollCalcStatusOut)
+async def calc_status(
+    period: str, _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> PayrollCalcStatusOut:
+    row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
+    if row is None:
+        return PayrollCalcStatusOut(period=period, state="idle", progress=0, total=0)
+    return PayrollCalcStatusOut(
+        period=period,
+        state=row.calc_state or "idle",
+        progress=row.calc_progress or 0,
+        total=row.calc_total or 0,
+        error=row.calc_error,
+        started_at=row.calc_started_at,
+        calculated_at=row.calculated_at,
+    )
+
+
+@router.post("/tick", dependencies=[Depends(verify_bot_secret)])
+async def payroll_queue_tick(db: AsyncSession = Depends(get_db)) -> dict:
+    """Navbatdagi davrni hisoblaydi — Docker/scheduler rejimi va testlar uchun.
+
+    cPanel'da bu HTTP yo'l ISHLATILMAYDI: `scripts/cron_tick.py` xuddi shu
+    servisni o'z jarayonida chaqiradi, shunda og'irlik Passenger'ga
+    umuman tegmaydi."""
+    from api.services.payroll_jobs import payroll_tick
+
+    return await payroll_tick(db)
 
 
 @router.get("/{period}", response_model=list[PayslipRow])

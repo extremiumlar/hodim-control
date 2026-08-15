@@ -208,6 +208,17 @@ async def calculate_monthly_payroll() -> None:
         logger.info("[PAYROLL OK] Oylik ish haqi muvaffaqiyatli hisoblandi: %s", body)
 
 
+async def payroll_queue_tick() -> None:
+    """Saytdan navbatga qo'yilgan oylik hisobini bajaradi (§4.3).
+
+    cPanel'da bu ish `scripts/cron_tick.py` ichida IN-PROCESS bajariladi —
+    bu yerdagi HTTP yo'l faqat Docker/scheduler rejimi uchun (u yerda bir
+    nechta ishchi bor, uzoq so'rov saytni qotirmaydi)."""
+    body = await call_api("/payroll/tick", json={}, timeout=600, label="[PAYROLL QUEUE FAILED]")
+    if body is not None and body.get("ran"):
+        logger.info("[PAYROLL QUEUE] %s hisoblandi: %s", body.get("ran"), body)
+
+
 async def payroll_late_warnings_tick() -> None:
     """Kechikish limiti ogohlantirishi (1.5-band): kecha limitni birinchi marta
     oshirgan/unga yaqinlashtirgan xodimlarga botga darhol shaxsiy xabar."""

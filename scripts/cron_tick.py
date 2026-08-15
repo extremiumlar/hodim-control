@@ -77,6 +77,12 @@ PLAYBOOK_LOCK = ROOT / "logs" / "playbook.lock"
 PLAYBOOK_LOCK_STALE_MINUTES = 6
 SYSTEM_HEALTH_LOCK = ROOT / "logs" / "system_health.lock"
 SYSTEM_HEALTH_LOCK_STALE_MINUTES = 6
+# Oylik hisobi (§4.3, 2026-08-15) — saytdagi tugma faqat NAVBATGA qo'yadi,
+# og'ir hisobni shu jarayon bajaradi. Lock uzunroq (20 daq): 20 xodimga
+# ~240 SQL so'rov, sekin ketsa ustiga ikkinchisi tushib payslip'larni
+# ikki marta yozib yurmasin.
+PAYROLL_LOCK = ROOT / "logs" / "payroll.lock"
+PAYROLL_LOCK_STALE_MINUTES = 20
 AUTO_PLAN_LOCK = ROOT / "logs" / "auto_plan.lock"
 AUTO_PLAN_LOCK_STALE_MINUTES = 6
 # Bosqich 4b (2026-08-13) — qolgan ticklar. `group_digest` HAR DAQIQA
@@ -371,6 +377,19 @@ async def _run_playbook_inprocess(now: datetime) -> None:
     await _run_service_inprocess(now, "playbook", PLAYBOOK_LOCK, PLAYBOOK_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_payroll_inprocess(now: datetime) -> None:
+    """Navbatga qo'yilgan oylik hisobi — HAR DAQIQA tekshiriladi.
+
+    Navbat bo'sh bo'lsa bu bitta yengil SELECT, ya'ni har daqiqa chaqirish
+    arzon. HR tugmani bosgach eng ko'pi bilan 1 daqiqa kutadi — buning
+    evaziga sayt hisob davomida umuman qotmaydi (§4.3)."""
+    async def runner(db):
+        from api.services.payroll_jobs import payroll_tick
+        return await payroll_tick(db)
+
+    await _run_service_inprocess(now, "oylik hisobi", PAYROLL_LOCK, PAYROLL_LOCK_STALE_MINUTES, runner)
+
+
 async def _run_system_health_inprocess(now: datetime) -> None:
     async def runner(db):
         from api.services import system_health
@@ -544,6 +563,9 @@ async def main() -> None:
     # Chastota AVVALGIDEK — faqat yo'l o'zgardi. Digest HAR DAQIQA (vaqtni
     # servisning o'zi bazadan tekshiradi), qolganlari o'z qoldig'ida.
     await _run_attendance_digest_inprocess(now)
+    # Oylik navbati — HAR DAQIQA. Digestdan keyin, chunki digest vaqt-sezgir;
+    # navbat bo'sh bo'lganda bu atigi bitta SELECT.
+    await _run_payroll_inprocess(now)
     if now.minute % 5 == 3:
         await _run_playbook_inprocess(now)
     if now.minute % 30 == 17:
@@ -562,6 +584,10 @@ async def main() -> None:
     # Qoldiq 4: CRM sync (m%2==1) va bilim bazasi (m%5==3) bilan kesishmasin.
     if now.minute % 5 == 4:
         await _run_misc_inprocess(now, "lid manbasi", "lead_source_tick")
+    # Reklama xarajati eslatmasi — oyning 3-kuni ertalab BIR MARTA
+    # (daqiqa aniq mos kelgani uchun takrorlanmaydi).
+    if now.day == 3 and now.hour == 10 and now.minute == 0:
+        await _run_misc_inprocess(now, "reklama xarajati eslatmasi", "ad_spend_reminder_tick")
     # Tabrik videolari — HAR DAQIQA: guruhga tashrif/shartnoma xabari kech
     # bormasin. Ish yengil (bitta indeksli SELECT, odatda bo'sh javob).
     await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")

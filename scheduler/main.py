@@ -176,6 +176,13 @@ def _build_jobs() -> list[JobSpec]:
             _cron(day=cfg.MONTHLY_PAYROLL_DAY, hour=cfg.MONTHLY_PAYROLL_HOUR, minute=cfg.MONTHLY_PAYROLL_MINUTE),
             misfire_grace_time=cfg.MISFIRE_GRACE_DEFAULT, coalesce=True,
         ),
+        # Saytdan navbatga qo'yilgan hisob — har daqiqa (§4.3). Navbat bo'sh
+        # bo'lsa bitta SELECT, ya'ni arzon.
+        JobSpec(
+            "payroll_queue", jobs.payroll_queue_tick,
+            IntervalTrigger(minutes=1),
+            max_instances=1, coalesce=True,
+        ),
         # Kechikish limiti ogohlantirishi — ish kuni boshlanishidan oldin (1.5-band)
         JobSpec(
             "payroll_late_warnings", jobs.payroll_late_warnings_tick,

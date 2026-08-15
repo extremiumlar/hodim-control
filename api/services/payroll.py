@@ -21,6 +21,7 @@ Muhim qoidalar:
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -141,6 +142,45 @@ async def resolve_policy(db: AsyncSession, user: User) -> FinePolicy | None:
     return await db.scalar(
         select(FinePolicy).where(FinePolicy.scope == "global", FinePolicy.is_active.is_(True))
     )
+
+
+async def load_policy_index(db: AsyncSession) -> dict:
+    """Barcha FAOL jarima qoidalarini BITTA so'rovda yuklaydi (§4.3).
+
+    NEGA: `resolve_policy` har xodim uchun 1-3 ta SELECT qilardi. Butun oy
+    hisoblanganda bu 20 xodim × 3 = 60 ta ortiqcha so'rov edi, holbuki
+    qoidalar jadvali o'nlab qatordan iborat — hammasini bir marta o'qish
+    arzonroq.
+
+    `order_by(id)` ATAYLAB: bitta darajada bir nechta faol qator bo'lib
+    qolsa (invariant buzilgan holat), qaysi biri tanlanishi TASODIFIY
+    bo'lmasin — `resolve_policy` dagi kabi birinchisi olinadi."""
+    rows = list(
+        await db.scalars(
+            select(FinePolicy).where(FinePolicy.is_active.is_(True)).order_by(FinePolicy.id)
+        )
+    )
+    index: dict = {"user": {}, "position": {}, "global": None}
+    for row in rows:
+        if row.scope == "user" and row.scope_id is not None:
+            index["user"].setdefault(row.scope_id, row)
+        elif row.scope == "position" and row.scope_id is not None:
+            index["position"].setdefault(row.scope_id, row)
+        elif row.scope == "global" and index["global"] is None:
+            index["global"] = row
+    return index
+
+
+def policy_from_index(index: dict, user: User) -> FinePolicy | None:
+    """`resolve_policy` bilan AYNAN bir xil tanlov qoidasi, lekin so'rovsiz."""
+    policy = index["user"].get(user.id)
+    if policy is not None:
+        return policy
+    if user.position_id is not None:
+        policy = index["position"].get(user.position_id)
+        if policy is not None:
+            return policy
+    return index["global"]
 
 
 async def resolve_rate(db: AsyncSession, user_id: int, on_date: date) -> SalaryRate | None:
@@ -569,7 +609,12 @@ def compute_base(
 
 
 async def compute_overtime(
-    db: AsyncSession, user: User, period: str, profile: OvertimeProfile | None, days: list[dict]
+    db: AsyncSession,
+    user: User,
+    period: str,
+    profile: OvertimeProfile | None,
+    days: list[dict],
+    rate: SalaryRate | None = None,
 ) -> dict:
     """Qo'shimcha ish summasi. Faqat `status='approved'` `OvertimeEntry`
     yozuvlari hisobga olinadi — tasdiqsiz pul hisoblanmaydi (1.3-band).
@@ -577,7 +622,12 @@ async def compute_overtime(
     `derived` rejimda soatlik stavka = oylik ÷ norma soat (QAROR: norma soati
     ish jadvalidan avtomatik, ya'ni shu oy uchun `days`dagi jami
     `scheduled_minutes`) × `profile.multiplier` (MAJBURIY, tizim darajasida
-    default YO'Q — 9-bo'lim, savol 6)."""
+    default YO'Q — 9-bo'lim, savol 6).
+
+    `rate` — chaqiruvchi allaqachon yechgan stavka (`build_payslip` uni
+    baza hisobi uchun oladi). Berilmasa shu yerda qayta yechiladi: ilgari
+    HAR DOIM shunday edi va bu har xodimga bitta ortiqcha SQL so'rovi
+    demakdi (§4.3 «qo'shimcha»)."""
     result: dict = {"minutes": 0, "amount": Decimal("0"), "rate_snapshot": None, "detail": []}
     if profile is None or not profile.enabled:
         return result
@@ -628,7 +678,8 @@ async def compute_overtime(
             # noto'g'ri katta summa hisoblanib ketmasin.
             hourly_rate = Decimal("0")
         else:
-            rate = await resolve_rate(db, user.id, period_start)
+            if rate is None:
+                rate = await resolve_rate(db, user.id, period_start)
             monthly_amount = _dec(rate.amount) if rate is not None else Decimal("0")
             if profile.norm_hours_source == NormHoursSource.fixed.value and profile.fixed_norm_hours_per_month:
                 norm_hours = Decimal(profile.fixed_norm_hours_per_month)
@@ -688,13 +739,23 @@ def _profile_snapshot(profile: OvertimeProfile | None) -> dict | None:
     }
 
 
-async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
+async def build_payslip(
+    db: AsyncSession, user: User, period: str, policy_index: dict | None = None
+) -> dict:
     """Bitta xodim uchun to'liq hisob — hali DB'ga yozilmagan sof natija:
     `{"fields": {...Payslip ustunlari...}, "items": [...PayslipItem...]}`.
-    `run_payroll` buni chaqirib upsert qiladi."""
+    `run_payroll` buni chaqirib upsert qiladi.
+
+    `policy_index` — `load_policy_index` natijasi. Berilsa jarima qoidasi
+    so'rovsiz aniqlanadi (§4.3); berilmasa avvalgidek DB'dan yechiladi, ya'ni
+    bitta xodimni hisoblovchi chaqiruvchilar o'zgarishsiz ishlayveradi."""
     period_start, _period_end = _period_bounds(period)
     days = await collect_attendance(db, user, period)
-    policy = await resolve_policy(db, user)
+    policy = (
+        policy_from_index(policy_index, user)
+        if policy_index is not None
+        else await resolve_policy(db, user)
+    )
     rate = await resolve_rate(db, user.id, period_start)
     first_rate = await _first_rate(db, user.id)
     overtime_profile = await db.scalar(select(OvertimeProfile).where(OvertimeProfile.user_id == user.id))
@@ -708,7 +769,7 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
         late["amount"], absent["amount"], base_amount, policy
     )
 
-    overtime = await compute_overtime(db, user, period, overtime_profile, days)
+    overtime = await compute_overtime(db, user, period, overtime_profile, days, rate=rate)
 
     bonus_row = await db.scalar(select(Bonus).where(Bonus.user_id == user.id, Bonus.period == period))
     bonus_amount = _dec(bonus_row.amount) if bonus_row is not None else Decimal("0")
@@ -877,14 +938,25 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     return {"fields": fields, "items": items}
 
 
-async def run_payroll(db: AsyncSession, period: str, user_ids: list[int] | None = None) -> dict:
+async def run_payroll(
+    db: AsyncSession,
+    period: str,
+    user_ids: list[int] | None = None,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+) -> dict:
     """Berilgan oy uchun (yoki faqat `user_ids`) barcha xodimlarning
     payslip'ini hisoblab, upsert qiladi. IDEMPOTENT: mavjud `Payslip` topilsa
     ustunlar yangilanadi, eski `PayslipItem`lar o'chirilib qayta yoziladi —
     qayta-qayta chaqirilsa dublikat paydo bo'lmaydi.
 
     `PayrollPeriod.locked=True` bo'lsa — `PayrollLocked` ko'tariladi (avval
-    Dasturchi `reopen` qilishi kerak, Bosqich 3.5)."""
+    Dasturchi `reopen` qilishi kerak, Bosqich 3.5).
+
+    `on_progress(done, total)` — fon rejimi uchun (§4.3): cron har xodimdan
+    keyin `payroll_periods.calc_progress` ni yangilaydi, sayt esa buni
+    «12/20 xodim» deb ko'rsatadi. Chaqiruvchi COMMIT qilmasligi kerak —
+    yarim hisoblangan payslip'lar ko'rinib qolmasin (progress ustuni
+    ATAYLAB alohida sessiyada yangilanadi, `payroll_jobs.py` ga qarang)."""
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
     if period_row is not None and period_row.locked:
         raise PayrollLocked(f"«{period}» davri qulflangan — avval qulfni ochish kerak")
@@ -898,9 +970,13 @@ async def run_payroll(db: AsyncSession, period: str, user_ids: list[int] | None 
         query = query.where(User.id.in_(user_ids))
     users = list(await db.scalars(query))
 
+    # Jarima qoidalari BIR MARTA yuklanadi — har xodimga 1-3 so'rov o'rniga
+    # butun yurish uchun bitta (§4.3).
+    policy_index = await load_policy_index(db)
+
     calculated = 0
     for user in users:
-        result = await build_payslip(db, user, period)
+        result = await build_payslip(db, user, period, policy_index=policy_index)
         existing = await db.scalar(select(Payslip).where(Payslip.user_id == user.id, Payslip.period == period))
         now = datetime.utcnow()
 
@@ -933,6 +1009,8 @@ async def run_payroll(db: AsyncSession, period: str, user_ids: list[int] | None 
                 )
             )
         calculated += 1
+        if on_progress is not None:
+            await on_progress(calculated, len(users))
 
     period_row.status = PayrollPeriodStatus.calculated.value
     period_row.calculated_at = datetime.utcnow()

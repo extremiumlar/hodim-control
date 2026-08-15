@@ -178,6 +178,40 @@ def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def bot_secret_hdr() -> dict:
+    """`.env`dagi BOT_SHARED_SECRET — bot/cron endpointlari uchun."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    with open(env_path, encoding="utf-8") as f:
+        secret = next(
+            (line.strip().split("=", 1)[1] for line in f if line.startswith("BOT_SHARED_SECRET=")), ""
+        )
+    return {"X-Bot-Secret": secret}
+
+
+def payroll_tick(client, kutilgan: str | None = None, urinish: int = 5) -> dict | None:
+    """Navbatdagi oylik hisobini bajaradi — testda CRON o'rnini bosadi (§4.3).
+
+    NEGA KERAK: `POST /payroll/{period}/calculate` endi hisobni o'zi
+    bajarmaydi, faqat NAVBATGA qo'yadi (202) — production'da Passenger
+    konkurentligi = 1 va og'ir hisob butun saytni qotirardi. Haqiqiy ishni
+    `scripts/cron_tick.py` alohida jarayonda qiladi; test esa xuddi shu
+    servisni HTTP orqali chaqiradi.
+
+    Navbatda boshqa davr ham turgan bo'lishi mumkin (oldingi blok qoldig'i) —
+    shuning uchun kutilgan davr chiqquncha bir necha marta uriniladi."""
+    natija = None
+    for _ in range(urinish):
+        r = client.post(f"{API_BASE}/payroll/tick", headers=bot_secret_hdr(), json={})
+        if r.status_code != 200:
+            return {"http": r.status_code, "text": r.text[:200]}
+        natija = r.json()
+        if natija.get("ran") is None:
+            break
+        if kutilgan is None or natija.get("ran") == kutilgan:
+            break
+    return natija
+
+
 # ─────────────────────────────────────────────────────────────────
 # Testlar
 # ─────────────────────────────────────────────────────────────────
@@ -2336,6 +2370,168 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Kanal kesimi tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: reklama xarajati, CPL/CAC/ROMI (3-bosqich) --")
+        try:
+            import asyncio as _aio6
+            import json as _json6
+            from datetime import timezone as _tz6
+
+            from db.base import async_session as _asess6
+            from api.services import ad_spend as _ads
+            from api.services import funnel as _fn6
+
+            conn = db()
+            cur = conn.cursor()
+            EL = 982001
+            E_PERIOD = "2021-07"
+            for t in ("ad_spend", "funnel_month"):
+                cur.execute(f"delete from {t} where period=?", (E_PERIOD,))
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (EL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (EL,))
+            conn.commit()
+
+            _fn6_orig = (
+                list(_fn6.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn6.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn6.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn6.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                e_ts = int(datetime(2021, 7, 10, 9, tzinfo=_tz6.utc).timestamp())
+                e_det = datetime(2021, 7, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                def elead(i, tags):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, tags, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?,?)",
+                        (EL + i, 8779, "T-Yangi", 1, "T-op", 1, e_ts, e_ts,
+                         _json6.dumps(tags), e_det, e_det))
+
+                def eev(i, to_id):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',?,'T-bosqich',1,'T-op',1,?,?)",
+                        (EL + i, to_id, e_ts, e_det))
+
+                # #T-insta: 10 lid, 2 tashrif, 1 shartnoma
+                for i in range(10):
+                    elead(i, ["#T-insta"])
+                eev(0, 8787); eev(0, 8788); eev(1, 8787)
+                # #T-tg: 5 lid, 1 shartnoma
+                for i in range(10, 15):
+                    elead(i, ["#T-tg"])
+                eev(10, 8787); eev(10, 8788)
+                conn.commit()
+
+                async def _eco(gb="tag"):
+                    async with _asess6() as s:
+                        return await _ads.economics(s, E_PERIOD, gb)
+
+                async def _set(channel, amount, reach=None):
+                    async with _asess6() as s:
+                        return await _ads.upsert_spend(s, E_PERIOD, channel, amount, reach, None, None)
+
+                _aio6.run(_set("#T-insta", 1_000_000, reach=50_000))
+                eco = _aio6.run(_eco())
+                by = {r["channel"]: r for r in eco["rows"]}
+                check("Iqtisod: CPL = xarajat / lid (1 000 000 / 10 = 100 000)",
+                      by["#T-insta"]["cpl"] == 100000.0, f"={by['#T-insta']['cpl']}")
+                check("Iqtisod: CAC = xarajat / shartnoma (1 000 000 / 1)",
+                      by["#T-insta"]["cac"] == 1000000.0, f"={by['#T-insta']['cac']}")
+                check("Iqtisod: CPV = xarajat / tashrif (1 000 000 / 2)",
+                      by["#T-insta"]["cpv"] == 500000.0, f"={by['#T-insta']['cpv']}")
+                check("Iqtisod: qamrov kiritilsa auditoriya->lid % chiqadi",
+                      by["#T-insta"]["reach_to_lead"] == 0.02,
+                      f"={by['#T-insta']['reach_to_lead']}")
+                check("Iqtisod: foyda kiritilmagan -> ROMI hisoblanmaydi (None)",
+                      by["#T-insta"]["romi"] is None, f"={by['#T-insta']['romi']}")
+
+                # Xarajati kiritilmagan, lekin lid keltirgan kanal ko'rinsin
+                check("Iqtisod: xarajatsiz kanal «unutilgan» ro'yxatida",
+                      any(m["channel"] == "#T-tg" for m in eco["missing_spend"]),
+                      f"{eco['missing_spend']}")
+
+                # O'rtacha foyda -> ROMI
+                async def _profit(v):
+                    async with _asess6() as s:
+                        return await _ads.set_avg_deal_profit(s, E_PERIOD, v, None)
+
+                _aio6.run(_profit(3_000_000))
+                eco2 = _aio6.run(_eco())
+                by2 = {r["channel"]: r for r in eco2["rows"]}
+                # (1 shartnoma × 3 000 000 − 1 000 000) / 1 000 000 = 200%
+                check("Iqtisod: ROMI = (daromad − xarajat) / xarajat = 200%",
+                      by2["#T-insta"]["romi"] == 200.0, f"={by2['#T-insta']['romi']}")
+
+                _aio6.run(_profit(500_000))
+                eco3 = _aio6.run(_eco())
+                by3 = {r["channel"]: r for r in eco3["rows"]}
+                check("Iqtisod: zarar bo'lsa ROMI manfiy (-50%)",
+                      by3["#T-insta"]["romi"] == -50.0, f"={by3['#T-insta']['romi']}")
+
+                # Mos kelmagan kanal — jimgina 0 emas, ogohlantirish
+                _aio6.run(_set("Instagram", 500_000))
+                eco4 = _aio6.run(_eco())
+                by4 = {r["channel"]: r for r in eco4["rows"]}
+                check("Iqtisod: voronkada yo'q kanal «mos kelmadi» deb belgilanadi",
+                      by4["Instagram"]["matched"] is False
+                      and "Instagram" in eco4["unmatched"], f"{eco4['unmatched']}")
+                check("Iqtisod: mos kelmagan kanal JAMI lidga qo'shilmaydi",
+                      eco4["totals"]["leads"] == 10, f"jami lid={eco4['totals']['leads']}")
+                check("Iqtisod: lekin JAMI xarajatga qo'shiladi (pul ketgan)",
+                      eco4["totals"]["spend"] == 1_500_000.0,
+                      f"jami xarajat={eco4['totals']['spend']}")
+
+                # Registr farqi CPL'ni buzmasin
+                _aio6.run(_set("#T-INSTA", 200_000))
+                eco5 = _aio6.run(_eco())
+                by5 = {r["channel"]: r for r in eco5["rows"]}
+                check("Iqtisod: katta/kichik harf farqi kanalni ajratmaydi",
+                      by5["#T-INSTA"]["matched"] is True and by5["#T-INSTA"]["leads"] == 10,
+                      f"{by5['#T-INSTA']}")
+
+                # API
+                r_e = client.get(f"{API_BASE}/funnel/economics?period={E_PERIOD}",
+                                 headers=auth(boss_t))
+                check("Iqtisod(API): 200", r_e.status_code == 200, f"kod={r_e.status_code}")
+                r_ch = client.get(f"{API_BASE}/funnel/economics/channels?period={E_PERIOD}",
+                                  headers=auth(boss_t))
+                check("Iqtisod(API): kanal ro'yxati «(tegsiz)» ni bermaydi",
+                      r_ch.status_code == 200
+                      and all(not c["channel"].startswith("(")
+                              for c in r_ch.json().get("channels", [])),
+                      f"kod={r_ch.status_code}")
+                e_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+                if e_emp:
+                    r_deny = client.post(
+                        f"{API_BASE}/funnel/economics/spend",
+                        headers=auth(token_for(e_emp[0], "employee")),
+                        json={"period": E_PERIOD, "channel": "#T-insta", "amount": 1})
+                    check("Iqtisod(API): oddiy xodim xarajat kirita OLMAYDI -> 403",
+                          r_deny.status_code == 403, f"kod={r_deny.status_code}")
+                r_neg = client.post(
+                    f"{API_BASE}/funnel/economics/spend", headers=auth(boss_t),
+                    json={"period": E_PERIOD, "channel": "#T-insta", "amount": -5})
+                check("Iqtisod(API): manfiy summa -> 400", r_neg.status_code == 400,
+                      f"kod={r_neg.status_code}")
+            finally:
+                for t in ("ad_spend", "funnel_month"):
+                    cur.execute(f"delete from {t} where period=?", (E_PERIOD,))
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (EL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (EL,))
+                conn.commit()
+                conn.close()
+                (_fn6.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn6.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn6_orig
+        except Exception:
+            check("Reklama xarajati tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio
@@ -3104,11 +3300,33 @@ def test_payroll_api() -> None:
             check("preflight -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
 
             # ── Hisoblash ──
+            # §4.3: endi bu NAVBATGA qo'yadi (202) — hisobni cron bajaradi.
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t),
                              json={"user_ids": [emp_uid]})
-            check("calculate -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
-            check("calculate 1 xodimni hisobladi",
-                  r.status_code == 200 and r.json().get("calculated") == 1, f"={r.json() if r.status_code == 200 else None}")
+            check("calculate -> 202 (navbatga qo'yildi)", r.status_code == 202,
+                  f"kod={r.status_code} {r.text[:150]}")
+            check("calculate javobida navbat belgisi bor",
+                  r.status_code == 202 and r.json().get("queued") is True,
+                  f"={r.json() if r.status_code == 202 else None}")
+            tick = payroll_tick(client, PERIOD)
+            check("cron navbatdagi davrni hisobladi",
+                  bool(tick) and tick.get("ran") == PERIOD and tick.get("calculated") == 1, f"={tick}")
+
+            # Hisob ketayotganda ikkinchi marta bosib bo'lmasin (409)
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+            check("navbatga qayta qo'yish -> 202 (avvalgisi tugagan)", r.status_code == 202,
+                  f"kod={r.status_code}")
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
+            check("hisob navbatda turganda ikkinchi so'rov -> 409", r.status_code == 409,
+                  f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/status", headers=auth(mgr_t))
+            check("GET /status navbat holatini ko'rsatadi",
+                  r.status_code == 200 and r.json().get("state") == "queued",
+                  f"kod={r.status_code} {r.text[:120]}")
+            payroll_tick(client, PERIOD)
+            r = client.get(f"{API_BASE}/payroll/{PERIOD}/status", headers=auth(mgr_t))
+            check("hisob tugagach state=done",
+                  r.status_code == 200 and r.json().get("state") == "done", f"={r.text[:120]}")
 
             # ── Davrlar ro'yxati (literal /periods — {period} bilan aralashmasin) ──
             r = client.get(f"{API_BASE}/payroll/periods", headers=auth(mgr_t))
@@ -3419,7 +3637,9 @@ def test_admin_override() -> None:
                     "effective_from": "2020-01-01",
                 })
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={"user_ids": [emp_uid]})
-                check("payroll hisoblandi -> 200", r.status_code == 200, f"kod={r.status_code}")
+                check("payroll navbatga qo'yildi -> 202", r.status_code == 202, f"kod={r.status_code}")
+                tick = payroll_tick(client, PERIOD)
+                check("payroll hisoblandi (cron)", bool(tick) and tick.get("ok") is True, f"={tick}")
                 # Ikki bosqichli tasdiq (9a02004): HR «tayyor» demaguncha
                 # Boshliq qulflay OLMAYDI — aks holda bir odam butun pul
                 # jarayonini yakunlab qo'yardi.
@@ -3448,8 +3668,10 @@ def test_admin_override() -> None:
                 check("dasturchi qulfni ochadi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
 
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
-                check("qulf ochilgach HR qayta hisoblay oladi -> 200", r.status_code == 200,
+                check("qulf ochilgach HR qayta hisoblay oladi -> 202", r.status_code == 202,
                       f"kod={r.status_code}")
+                tick = payroll_tick(client, PERIOD)
+                check("qulf ochilgach cron hisobladi", bool(tick) and tick.get("ok") is True, f"={tick}")
 
                 r = client.patch(f"{API_BASE}/admin/payroll/{PERIOD}/user/{emp_uid}", headers=auth(dev_t), json={
                     "fields": {"net": 999999}, "override_reason": "T-sinov: qo'lda tuzatish",
@@ -3999,7 +4221,10 @@ def test_payroll_reporting() -> None:
 
                 # ── "payroll_calculated" AuditLog — barcha pul o'zgarishi audit qilinadi ──
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
-                check("qayta hisoblash -> 200", r.status_code == 200, f"kod={r.status_code}")
+                check("qayta hisoblash -> 202", r.status_code == 202, f"kod={r.status_code}")
+                # Audit yozuvini endi CRON yozadi (so'rov emas) — actor_id
+                # `calc_requested_by` dan olinadi, ya'ni kim bosgani saqlanadi.
+                payroll_tick(client, PERIOD)
 
             conn = db()
             cur = conn.cursor()
@@ -5132,7 +5357,10 @@ def test_payroll_approval_segregation() -> None:
 
         with httpx.Client(base_url=API_BASE, timeout=60) as c:
             r = c.post(f"/payroll/{period}/calculate", headers=auth(hr_t), json={"user_ids": [uid]})
-            check("HR hisoblay oladi", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
+            check("HR hisoblay oladi (navbat -> 202)", r.status_code == 202,
+                  f"kod={r.status_code} {r.text[:120]}")
+            tick = payroll_tick(c, period)
+            check("cron HR so'rovini bajardi", bool(tick) and tick.get("ok") is True, f"={tick}")
 
             r = c.post(f"/payroll/{period}/approve", headers=auth(hr_t))
             check("HR YAKUNIY tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
