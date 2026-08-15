@@ -158,6 +158,9 @@ def parse_lead_events(payload) -> list[dict]:
                 "created_ts": _ts_seconds(
                     _first(r, "createdTimestamp", "created_timestamp", "createdAt")
                 ),
+                # Kanal kesimi uchun teglar — webhook payload'ida bo'lsa
+                # bepul olamiz (bo'lmasa boyituvchi lid detalidan oladi).
+                "tags": r.get("tags") if isinstance(r.get("tags"), list) else None,
                 "hint": item["hint"],
             }
         )
@@ -227,6 +230,7 @@ async def apply_lead_record(db: AsyncSession, rec: dict) -> str:
                 first_responsible_id=resp_id,
                 crm_updated_ts=updated_ts,
                 crm_created_ts=rec.get("created_ts"),
+                tags=rec.get("tags"),
                 first_seen_at=now,
                 last_seen_at=now,
             )
@@ -263,6 +267,8 @@ async def apply_lead_record(db: AsyncSession, rec: dict) -> str:
     prev.crm_updated_ts = updated_ts
     if prev.crm_created_ts is None and rec.get("created_ts"):
         prev.crm_created_ts = rec["created_ts"]
+    if rec.get("tags") is not None and rec["tags"] != prev.tags:
+        prev.tags = rec["tags"]
     prev.last_seen_at = now
     return result
 

@@ -917,6 +917,11 @@ class UysotAdapter(CRMAdapter):
             "phone": phones[0] if phones else None,
             "phones": phones,
             "source": source,
+            # Teglar shu javobda BOR — ommaviy `/lead/filter` dagi kabi.
+            # Ularni shu yerdan olish TEKIN: baribir shu lid uchun so'rov
+            # yuborilyapti (diff-skaner productionda webhook rejimi sababli
+            # ishlamaydi, ya'ni teglarning YAGONA yo'li shu).
+            "tags": data.get("tags") or [],
             "responsible_id": data.get("responsibleById"),
         }
 

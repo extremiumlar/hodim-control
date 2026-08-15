@@ -69,6 +69,7 @@ async def enrich_tick(db: AsyncSession, limit: int | None = None) -> dict:
 
     now = datetime.utcnow()
     found = 0
+    tagged = 0
     for row in rows:
         try:
             detail = await adapter.get_lead_detail(row.crm_lead_id)
@@ -81,6 +82,12 @@ async def enrich_tick(db: AsyncSession, limit: int | None = None) -> dict:
         if detail and detail.get("source"):
             row.source = str(detail["source"])[:64]
             found += 1
+        # Teglar ham SHU javobdan (qo'shimcha so'rovsiz). Productionda
+        # diff-skaner webhook rejimi sababli ishlamaydi, shuning uchun
+        # teglarning yagona ishonchli yo'li — mana shu.
+        if detail and detail.get("tags"):
+            row.tags = list(detail["tags"])
+            tagged += 1
 
     await db.commit()
 
@@ -93,5 +100,6 @@ async def enrich_tick(db: AsyncSession, limit: int | None = None) -> dict:
         "ok": True,
         "checked": len(rows),
         "found": found,
+        "tagged": tagged,
         "has_more": remaining is not None,
     }

@@ -2268,8 +2268,8 @@ def run_tests(ctx: dict) -> None:
                         self.calls.append(lead_id)
                         # Bittasiga manba yo'q — u ham BELGILANISHI kerak
                         if lead_id == CL + 3:
-                            return {"id": lead_id, "source": None}
-                        return {"id": lead_id, "source": "T-FACEBOOK"}
+                            return {"id": lead_id, "source": None, "tags": ["#T-yangiteg"]}
+                        return {"id": lead_id, "source": "T-FACEBOOK", "tags": []}
 
                 fake = _FakeAdapter()
                 _ls_orig = _ls5._adapter
@@ -2300,6 +2300,15 @@ def run_tests(ctx: dict) -> None:
                           "manbasiz lid belgilanmagan")
                     check("Manba: keyingi tick'da hech nima so'ralmaydi",
                           _aio5.run(_enrich(10)).get("checked") == 0, "qayta so'rov bor")
+
+                    # Teg ham SHU javobdan olinadi (qo'shimcha so'rovsiz) —
+                    # productionda diff-skaner webhook rejimida ishlamaydi,
+                    # ya'ni teglarning yagona yo'li shu.
+                    check("Manba: teg ham o'sha javobdan yoziladi",
+                          cur.execute("select tags from crm_lead_state where crm_lead_id=?",
+                                      (CL + 3,)).fetchone()[0] == '["#T-yangiteg"]',
+                          str(cur.execute("select tags from crm_lead_state where crm_lead_id=?",
+                                          (CL + 3,)).fetchone()))
 
                     src2 = _aio5.run(_ch("source"))
                     s2by = {r["channel"]: r for r in src2["rows"]}
