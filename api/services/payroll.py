@@ -28,7 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.hourly_plan import DEFAULT_END, DEFAULT_START
-from api.timeutil import TASHKENT_TZ, work_minutes
+from api.timeutil import TASHKENT_TZ, today_local, work_minutes
 from db.models import (
     AbsentMode,
     Attendance,
@@ -258,6 +258,11 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
     }
     excused_dates = set(excused_paid_by_date)
 
+    # HALI KELMAGAN kunlar chegarasi. Oy tugagan bo'lsa `today` oy oxiridan
+    # katta bo'ladi va hech bir kun `future` bo'lmaydi — ya'ni yakuniy hisob
+    # avvalgidek butun oyni qamrab oladi (regressiya yo'q).
+    today = today_local()
+
     days: list[dict] = []
     for row in schedule:
         d = row["date"]
@@ -266,6 +271,21 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
 
         if not row["is_working"]:
             status = "weekend"
+        elif d > today:
+            # ⚠️ ENG MUHIM TUZATISH (2026-08-15). Ilgari bu shox YO'Q edi va
+            # kelajakdagi ish kunlari `att is None` sababli 'absent' bo'lardi.
+            # Oqibati jonli bazada: 15-avgustda hisoblanganda oyning qolgan
+            # yarmi "kelmagan" deb sanalib, kunlik ulush oylikdan ayirilardi —
+            # Abdurahmon 3 000 000 o'rniga 115 385 so'm oldi (25 kun "kelmagan").
+            #
+            # `future` holati BARCHA pul yo'llaridan tashqarida qoladi:
+            # `compute_absent_fine` va `compute_base`dagi kelmagan-kun ayirmasi
+            # ikkalasi ham `status == "absent"` bo'yicha filtrlaydi.
+            #
+            # DIQQAT: kunlik ulush maxraji (`full_scheduled`) ATAYIN butun oy
+            # bo'yicha qoladi — aks holda bitta kelmagan kun uchun ayirma
+            # ~2 barobar oshib ketardi (5 mln / 11 kun ≠ 5 mln / 26 kun).
+            status = "future"
         elif excused:
             status = "excused"
         elif att is None:
@@ -799,6 +819,14 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
             }
         )
 
+    # ── ORALIQ HISOB belgisi ──
+    # Oy tugamagan bo'lsa hisob "hozirgacha" holatini ko'rsatadi: kelajakdagi
+    # kunlar `future` (yuqoriga qarang) va ular na jarimaga, na ayirmaga
+    # kiradi. Buni AYTMASAK, xodim oy o'rtasida payslip ochib "nega jarimam
+    # yo'q / kunlarim kam" deb chalkashadi — shuning uchun UI shu bayroqqa
+    # qarab "Oraliq hisob — {sana}gacha" deb yozadi.
+    future_days = sum(1 for d in days if d["status"] == "future")
+    counted_through = max((d["date"] for d in days if d["status"] != "future"), default=None)
     breakdown = {
         "policy": _policy_snapshot(policy),
         "overtime_profile": _profile_snapshot(overtime_profile),
@@ -806,6 +834,9 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
         "fine_applies_to": policy.fine_applies_to if policy else None,
         "cap_applied": cap_applied,
         "raw_fine_total": float(raw_fine_total),
+        "is_interim": future_days > 0,
+        "future_days": future_days,
+        "counted_through": counted_through.isoformat() if counted_through else None,
         "days": [_day_snapshot(d) for d in days],
         "late_detail": late["detail"],
     }
