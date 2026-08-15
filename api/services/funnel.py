@@ -89,9 +89,16 @@ def _pct(numerator: int, denominator: int) -> float | None:
 async def _lead_ids_reached(
     db: AsyncSession, stage: str, start_utc: datetime, end_utc: datetime
 ) -> set[int]:
-    """Berilgan oynada shu bosqichga (yoki undan keyingisiga) KIRGAN noyob
-    lidlar. `first_seen` chiqarib tashlanadi — u CRM hodisasi emas, skaner
-    lidni birinchi ko'rgani (`lead_diff._is_visit_event` bilan bir xil qoida)."""
+    """Berilgan oynada shu bosqichga (yoki undan keyingisiga) PASTDAN KIRGAN
+    noyob lidlar.
+
+    IKKI SHART, IKKALASI HAM ZARUR:
+    1. `first_seen` chiqarib tashlanadi — u CRM hodisasi emas, skaner lidni
+       birinchi ko'rgani (`lead_diff._is_visit_event` bilan bir xil qoida).
+    2. `from` ALLAQACHON shu darajada bo'lmasin. Aks holda tashrifda turgan
+       lid shartnomaga o'tganda «tashrif» qatorida QAYTA sanalardi — jonli
+       tekshiruvda (2026-08) shu sabab 139 ta tashrif chiqdi, KPI esa ~46 ta
+       ko'rsatardi. Bir xil hodisa ikki joyda ikki xil son bermasligi kerak."""
     ids = _ids_at_or_after(stage)
     if not ids:
         return set()
@@ -100,6 +107,8 @@ async def _lead_ids_reached(
         .where(
             LeadEvent.event_type != "first_seen",
             LeadEvent.to_pipe_status_id.in_(ids),
+            LeadEvent.from_pipe_status_id.notin_(ids)
+            | LeadEvent.from_pipe_status_id.is_(None),
             LeadEvent.detected_at >= start_utc,
             LeadEvent.detected_at < end_utc,
         )

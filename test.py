@@ -2116,6 +2116,18 @@ def run_tests(ctx: dict) -> None:
                 check("Voronka(kogorta): eski davr «pishgan» deb belgilanadi",
                       coh["mature"] is True, f"mature={coh['mature']}, yosh={coh['age_days']}")
 
+                # Tashrifda TURGAN lid shartnomaga o'tsa, «tashrif» qatorida
+                # QAYTA sanalmasligi kerak (jonli 2026-08 da shu sabab 139 ta
+                # tashrif chiqqan, KPI esa 44 ta ko'rsatgan edi).
+                fev(FL + 1, 8788, det=fn_det)   # 8787 -> 8788 (tashrifdan shartnomaga)
+                conn.commit()
+                per2 = _aio4.run(_per())
+                by2 = {r["key"]: r for r in per2["rows"]}
+                check("Voronka: tashrifdan shartnomaga o'tish tashrifni QAYTA sanamaydi",
+                      by2["visit"]["value"] == 3, f"tashrif={by2['visit']['value']}")
+                check("Voronka: lekin shartnoma soni oshadi (1 -> 2)",
+                      by2["contract"]["value"] == 2, f"shartnoma={by2['contract']['value']}")
+
                 weak = _fn.weakest_link(per["rows"])
                 check("Voronka: eng zaif bo'g'in — shartnoma (33.3%)",
                       weak and weak["key"] == "contract", f"{weak}")
