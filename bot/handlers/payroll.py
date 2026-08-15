@@ -27,8 +27,15 @@ def _fmt_money(n: float) -> str:
 def _payslip_text(data: dict) -> str:
     lines = [f"💵 <b>{data['period']} oyi uchun oyligingiz</b>", ""]
     lines.append(f"Asosiy oylik: {_fmt_money(data['base_amount'])}")
+    # Manfiy bo'lishi mumkin (2026-08-15): oy bo'yicha kam ishlangan vaqt
+    # ortiqchasidan ko'p chiqsa — u holda bu ushlanma, "+" belgisi yolg'on
+    # bo'lardi.
     if data.get("overtime_amount"):
-        lines.append(f"Qo'shimcha ish: +{_fmt_money(data['overtime_amount'])}")
+        ot = data["overtime_amount"]
+        if ot > 0:
+            lines.append(f"Qo'shimcha ish: +{_fmt_money(ot)}")
+        else:
+            lines.append(f"Kam ishlangan vaqt: −{_fmt_money(abs(ot))}")
     if data.get("bonus_amount"):
         lines.append(f"Bonus: +{_fmt_money(data['bonus_amount'])}")
     if data.get("fine_amount"):

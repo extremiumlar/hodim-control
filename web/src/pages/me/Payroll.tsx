@@ -91,9 +91,18 @@ export default function MyPayroll() {
 
         <Row label="Asosiy oylik" amount={data.base_amount ?? 0} />
         {/* Nol bo'lmaganda ko'rsatiladi — botdagi qoida bilan bir xil */}
-        {!!data.overtime_amount && (
-          <Row label="Qo'shimcha ish" amount={data.overtime_amount} sign="+" />
-        )}
+        {/* Manfiy bo'lishi mumkin (2026-08-15): oy bo'yicha kam ishlangan
+            vaqt ortiqchasidan ko'p chiqsa — u holda bu USHLANMA. */}
+        {!!data.overtime_amount &&
+          (data.overtime_amount > 0 ? (
+            <Row label="Qo'shimcha ish" amount={data.overtime_amount} sign="+" />
+          ) : (
+            <Row
+              label="Kam ishlangan vaqt"
+              amount={Math.abs(data.overtime_amount)}
+              sign="−"
+            />
+          ))}
         {!!data.bonus_amount && <Row label="Bonus" amount={data.bonus_amount} sign="+" />}
         {!!data.fine_amount && (
           <Row label="Kechikish jarimasi" amount={data.fine_amount} sign="−" />

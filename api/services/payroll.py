@@ -576,20 +576,27 @@ async def compute_overtime(
         )
     )
 
+    # 2026-08-15: `minutes` endi MANFIY bo'lishi mumkin (kam ishlangan vaqt) —
+    # shuning uchun chegara va cheklovlar ABSOLYUT qiymatga, ishora esa
+    # saqlanib qoladi. Aks holda `min(minutes, cap)` manfiy qiymatni
+    # o'zgarishsiz o'tkazib yuborardi va kunlik cheklov faqat bir tomonga
+    # ishlardi.
     total_minutes = 0
     for e in entries:
-        if e.minutes < profile.min_minutes:
+        if abs(e.minutes) < profile.min_minutes:
             continue  # himoya — yaratish/tasdiqlashda ham tekshirilishi kerak
         minutes = e.minutes
         if profile.daily_cap_minutes is not None:
-            minutes = min(minutes, profile.daily_cap_minutes)
+            ishora = 1 if minutes >= 0 else -1
+            minutes = ishora * min(abs(minutes), profile.daily_cap_minutes)
         total_minutes += minutes
         result["detail"].append({"date": e.date.isoformat(), "minutes": minutes, "source": e.source})
 
     if profile.monthly_cap_minutes is not None:
-        total_minutes = min(total_minutes, profile.monthly_cap_minutes)
+        ishora = 1 if total_minutes >= 0 else -1
+        total_minutes = ishora * min(abs(total_minutes), profile.monthly_cap_minutes)
     result["minutes"] = total_minutes
-    if total_minutes <= 0:
+    if total_minutes == 0:
         return result
 
     if profile.mode == OvertimeMode.fixed_rate.value:
@@ -729,12 +736,21 @@ async def build_payslip(db: AsyncSession, user: User, period: str) -> dict:
     # aniq ko'rsin (jazo emas, o'zi so'ragan kun).
     if unpaid_leave_item is not None:
         items.append(unpaid_leave_item)
-    if overtime["amount"] > 0:
+    # `!= 0` — 2026-08-15 dan qiymat MANFIY ham bo'lishi mumkin (oy bo'yicha
+    # kam ishlangan vaqt ortiqchasidan ko'p chiqsa). Ilgari `> 0` edi va
+    # manfiy natija `net`ni kamaytirsa ham payslip'da QATOR chiqmasdi —
+    # xodim summaning qayerdan kelganini ko'ra olmasdi.
+    if overtime["amount"] != 0:
         hrs = Decimal(overtime["minutes"]) / Decimal(60)
+        ortiqcha = overtime["minutes"] > 0
         items.append(
             {
                 "kind": "overtime",
-                "label": f"Qo'shimcha ish — {hrs:.1f} soat",
+                "label": (
+                    f"Qo'shimcha ish — {hrs:.1f} soat"
+                    if ortiqcha
+                    else f"Kam ishlangan vaqt — {abs(hrs):.1f} soat"
+                ),
                 "quantity": hrs,
                 "rate": overtime["rate_snapshot"],
                 "amount": overtime["amount"],
@@ -970,19 +986,37 @@ async def detect_overtime_candidates(db: AsyncSession, for_date: date) -> list[O
         profile = profiles[user_id]
         if att is None or user is None or att.check_out_time is None or att.status not in ("present", "late"):
             continue
-        is_working, _start, end = await _effective_today(db, user, for_date)
+        is_working, start, end = await _effective_today(db, user, for_date)
         if not is_working:
             continue
-        over_minutes = _minute_of_day_local(att.check_out_time) - _hm_to_min(end)
-        if over_minutes < profile.min_minutes:
+        # 2026-08-15 (egasining talabi "vaqtini qo'shib ayirib umumiy
+        # hisoblab berish"): endi FAQAT kech ketish emas, kunlik SOF farq
+        # o'lchanadi — ishlangan vaqt minus rejadagi vaqt.
+        #
+        # NEGA SHUNDAY YAXSHIROQ: ilgari faqat `check_out - end` qaralardi,
+        # ya'ni xodim kech kelib kech ketsa "qo'shimcha ish" deb yozilardi —
+        # aslida u kam ishlagan bo'lishi mumkin edi. Endi kechikish ham,
+        # erta ketish ham, tushlik ham bitta sonda hisobga olinadi.
+        #
+        # Manfiy qiymat = KAM ishlangan vaqt. `compute_overtime` uni oy
+        # bo'yicha ortiqcha vaqtdan ayiradi.
+        scheduled_minutes = work_minutes(_hm_to_min(start), _hm_to_min(end))
+        delta_minutes = (att.worked_minutes or 0) - scheduled_minutes
+        # `min_minutes` — SEZGIRLIK chegarasi: bir-ikki daqiqalik farq uchun
+        # yozuv yaratilmasin (ikkala yo'nalishda ham).
+        if abs(delta_minutes) < max(profile.min_minutes, 1):
             continue
+        if delta_minutes > 0:
+            izoh = f"Avtomatik: rejadagi {scheduled_minutes} daq o'rniga {att.worked_minutes} daq — {delta_minutes} daq ORTIQCHA"
+        else:
+            izoh = f"Avtomatik: rejadagi {scheduled_minutes} daq o'rniga {att.worked_minutes} daq — {-delta_minutes} daq KAM"
         entry = OvertimeEntry(
             user_id=user_id,
             date=for_date,
-            minutes=over_minutes,
+            minutes=delta_minutes,
             source="auto_attendance",
             status=OvertimeEntryStatus.pending.value,
-            note=f"Avtomatik aniqlandi: check-out {end}dan {over_minutes} daqiqa keyin",
+            note=izoh,
         )
         db.add(entry)
         created.append(entry)

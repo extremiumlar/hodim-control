@@ -7,7 +7,6 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
-import KpiRateTab from "@/components/payroll/KpiRateTab";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -791,14 +790,13 @@ export default function PayrollSettings() {
         title="Ish haqi sozlamalari"
         description={
           isPayrollManager
-            ? "Jarima qoidasi, KPI stavkalari, qo'shimcha ish profillari. Oylik stavkalar «Ish haqi» sahifasiga ko'chirildi."
+            ? "Jarima qoidasi va qo'shimcha ish profillari. Oylik/KPI stavkalari «Ish haqi» sahifasiga ko'chirildi."
             : "Sizga kechikish/jarima qoidasini o'zgartirish huquqi berilgan."
         }
       />
       <Tabs defaultValue="policy">
         <TabsList>
           <TabsTrigger value="policy">Jarima qoidasi</TabsTrigger>
-          {isPayrollManager && <TabsTrigger value="kpi">KPI stavkalari</TabsTrigger>}
           {isPayrollManager && <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>}
         </TabsList>
         <TabsContent value="policy">
@@ -807,11 +805,6 @@ export default function PayrollSettings() {
             {canGrant && <FinePolicyEditorsCard />}
           </div>
         </TabsContent>
-        {isPayrollManager && (
-          <TabsContent value="kpi">
-            <KpiRateTab />
-          </TabsContent>
-        )}
         {isPayrollManager && (
           <TabsContent value="overtime">
             <OvertimeProfileTab />

@@ -29,6 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import AdvanceTab from "@/components/payroll/AdvanceTab";
+import KpiRateTab from "@/components/payroll/KpiRateTab";
 import SalaryRateTab from "@/components/payroll/SalaryRateTab";
 import { type PayslipRow, type ReadinessIssue } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -220,10 +221,13 @@ export default function Payroll() {
     <Tabs defaultValue="payslips" className="space-y-6">
       <TabsList>
         <TabsTrigger value="payslips">Hisob-kitob</TabsTrigger>
-        {/* «Oylik stavkalar» ilgari Sozlamalarda edi — egasining talabi
-            bo'yicha shu yerga ko'chirildi: stavka sozlama emas, u xodimning
-            puli va hisob-kitob bilan yonma-yon turishi kerak. */}
+        {/* «Oylik stavkalar» va «KPI stavkalari» ilgari Sozlamalarda edi —
+            egasining talabi bo'yicha shu yerga ko'chirildi: stavka sozlama
+            emas, u xodimning puli va hisob-kitob bilan yonma-yon turishi
+            kerak. Sozlamalarda faqat QOIDALAR qoldi (jarima, qo'shimcha ish
+            profillari). */}
         <TabsTrigger value="rates">Oylik stavkalar</TabsTrigger>
+        <TabsTrigger value="kpi">KPI stavkalari</TabsTrigger>
         <TabsTrigger value="advances">Avans</TabsTrigger>
       </TabsList>
       <TabsContent value="payslips">
@@ -231,6 +235,9 @@ export default function Payroll() {
       </TabsContent>
       <TabsContent value="rates">
         <SalaryRateTab />
+      </TabsContent>
+      <TabsContent value="kpi">
+        <KpiRateTab />
       </TabsContent>
       <TabsContent value="advances">
         <AdvanceTab />
@@ -307,8 +314,18 @@ function PayrollTable() {
     {
       accessorKey: "overtime_amount",
       header: "Qo'shimcha ish",
-      cell: ({ row }) =>
-        row.original.overtime_amount > 0 ? `+${fmtMoney(row.original.overtime_amount)}` : "—",
+      // MANFIY ham bo'lishi mumkin (2026-08-15): oy bo'yicha kam ishlangan
+      // vaqt ortiqchasidan ko'p bo'lsa. Ilgari `> 0` edi va manfiy natija
+      // «—» ko'rinardi — ya'ni pul kamaygani jadvalda umuman ko'rinmasdi.
+      cell: ({ row }) => {
+        const v = row.original.overtime_amount;
+        if (!v) return "—";
+        return v > 0 ? (
+          `+${fmtMoney(v)}`
+        ) : (
+          <span className="text-rose-600">−{fmtMoney(Math.abs(v))}</span>
+        );
+      },
     },
     {
       accessorKey: "bonus_amount",

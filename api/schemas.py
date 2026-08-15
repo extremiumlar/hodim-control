@@ -1200,12 +1200,24 @@ class OvertimeProfileOut(BaseModel):
 
 
 class OvertimeEntryIn(BaseModel):
-    """HR/rahbar qo'lda qo'shimcha ish kiritishi."""
+    """HR/rahbar qo'lda qo'shimcha ish kiritishi.
+
+    2026-08-15: `minutes` MANFIY ham bo'lishi mumkin — bu «kam ishlangan
+    vaqt» degani va oylikdan ayiriladi. Ilgari `gt=0` edi, ya'ni avtomatik
+    aniqlangan manfiy yozuvni HR qo'lda tuzata olmasdi. 0 esa ma'nosiz
+    (hech narsa o'zgartirmaydigan yozuv), shuning uchun taqiqlanadi."""
 
     user_id: int
     date: dt.date
-    minutes: int = Field(gt=0)
+    minutes: int
     note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("minutes")
+    @classmethod
+    def _not_zero(cls, v: int) -> int:
+        if v == 0:
+            raise ValueError("minutes 0 bo'lishi mumkin emas")
+        return v
 
 
 class OvertimeEntryDecide(BaseModel):
