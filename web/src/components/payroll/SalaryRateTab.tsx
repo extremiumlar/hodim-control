@@ -24,7 +24,6 @@ import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 
 import DataTable from "@/components/DataTable";
-import { currentMonthKey } from "@/components/PeriodPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -183,7 +182,7 @@ function EditRateDialog({ rate, onClose }: { rate: SalaryRate | null; onClose: (
   );
 }
 
-export default function SalaryRateTab() {
+export default function SalaryRateTab({ period }: { period: string }) {
   const usersQuery = useUsers();
   const [userId, setUserId] = useState<number | null>(null);
   const ratesQuery = useSalaryRates(userId ?? 0, userId !== null);
@@ -192,8 +191,12 @@ export default function SalaryRateTab() {
 
   // Kimda stavka YO'Q — `preflight` allaqachon shuni hisoblaydi (u yerda
   // qamrov backend bilan bir xil: davomat kuzatiladigan faol xodimlar).
-  // Joriy oy olinadi: stavka kiritilgach ro'yxat o'z-o'zidan qisqaradi.
-  const preflightQuery = usePayrollPreflight(currentMonthKey());
+  //
+  // ⚠️ `period` PROP ORQALI keladi, `currentMonthKey()` EMAS (§4.2): ilgari bu
+  // tab doim joriy oyni so'rardi, «Hisob-kitob» tabi esa HR tanlagan oyni.
+  // Ikki xil kalit — react-query keshi bo'linib, og'ir `collect_readiness`
+  // bitta sahifada IKKI marta ishlardi. Endi ikkalasi bir xil kalitni ishlatadi.
+  const preflightQuery = usePayrollPreflight(period);
   const missingRate = preflightQuery.data?.no_salary_rate ?? [];
 
   const [amount, setAmount] = useState("");

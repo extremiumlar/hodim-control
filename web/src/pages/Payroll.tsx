@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
+import { useQueryClient } from "@tanstack/react-query";
 import { fmtMoney } from "@/lib/utils";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
@@ -38,6 +39,8 @@ import {
   useHrApprovePayrollPeriod,
   useCalculatePayroll,
   useDownloadPayrollExport,
+  qk,
+  usePayrollCalcStatus,
   usePayrollPeriods,
   usePayrollPreflight,
   usePayslipDetail,
@@ -212,10 +215,17 @@ export default function Payroll() {
   const { user } = useAuth();
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
 
+  // Davr holati ATAYLAB shu yerda (ilgari `PayrollTable` ichida edi): «Oylik
+  // stavkalar» tabi ham `preflight` ni so'raydi va oldin u DOIM joriy oyni
+  // ishlatardi. HR boshqa oyga o'tgan zahoti ikkita TURLI kalit paydo bo'lib,
+  // og'ir `collect_readiness` ikki marta ishlardi (§4.2). Endi ikkalasi bir xil
+  // `period` ni ishlatadi — react-query keshni bo'lishadi va so'rov bitta.
+  const [period, setPeriod] = useState(currentMonthKey());
+
   // Stavka va avans tablari FAQAT payroll boshqaruvchilarida. ROP bu
   // sahifaga kira oladi (o'z jamoasining payslip'ini ko'rish uchun), lekin
   // pul kiritish huquqi yo'q — backend ham 403 beradi.
-  if (!canManage) return <PayrollTable />;
+  if (!canManage) return <PayrollTable period={period} setPeriod={setPeriod} />;
 
   return (
     <Tabs defaultValue="payslips" className="space-y-6">
@@ -231,10 +241,10 @@ export default function Payroll() {
         <TabsTrigger value="advances">Avans</TabsTrigger>
       </TabsList>
       <TabsContent value="payslips">
-        <PayrollTable />
+        <PayrollTable period={period} setPeriod={setPeriod} />
       </TabsContent>
       <TabsContent value="rates">
-        <SalaryRateTab />
+        <SalaryRateTab period={period} />
       </TabsContent>
       <TabsContent value="kpi">
         <KpiRateTab />
@@ -246,7 +256,13 @@ export default function Payroll() {
   );
 }
 
-function PayrollTable() {
+function PayrollTable({
+  period,
+  setPeriod,
+}: {
+  period: string;
+  setPeriod: (p: string) => void;
+}) {
   const { user } = useAuth();
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
   // YAKUNIY tasdiq — faqat Boshliq/Dasturchi (2026-08-08, vazifalar
@@ -254,7 +270,6 @@ function PayrollTable() {
   // ko'rinib turib bosilmaydigan tugma yomon UX bo'lardi.
   const canFinalApprove = !!user && ["boss", "dasturchi"].includes(user.role);
 
-  const [period, setPeriod] = useState(currentMonthKey());
   const [detailUserId, setDetailUserId] = useState<number | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmHrApprove, setConfirmHrApprove] = useState(false);
@@ -262,6 +277,44 @@ function PayrollTable() {
   const periodsQuery = usePayrollPeriods();
   const payslipsQuery = usePayslips(period);
   const calculate = useCalculatePayroll();
+  const queryClient = useQueryClient();
+
+  // ── Fon rejimidagi hisoblash (§4.3) ──
+  // Hisob endi so'rov ichida emas, alohida cron jarayonida ketadi — shuning
+  // uchun tugma bosilgach natija DARHOL kelmaydi. Sahifa holatni 3 soniyada
+  // bir so'rab progressni ko'rsatadi. `watchCalc` faqat shu sahifa ochilgan
+  // seansda so'ralgan bo'lsa yoqiladi (boshqa sahifalarda bekorga so'rov
+  // yubormasin), lekin sahifa yangilangach ham davom etsin uchun
+  // `periodInfo` orqali ham tekshiriladi.
+  const [watchCalc, setWatchCalc] = useState(false);
+  const calcQuery = usePayrollCalcStatus(period, watchCalc);
+  const calcState = calcQuery.data?.state;
+  const isCalculating = calcState === "queued" || calcState === "running";
+  const prevCalcState = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    // Davr almashsa kuzatuv qayta boshlansin — boshqa oyning progressini
+    // ko'rsatib qolmasin.
+    setWatchCalc(false);
+    prevCalcState.current = undefined;
+  }, [period]);
+
+  useEffect(() => {
+    if (prevCalcState.current === calcState) return;
+    const oldState = prevCalcState.current;
+    prevCalcState.current = calcState;
+    // Faqat HAQIQIY o'tishda xabar beramiz: sahifa yangi ochilganda eski
+    // `done` holatini ko'rib «tayyor» deb qichqirmasin.
+    if (!oldState || oldState === calcState) return;
+    if (calcState === "done") {
+      toast.success(`${calcQuery.data?.progress ?? 0} xodim hisoblandi.`);
+      queryClient.invalidateQueries({ queryKey: ["payroll", "payslips"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll", "payslip"] });
+      queryClient.invalidateQueries({ queryKey: ["payroll", "periods"] });
+    } else if (calcState === "error") {
+      toast.error(calcQuery.data?.error ?? "Hisoblashda xato");
+    }
+  }, [calcState, calcQuery.data, queryClient]);
   const approve = useApprovePayrollPeriod();
   const hrApprove = useHrApprovePayrollPeriod();
   const downloadExport = useDownloadPayrollExport();
@@ -369,16 +422,28 @@ function PayrollTable() {
             <Button
               variant="outline"
               size="sm"
-              disabled={calculate.isPending || isLocked}
+              disabled={calculate.isPending || isLocked || isCalculating}
               onClick={() =>
                 calculate.mutate(
                   { period },
-                  { onSuccess: (r) => toast.success(`${r.calculated} xodim hisoblandi.`) }
+                  {
+                    onSuccess: () => {
+                      // Natija emas, NAVBAT tasdig'i keldi — endi holatni
+                      // kuzatamiz (§4.3).
+                      setWatchCalc(true);
+                      queryClient.invalidateQueries({ queryKey: qk.payrollCalcStatus(period) });
+                      toast.info("Hisoblash navbatga qo'yildi...");
+                    },
+                  }
                 )
               }
             >
-              <RefreshCw className="mr-2 h-4 w-4" />
-              {isLocked ? "Qulflangan" : "Hisoblash"}
+              <RefreshCw className={`mr-2 h-4 w-4 ${isCalculating ? "animate-spin" : ""}`} />
+              {isLocked
+                ? "Qulflangan"
+                : isCalculating
+                  ? `Hisoblanmoqda ${calcQuery.data?.progress ?? 0}/${calcQuery.data?.total ?? 0}`
+                  : "Hisoblash"}
             </Button>
             {/* 1-bosqich: HR "tekshirdim, tayyor" — qulflamaydi. */}
             {rows.length > 0 && !isApproved && !isHrApproved && (
