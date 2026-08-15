@@ -17,6 +17,8 @@ import type {
   MyAttendanceHistory,
   AuditLog,
   CelebrationMediaRow,
+  FunnelData,
+  FunnelMonths,
   Bonus,
   DailyResult,
   EmployeeAttendanceSummary,
@@ -719,6 +721,11 @@ export const api = {
       `/payroll/fine-policy-editors/${userId}`,
       { method: "POST", body: JSON.stringify({ granted, reason }) }
     ),
+  // Sotuv voronkasi (VORONKA_TARIFLAR.md). Hisob lokal jadvallardan —
+  // CRM'ga so'rov ketmaydi.
+  funnel: (mode: "period" | "cohort", month?: string) =>
+    apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
+  funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
   // Tabrik videolari (tashrif/shartnoma -> umumiy guruh). Fayl serverda
   // saqlanmaydi: backend uni Telegram'ga uzatib `file_id` oladi.
   celebrationSettings: () =>

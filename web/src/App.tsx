@@ -24,6 +24,7 @@ const CheckIn = lazy(() => import("./pages/CheckIn"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const PayrollSettings = lazy(() => import("./pages/PayrollSettings"));
 const Celebration = lazy(() => import("./pages/Celebration"));
+const Funnel = lazy(() => import("./pages/Funnel"));
 const Overtime = lazy(() => import("./pages/Overtime"));
 const AdminOverride = lazy(() => import("./pages/AdminOverride"));
 const WorkLog = lazy(() => import("./pages/WorkLog"));
@@ -202,6 +203,8 @@ export default function App() {
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />
           <Route path="norms" element={<ManagerRoute><Norms /></ManagerRoute>} />
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />
+          {/* Voronka — barcha rahbar rollar (backend `funnel.py: _VIEW_ROLES`). */}
+          <Route path="funnel" element={<ManagerRoute><Funnel /></ManagerRoute>} />
           <Route path="statistics" element={<ManagerRoute><Statistics /></ManagerRoute>} />
           <Route path="work-schedule" element={<ManagerRoute><WorkSchedule /></ManagerRoute>} />
           {/* Ish kundaligi — ROP ham kiradi (backend uni o'z jamoasi bilan

@@ -2023,6 +2023,143 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Tabrik videolari tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: bosqichlar, konversiya, kogorta --")
+        try:
+            import asyncio as _aio4
+
+            from db.base import async_session as _asess4
+            from datetime import timezone as _tz4
+            from api.services import funnel as _fn
+
+            conn = db()
+            cur = conn.cursor()
+            FL = 980001  # test lid diapazoni
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (FL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (FL,))
+            conn.commit()
+
+            # Bosqich ID'larini testda QOTIRAMIZ — jonli .env ga bog'liq
+            # bo'lmasin (u yerda ID o'zgarsa test yiqilmasligi kerak).
+            _fn_orig = (
+                list(_fn.CRM_UYSOT_INVITE_PIPE_STATUS_IDS),
+                list(_fn.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn.CRM_UYSOT_INVITE_PIPE_STATUS_IDS = [8786]
+            _fn.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                fn_day = date(2021, 5, 10)          # tarixiy oy — jonli ma'lumotga tegmaydi
+                fn_from, fn_to = date(2021, 5, 1), date(2021, 5, 31)
+                fn_ts = int(datetime(2021, 5, 10, 9, tzinfo=_tz4.utc).timestamp())
+                fn_det = datetime(2021, 5, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                for i in range(5):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?)",
+                        (FL + i, 8779, "T-Yangi", 1, "T-op", 1, fn_ts, fn_ts, fn_det, fn_det))
+
+                def fev(lead, to_id, etype="stage_change", det=fn_det):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,?,8779,'T-Yangi',?,'T-bosqich',1,'T-op',1,?,?)",
+                        (lead, etype, to_id, fn_ts, det))
+
+                fev(FL + 0, 8786); fev(FL + 0, 8787); fev(FL + 0, 8788)   # to'liq zanjir
+                fev(FL + 1, 8786); fev(FL + 1, 8787)                       # tashrifgacha
+                fev(FL + 2, 8787)                                          # TAKLIFSIZ sakrash
+                fev(FL + 3, 8786)                                          # faqat taklif
+                fev(FL + 4, 8787, etype="first_seen")                      # SANALMASIN
+                conn.commit()
+
+                async def _per():
+                    async with _asess4() as s:
+                        return await _fn.period_funnel(s, fn_from, fn_to)
+
+                async def _coh():
+                    async with _asess4() as s:
+                        return await _fn.cohort_funnel(s, fn_from, fn_to)
+
+                per = _aio4.run(_per())
+                by = {r["key"]: r for r in per["rows"]}
+                check("Voronka: lid soni CRM yaratilish vaqtidan (5)",
+                      by["lead"]["value"] == 5, f"lid={by['lead']['value']}")
+                check("Voronka: sakragan lid taklifda ham sanaladi (4)",
+                      by["invite"]["value"] == 4, f"taklif={by['invite']['value']}")
+                check("Voronka: tashrif = 3", by["visit"]["value"] == 3,
+                      f"tashrif={by['visit']['value']}")
+                check("Voronka: first_seen tashrif bermaydi (4 emas, 3)",
+                      by["visit"]["value"] == 3, f"tashrif={by['visit']['value']}")
+                check("Voronka: shartnoma = 1", by["contract"]["value"] == 1,
+                      f"shartnoma={by['contract']['value']}")
+                check("Voronka: qo'ng'iroq qatorida konversiya YO'Q (zanjirdan tashqari)",
+                      by["call_try"]["conv_from_prev"] is None and by["call_try"]["outside_chain"],
+                      f"{by['call_try']}")
+                check("Voronka: tashrif->shartnoma konversiyasi 33.3%",
+                      by["contract"]["conv_from_prev"] == 33.3,
+                      f"={by['contract']['conv_from_prev']}")
+
+                coh = _aio4.run(_coh())
+                cby = {r["key"]: r for r in coh["rows"]}
+                check("Voronka(kogorta): lid=5, shartnoma=1",
+                      cby["lead"]["value"] == 5 and cby["contract"]["value"] == 1,
+                      f"lid={cby['lead']['value']}, shartnoma={cby['contract']['value']}")
+                check("Voronka(kogorta): liddan shartnomagacha 20%",
+                      cby["contract"]["conv_from_lead"] == 20.0,
+                      f"={cby['contract']['conv_from_lead']}")
+                check("Voronka(kogorta): eski davr «pishgan» deb belgilanadi",
+                      coh["mature"] is True, f"mature={coh['mature']}, yosh={coh['age_days']}")
+
+                weak = _fn.weakest_link(per["rows"])
+                check("Voronka: eng zaif bo'g'in — shartnoma (33.3%)",
+                      weak and weak["key"] == "contract", f"{weak}")
+
+                # Bo'sh oy: bo'lish xatosi bermasin, konversiya None bo'lsin
+                async def _empty():
+                    async with _asess4() as s:
+                        return await _fn.period_funnel(s, date(2019, 2, 1), date(2019, 2, 28))
+                emp = _aio4.run(_empty())
+                eby = {r["key"]: r for r in emp["rows"]}
+                check("Voronka: bo'sh davrda konversiya 0% emas, «—» (None)",
+                      eby["visit"]["conv_from_prev"] is None and eby["lead"]["value"] == 0,
+                      f"lid={eby['lead']['value']}, konv={eby['visit']['conv_from_prev']}")
+                check("Voronka: bo'sh davrda eng zaif bo'g'in yo'q",
+                      _fn.weakest_link(emp["rows"]) is None, f"{_fn.weakest_link(emp['rows'])}")
+
+                # API: ruxsat
+                fn_rop = cur.execute(
+                    "select id from users where role='rop' and is_active=1 limit 1").fetchone()
+                if fn_rop:
+                    r_ok = client.get(f"{API_BASE}/funnel?mode=cohort&month=2021-05",
+                                      headers=auth(token_for(fn_rop[0], "rop")))
+                    check("Voronka(API): ROP ko'ra oladi -> 200",
+                          r_ok.status_code == 200, f"kod={r_ok.status_code}")
+                fn_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+                if fn_emp:
+                    r_no = client.get(f"{API_BASE}/funnel", headers=auth(token_for(fn_emp[0], "employee")))
+                    check("Voronka(API): oddiy xodimga -> 403",
+                          r_no.status_code == 403, f"kod={r_no.status_code}")
+                r_bad = client.get(f"{API_BASE}/funnel?month=notoq", headers=auth(boss_t))
+                check("Voronka(API): noto'g'ri oy formati -> 400",
+                      r_bad.status_code == 400, f"kod={r_bad.status_code}")
+            finally:
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (FL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (FL,))
+                conn.commit()
+                conn.close()
+                (_fn.CRM_UYSOT_INVITE_PIPE_STATUS_IDS,
+                 _fn.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn_orig
+        except Exception:
+            check("Voronka tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

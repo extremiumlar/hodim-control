@@ -630,6 +630,12 @@ class CrmLeadState(Base):
     # bo'shliqsiz saqlaydi (masalan operator→manager tashrif kreditlash uchun).
     first_responsible_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     crm_updated_ts: Mapped[int] = mapped_column(Integer)
+    # Lid CRM'DA yaratilgan vaqt (`createdTimestamp`). Voronka KOGORTASI aynan
+    # shunga tayanadi: «avgustda kelgan lid» — bizning skanerimiz uni qachon
+    # ko'rgani emas, CRM'da qachon paydo bo'lgani. `first_seen_at` zaxira
+    # sifatida qoladi (eski qatorlarda bu ustun NULL — skaner ishga tushgan
+    # kunda mavjud bo'lgan lidlarning yaratilish vaqti bizda yo'q).
+    crm_created_ts: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

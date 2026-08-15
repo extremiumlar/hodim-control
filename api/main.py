@@ -65,6 +65,7 @@ from api.routers import (
     system_health,
     daily_results,
     excused_days,
+    funnel,
     hot_lead,
     hourly_plan,
     idle_watch,
@@ -149,6 +150,7 @@ app.include_router(excused_days.router)
 app.include_router(norms.router)
 app.include_router(mobilograf.router)
 app.include_router(celebration.router)
+app.include_router(funnel.router)
 app.include_router(monitored_groups.router)
 app.include_router(reports.router)
 app.include_router(daily_results.router)

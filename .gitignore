@@ -41,6 +41,12 @@ secrets/
 app.db.bak*
 *.bak_*
 backups/
+# SQLite WAL yo'ldoshlari — ichida HALI YOZILMAGAN baza sahifalari bor, ya'ni
+# xuddi bazaning o'zi kabi maxfiy. Fayl nomi ".db" bilan TUGAMAGANI uchun
+# yuqoridagi `*.db` naqshi ularni QAMRAMAYDI (2026-08-15 da `git status` da
+# ochiq turgani aniqlandi).
+*.db-wal
+*.db-shm
 
 # Loglar — `*.log` faqat FAYL nomiga mos keladi, papkani qamramaydi
 logs/

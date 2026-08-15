@@ -49,6 +49,14 @@ CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [
     int(x) for x in os.getenv("CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
     if x.strip().isdigit()
 ]
+# «Officega taklif qilindi» bosqichlari — voronkaning tashrifdan oldingi
+# bo'g'ini (`api/services/funnel.py`). Jonli hisobda uchtasi: 7139 va 8090
+# (Pipeline — bir xil nomli ikki bosqich), 8786 (Nurli Diyor).
+# Bo'sh bo'lsa — voronkada bu qator ko'rsatilmaydi, qolgan bosqichlar ishlaydi.
+CRM_UYSOT_INVITE_PIPE_STATUS_IDS = [
+    int(x) for x in os.getenv("CRM_UYSOT_INVITE_PIPE_STATUS_IDS", "").replace(";", ",").split(",")
+    if x.strip().isdigit()
+]
 
 # Diff-engine (kunlik statistika, lead_diff.py): chegaralangan tez skan qancha
 # kun orqaga yaratilgan lidlarni qamrab olishi kerak — undan eskilari kamdan-kam

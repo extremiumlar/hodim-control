@@ -19,6 +19,7 @@ import {
   PanelLeftOpen,
   Scale,
   Clapperboard,
+  Filter,
   ScrollText,
   Settings,
   ShieldAlert,
@@ -99,6 +100,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: "Sotuv",
     items: [
       { to: "/lead-stats", label: "Lidlar", icon: TrendingUp },
+      { to: "/funnel", label: "Voronka", icon: Filter },
       { to: "/norms", label: "Normalar", icon: Target },
     ],
   },

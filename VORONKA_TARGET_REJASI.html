@@ -1,0 +1,448 @@
+<title>Voronka va target tizimi</title>
+<style>
+  :root{
+    --bg:#FBFCFD; --surface:#FFFFFF; --surface-2:#F1F4F8; --ink:#141C26; --muted:#5C6B7A;
+    --line:#E1E7EE;
+    --fact:#0F766E; --fact-soft:#E0F2F0;      /* O'LCHANGAN — tizim biladigan haqiqat */
+    --plan:#B45309; --plan-soft:#FBF0E2;      /* MAQSAD — teskari hisoblanadigan reja */
+    --gap:#B02A37; --gap-soft:#FAE7E9;        /* YO'Q — ma'lumot manbai yo'q */
+    --radius:14px;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0B1220;--surface:#121B2B;--surface-2:#18243A;--ink:#E6EDF5;--muted:#93A4B8;
+      --line:#25334A;--fact:#2DD4BF;--fact-soft:#0F2A2A;--plan:#F0B429;--plan-soft:#2B2210;
+      --gap:#F1868F;--gap-soft:#2C1519;}
+  }
+  :root[data-theme="light"]{--bg:#FBFCFD;--surface:#FFFFFF;--surface-2:#F1F4F8;--ink:#141C26;
+    --muted:#5C6B7A;--line:#E1E7EE;--fact:#0F766E;--fact-soft:#E0F2F0;--plan:#B45309;
+    --plan-soft:#FBF0E2;--gap:#B02A37;--gap-soft:#FAE7E9;}
+  :root[data-theme="dark"]{--bg:#0B1220;--surface:#121B2B;--surface-2:#18243A;--ink:#E6EDF5;
+    --muted:#93A4B8;--line:#25334A;--fact:#2DD4BF;--fact-soft:#0F2A2A;--plan:#F0B429;
+    --plan-soft:#2B2210;--gap:#F1868F;--gap-soft:#2C1519;}
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.62;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  header.hero{border-bottom:1px solid var(--line);background:radial-gradient(115% 130% at 8% 0%,var(--fact-soft) 0%,transparent 60%)}
+  .hero-in{padding:54px 0 40px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--fact);margin:0 0 16px;display:flex;align-items:center;gap:10px}
+  .eyebrow::before{content:"";width:26px;height:2px;background:var(--fact)}
+  h1{font-size:clamp(29px,4.6vw,43px);line-height:1.08;letter-spacing:-.022em;margin:0 0 16px;font-weight:760;text-wrap:balance;max-width:22ch}
+  .lede{font-size:clamp(16px,2vw,18px);color:var(--muted);max-width:64ch;margin:0}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .lg{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:5px 12px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .dot.f{background:var(--fact)} .dot.p{background:var(--plan)} .dot.g{background:var(--gap)}
+
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  .sec-num{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--fact);text-transform:uppercase}
+  h2{font-size:clamp(21px,3vw,28px);letter-spacing:-.015em;margin:8px 0 10px;font-weight:720;text-wrap:balance}
+  h2+p{margin:0;color:var(--muted);max-width:66ch}
+  h3{font-size:16.5px;margin:26px 0 6px;font-weight:680;letter-spacing:-.01em}
+  p{margin:13px 0}
+  code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:1.5px 5px;border-radius:4px}
+
+  /* ── Voronka ── */
+  .funnel{margin-top:18px;display:flex;flex-direction:column;gap:7px}
+  .fr{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center}
+  .bar{border-radius:10px;padding:12px 16px;border:1px solid var(--line);background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .bar .nm{font-weight:640;font-size:14.5px}
+  .bar .sub{font-size:12px;color:var(--muted)}
+  .bar.f{border-color:color-mix(in srgb,var(--fact) 42%,var(--line));background:var(--fact-soft)}
+  .bar.g{border-color:color-mix(in srgb,var(--gap) 42%,var(--line));background:var(--gap-soft)}
+  .val{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:15px;font-weight:700;white-space:nowrap}
+  .bar.f .val{color:var(--fact)} .bar.g .val{color:var(--gap)}
+  .conv{font-family:var(--mono);font-size:11.5px;color:var(--plan);background:var(--plan-soft);border-radius:6px;padding:3px 8px;white-space:nowrap;text-align:center;min-width:78px}
+  .w1{width:100%}.w2{width:92%}.w3{width:80%}.w4{width:66%}.w5{width:52%}.w6{width:38%}
+  @media(max-width:640px){.w1,.w2,.w3,.w4,.w5,.w6{width:100%}}
+  .fake{margin-top:14px;font-size:12.5px;color:var(--muted);background:var(--surface-2);border-radius:8px;padding:10px 13px}
+
+  /* ── Ledger ── */
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin-top:8px}
+  .col{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:17px 19px}
+  .col h3{margin:0 0 10px;font-size:14.5px}
+  .col.have h3{color:var(--fact)} .col.miss h3{color:var(--gap)}
+  .col ul{margin:0;padding-left:18px;font-size:14px} .col li{margin:6px 0}
+
+  /* ── Bosqichlar ── */
+  .tl{display:flex;flex-direction:column;gap:15px;margin-top:6px}
+  .st{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .st.key{border-color:color-mix(in srgb,var(--plan) 50%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--plan) 20%,transparent)}
+  .st-h{display:grid;grid-template-columns:auto 1fr auto;gap:15px;align-items:center;padding:15px 19px;background:var(--surface-2);border-bottom:1px solid var(--line)}
+  .st-n{font-family:var(--mono);font-weight:700;font-size:14px;width:38px;height:38px;border-radius:9px;display:grid;place-items:center;background:var(--fact-soft);color:var(--fact)}
+  .st.key .st-n{background:var(--plan-soft);color:var(--plan)}
+  .st-t{font-size:17px;font-weight:700;letter-spacing:-.012em}
+  .st-s{font-size:12.5px;color:var(--muted);margin-top:1px}
+  .st-w{font-family:var(--mono);font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .st-b{padding:17px 19px}
+  .st-b>p:first-child{margin-top:0}
+  .st-b ul{margin:10px 0 0;padding-left:19px} .st-b li{margin:5px 0}
+  .st-b li::marker{color:var(--fact)}
+  .out{margin-top:13px;padding:11px 14px;background:var(--fact-soft);border-radius:9px;font-size:13.5px}
+  .out b{color:var(--fact)}
+  .st.key .out{background:var(--plan-soft)} .st.key .out b{color:var(--plan)}
+
+  .warn{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start;background:var(--gap-soft);border:1px solid color-mix(in srgb,var(--gap) 32%,transparent);border-radius:var(--radius);padding:16px 18px;margin:16px 0}
+  .warn .mk{font-family:var(--mono);font-weight:700;font-size:18px;color:var(--gap);line-height:1.35}
+  .warn p{margin:0}.warn p+p{margin-top:7px}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:10px}
+  th,td{text-align:left;padding:9px 12px;vertical-align:top}
+  thead th{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border-bottom:1px solid var(--line);font-weight:600}
+  tbody tr+tr td{border-top:1px solid var(--line)}
+  .scroll{overflow-x:auto}
+
+  footer{padding:34px 0 56px;color:var(--muted);font-size:13px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:8px 18px}
+  @media(max-width:620px){.st-h{grid-template-columns:auto 1fr}.st-w{grid-column:2;margin-top:3px}.warn{grid-template-columns:1fr}}
+</style>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <p class="eyebrow">Sotuv voronkasi · Teskari rejalashtirish</p>
+    <h1>10 uydan auditoriyagacha: target tizimi</h1>
+    <p class="lede">
+      «Oyiga 10 uy sotish» maqsadidan teskari hisoblab, har bosqichga aniq
+      raqam qo'yish: nechta tashrif, nechta suhbat, nechta lid, qancha
+      byudjet. Quyida — tizimda nima allaqachon o'lchanayotgani, nima
+      yetishmayotgani va buni qanday tartibda qurish kerakligi.
+    </p>
+    <div class="legend">
+      <span class="lg"><span class="dot f"></span> Tizim allaqachon o'lchaydi</span>
+      <span class="lg"><span class="dot p"></span> Teskari hisoblanadi (maqsad)</span>
+      <span class="lg"><span class="dot g"></span> Ma'lumot manbai YO'Q</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">A · Zanjir</span>
+    <h2>Hisob pastdan yuqoriga yuradi</h2>
+    <p>Maqsad — eng pastda (sotuv). Undan yuqoriga har bosqich
+      <b>konversiya foizi</b>ga bo'linib hisoblanadi. Ranglar: yashil — tizim
+      bugun ham o'lchayapti, qizil — ma'lumot umuman yo'q.</p>
+
+    <div class="funnel">
+      <div class="fr"><div class="bar g w1"><span><span class="nm">Auditoriya (qamrov)</span><br><span class="sub">reklama ko'rgan odamlar</span></span><span class="val">? </span></div><span class="conv">→ 1–3%</span></div>
+      <div class="fr"><div class="bar f w2"><span><span class="nm">Lid</span><br><span class="sub">CRM «Yangi lid» — voqea jurnalida bor</span></span><span class="val">2 000</span></div><span class="conv">→ 60%</span></div>
+      <div class="fr"><div class="bar f w3"><span><span class="nm">Suhbat</span><br><span class="sub">operator gaplashgan (qo'ng'iroq tarixi)</span></span><span class="val">1 200</span></div><span class="conv">→ 12%</span></div>
+      <div class="fr"><div class="bar f w4"><span><span class="nm">Ofisga taklif</span><br><span class="sub">CRM bosqichi — voqea jurnalida bor</span></span><span class="val">300</span></div><span class="conv">→ 50%</span></div>
+      <div class="fr"><div class="bar f w5"><span><span class="nm">Tashrif</span><br><span class="sub">menejer qabul qilgan — hozir ham sanaladi</span></span><span class="val">150</span></div><span class="conv">→ 6,7%</span></div>
+      <div class="fr"><div class="bar f w6"><span><span class="nm">Shartnoma (uy)</span><br><span class="sub">MAQSAD — hozir ham sanaladi</span></span><span class="val">10</span></div><span class="conv">maqsad</span></div>
+    </div>
+
+    <p class="fake">
+      ⚠️ <b>Yuqoridagi raqamlar — MISOL, haqiqiy emas.</b> Ular shunchaki
+      hisob qanday yurishini ko'rsatadi. Haqiqiy konversiyalarni hech kim
+      bilmaydi — ularni o'lchash 1-bosqichning maqsadi. Aynan shu sababli
+      kalkulyator BIRINCHI emas, IKKINCHI qilinadi.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">B · Boshlang'ich holat</span>
+    <h2>Voronkaning pastki yarmi allaqachon o'lchanadi</h2>
+    <p>Bu eng yaxshi xabar: tizim CRM voqealarini (<code>LeadEvent</code>)
+      yozib boradi va tashrif hamda shartnomani operator kesimida real
+      hodisalardan sanaydi. Ya'ni noldan boshlanmaydi.</p>
+
+    <div class="cols">
+      <div class="col have">
+        <h3>✓ Bugun ham ishlayapti</h3>
+        <ul>
+          <li><b>Lid</b> — yangi lid voqeasi (<code>first_seen</code>)</li>
+          <li><b>Bosqich o'tishlari</b> — qaysi lid, qachon, qaysi bosqichdan qaysisiga</li>
+          <li><b>Tashrif</b> — operator/menejer kesimida, dual-kredit qoidasi bilan</li>
+          <li><b>Shartnoma</b> — yopgan xodimga yoziladi</li>
+          <li><b>Suhbat</b> — qo'ng'iroqlar (kiruvchi/chiquvchi), soatlik sifat bilan</li>
+          <li><b>Norma tizimi</b> — har xodimga kunlik raqam (lavozimga mos)</li>
+          <li><b>Yetkazish</b> — guruh digesti, bot, sayt</li>
+        </ul>
+      </div>
+      <div class="col miss">
+        <h3>○ Yetishmaydi</h3>
+        <ul>
+          <li><b>Konversiya foizi</b> — xom sonlar bor, nisbat hisoblanmaydi</li>
+          <li><b>Kogorta</b> — «iyulda kelgan lid qachon sotildi» kuzatilmaydi</li>
+          <li><b>Lid manbai</b> — kanal faqat «issiq lid»da, umumiy holatda saqlanmaydi</li>
+          <li><b>Xarajat</b> — reklama byudjeti hech qayerda yo'q</li>
+          <li><b>Auditoriya</b> — qamrov ma'lumoti yo'q (faqat reklama kabinetlarida)</li>
+          <li><b>Maqsad obyekti</b> — «oyiga 10 uy» degan narsa tizimda yo'q</li>
+          <li><b>Teskari kalkulyator</b> — yo'q</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">C · Eng muhim qaror</span>
+    <h2>Avval o'lchash, keyin rejalashtirish</h2>
+    <p>Bu loyihaning muvaffaqiyati shu tartibga bog'liq.</p>
+
+    <div class="warn">
+      <div class="mk">1</div>
+      <div>
+        <p><b>Kalkulyatorni birinchi qilish — eng katta xato.</b> Teskari hisob
+        arifmetik jihatdan oson (bo'lish amali), lekin uning yagona kirishi —
+        konversiya foizlari. Ular o'lchanmagan bo'lsa, kalkulyator ishonchli
+        ko'rinishdagi <em>o'ylab topilgan</em> raqamlarni chiqaradi va butun
+        reja shunga qurilib ketadi.</p>
+        <p>Shuning uchun: 1-bosqich — o'lchov, 4-bosqich — kalkulyator.</p>
+      </div>
+    </div>
+
+    <div class="warn">
+      <div class="mk">2</div>
+      <div>
+        <p><b>Vaqt siljishi tuzog'i.</b> «Shu oyning lidlari ÷ shu oyning
+        shartnomalari» — NOTO'G'RI hisob. Avgustda kelgan lid oktyabrda
+        shartnoma qilishi mumkin. Bunday hisob konversiyani oy oxirida past,
+        keyingi oyda esa sun'iy yuqori ko'rsatadi.</p>
+        <p>To'g'ri yo'l — <b>kogorta</b>: lidni kelgan oyiga biriktirib, uni
+        vaqt bo'ylab kuzatish. Tizim ikkala rejimni ham ko'rsatishi kerak:
+        «davr kesimi» (operativ) va «kogorta» (haqiqiy konversiya).</p>
+      </div>
+    </div>
+
+    <div class="warn">
+      <div class="mk">3</div>
+      <div>
+        <p><b>Ta'riflar kelishilmasa, hamma raqam bahsli bo'ladi.</b> «Suhbat»
+        — har qo'ng'iroqmi yoki javob berilgani (30 soniyadan uzun)? «Sotuv» —
+        shartnoma bosqichimi yoki birinchi to'lovmi? Bitta shartnoma har doim
+        bitta uymi? Bekor qilingan shartnoma qanday sanaladi?</p>
+        <p>Bu savollarga kod yozishdan OLDIN javob kerak — keyin o'zgartirish
+        butun tarixni qayta hisoblashni talab qiladi.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">D · Bosqichlar</span>
+    <h2>Qanday tartibda quramiz</h2>
+    <p>Har bosqich mustaqil qiymat beradi — oxirini kutish shart emas.</p>
+
+    <div class="tl">
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">00</div>
+          <div><div class="st-t">Ta'riflarni qotirish</div><div class="st-s">Kod yozilmaydi — faqat kelishuv</div></div>
+          <div class="st-w">1–2 kun</div>
+        </div>
+        <div class="st-b">
+          <p>Har ko'rsatkichning aniq ta'rifi yozib olinadi va hujjatga qotiriladi:</p>
+          <ul>
+            <li><b>Sotuv</b> = «Shartnoma qilindi» bosqichiga kirishmi? 1 shartnoma = 1 uymi?</li>
+            <li><b>Tashrif</b> = «Tashrif» bosqichiga kirish (hozirgi qoida saqlanadimi?)</li>
+            <li><b>Suhbat</b> = javob berilgan qo'ng'iroqmi, necha soniyadan?</li>
+            <li><b>Lid</b> = yangi lid; takroriy murojaat yangi lidmi?</li>
+            <li>Bekor qilingan shartnoma, «sifatsiz lid» qanday sanaladi</li>
+          </ul>
+          <div class="out"><b>Natija:</b> bir sahifalik ta'riflar hujjati — keyingi barcha hisob shunga tayanadi.</div>
+        </div>
+      </div>
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">01</div>
+          <div><div class="st-t">Voronka o'lchovi va konversiyalar</div><div class="st-s">Haqiqiy raqamlarni birinchi marta ko'ramiz</div></div>
+          <div class="st-w">1–2 hafta</div>
+        </div>
+        <div class="st-b">
+          <p>Mavjud <code>LeadEvent</code> jurnalidan voronka quriladi — yangi
+          CRM so'rovlarisiz, chunki voqealar allaqachon yozilgan.</p>
+          <ul>
+            <li>Kunlik materializatsiya: bosqich × operator × (keyin: kanal)</li>
+            <li>Ikki rejim: <b>davr kesimi</b> va <b>kogorta</b></li>
+            <li>Saytda voronka sahifasi: har bosqich, konversiya %, eng zaif bo'g'in</li>
+            <li>Konversiya o'rtachasi + tebranish (bitta oyga ishonib qolmaslik uchun)</li>
+          </ul>
+          <div class="out"><b>Natija:</b> «bizning haqiqiy konversiyamiz qancha» degan savolga birinchi marta aniq javob.</div>
+        </div>
+      </div>
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">02</div>
+          <div><div class="st-t">Lid manbai (kanal)</div><div class="st-s">Qaysi reklama qancha sotuv keltirdi</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <p>Uysot lid ma'lumotida manba bor (masalan <code>FACEBOOK_FORM</code>,
+          <code>telegram</code>), lekin biz uni faqat «issiq lid»da saqlaymiz.</p>
+          <ul>
+            <li>Manbani lid holatiga (<code>CrmLeadState</code>) yozish</li>
+            <li>Voqea jurnaliga manbani biriktirish — kanal kesimida voronka</li>
+            <li>Eski lidlarga manbani to'ldirish (backfill)</li>
+          </ul>
+          <div class="out"><b>Natija:</b> «Instagram lidi tashrifga 3%, Telegram 8% aylanadi» — byudjetni qayerga surishni ko'rsatadi.</div>
+        </div>
+      </div>
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">03</div>
+          <div><div class="st-t">Xarajat va auditoriya</div><div class="st-s">Yagona qo'lda kiritiladigan qism</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <p>Reklama xarajati tizimda ham, CRM'da ham YO'Q. Boshlanishiga
+          qo'lda kiritish — keyin reklama kabinetlari API'siga ulash mumkin.</p>
+          <ul>
+            <li>Oddiy jadval: oy × kanal × xarajat (+ ixtiyoriy qamrov/ko'rsatish soni)</li>
+            <li>Kiritish sahifasi (oyiga bir marta, 5 daqiqalik ish)</li>
+            <li>Hisoblar: <b>CPL</b> (lid narxi), <b>CAC</b> (sotuv narxi), <b>ROMI</b></li>
+          </ul>
+          <div class="out"><b>Natija:</b> «bitta uy sotish bizga qancha reklama puliga tushadi» — savolingizning «rasxot» qismi.</div>
+        </div>
+      </div>
+
+      <div class="st key">
+        <div class="st-h">
+          <div class="st-n">04</div>
+          <div><div class="st-t">Teskari kalkulyator</div><div class="st-s">Aynan siz so'ragan narsa</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <p>Endi bu oson — barcha kirish ma'lumoti tayyor:</p>
+          <ul>
+            <li>Kirish: <b>oylik maqsad</b> (10 uy)</li>
+            <li>O'lchangan konversiyalar avtomatik qo'yiladi, lekin <b>tahrirlash mumkin</b>
+              («keyingi oy tashrif konversiyasini 8% qilamiz»)</li>
+            <li>Chiqish: kerakli tashrif → suhbat → lid → byudjet → auditoriya</li>
+            <li>Sezgirlik: «tashrif→sotuv 1% oshsa, 250 ta kam lid kerak»</li>
+          </ul>
+          <div class="out"><b>Natija:</b> maqsad qo'yilgan zahoti butun zanjir bo'yicha kerakli raqamlar chiqadi.</div>
+        </div>
+      </div>
+
+      <div class="st key">
+        <div class="st-h">
+          <div class="st-n">05</div>
+          <div><div class="st-t">Targetni xodimlarga tarqatish</div><div class="st-s">Reja shaxsiy kunlik raqamga aylanadi</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <p>Eng qimmatli bog'lanish: oylik voronka targeti mavjud
+          <b>norma tizimiga</b> ulanadi (u endigina tartibga solindi).</p>
+          <ul>
+            <li>Oylik lid/suhbat targeti → ish kunlari va xodimlar soniga bo'linadi</li>
+            <li>Ta'til, dam kuni, yangi xodim hisobga olinadi</li>
+            <li>Rahbarga <b>tavsiya</b> ko'rinishida chiqadi — u tasdiqlaydi (avtomatik qo'yilmaydi)</li>
+            <li>Menejerlarga tashrif targeti, operatorlarga suhbat targeti</li>
+          </ul>
+          <div class="out"><b>Natija:</b> «oyiga 10 uy» har operatorning ekranidagi kunlik raqamga aylanadi.</div>
+        </div>
+      </div>
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">06</div>
+          <div><div class="st-t">Reja va fakt kuzatuvi</div><div class="st-s">Oy oxirini kutmaslik</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <ul>
+            <li>Har bosqichda: reja / haqiqiy / farq</li>
+            <li><b>Prognoz:</b> «shu tempda 7 ta bo'ladi, 10 emas» — oyning 10-kunida aytadi</li>
+            <li>Qaysi bo'g'in orqada — lid kammi, konversiya tushdimi?</li>
+            <li>Mavjud guruh digestiga qo'shiladi (yangi kanal qurish shart emas)</li>
+          </ul>
+          <div class="out"><b>Natija:</b> reja buzilayotgani oy oxirida emas, boshida ma'lum bo'ladi.</div>
+        </div>
+      </div>
+
+      <div class="st">
+        <div class="st-h">
+          <div class="st-n">07</div>
+          <div><div class="st-t">Tahlil va stsenariylar</div><div class="st-s">Ixtiyoriy, keyinroq</div></div>
+          <div class="st-w">1 hafta</div>
+        </div>
+        <div class="st-b">
+          <ul>
+            <li>Eng katta yo'qotish qayerda (bo'g'in tahlili)</li>
+            <li>«Agar byudjetni 20% oshirsak, nechta uy qo'shiladi»</li>
+            <li>Operatorlar kesimida konversiya (kim yaxshi yopadi)</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">E · Xavflar</span>
+    <h2>Oldindan bilib qo'yish kerak</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Xavf</th><th>Ta'siri</th><th>Yechim</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>Tarix qisqa</b> — voqea jurnali ~2026-iyuldan</td>
+            <td>Birinchi konversiyalar taxminiy, mavsumiylik ko'rinmaydi</td>
+            <td>Uysot'dan tarixiy eksport bilan to'ldirish; dastlab konversiyani «taxminiy» deb belgilash</td>
+          </tr>
+          <tr>
+            <td><b>Uysot API tokeni o'lik</b> (31-iyuldan)</td>
+            <td>Tarixiy eksport ham, yangi ma'lumot ham to'xtagan</td>
+            <td>Tokenni tiklash — bu butun loyihaning old sharti</td>
+          </tr>
+          <tr>
+            <td><b>Xarajatni kim kiritadi</b></td>
+            <td>Kiritilmasa CPL/CAC hisoblanmaydi, zanjirning yuqori qismi ochilmaydi</td>
+            <td>Mas'ul odam belgilash; oyiga bir marta eslatma yuborish</td>
+          </tr>
+          <tr>
+            <td><b>Auditoriya raqami</b> faqat reklama kabinetlarida</td>
+            <td>Zanjirning eng yuqori bo'g'ini taxminiy qoladi</td>
+            <td>Boshida qo'lda; keyin Meta/Google API integratsiyasi</td>
+          </tr>
+          <tr>
+            <td><b>Bosqich o'tishlari «sakrab» ketishi</b></td>
+            <td>Lid oraliq bosqichni chetlab o'tsa konversiya buzuq ko'rinadi</td>
+            <td>Voronkani «kamida shu bosqichga yetgan» mantiqda hisoblash</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <span class="sec-num">F · Keyingi qadam</span>
+    <h2>Nimadan boshlaymiz</h2>
+    <p>Kod yozishdan oldin faqat bitta narsa kerak — <b>0-bosqich ta'riflari</b>.
+    Ular sizning qaroringiz, men o'ylab topa olmayman.</p>
+    <ul>
+      <li>«Sotuv» nima: shartnoma bosqichimi yoki birinchi to'lovmi?</li>
+      <li>Bitta shartnoma doim bitta uymi?</li>
+      <li>«Suhbat» nima: har qo'ng'iroqmi yoki javob berilgani?</li>
+      <li>Oylik maqsad kim tomonidan qo'yiladi (Boshliq/ROP)?</li>
+    </ul>
+    <p>Javoblar bo'lishi bilan <b>1-bosqich</b>ni (voronka o'lchovi) boshlayman —
+    u yangi CRM so'rovlarisiz, mavjud voqea jurnalidan quriladi.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Voronka va target tizimi — reja</span><span>·</span>
+    <span>hodimlar_tizimi</span><span>·</span>
+    <span>2026-08-15</span>
+  </div>
+</footer>

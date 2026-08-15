@@ -151,6 +151,7 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
                         responsible_name=resp_name,
                         first_responsible_id=first_responsible_id,
                         crm_updated_ts=updated_ts,
+                        crm_created_ts=r.get("created_ts"),
                         first_seen_at=now,
                         last_seen_at=now,
                     )
@@ -190,6 +191,10 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
             if prev.first_responsible_id is None:
                 prev.first_responsible_id = resp_id
             prev.crm_updated_ts = updated_ts
+            # Eski qatorlarda bu ustun NULL — skaner lidni qayta ko'rganda
+            # jimgina to'ldiriladi (alohida backfill skripti kerak emas).
+            if prev.crm_created_ts is None and r.get("created_ts"):
+                prev.crm_created_ts = r["created_ts"]
             prev.last_seen_at = now
 
     if not dry_run:

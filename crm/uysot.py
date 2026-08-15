@@ -744,6 +744,9 @@ class UysotAdapter(CRMAdapter):
                     "responsible_id": record.get("responsibleById"),
                     "responsible_name": record.get("responsibleBy"),
                     "updated_ts": record.get("updatedTimestamp"),
+                    # Voronka kogortasi uchun: lid CRM'DA qachon yaratilgan
+                    # (bizning skaner uni qachon ko'rgani EMAS).
+                    "created_ts": record.get("createdTimestamp"),
                 }
             )
         return out

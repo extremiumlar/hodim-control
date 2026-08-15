@@ -81,6 +81,8 @@ export const qk = {
   finePolicyEditors: ["payroll", "fine-policy-editors"] as const,
   explanations: (statusFilter?: string) => ["explanations", statusFilter ?? "all"] as const,
   celebrationSettings: ["celebration", "settings"] as const,
+  funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
+  funnelMonths: (months: number) => ["funnel", "months", months] as const,
   // Ish kundaligi. Kalitlar "work-log" prefiksi ostida — mutatsiyalar
   // [["work-log"]] bilan invalidatsiya qilinadi va o'z oyim ham, rahbar
   // ko'rinishi ham, qamrov ham birdaniga yangilanadi.
@@ -940,3 +942,15 @@ export const useDisableCelebrationMedia = () =>
 
 export const useTestCelebrationMedia = () =>
   useApiMutation((kind: string) => api.testCelebrationMedia(kind), []);
+
+// ─── Sotuv voronkasi ───
+export const useFunnel = (mode: "period" | "cohort", month?: string) =>
+  useQuery({
+    queryKey: qk.funnel(mode, month),
+    queryFn: () => api.funnel(mode, month),
+    // Rejim/oy almashtirilganda jadval "sakramaydi" — eski natija xira turadi
+    placeholderData: keepPreviousData,
+  });
+
+export const useFunnelMonths = (months = 6) =>
+  useQuery({ queryKey: qk.funnelMonths(months), queryFn: () => api.funnelMonths(months) });

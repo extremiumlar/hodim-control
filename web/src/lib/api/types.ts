@@ -97,6 +97,59 @@ export interface ManualAttendancePayload {
   reason: string;
 }
 
+export interface FunnelRow {
+  key: string;
+  label: string;
+  value: number;
+  conv_from_prev: number | null;
+  conv_from_lead?: number | null;
+  conv_label?: string;
+  outside_chain?: boolean;
+}
+
+export interface FunnelData {
+  mode: "period" | "cohort";
+  date_from: string;
+  date_to: string;
+  rows: FunnelRow[];
+  weakest_link: { key: string; label: string; conv: number } | null;
+  stages_configured: Record<string, boolean>;
+  approx_leads: number;
+  // faqat period rejimida
+  calls_quality?: { short_calls: number; talk_minutes: number };
+  // faqat cohort rejimida
+  age_days?: number;
+  mature?: boolean;
+  maturity_days?: number;
+}
+
+export interface FunnelMonthRow {
+  period: string;
+  leads: number;
+  visits: number;
+  contracts: number;
+  lead_to_visit: number | null;
+  lead_to_contract: number | null;
+  visit_to_contract: number | null;
+  mature: boolean;
+}
+
+export interface FunnelSpread {
+  avg: number | null;
+  min: number | null;
+  max: number | null;
+  months: number;
+}
+
+export interface FunnelMonths {
+  series: FunnelMonthRow[];
+  summary: {
+    lead_to_visit: FunnelSpread;
+    lead_to_contract: FunnelSpread;
+    visit_to_contract: FunnelSpread;
+  };
+}
+
 export interface CelebrationMediaRow {
   kind: "visit" | "contract";
   label: string;
