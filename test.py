@@ -2172,6 +2172,161 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Voronka tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: kanal kesimi va manba boyitish (2-bosqich) --")
+        try:
+            import asyncio as _aio5
+            import json as _json5
+            from datetime import timezone as _tz5
+
+            from db.base import async_session as _asess5
+            from api.services import funnel as _fn5
+            from api.services import lead_source as _ls5
+
+            conn = db()
+            cur = conn.cursor()
+            CL = 981001
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (CL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (CL,))
+            conn.commit()
+
+            _fn5_orig = (
+                list(_fn5.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn5.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn5.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn5.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                c_from, c_to = date(2021, 6, 1), date(2021, 6, 30)
+                c_ts = int(datetime(2021, 6, 10, 9, tzinfo=_tz5.utc).timestamp())
+                c_det = datetime(2021, 6, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                def lead(i, tags, source=None, checked=None):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, tags, source, source_checked_at, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (CL + i, 8779, "T-Yangi", 1, "T-op", 1, c_ts, c_ts,
+                         _json5.dumps(tags) if tags is not None else None,
+                         source, checked, c_det, c_det))
+
+                def cev(i, to_id):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',?,'T-bosqich',1,'T-op',1,?,?)",
+                        (CL + i, to_id, c_ts, c_det))
+
+                # 0: telegram + webinar (IKKI teg), tashrif+shartnoma
+                lead(0, ["#telegram", "#webinar"]); cev(0, 8787); cev(0, 8788)
+                # 1: telegram, faqat tashrif
+                lead(1, ["#telegram"]); cev(1, 8787)
+                # 2: telegram, hech qayerga yetmagan
+                lead(2, ["#telegram"])
+                # 3: tegsiz
+                lead(3, None)
+                conn.commit()
+
+                async def _ch(group_by):
+                    async with _asess5() as s:
+                        return await _fn5.channel_funnel(s, c_from, c_to, group_by)
+
+                ch = _aio5.run(_ch("tag"))
+                by = {r["channel"]: r for r in ch["rows"]}
+                check("Kanal: teglar bo'yicha guruhlanadi (telegram 3 lid)",
+                      by.get("#telegram", {}).get("leads") == 3, f"{by.get('#telegram')}")
+                check("Kanal: bitta lid IKKI tegda ham sanaladi (webinar 1 lid)",
+                      by.get("#webinar", {}).get("leads") == 1, f"{by.get('#webinar')}")
+                check("Kanal: tegsiz lid alohida qatorda",
+                      by.get("(tegsiz)", {}).get("leads") == 1, f"{by.get('(tegsiz)')}")
+                check("Kanal: telegram konversiyasi — lid->tashrif 66.7%",
+                      by["#telegram"]["lead_to_visit"] == 66.7,
+                      f"={by['#telegram']['lead_to_visit']}")
+                check("Kanal: telegram lid->shartnoma 33.3%",
+                      by["#telegram"]["lead_to_contract"] == 33.3,
+                      f"={by['#telegram']['lead_to_contract']}")
+                check("Kanal: webinar 100% shartnoma (1/1)",
+                      by["#webinar"]["lead_to_contract"] == 100.0,
+                      f"={by['#webinar']['lead_to_contract']}")
+                check("Kanal: eng ko'p lidli kanal yuqorida",
+                      ch["rows"][0]["channel"] == "#telegram", f"{ch['rows'][0]['channel']}")
+
+                src = _aio5.run(_ch("source"))
+                sby = {r["channel"]: r for r in src["rows"]}
+                _no_src = sby.get("(manba yo'q)")
+                check("Kanal(manba): so'ralmagan lidlar «(manba yo'q)» da",
+                      (_no_src or {}).get("leads") == 4, str(_no_src))
+
+                # ── Manba boyituvchisi: CRM o'rniga soxta adapter ──
+                class _FakeAdapter:
+                    def __init__(self):
+                        self.calls = []
+
+                    async def get_lead_detail(self, lead_id):
+                        self.calls.append(lead_id)
+                        # Bittasiga manba yo'q — u ham BELGILANISHI kerak
+                        if lead_id == CL + 3:
+                            return {"id": lead_id, "source": None}
+                        return {"id": lead_id, "source": "T-FACEBOOK"}
+
+                fake = _FakeAdapter()
+                _ls_orig = _ls5._adapter
+                _ls5._adapter = lambda: fake
+                try:
+                    async def _enrich(n):
+                        async with _asess5() as s:
+                            return await _ls5.enrich_tick(s, limit=n)
+
+                    r1 = _aio5.run(_enrich(2))
+                    check("Manba: bir tick'da FAQAT byudjet qadar so'raladi (2 ta)",
+                          r1.get("checked") == 2 and len(fake.calls) == 2, f"{r1}, {fake.calls}")
+                    check("Manba: eng yangi liddan boshlanadi",
+                          fake.calls[0] == CL + 3, f"birinchi={fake.calls[0]}")
+                    check("Manba: yana qolgani bor deb belgilanadi",
+                          r1.get("has_more") is True, f"{r1}")
+
+                    r2 = _aio5.run(_enrich(10))
+                    checked_all = cur.execute(
+                        "select count(*) from crm_lead_state where crm_lead_id >= ?"
+                        " and source_checked_at is not null", (CL,)).fetchone()[0]
+                    check("Manba: hammasi belgilandi (qayta so'ralmaydi)",
+                          checked_all == 4, f"belgilangan={checked_all}")
+                    check("Manba: manbasi yo'q lid ham belgilanadi (cheksiz so'rov yo'q)",
+                          cur.execute(
+                              "select source, source_checked_at is not null from crm_lead_state"
+                              " where crm_lead_id=?", (CL + 3,)).fetchone() == (None, 1),
+                          "manbasiz lid belgilanmagan")
+                    check("Manba: keyingi tick'da hech nima so'ralmaydi",
+                          _aio5.run(_enrich(10)).get("checked") == 0, "qayta so'rov bor")
+
+                    src2 = _aio5.run(_ch("source"))
+                    s2by = {r["channel"]: r for r in src2["rows"]}
+                    check("Kanal(manba): boyitgandan keyin manba kesimi ishlaydi",
+                          s2by.get("T-FACEBOOK", {}).get("leads") == 3, f"{s2by.get('T-FACEBOOK')}")
+                finally:
+                    _ls5._adapter = _ls_orig
+
+                r_api = client.get(f"{API_BASE}/funnel/channels?group_by=tag&month=2021-06",
+                                   headers=auth(boss_t))
+                check("Kanal(API): 200 va qatorlar qaytadi",
+                      r_api.status_code == 200 and isinstance(r_api.json().get("rows"), list),
+                      f"kod={r_api.status_code}")
+                r_bad2 = client.get(f"{API_BASE}/funnel/channels?group_by=xato",
+                                    headers=auth(boss_t))
+                check("Kanal(API): noto'g'ri group_by -> 422",
+                      r_bad2.status_code == 422, f"kod={r_bad2.status_code}")
+            finally:
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (CL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (CL,))
+                conn.commit()
+                conn.close()
+                (_fn5.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn5.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn5_orig
+        except Exception:
+            check("Kanal kesimi tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

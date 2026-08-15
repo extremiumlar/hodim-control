@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type FunnelData, type FunnelRow, type FunnelSpread } from "@/lib/api";
-import { useFunnel, useFunnelMonths } from "@/lib/queries";
+import { useFunnel, useFunnelChannels, useFunnelMonths } from "@/lib/queries";
 
 const fmt = (n: number) => n.toLocaleString("ru-RU").replace(/,/g, " ");
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v}%`);
@@ -141,6 +141,88 @@ function SpreadRow({ label, s }: { label: string; s: FunnelSpread }) {
   );
 }
 
+/**
+ * Kanal kesimi — «qaysi reklama sotuv keltirdi».
+ *
+ * Har doim KOGORTA: shu oyda kelgan lidlar keyin qayergacha yetdi. Davr
+ * kesimi bu yerda ma'nosiz bo'lardi — kanal lidga biriktirilgan, hodisaga
+ * emas.
+ */
+function ChannelCard({ month }: { month: string }) {
+  const [groupBy, setGroupBy] = useState<"tag" | "source">("tag");
+  const q = useFunnelChannels(groupBy, month);
+  const rows = q.data?.rows ?? [];
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+        <CardTitle className="text-base">Kanal kesimi — qaysi manba sotuv keltiradi</CardTitle>
+        <Tabs value={groupBy} onValueChange={(v) => setGroupBy(v as "tag" | "source")}>
+          <TabsList>
+            <TabsTrigger value="tag">Teglar</TabsTrigger>
+            <TabsTrigger value="source">Manba</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </CardHeader>
+      <CardContent>
+        {q.isLoading && !q.data ? (
+          <Skeleton className="h-40 w-full" />
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Bu davrda lid yo'q.</p>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-xs uppercase text-muted-foreground">
+                    <th className="py-2 text-left font-medium">
+                      {groupBy === "tag" ? "Teg" : "Manba"}
+                    </th>
+                    <th className="py-2 text-right font-medium">Lid</th>
+                    <th className="py-2 text-right font-medium">Tashrif</th>
+                    <th className="py-2 text-right font-medium">Shartnoma</th>
+                    <th className="py-2 text-right font-medium">Lid→tashrif</th>
+                    <th className="py-2 text-right font-medium">Lid→shartnoma</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.channel} className="border-b last:border-0">
+                      <td className="max-w-[220px] truncate py-1.5" title={r.channel}>
+                        {r.channel}
+                      </td>
+                      <td className="py-1.5 text-right font-mono">{fmt(r.leads)}</td>
+                      <td className="py-1.5 text-right font-mono">{fmt(r.visits)}</td>
+                      <td className="py-1.5 text-right font-mono font-semibold">
+                        {fmt(r.contracts)}
+                      </td>
+                      <td className="py-1.5 text-right font-mono">{pct(r.lead_to_visit)}</td>
+                      <td className="py-1.5 text-right font-mono">{pct(r.lead_to_contract)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              {groupBy === "tag" ? (
+                <>
+                  Bitta lid bir nechta tegda bo'lishi mumkin — shuning uchun yig'indi umumiy
+                  liddan ko'p chiqadi, bu xato emas.
+                </>
+              ) : (
+                <>
+                  Manba CRM'dan lid-ma'lumoti orqali sekin to'ldiriladi (so'rov limiti
+                  sababli). «(manba yo'q)» — hali so'ralmagan yoki CRM'da ko'rsatilmagan.
+                </>
+              )}
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function FunnelPage() {
   const [mode, setMode] = useState<"period" | "cohort">("cohort");
   const [month, setMonth] = useState(currentMonthKey());
@@ -180,6 +262,8 @@ export default function FunnelPage() {
       </p>
 
       <FunnelCard data={funnel.data} isLoading={funnel.isLoading} />
+
+      <ChannelCard month={month} />
 
       <Card>
         <CardHeader>

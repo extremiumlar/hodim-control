@@ -636,6 +636,19 @@ class CrmLeadState(Base):
     # sifatida qoladi (eski qatorlarda bu ustun NULL — skaner ishga tushgan
     # kunda mavjud bo'lgan lidlarning yaratilish vaqti bizda yo'q).
     crm_created_ts: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # ── Lid manbai (voronka 2-bosqichi) ──
+    # `tags` — CRM teglari (masalan ["#telegram", "#Webinar_15_aprel"]). Ommaviy
+    # skanerda BEPUL keladi, shuning uchun asosiy kanal signali shu: kampaniya
+    # nomi ham, kanal ham teglarda uchraydi.
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # `source` — attribution kanali (`MOI_ZVONKI`, `FACEBOOK_FORM`...). Ommaviy
+    # javobda YO'Q, faqat `/lead/{id}` detalida — ya'ni har lid uchun alohida
+    # so'rov. Shuning uchun byudjetli boyituvchi (`lead_source.py`) sekin-asta
+    # to'ldiradi; NULL = hali so'ralmagan.
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Manba so'ralgan vaqt — qayta so'ramaslik uchun (manba topilmasa ham
+    # belgilanadi, aks holda bir xil lidga cheksiz so'rov ketardi).
+    source_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -1759,6 +1772,24 @@ class PayrollPeriod(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     locked: Mapped[bool] = mapped_column(Boolean, default=False)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # ── Fon rejimidagi hisoblash holati (2026-08-15, §4.3) ──
+    # NEGA: production'da Passenger konkurentligi = 1. Hisoblash so'rov ichida
+    # bajarilganda (~20 xodim × 12 SQL + har rahbarga Telegram/FCM) yagona
+    # ishchi 10-40 soniya band bo'lib, BUTUN sayt navbatga tushardi. Endi
+    # tugma faqat shu ustunlarni belgilaydi (yengil UPDATE), og'ir ishni esa
+    # alohida cron JARAYONI bajaradi — Passenger'ga umuman tegmaydi.
+    # `queued` → `running` → `done`/`error`.
+    calc_state: Mapped[str] = mapped_column(String(10), default="idle", server_default="idle")
+    calc_requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    calc_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    calc_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    calc_progress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    calc_total: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    calc_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Faqat tanlangan xodimlar so'ralgan bo'lsa — cron o'sha ro'yxatni bilishi
+    # uchun saqlanadi (so'rov tugagach kontekst yo'qolmasin).
+    calc_user_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
 
 class Payslip(Base):

@@ -558,6 +558,10 @@ async def main() -> None:
         await _run_misc_inprocess(now, "muddati o'tgan vazifalar", "mark_overdue")
     if now.minute % 5 == 3:
         await _run_misc_inprocess(now, "bilim bazasi", "knowledge_tick")
+    # Lid manbasi (voronka kanal kesimi) — har 5 daqiqada kichik to'plam.
+    # Qoldiq 4: CRM sync (m%2==1) va bilim bazasi (m%5==3) bilan kesishmasin.
+    if now.minute % 5 == 4:
+        await _run_misc_inprocess(now, "lid manbasi", "lead_source_tick")
     # Tabrik videolari — HAR DAQIQA: guruhga tashrif/shartnoma xabari kech
     # bormasin. Ish yengil (bitta indeksli SELECT, odatda bo'sh javob).
     await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")

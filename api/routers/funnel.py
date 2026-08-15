@@ -71,6 +71,23 @@ async def get_funnel(
     return data
 
 
+@router.get("/channels")
+async def get_channels(
+    group_by: str = Query("tag", pattern="^(tag|source)$"),
+    month: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Kanal kesimidagi kogorta — «qaysi reklama sotuv keltirdi».
+
+    `group_by=tag` — CRM teglari (bepul, hamma lidda bor);
+    `group_by=source` — attribution kanali (sekin to'ldiriladi, qismi NULL)."""
+    day_from, day_to = _resolve_range(month, date_from, date_to)
+    return await funnel_service.channel_funnel(db, day_from, day_to, group_by)
+
+
 @router.get("/months")
 async def get_monthly_series(
     months: int = Query(6, ge=2, le=18),

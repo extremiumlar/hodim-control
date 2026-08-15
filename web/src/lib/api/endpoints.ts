@@ -17,6 +17,7 @@ import type {
   MyAttendanceHistory,
   AuditLog,
   CelebrationMediaRow,
+  FunnelChannels,
   FunnelData,
   FunnelMonths,
   Bonus,
@@ -726,6 +727,10 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelChannels: (groupBy: "tag" | "source", month?: string) =>
+    apiFetch<FunnelChannels>(
+      `/funnel/channels?group_by=${groupBy}${month ? `&month=${month}` : ""}`
+    ),
   // Tabrik videolari (tashrif/shartnoma -> umumiy guruh). Fayl serverda
   // saqlanmaydi: backend uni Telegram'ga uzatib `file_id` oladi.
   celebrationSettings: () =>

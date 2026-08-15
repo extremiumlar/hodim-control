@@ -92,6 +92,17 @@ async def cleanup_login_security(db: AsyncSession) -> dict:
     }
 
 
+async def lead_source_tick(db: AsyncSession) -> dict:
+    """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
+
+    Sekin ataylab: manba faqat `GET /lead/{id}` da bo'lgani uchun har lid
+    bitta CRM so'roviga tushadi. Tick'da 20 ta -> soatiga ~240 ta, ya'ni
+    Uysot limitining kichik ulushi."""
+    from api.services import lead_source
+
+    return await lead_source.enrich_tick(db)
+
+
 async def celebration_tick(db: AsyncSession) -> dict:
     """Tashrif/shartnoma tabriklarini guruhga e'lon qilish — ZAXIRA yo'l.
 

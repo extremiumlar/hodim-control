@@ -299,6 +299,77 @@ async def cohort_funnel(db: AsyncSession, day_from: date, day_to: date) -> dict:
     }
 
 
+def _lead_channels(tags: list | None, source: str | None, group_by: str) -> list[str]:
+    """Lid qaysi kanal(lar)ga tegishli.
+
+    ⚠️ BITTA LID BIR NECHTA TEGDA BO'LISHI MUMKIN (masalan «#telegram» va
+    «#Webinar_15_aprel»). Shunda u HAR IKKALA qatorda sanaladi — bu ataylab:
+    «webinar lidlari qanday aylandi» va «telegram lidlari qanday aylandi»
+    degan savollarning ikkalasi ham to'g'ri javob olishi kerak. Ya'ni kanal
+    kesimidagi yig'indi umumiy liddan KO'P bo'lishi mumkin va bu xato emas."""
+    if group_by == "source":
+        return [source] if source else ["(manba yo'q)"]
+    values = [str(t) for t in (tags or []) if str(t).strip()]
+    return values or ["(tegsiz)"]
+
+
+async def channel_funnel(
+    db: AsyncSession, day_from: date, day_to: date, group_by: str = "tag"
+) -> dict:
+    """KANAL KESIMIDAGI KOGORTA: qaysi kanal lidlari sotuvga aylanadi.
+
+    Kogorta rejimida (davr kesimi emas): «shu oyda kelgan telegram lidlari
+    keyin qayergacha yetdi» — byudjetni qayerga surishni aynan shu ko'rsatadi.
+    """
+    start_utc, end_utc = local_range_utc_naive(day_from, day_to)
+    lead_ids, _approx = await _cohort_lead_ids(db, start_utc, end_utc)
+    if not lead_ids:
+        return {"group_by": group_by, "rows": [], "date_from": day_from.isoformat(),
+                "date_to": day_to.isoformat()}
+
+    rows = list(
+        await db.execute(
+            select(CrmLeadState.crm_lead_id, CrmLeadState.tags, CrmLeadState.source).where(
+                CrmLeadState.crm_lead_id.in_(lead_ids)
+            )
+        )
+    )
+    by_channel: dict[str, set[int]] = {}
+    for lead_id, tags, source in rows:
+        for ch in _lead_channels(tags, source, group_by):
+            by_channel.setdefault(ch, set()).add(lead_id)
+
+    visit_ids = await _lead_ids_ever_reached(db, STAGE_VISIT, lead_ids)
+    contract_ids = await _lead_ids_ever_reached(db, STAGE_CONTRACT, lead_ids)
+
+    out = []
+    for channel, ids in by_channel.items():
+        leads = len(ids)
+        visits = len(ids & visit_ids)
+        contracts = len(ids & contract_ids)
+        out.append(
+            {
+                "channel": channel,
+                "leads": leads,
+                "visits": visits,
+                "contracts": contracts,
+                "lead_to_visit": _pct(visits, leads),
+                "lead_to_contract": _pct(contracts, leads),
+                "visit_to_contract": _pct(contracts, visits),
+            }
+        )
+    # Eng ko'p lid bergan kanal yuqorida — lekin qaror uchun konversiyaga
+    # qaraladi, shuning uchun ikkalasi ham ko'rsatiladi.
+    out.sort(key=lambda r: (-r["leads"], r["channel"]))
+    return {
+        "group_by": group_by,
+        "date_from": day_from.isoformat(),
+        "date_to": day_to.isoformat(),
+        "rows": out,
+        "note": "Bitta lid bir nechta tegda bo'lishi mumkin — yig'indi umumiy liddan ko'p chiqadi",
+    }
+
+
 def weakest_link(rows: list[dict]) -> dict | None:
     """Eng zaif bo'g'in — konversiyasi eng past o'tish. Rejalashtirishda
     «qayerni tuzatsak eng ko'p foyda» degan savolga javob.

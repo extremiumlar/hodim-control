@@ -747,6 +747,9 @@ class UysotAdapter(CRMAdapter):
                     # Voronka kogortasi uchun: lid CRM'DA qachon yaratilgan
                     # (bizning skaner uni qachon ko'rgani EMAS).
                     "created_ts": record.get("createdTimestamp"),
+                    # Kanal kesimi uchun: teglar ommaviy javobda BEPUL keladi
+                    # (manba `source` esa faqat lid detalida — alohida so'rov).
+                    "tags": record.get("tags") or [],
                 }
             )
         return out

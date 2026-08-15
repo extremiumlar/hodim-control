@@ -123,6 +123,24 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface FunnelChannelRow {
+  channel: string;
+  leads: number;
+  visits: number;
+  contracts: number;
+  lead_to_visit: number | null;
+  lead_to_contract: number | null;
+  visit_to_contract: number | null;
+}
+
+export interface FunnelChannels {
+  group_by: "tag" | "source";
+  date_from: string;
+  date_to: string;
+  rows: FunnelChannelRow[];
+  note?: string;
+}
+
 export interface FunnelMonthRow {
   period: string;
   leads: number;

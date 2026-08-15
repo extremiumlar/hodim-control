@@ -152,6 +152,7 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
                         first_responsible_id=first_responsible_id,
                         crm_updated_ts=updated_ts,
                         crm_created_ts=r.get("created_ts"),
+                        tags=r.get("tags") or None,
                         first_seen_at=now,
                         last_seen_at=now,
                     )
@@ -195,6 +196,11 @@ async def diff_tick(db: AsyncSession, full: bool = False, dry_run: bool = False)
             # jimgina to'ldiriladi (alohida backfill skripti kerak emas).
             if prev.crm_created_ts is None and r.get("created_ts"):
                 prev.crm_created_ts = r["created_ts"]
+            # Teglar CRM'da o'zgarishi mumkin (operator qo'shadi/oladi) —
+            # har skanerda joriy holat yoziladi.
+            new_tags = r.get("tags") or None
+            if new_tags != prev.tags:
+                prev.tags = new_tags
             prev.last_seen_at = now
 
     if not dry_run:

@@ -83,6 +83,8 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  funnelChannels: (groupBy: string, month?: string) =>
+    ["funnel", "channels", groupBy, month ?? "current"] as const,
   // Ish kundaligi. Kalitlar "work-log" prefiksi ostida — mutatsiyalar
   // [["work-log"]] bilan invalidatsiya qilinadi va o'z oyim ham, rahbar
   // ko'rinishi ham, qamrov ham birdaniga yangilanadi.
@@ -954,3 +956,10 @@ export const useFunnel = (mode: "period" | "cohort", month?: string) =>
 
 export const useFunnelMonths = (months = 6) =>
   useQuery({ queryKey: qk.funnelMonths(months), queryFn: () => api.funnelMonths(months) });
+
+export const useFunnelChannels = (groupBy: "tag" | "source", month?: string) =>
+  useQuery({
+    queryKey: qk.funnelChannels(groupBy, month),
+    queryFn: () => api.funnelChannels(groupBy, month),
+    placeholderData: keepPreviousData,
+  });
