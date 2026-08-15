@@ -61,6 +61,7 @@ export const qk = {
   overtimeEntries: (params?: object) => ["payroll", "overtime", params ?? {}] as const,
   payrollPeriods: ["payroll", "periods"] as const,
   payrollPreflight: (period: string) => ["payroll", "preflight", period] as const,
+  payrollCalcStatus: (period: string) => ["payroll", "calc-status", period] as const,
   payslips: (period: string) => ["payroll", "payslips", period] as const,
   payslipDetail: (period: string, userId: number) => ["payroll", "payslip", period, userId] as const,
   myLateStatus: ["payroll", "me", "late-status"] as const,
@@ -83,6 +84,10 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  funnelEconomics: (period: string, groupBy: string) =>
+    ["funnel", "economics", period, groupBy] as const,
+  funnelKnownChannels: (period: string, groupBy: string) =>
+    ["funnel", "known-channels", period, groupBy] as const,
   funnelChannels: (groupBy: string, month?: string) =>
     ["funnel", "channels", groupBy, month ?? "current"] as const,
   // Ish kundaligi. Kalitlar "work-log" prefiksi ostida — mutatsiyalar
@@ -572,6 +577,22 @@ export const useCalculatePayroll = () =>
     [["payroll", "payslips"], ["payroll", "payslip"], qk.payrollPeriods, ["payroll", "preflight"]]
   );
 
+/** Fon rejimidagi hisoblash progressi (§4.3).
+ *
+ * `enabled` yoqilganda har 3 soniyada so'raladi. Ish tugagach (`done`/`error`)
+ * so'rov TO'XTAYDI — `refetchInterval` `false` qaytaradi. Aks holda sahifa
+ * ochiq turgan sayin bekorga so'rov yuborilaverardi. */
+export const usePayrollCalcStatus = (period: string, enabled: boolean) =>
+  useQuery({
+    queryKey: qk.payrollCalcStatus(period),
+    queryFn: () => api.payrollCalcStatus(period),
+    enabled,
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state === "queued" || state === "running" ? 3000 : false;
+    },
+  });
+
 export const usePayslips = (period: string, enabled = true) =>
   useQuery({ queryKey: qk.payslips(period), queryFn: () => api.listPayslips(period), enabled });
 
@@ -963,3 +984,30 @@ export const useFunnelChannels = (groupBy: "tag" | "source", month?: string) =>
     queryFn: () => api.funnelChannels(groupBy, month),
     placeholderData: keepPreviousData,
   });
+
+// ─── Reklama xarajati va birlik iqtisodiyoti (3-bosqich) ───
+export const useFunnelEconomics = (period: string, groupBy: "tag" | "source" = "tag") =>
+  useQuery({
+    queryKey: qk.funnelEconomics(period, groupBy),
+    queryFn: () => api.funnelEconomics(period, groupBy),
+    placeholderData: keepPreviousData,
+  });
+
+export const useFunnelKnownChannels = (period: string, groupBy: "tag" | "source" = "tag") =>
+  useQuery({
+    queryKey: qk.funnelKnownChannels(period, groupBy),
+    queryFn: () => api.funnelKnownChannels(period, groupBy),
+  });
+
+export const useSetAdSpend = (period: string, groupBy: "tag" | "source") =>
+  useApiMutation(api.setAdSpend, [qk.funnelEconomics(period, groupBy)]);
+
+export const useDeleteAdSpend = (period: string, groupBy: "tag" | "source") =>
+  useApiMutation(api.deleteAdSpend, [qk.funnelEconomics(period, groupBy)]);
+
+export const useSetAvgDealProfit = (period: string, groupBy: "tag" | "source") =>
+  useApiMutation(
+    (vars: { period: string; value: number | null }) =>
+      api.setAvgDealProfit(vars.period, vars.value),
+    [qk.funnelEconomics(period, groupBy)]
+  );

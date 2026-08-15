@@ -2078,3 +2078,56 @@ class CelebrationClap(Base):
     post_id: Mapped[int] = mapped_column(ForeignKey("celebration_posts.id", ondelete="CASCADE"), index=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AdSpend(Base):
+    """Reklama xarajati — oy × kanal (voronka 3-bosqich).
+
+    NEGA QO'LDA: xarajat na tizimda, na CRM'da bor — u reklama kabinetlarida
+    (Meta/Google/Telegram). Boshlanishiga oyiga bir marta qo'lda kiritiladi;
+    keyin kabinet API'lariga ulash mumkin.
+
+    `channel` — voronkadagi kanal nomi bilan AYNAN bir xil bo'lishi kerak
+    (CRM tegi «#telegram» yoki manba «WEB_FORM»), aks holda xarajat lidlar
+    bilan bog'lanmaydi. Shuning uchun kiritish sahifasi kanal nomini
+    voronkada HAQIQATAN uchragan qiymatlardan tanlatadi — qo'lda yozish
+    imlo xatosiga olib kelardi va CPL jimgina noto'g'ri chiqardi.
+
+    `reach` — qamrov/ko'rsatishlar soni (ixtiyoriy): voronkaning eng yuqori
+    bo'g'ini. Kiritilsa «auditoriya → lid» konversiyasi ham hisoblanadi."""
+
+    __tablename__ = "ad_spend"
+    __table_args__ = (UniqueConstraint("period", "channel", name="uq_ad_spend_period_channel"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)  # "YYYY-MM"
+    channel: Mapped[str] = mapped_column(String(120))
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    reach: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class FunnelMonth(Base):
+    """Oylik voronka farazlari — hozircha bittasi: o'rtacha shartnoma foydasi.
+
+    NEGA KERAK: ROMI («reklama puli o'zini qopladimi») daromadsiz hisoblanmaydi,
+    daromad esa CRM'da yo'q — lid yozuvidagi `balance` jonli bazada deyarli
+    doim 0. Shuning uchun rahbar bitta shartnomadan o'rtacha QANCHA FOYDA
+    qolishini kiritadi; kiritilmasa ROMI ko'rsatilmaydi (taxminiy raqam
+    chiqarib, unga ishonib qolishdan ko'ra «hisoblanmadi» deyish to'g'riroq).
+
+    Kelajakda oylik maqsad (4-bosqich) ham shu jadvalga qo'shiladi."""
+
+    __tablename__ = "funnel_month"
+
+    period: Mapped[str] = mapped_column(String(7), primary_key=True)  # "YYYY-MM"
+    avg_deal_profit: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

@@ -10,6 +10,7 @@
  */
 import { useState } from "react";
 import { AlertTriangle, Filter, Info } from "lucide-react";
+import EconomicsCard from "@/components/funnel/EconomicsCard";
 import PageHeader from "@/components/PageHeader";
 import { MonthPicker, currentMonthKey } from "@/components/PeriodPicker";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { type FunnelData, type FunnelRow, type FunnelSpread } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { useFunnel, useFunnelChannels, useFunnelMonths } from "@/lib/queries";
 
 const fmt = (n: number) => n.toLocaleString("ru-RU").replace(/,/g, " ");
@@ -148,8 +150,15 @@ function SpreadRow({ label, s }: { label: string; s: FunnelSpread }) {
  * kesimi bu yerda ma'nosiz bo'lardi — kanal lidga biriktirilgan, hodisaga
  * emas.
  */
-function ChannelCard({ month }: { month: string }) {
-  const [groupBy, setGroupBy] = useState<"tag" | "source">("tag");
+function ChannelCard({
+  month,
+  groupBy,
+  setGroupBy,
+}: {
+  month: string;
+  groupBy: "tag" | "source";
+  setGroupBy: (v: "tag" | "source") => void;
+}) {
   const q = useFunnelChannels(groupBy, month);
   const rows = q.data?.rows ?? [];
 
@@ -224,8 +233,12 @@ function ChannelCard({ month }: { month: string }) {
 }
 
 export default function FunnelPage() {
+  const { user } = useAuth();
   const [mode, setMode] = useState<"period" | "cohort">("cohort");
   const [month, setMonth] = useState(currentMonthKey());
+  const [groupBy, setGroupBy] = useState<"tag" | "source">("tag");
+  // Xarajatni kim kiritadi — backend `funnel.py: _EDIT_ROLES` bilan bir xil
+  const canEdit = ["boss", "dasturchi", "rop"].includes(user?.role ?? "");
   const funnel = useFunnel(mode, month);
   const months = useFunnelMonths(6);
 
@@ -263,7 +276,9 @@ export default function FunnelPage() {
 
       <FunnelCard data={funnel.data} isLoading={funnel.isLoading} />
 
-      <ChannelCard month={month} />
+      <ChannelCard month={month} groupBy={groupBy} setGroupBy={setGroupBy} />
+
+      <EconomicsCard period={month} groupBy={groupBy} canEdit={canEdit} />
 
       <Card>
         <CardHeader>

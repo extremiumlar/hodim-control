@@ -123,6 +123,42 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface EconomicsRow {
+  id: number;
+  channel: string;
+  amount: number;
+  reach: number | null;
+  note: string | null;
+  matched: boolean;
+  leads: number;
+  visits: number;
+  contracts: number;
+  cpl: number | null;
+  cpv: number | null;
+  cac: number | null;
+  romi: number | null;
+  reach_to_lead: number | null;
+}
+
+export interface Economics {
+  period: string;
+  group_by: "tag" | "source";
+  avg_deal_profit: number | null;
+  rows: EconomicsRow[];
+  unmatched: string[];
+  missing_spend: { channel: string; leads: number; contracts: number }[];
+  totals: {
+    spend: number;
+    leads: number;
+    visits: number;
+    contracts: number;
+    cpl: number | null;
+    cpv: number | null;
+    cac: number | null;
+    romi: number | null;
+  };
+}
+
 export interface FunnelChannelRow {
   channel: string;
   leads: number;
@@ -874,6 +910,19 @@ export interface PayrollPreflight {
   attendance: AttendanceReadiness;
   no_salary_rate: ReadinessIssue[];
   pending_overtime: ReadinessIssue[];
+}
+
+/** Fon rejimidagi hisoblash holati (§4.3). `state`:
+ *  `idle` — hech qachon so'ralmagan · `queued` — navbatda (cronni kutyapti) ·
+ *  `running` — hisoblanmoqda · `done` — tugadi · `error` — xato. */
+export interface PayrollCalcStatus {
+  period: string;
+  state: "idle" | "queued" | "running" | "done" | "error";
+  progress: number;
+  total: number;
+  error: string | null;
+  started_at: string | null;
+  calculated_at: string | null;
 }
 
 export interface PayrollLateStatus {

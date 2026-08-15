@@ -12,14 +12,22 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel
+
 from api.deps import get_db, require_roles
+from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
-from db.models import Role, User
+from db.models import AuditLog, Role, User
 
 router = APIRouter(prefix="/funnel", tags=["funnel"])
 
 _VIEW_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
 _viewer = require_roles(*_VIEW_ROLES)
+
+# Xarajat va farazlarni KIM kiritadi — maqsad qo'yuvchilar bilan bir xil
+# qamrov (`VORONKA_TARIFLAR.md` 3-bo'lim): Boshliq, Dasturchi, ROP.
+_EDIT_ROLES = (Role.boss.value, Role.dasturchi.value, Role.rop.value)
+_editor = require_roles(*_EDIT_ROLES)
 
 # Bir so'rovda qamrab olinadigan eng uzun oraliq — tasodifiy «5 yil» so'rovi
 # butun jadvalni Pythonda aylanib chiqmasin.
@@ -120,3 +128,99 @@ async def get_monthly_series(
             "visit_to_contract": _avg_spread("visit_to_contract"),
         },
     }
+
+
+class AdSpendIn(BaseModel):
+    period: str
+    channel: str
+    amount: float
+    reach: int | None = None
+    note: str | None = None
+
+
+class AvgProfitIn(BaseModel):
+    period: str
+    avg_deal_profit: float | None = None
+
+
+@router.get("/economics")
+async def get_economics(
+    period: str,
+    group_by: str = Query("tag", pattern="^(tag|source)$"),
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reklama xarajati + natija: CPL, CPV, CAC, ROMI (3-bosqich)."""
+    _resolve_range(period, None, None)  # format tekshiruvi (YYYY-MM)
+    return await ad_spend_service.economics(db, period, group_by)
+
+
+@router.get("/economics/channels")
+async def get_known_channels(
+    period: str,
+    group_by: str = Query("tag", pattern="^(tag|source)$"),
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Shu oyda HAQIQATAN uchragan kanal nomlari — xarajat kiritish
+    formasi shu ro'yxatdan tanlatadi.
+
+    Nega ro'yxat: kanal nomi qo'lda yozilsa («telegram» vs «#telegram»)
+    xarajat lidlar bilan bog'lanmay qolardi va CPL jimgina noto'g'ri
+    chiqardi."""
+    day_from, day_to = _resolve_range(period, None, None)
+    data = await funnel_service.channel_funnel(db, day_from, day_to, group_by)
+    return {
+        "channels": [
+            {"channel": r["channel"], "leads": r["leads"]}
+            for r in data["rows"]
+            if not r["channel"].startswith("(")
+        ]
+    }
+
+
+@router.post("/economics/spend")
+async def set_spend(
+    payload: AdSpendIn, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    _resolve_range(payload.period, None, None)
+    if payload.amount < 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Summa manfiy bo'lmasin")
+    row = await ad_spend_service.upsert_spend(
+        db, payload.period, payload.channel.strip(), payload.amount,
+        payload.reach, (payload.note or "").strip() or None, actor.id,
+    )
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="ad_spend_set",
+            after={"period": payload.period, "channel": row.channel, "amount": float(row.amount)},
+        )
+    )
+    await db.commit()
+    return {"ok": True, "id": row.id}
+
+
+@router.delete("/economics/spend/{spend_id}")
+async def remove_spend(
+    spend_id: int, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    if not await ad_spend_service.delete_spend(db, spend_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Yozuv topilmadi")
+    db.add(AuditLog(actor_id=actor.id, action="ad_spend_deleted", before={"id": spend_id}))
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/economics/avg-profit")
+async def set_avg_profit(
+    payload: AvgProfitIn, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Bitta shartnomadan o'rtacha foyda — ROMI shu bo'lmasa hisoblanmaydi."""
+    _resolve_range(payload.period, None, None)
+    if payload.avg_deal_profit is not None and payload.avg_deal_profit < 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Foyda manfiy bo'lmasin")
+    await ad_spend_service.set_avg_deal_profit(
+        db, payload.period, payload.avg_deal_profit, actor.id
+    )
+    return {"ok": True}

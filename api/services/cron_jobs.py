@@ -92,6 +92,47 @@ async def cleanup_login_security(db: AsyncSession) -> dict:
     }
 
 
+async def ad_spend_reminder_tick(db: AsyncSession) -> dict:
+    """Reklama xarajati kiritilmagan bo'lsa eslatma (voronka 3-bosqich).
+
+    NEGA KERAK: bu tizimning YAGONA qo'lda kiritiladigan qismi va reja
+    aynan shuni asosiy xavf deb belgilagan — kiritilmasa CPL/CAC/ROMI
+    hisoblanmaydi va zanjirning yuqori qismi ochilmay qoladi.
+
+    Kimga: xarajatni kirita oladiganlar (Boshliq, Dasturchi, ROP) —
+    shaxsiy DM, guruhga emas (pul raqamlari)."""
+    from sqlalchemy import select
+
+    from api.notify import notify_user
+    from api.services import ad_spend
+    from api.services.push import Category
+    from db.models import Role, User
+
+    missing = await ad_spend.missing_periods(db, months=2)
+    if not missing:
+        return {"ok": True, "missing": []}
+
+    targets = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_((Role.boss.value, Role.dasturchi.value, Role.rop.value)),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+    davrlar = ", ".join(missing)
+    text = (
+        f"📣 <b>Reklama xarajati kiritilmagan</b>: {davrlar}\n\n"
+        "Kiritilmasa bitta lid va bitta sotuv qancha pulga tushgani "
+        "(CPL/CAC) hisoblanmaydi.\n"
+        "Sayt → <b>Voronka</b> → «Reklama xarajati» — 5 daqiqalik ish."
+    )
+    for user in targets:
+        await notify_user(db, user, Category.APPROVALS, text, data={"path": "/funnel"})
+    return {"ok": True, "missing": missing, "notified": len(targets)}
+
+
 async def lead_source_tick(db: AsyncSession) -> dict:
     """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
 

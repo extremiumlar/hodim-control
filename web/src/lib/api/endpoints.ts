@@ -17,6 +17,7 @@ import type {
   MyAttendanceHistory,
   AuditLog,
   CelebrationMediaRow,
+  Economics,
   FunnelChannels,
   FunnelData,
   FunnelMonths,
@@ -43,6 +44,7 @@ import type {
   OvertimeProfile,
   OvertimeProfileInput,
   PayrollAdjustment,
+  PayrollCalcStatus,
   PayrollLateStatus,
   PayrollPeriodSummary,
   PayrollPreflight,
@@ -438,11 +440,15 @@ export const api = {
     apiFetch<{ deleted: boolean }>(`/payroll/adjustments/${adjustmentId}`, { method: "DELETE" }),
   listPayrollPeriods: () => apiFetch<PayrollPeriodSummary[]>("/payroll/periods"),
   payrollPreflight: (period: string) => apiFetch<PayrollPreflight>(`/payroll/${period}/preflight`),
+  // Hisoblash NAVBATGA qo'yiladi (§4.3) — javob darhol keladi, natija emas.
+  // Progressni `payrollCalcStatus` bilan kuzatish kerak.
   calculatePayroll: (period: string, userIds?: number[]) =>
-    apiFetch<{ period: string; calculated: number }>(`/payroll/${period}/calculate`, {
+    apiFetch<{ period: string; queued: boolean; total: number }>(`/payroll/${period}/calculate`, {
       method: "POST",
       body: JSON.stringify({ user_ids: userIds ?? null }),
     }),
+  payrollCalcStatus: (period: string) =>
+    apiFetch<PayrollCalcStatus>(`/payroll/${period}/status`),
   hrApprovePayrollPeriod: (period: string) =>
     apiFetch<{ period: string; status: string; payslip_count: number }>(
       `/payroll/${period}/hr-approve`,
@@ -727,6 +733,29 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelEconomics: (period: string, groupBy: "tag" | "source" = "tag") =>
+    apiFetch<Economics>(`/funnel/economics?period=${period}&group_by=${groupBy}`),
+  funnelKnownChannels: (period: string, groupBy: "tag" | "source" = "tag") =>
+    apiFetch<{ channels: { channel: string; leads: number }[] }>(
+      `/funnel/economics/channels?period=${period}&group_by=${groupBy}`
+    ),
+  setAdSpend: (body: {
+    period: string;
+    channel: string;
+    amount: number;
+    reach?: number | null;
+    note?: string | null;
+  }) => apiFetch<{ ok: boolean; id: number }>("/funnel/economics/spend", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
+  deleteAdSpend: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/funnel/economics/spend/${id}`, { method: "DELETE" }),
+  setAvgDealProfit: (period: string, avg_deal_profit: number | null) =>
+    apiFetch<{ ok: boolean }>("/funnel/economics/avg-profit", {
+      method: "POST",
+      body: JSON.stringify({ period, avg_deal_profit }),
+    }),
   funnelChannels: (groupBy: "tag" | "source", month?: string) =>
     apiFetch<FunnelChannels>(
       `/funnel/channels?group_by=${groupBy}${month ? `&month=${month}` : ""}`
