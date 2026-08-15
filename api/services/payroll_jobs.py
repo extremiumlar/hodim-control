@@ -103,7 +103,20 @@ async def payroll_tick(db: AsyncSession) -> dict:
         # Import funksiya ichida: `payroll.py` ↔ `payroll_jobs.py` aylanma
         # importini oldini oladi va cron har daqiqada ishga tushganda
         # (ish yo'q bo'lsa ham) og'ir modulni ko'tarmaydi.
+        from api.routers.bonuses import recalculate_period
         from api.services.payroll import run_payroll
+
+        # ── KPI bonusi AVVAL qayta hisoblanadi (§2.3) ──
+        # `build_payslip` `bonuses` jadvalidan TAYYOR qatorni o'qiydi. Ilgari
+        # o'sha qatorni faqat bot/cron (oyning oxirgi kuni 23:30) yaratardi —
+        # ya'ni oy o'rtasida hisoblanganda bonus qatori umuman yo'q bo'lib,
+        # KPI puli jimgina 0 chiqardi va HR «KPI oylikka o'tmadi» derdi.
+        # Endi tartib xatosi tuzilishi bo'yicha mumkin emas: bonus har doim
+        # oylikdan OLDIN yangilanadi.
+        #
+        # Xabarsiz (`notify=False`): xodim har «Hisoblash» bosilganda
+        # «bonusingiz hisoblandi» xabarini qayta-qayta olmasin.
+        bonus_result = await recalculate_period(db, period, actor_id=actor_id, notify=False)
 
         result = await run_payroll(db, period, user_ids=user_ids, on_progress=on_progress)
     except Exception as exc:  # noqa: BLE001 — cron jim o'lmasin
@@ -162,6 +175,7 @@ async def payroll_tick(db: AsyncSession) -> dict:
         "ran": period,
         "ok": True,
         "calculated": result["calculated"],
+        "bonuses": bonus_result["calculated"],
         "total_net": total_net,
         "reclaimed": reclaimed,
     }

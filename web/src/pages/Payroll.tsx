@@ -474,6 +474,17 @@ function PayrollTable({
         )}
       </PageHeader>
 
+      {/* §2.3: HR «KPI oylikka o'tmadi» deb shikoyat qilardi — sabab, bonus
+          qatorini faqat oy oxiridagi cron yaratardi. Endi «Hisoblash» o'zi
+          bonusni ham yangilaydi; buni AYTIB qo'yish kerak, aks holda HR
+          hamon botdagi alohida tugmani qidiradi. */}
+      {canManage && !isLocked && (
+        <p className="-mt-2 text-xs text-slate-500">
+          «Hisoblash» bosilganda <b>KPI bonusi ham shu paytda qayta hisoblanadi</b> — botdan
+          alohida hisoblash shart emas.
+        </p>
+      )}
+
       {canManage && !isLocked && <PreflightSection period={period} />}
 
       {rows.length > 0 && (

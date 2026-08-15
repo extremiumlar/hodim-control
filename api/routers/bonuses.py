@@ -22,14 +22,31 @@ class CalculateMonthlyRequest(BaseModel):
     period: str | None = None  # "YYYY-MM"; berilmasa joriy oy ishlatiladi
 
 
-@router.post("/calculate-monthly", dependencies=[Depends(verify_bot_secret)])
-async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession = Depends(get_db)) -> dict:
-    """Scheduler tomonidan har oy oxirida chaqiriladi — barcha faol xodimlar uchun
-    bonusni hisoblab, natijani saqlaydi va botga push-xabar yuboradi (summasiz)."""
-    period = payload.period or today_local().strftime("%Y-%m")
+async def recalculate_period(
+    db: AsyncSession,
+    period: str,
+    *,
+    actor_id: int | None = None,
+    notify: bool = True,
+) -> dict:
+    """Berilgan oy uchun barcha kuzatiladigan xodimlarning KPI bonusini
+    qayta hisoblab saqlaydi. IDEMPOTENT (upsert) — qayta chaqirilsa dublikat
+    yaratmaydi, faqat summani yangilaydi.
 
+    QAMROV — `PAYROLL_TRACKED_ROLES` (§2.5): ilgari FAQAT `employee` roli
+    hisoblanardi, payroll esa Boshliqdan tashqari hammaga payslip yasaydi.
+    Ya'ni HR/ROP/Dasturchi payslip'ida bonus qatori HECH QACHON chiqmasdi.
+    Lavozimida ko'rsatkich bo'lmaganlar baribir 0 oladi (`metrics_for` bo'sh),
+    ya'ni qamrovni kengaytirish hech kimga ortiqcha pul bermaydi.
+
+    `notify=False` — oylik hisobi ichidan chaqirilganda ishlatiladi: xodim
+    «bonusingiz hisoblandi» xabarini oyning o'rtasida HR har «Hisoblash»
+    bosganida qayta-qayta olmasin (oy oxiridagi cron esa yuboradi)."""
+    tracked_roles = [r.value for r in Role if r is not Role.boss]
     employees = list(
-        await db.scalars(select(User).where(User.role == Role.employee.value, User.is_active == True))  # noqa: E712
+        await db.scalars(
+            select(User).where(User.role.in_(tracked_roles), User.is_active.is_(True))
+        )
     )
 
     calculated = 0
@@ -58,7 +75,7 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
 
         db.add(
             AuditLog(
-                actor_id=None,  # scheduler/tizim tomonidan avtomatik hisoblanadi
+                actor_id=actor_id,  # cron/scheduler chaqirsa None
                 action="bonus_calculated",
                 target_user_id=emp.id,
                 before={"amount": before_amount},
@@ -68,7 +85,7 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
         await db.commit()
         calculated += 1
 
-        if emp.telegram_id:
+        if notify and emp.telegram_id:
             await notify_user(
                 db, emp, Category.DECISIONS,
                 f"💰 Bonusingiz ({period}) hisoblandi. Tafsilot uchun saytga kiring.",
@@ -76,6 +93,33 @@ async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession =
             )
 
     return {"period": period, "calculated": calculated}
+
+
+@router.post("/calculate-monthly", dependencies=[Depends(verify_bot_secret)])
+async def calculate_monthly(payload: CalculateMonthlyRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    """Scheduler tomonidan har oy oxirida chaqiriladi — barcha faol xodimlar uchun
+    bonusni hisoblab, natijani saqlaydi va botga push-xabar yuboradi (summasiz)."""
+    period = payload.period or today_local().strftime("%Y-%m")
+    return await recalculate_period(db, period, actor_id=None, notify=True)
+
+
+@router.post("/recalculate")
+async def recalculate(
+    payload: CalculateMonthlyRequest,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """SAYTDAN (JWT bilan) KPI bonusini qayta hisoblash — §2.3.
+
+    NEGA KERAK: `bonuses` jadvaliga yozuv yaratadigan yagona yo'l bot/cron
+    edi (oyning oxirgi kuni 23:30). Oylik hisobi esa `bonuses` dan TAYYOR
+    qatorni o'qiydi — ya'ni oy o'rtasida HR «Hisoblash» bossa bonus qatori
+    umuman yo'q bo'lib, KPI puli jimgina 0 chiqardi.
+
+    Xabar YUBORILMAYDI: HR buni kuniga bir necha marta bosishi mumkin,
+    xodimga har safar «bonusingiz hisoblandi» borsa spam bo'lardi."""
+    period = payload.period or today_local().strftime("%Y-%m")
+    return await recalculate_period(db, period, actor_id=actor.id, notify=False)
 
 
 @router.get("", response_model=list[BonusOut])

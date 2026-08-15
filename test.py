@@ -3902,6 +3902,7 @@ def test_payroll_automation() -> None:
         from db.models import (
             Attendance,
             AuditLog,
+            Bonus,
             FinePolicy,
             OvertimeEntry,
             OvertimeProfile,
@@ -3922,6 +3923,10 @@ def test_payroll_automation() -> None:
             if pslips:
                 await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(pslips)))
             await s.execute(delete(Payslip).where(Payslip.user_id.in_(ids)))
+            # §2.3 dan keyin oylik hisobi KPI bonusini ham yaratadi — ya'ni
+            # sinov foydalanuvchilarida endi `bonuses` qatori ham qoladi va
+            # tozalanmasa `delete(User)` FOREIGN KEY bilan yiqiladi.
+            await s.execute(delete(Bonus).where(Bonus.user_id.in_(ids)))
             await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id.in_(ids)))
             await s.execute(delete(OvertimeProfile).where(OvertimeProfile.user_id.in_(ids)))
             await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(ids)))
@@ -4097,6 +4102,7 @@ def test_payroll_reporting() -> None:
         from db.models import (
             Attendance,
             AuditLog,
+            Bonus,
             LeadStageDaily,
             PayrollPeriod,
             Payslip,
@@ -4114,6 +4120,8 @@ def test_payroll_reporting() -> None:
                 if pslips:
                     await s.execute(delete(PayslipItem).where(PayslipItem.payslip_id.in_(pslips)))
                 await s.execute(delete(Payslip).where(Payslip.user_id.in_(ids)))
+                # §2.3: oylik hisobi endi bonus qatorini ham yaratadi
+                await s.execute(delete(Bonus).where(Bonus.user_id.in_(ids)))
                 await s.execute(delete(SalaryRate).where(SalaryRate.user_id.in_(ids)))
                 await s.execute(delete(Attendance).where(Attendance.user_id.in_(ids)))
                 await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(ids)))
@@ -5501,6 +5509,129 @@ def test_kpi_rates() -> None:
         conn.close()
 
 
+def test_kpi_in_payroll() -> None:
+    """§2.3 — KPI bonusi OYLIK bilan birga hisoblanadimi.
+
+    MUAMMO EDI: `bonuses` jadvaliga qator yaratadigan yagona yo'l bot/cron
+    edi (oyning oxirgi kuni 23:30). `build_payslip` esa o'sha jadvaldan
+    TAYYOR qatorni o'qiydi — ya'ni oy o'rtasida HR «Hisoblash» bosganda
+    bonus qatori umuman yo'q bo'lib, KPI puli jimgina 0 chiqardi.
+
+    Tekshiriladi:
+      (a) `/bonuses/recalculate` — rahbarga 200, oddiy xodimga 403;
+      (b) qamrov `employee` dan kengaydi (§2.5);
+      (c) oylik hisobi bonus qatorini O'ZI yaratadi (avval qator YO'Q edi)
+          va payslip'da bonus summasi ko'rinadi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("KPI BONUSI OYLIK BILAN BIRGA (2.3)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+    if not mgr_t:
+        return
+
+    PERIOD = "2021-05"
+    conn = db()
+    cur = conn.cursor()
+    uid = pos_id = None
+    try:
+        # Lavozim — FAQAT «suhbat» ko'rsatkichi (metrics_for shundan o'qiydi)
+        cur.execute(
+            "insert into positions (name, metrics, is_active, created_at)"
+            " values (?,?,1,datetime('now'))", ("T-KpiPay-Lavozim", '["suhbat"]'))
+        pos_id = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, position_id, bot_started,"
+            " is_active, created_at) values (999700801,'T-KpiPay','employee',?,0,1,datetime('now'))",
+            (pos_id,))
+        uid = cur.lastrowid
+        # 10 ta suhbat -> stavka 3000 -> bonus 30 000 kutiladi
+        cur.execute(
+            "insert into daily_results (user_id, date, conversations_count, visits_count, source)"
+            " values (?,?,?,?,'manual')", (uid, PERIOD + "-11", 10, 0))
+        conn.commit()
+        emp_t = token_for(uid, "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=60) as c:
+            c.post("/payroll/kpi-rates", headers=auth(mgr_t), json={
+                "scope": "user", "scope_id": uid, "metric": "suhbat", "amount": 3000,
+                "effective_from": PERIOD + "-01", "note": "T-kpipay"})
+            c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": uid, "amount": 1000000, "pay_basis": "monthly",
+                "effective_from": PERIOD + "-01"})
+
+            # (a) huquqlar
+            r = c.post("/bonuses/recalculate", headers=auth(emp_t), json={"period": PERIOD})
+            check("/bonuses/recalculate oddiy xodimga -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+            r = c.post("/bonuses/recalculate", headers=auth(mgr_t), json={"period": PERIOD})
+            check("/bonuses/recalculate rahbarga -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+
+            row = cur.execute("select amount from bonuses where user_id=? and period=?",
+                              (uid, PERIOD)).fetchone()
+            check("saytdan hisoblanganda bonus qatori paydo bo'ldi (10 x 3000)",
+                  row is not None and abs(row[0] - 30000) < 1, "=" + str(row))
+
+            # (b) qamrov: employee'dan boshqa rollar ham (ilgari faqat employee edi)
+            other = cur.execute(
+                "select count(*) from bonuses b join users u on u.id=b.user_id"
+                " where b.period=? and u.role in ('hr','rop','dasturchi')", (PERIOD,)).fetchone()
+            check("qamrov kengaydi — employee'dan boshqa rollar ham hisoblandi (2.5)",
+                  other is not None and other[0] >= 1, "=" + str(other))
+
+            # (c) ASOSIY: bonus qatorlarini o'chirib, FAQAT oylik hisoblaymiz
+            cur.execute("delete from bonuses where period=?", (PERIOD,))
+            conn.commit()
+            yoq = cur.execute("select count(*) from bonuses where period=?", (PERIOD,)).fetchone()
+            check("tayyorgarlik: bonus qatorlari o'chirildi", yoq[0] == 0, "=" + str(yoq))
+
+            r = c.post("/payroll/" + PERIOD + "/calculate", headers=auth(mgr_t), json={})
+            check("oylik navbatga qo'yildi -> 202", r.status_code == 202, "kod=" + str(r.status_code))
+            tick = payroll_tick(c, PERIOD)
+            check("cron oylikni hisobladi", bool(tick) and tick.get("ok") is True, "=" + str(tick))
+            check("cron javobida bonus soni ham bor",
+                  bool(tick) and tick.get("bonuses", 0) >= 1, "=" + str(tick))
+
+            row2 = cur.execute("select amount from bonuses where user_id=? and period=?",
+                               (uid, PERIOD)).fetchone()
+            check("OYLIK HISOBI bonus qatorini o'zi yaratdi",
+                  row2 is not None and abs(row2[0] - 30000) < 1, "=" + str(row2))
+
+            r = c.get("/payroll/" + PERIOD + "/user/" + str(uid), headers=auth(mgr_t))
+            bonus_amount = r.json().get("bonus_amount") if r.status_code == 200 else None
+            check("payslip'da KPI bonusi ko'rinadi (30 000)",
+                  bonus_amount is not None and abs(bonus_amount - 30000) < 1,
+                  "kod=" + str(r.status_code) + " bonus=" + str(bonus_amount))
+    except Exception:
+        check("KPI+oylik (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cur.execute("delete from bonuses where period=?", (PERIOD,))
+        cur.execute("delete from payslip_items where payslip_id in"
+                    " (select id from payslips where period=?)", (PERIOD,))
+        cur.execute("delete from payslips where period=?", (PERIOD,))
+        cur.execute("delete from payroll_periods where period=?", (PERIOD,))
+        cur.execute("delete from audit_logs where action in ('bonus_calculated','payroll_calculated')"
+                    " and json_extract(after,'$.period')=?", (PERIOD,))
+        if uid is not None:
+            cur.execute("delete from kpi_rates where scope='user' and scope_id=?", (uid,))
+            cur.execute("delete from daily_results where user_id=?", (uid,))
+            cur.execute("delete from salary_rates where user_id=?", (uid,))
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from users where id=?", (uid,))
+        if pos_id is not None:
+            cur.execute("delete from positions where id=?", (pos_id,))
+        conn.commit()
+        conn.close()
+
+
 def test_absent_deduct_daily() -> None:
     """Kelmagan kun kunlik ulush bilan ayiriladi (2026-08-08, egasi "A" tanladi).
 
@@ -6065,6 +6196,11 @@ def main() -> None:
         test_payroll_reporting()
     except Exception:
         print("Payroll hisobot testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_kpi_in_payroll()
+    except Exception:
+        print("KPI+oylik testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_dasturchi_bot_bridge()
