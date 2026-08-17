@@ -76,11 +76,26 @@ holda joriy oy har doim eng yomon ko'rinadi.
 
 ---
 
-## 4. Hali hal qilinmagan (kelajak bosqichlar)
+## 4. Panelda boshqariladigan qoidalar (2026-08-17 da qo'shildi)
 
-- **Bekor qilingan shartnoma** — hozir avtomatik ayrilmaydi. Shartnoma bosqichiga
-  kirgan lid keyin «Muvaffaqiyatsiz»ga o'tsa, sotuv soni kamaymaydi.
-  Kerak bo'lsa: 6-bosqichda «bekor» hisobi qo'shiladi.
-- **Lid manbai (kanal)** — 2-bosqich.
-- **Reklama xarajati va auditoriya** — 3-bosqich (qo'lda kiritiladi).
+Bu ikkitasi KODDA QOTIRILMAGAN — sayt → **Voronka** → «Voronka qoidalari»
+kartasida yoqib-o'chiriladi va qaysi CRM bosqichlari nazarda tutilgani
+o'sha yerda tanlanadi. Sabab: bular texnik sozlama emas, biznes qarori.
+
+| Qoida | Default | Yoqilganda |
+|-------|---------|------------|
+| **Bekor qilingan shartnoma sotuvdan ayrilsin** | o'chiq | Shartnomaga yetgan, lekin HOZIRGI holati «bekor» bo'lgan lid sotuv sanalmaydi |
+| **«Sifatsiz lead» lid soniga kirmasin** | o'chiq | Hozirgi holati «sifatsiz» bo'lgan lid maxrajdan chiqadi, konversiya ko'tariladi |
+
+Nozik joylar:
+- Qoida yoqilgan-u bosqich TANLANMAGAN bo'lsa — ishlamaydi, panel ogohlantiradi.
+- Bekorlik HOZIRGI HOLAT bo'yicha: lid bekorga o'tib keyin yana shartnomaga
+  qaytsa, u sotuv bo'lib qoladi.
+- Kogortada ham, davr kesimida ham bir xil qo'llanadi.
+- O'zgarish darhol BARCHA davrlarga ta'sir qiladi (voronka jonli hisoblanadi)
+  va auditga yoziladi.
+
+## 5. Hali hal qilinmagan
+
 - **Takroriy murojaat** — hozir CRM yangi lid yaratsa yangi lid deb sanaladi.
+- **Auditoriya (qamrov)** — qo'lda kiritiladi; reklama kabinetlari API'si yo'q.
