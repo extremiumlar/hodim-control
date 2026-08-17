@@ -6867,6 +6867,50 @@ def test_explanation_letters() -> None:
         conn.close()
 
 
+def cleanup_orphans() -> None:
+    """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
+
+    NEGA KERAK: `run_payroll` va `recalculate_period` BARCHA faol xodim
+    bo'yicha aylanadi — ya'ni bitta blok davr hisoblaganda BOSHQA blokning
+    sinov foydalanuvchilariga ham payslip/bonus qatori yaratiladi. Ular
+    o'z blokining tozalash ro'yxatida bo'lmasa qolib ketadi.
+
+    Ustiga-ustak, test.py dagi xom `sqlite3` ulanishlarida
+    `PRAGMA foreign_keys` YOQILMAGAN — shu sababli `delete from users`
+    egasiz qator qoldirib ham muvaffaqiyatli tugaydi (async SQLAlchemy
+    ulanishida esa aynan shu FOREIGN KEY xatosi bilan yiqilardi).
+
+    Bu qoldiqlar keyingi ishga tushirishda CHALG'ITUVCHI xatolar beradi
+    (jonli isbot 2026-08-17: «payroll_fund jami» sinovi egasiz 2 mln so'mlik
+    payslip tufayli qulagan edi). Shuning uchun oxirida yagona supurgi.
+    """
+    conn = db()
+    cur = conn.cursor()
+    jami = 0
+    try:
+        cur.execute(
+            "delete from payslip_items where payslip_id in"
+            " (select id from payslips where user_id not in (select id from users))"
+        )
+        jami += cur.rowcount
+        for tbl in ("bonuses", "payslips", "salary_rates", "attendance", "daily_results",
+                    "overtime_entries", "overtime_profiles", "work_schedule_override",
+                    "work_schedule_weekly", "excused_days", "norms", "payroll_adjustments"):
+            try:
+                cur.execute(
+                    f"delete from {tbl} where user_id is not null"
+                    " and user_id not in (select id from users)"
+                )
+                jami += cur.rowcount
+            except sqlite3.OperationalError:
+                pass  # jadval yoki ustun yo'q — muhim emas
+        conn.commit()
+    finally:
+        conn.close()
+    if jami:
+        print(f"\n[tozalash] egasiz {jami} ta qator o'chirildi")
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -7013,6 +7057,11 @@ def main() -> None:
         test_visit_counting()
     except Exception:
         print("Tashrif hisoblash testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        cleanup_orphans()
+    except Exception:
+        print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
 
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")
