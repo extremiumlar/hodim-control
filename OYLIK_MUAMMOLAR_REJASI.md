@@ -527,16 +527,40 @@ jarima, bonus).
 
 ## 7. Bajarish tartibi (tavsiya etilgan ketma-ketlik)
 
-| № | Ish | Qatlam | Hajm | Xatar |
-|---|---|---|---|---|
-| 1 | `86f36e2` deploy qilinganini tekshirish | deploy | 5 daq | past |
-| 2 | **§5.1** kelajak kunlari `absent` sanalmasin | backend | ~1 soat | **yuqori ta'sir** |
-| 3 | **§2.4/§5.2** sana defaultlari + ogohlantirish | web | 30 daq | past |
-| 4 | **§4.3** hisoblashni fon rejimiga | backend+web | ~3 soat | o'rta |
-| 5 | **§2.3** KPI qayta hisoblash JWT bilan + calculate ichida | backend | 1 soat | o'rta |
-| 6 | **§3.2** qo'shimcha ish profilini yoqish yo'li | backend+web | 1-2 soat | o'rta |
-| 7 | **§5.4** reset (faqat ruxsatdan keyin) | ma'lumot | 1 soat | **eng yuqori** |
-| 8 | 2026-08 ni qayta hisoblab, qo'lda tekshirish | — | 30 daq | — |
+| № | Ish | Qatlam | Hajm | Xatar | Holat |
+|---|---|---|---|---|---|
+| 1 | `86f36e2` deploy qilinganini tekshirish | deploy | 5 daq | past | ✅ |
+| 2 | **§5.1** kelajak kunlari `absent` sanalmasin | backend | ~1 soat | **yuqori ta'sir** | ✅ `d151269` |
+| 3 | **§2.4/§5.2** sana defaultlari + ogohlantirish | web | 30 daq | past | ✅ `915358f` |
+| 4 | **§4.3** hisoblashni fon rejimiga | backend+web | ~3 soat | o'rta | ✅ `1cda82c`, `f221050` |
+| 5 | **§2.3** KPI qayta hisoblash JWT bilan + calculate ichida | backend | 1 soat | o'rta | ✅ `15b583a` |
+| 6 | **§3.2** qo'shimcha ish profilini yoqish yo'li | backend+web | 1-2 soat | o'rta | ✅ `be3b05e`, `b79b04a` |
+| 7 | **§5.4** reset (faqat ruxsatdan keyin) | ma'lumot | 1 soat | **eng yuqori** | ⛔ RUXSAT KUTILYAPTI |
+| 8 | 2026-08 ni qayta hisoblab, qo'lda tekshirish | — | 30 daq | — | ✅ (quyida) |
+
+### 2026-08 tekshiruvi natijasi (2026-08-17)
+
+Jonli bazada qayta hisoblandi, MUSTAQIL usulda solishtirildi:
+
+- **kelmagan kun ayirmasi** — 7 xodimda formula bo'yicha to'g'ri
+  (`stavka ÷ ish kuni × kelmagan`), chetlashish 0 (yaxlitlash 100 so'mgacha);
+- **«kelmagan» deb belgilangan birorta kunda ham check-in YO'Q** — ya'ni
+  ayirmalar o'rinli, tizim yo'qolgan check-in uchun pul kesmagan;
+- **net = qatorlar yig'indisi** — 13 payslipda nomuvofiqlik 0.
+
+⚠️ **Ochiq qolgan ma'lumot kamchiliklari (kod emas, sozlama):**
+
+1. **KPI stavkalari 0 ta** — `kpi_rates` jadvali BO'SH. «KPI oylikka o'tmadi»
+   shikoyatining oxirgi sababi shu: kod endi to'g'ri ishlaydi, lekin
+   ko'paytiriladigan stavka yo'q. Avgustdagi haqiqiy hajm: Firuzabonu
+   1639 suhbat / 25 tashrif, Shahnoza 804/12, Hayot 526/4, Albina 43/6.
+2. **4 xodimda lavozim biriktirilmagan** (Abdurahmon, Farida, Otabek,
+   Sanobar) — `metrics_for` bo'sh qaytadi, ya'ni ularga KPI umuman
+   hisoblanmaydi.
+3. **Lavozim ko'rsatkichlari shubhali**: HR, IT, Boss, Prorab, Mashenist
+   kranchik lavozimlarida `suhbat`/`tashrif` (va video) turibdi.
+4. **Samandar va Begzod** — faolsizlantirilgan, payslip'lari 0 so'm bilan
+   eskirgan holda qolgan (pul zarari yo'q).
 
 **Har bir qadamdan keyin:** `test.py` to'liq ishlatilsin (hozirgi holat:
 **503 OK, 0 FAIL** — bu chiziq pasaymasligi kerak).
