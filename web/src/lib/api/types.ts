@@ -123,6 +123,43 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface OperatorQualityRow {
+  responsible_id: number;
+  user_id: number | null;
+  full_name: string;
+  leads: number;
+  visits: number;
+  contracts: number;
+  lead_to_visit: number | null;
+  calls: number | null;
+  answered: number | null;
+  talks_per_visit: number | null;
+  ranked: boolean;
+}
+
+export interface ManagerQualityRow {
+  responsible_id: number;
+  user_id: number | null;
+  full_name: string;
+  visits: number;
+  contracts: number;
+  visit_to_contract: number | null;
+  ranked: boolean;
+}
+
+export interface OperatorQuality {
+  date_from: string;
+  date_to: string;
+  operators: OperatorQualityRow[];
+  managers: ManagerQualityRow[];
+  best_operator: OperatorQualityRow | null;
+  worst_operator: OperatorQualityRow | null;
+  best_manager: ManagerQualityRow | null;
+  min_leads: number;
+  min_visits: number;
+  note: string;
+}
+
 export interface TargetProgressRow {
   key: string;
   label: string;

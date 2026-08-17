@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { AlertTriangle, Filter, Info } from "lucide-react";
 import EconomicsCard from "@/components/funnel/EconomicsCard";
+import OperatorQuality from "@/components/funnel/OperatorQuality";
 import TargetCalculator from "@/components/funnel/TargetCalculator";
 import TargetProgress from "@/components/funnel/TargetProgress";
 import TargetSplit from "@/components/funnel/TargetSplit";
@@ -284,6 +285,8 @@ export default function FunnelPage() {
       <TargetCalculator period={month} canEdit={canEdit} />
 
       <TargetSplit period={month} canEdit={canEdit} />
+
+      <OperatorQuality month={month} />
 
       <ChannelCard month={month} groupBy={groupBy} setGroupBy={setGroupBy} />
 

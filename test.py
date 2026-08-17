@@ -2948,6 +2948,127 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Reja/fakt kuzatuvi tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: operator kesimida konversiya (7-bosqich) --")
+        try:
+            import asyncio as _aio10
+            from datetime import timezone as _tz10
+
+            from db.base import async_session as _asess10
+            from api.services import funnel as _fn10
+            from api.services import funnel_operators as _fo
+
+            conn = db()
+            cur = conn.cursor()
+            OL = 984001
+            O_FROM, O_TO = date(2021, 4, 1), date(2021, 4, 30)
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (OL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (OL,))
+            conn.commit()
+
+            _fn10_orig = (
+                list(_fn10.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn10.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn10.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn10.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                o_ts = int(datetime(2021, 4, 10, 9, tzinfo=_tz10.utc).timestamp())
+                o_det = datetime(2021, 4, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                def olead(i, first_rid):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?)",
+                        (OL + i, 8779, "T-Yangi", first_rid, "T-op", first_rid, o_ts, o_ts,
+                         o_det, o_det))
+
+                def oev(i, to_id, rid):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',?,'T-bosqich',?,'T-op',?,?,?)",
+                        (OL + i, to_id, rid, rid, o_ts, o_det))
+
+                # Operator 111: 25 lid, 5 tashrif -> 20%
+                for i in range(25):
+                    olead(i, 111)
+                for i in range(5):
+                    oev(i, 8787, 222)          # tashrifni MENEJER 222 qabul qildi
+                # Operator 333: 25 lid, 1 tashrif -> 4%
+                for i in range(25, 50):
+                    olead(i, 333)
+                oev(25, 8787, 222)
+                # Kichik namunali operator 444: 2 lid, 1 tashrif -> 50% (reytingga KIRMASIN)
+                olead(50, 444); olead(51, 444)
+                oev(50, 8787, 222)
+                # Menejer 222: 7 tashrifdan 2 tasi shartnoma -> 28.6%
+                oev(0, 8788, 222); oev(25, 8788, 222)
+                conn.commit()
+
+                async def _oq():
+                    async with _asess10() as s:
+                        return await _fo.operator_quality(s, O_FROM, O_TO)
+
+                d = _aio10.run(_oq())
+                ops = {r["responsible_id"]: r for r in d["operators"]}
+                check("Operator sifati: maxraj — OLIB KELGAN lidlar (25 ta)",
+                      ops[111]["leads"] == 25, f"={ops[111]['leads']}")
+                check("Operator sifati: konversiya 20% (5/25)",
+                      ops[111]["lead_to_visit"] == 20.0, f"={ops[111]['lead_to_visit']}")
+                check("Operator sifati: ikkinchi operator 4% (1/25)",
+                      ops[333]["lead_to_visit"] == 4.0, f"={ops[333]['lead_to_visit']}")
+                check("Operator sifati: tashrifni MENEJER qilgan bo'lsa ham lid egasiga yoziladi",
+                      ops[111]["visits"] == 5, f"={ops[111]['visits']}")
+                check("Operator sifati: kichik namuna reytingdan CHIQARILADI",
+                      ops[444]["ranked"] is False and ops[444]["lead_to_visit"] == 50.0,
+                      f"{ops[444]}")
+                check("Operator sifati: 50% li kichik namuna «eng yaxshi» bo'lib qolmaydi",
+                      d["best_operator"]["responsible_id"] == 111,
+                      f"={d['best_operator']['responsible_id']}")
+                check("Operator sifati: eng past — yetarli namunalilar orasidan",
+                      d["worst_operator"]["responsible_id"] == 333,
+                      f"={d['worst_operator']['responsible_id']}")
+
+                mgr = {r["responsible_id"]: r for r in d["managers"]}
+                check("Menejer sifati: maxraj — O'ZI qabul qilgan tashriflar (7 ta)",
+                      mgr[222]["visits"] == 7, f"={mgr[222]['visits']}")
+                check("Menejer sifati: tashrif->shartnoma 28.6% (2/7)",
+                      mgr[222]["visit_to_contract"] == 28.6,
+                      f"={mgr[222]['visit_to_contract']}")
+
+                # Bo'sh davr — yiqilmasin
+                async def _empty10():
+                    async with _asess10() as s:
+                        return await _fo.operator_quality(s, date(2019, 1, 1), date(2019, 1, 31))
+                e = _aio10.run(_empty10())
+                check("Operator sifati: bo'sh davrda bo'sh ro'yxat (xato emas)",
+                      e["operators"] == [] and e["best_operator"] is None, f"{e['operators']}")
+
+                r_api = client.get(f"{API_BASE}/funnel/operators?month=2021-04",
+                                   headers=auth(boss_t))
+                check("Operator sifati(API): 200", r_api.status_code == 200,
+                      f"kod={r_api.status_code}")
+                o_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+                if o_emp:
+                    r_no = client.get(f"{API_BASE}/funnel/operators",
+                                      headers=auth(token_for(o_emp[0], "employee")))
+                    check("Operator sifati(API): oddiy xodimga -> 403",
+                          r_no.status_code == 403, f"kod={r_no.status_code}")
+            finally:
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (OL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (OL,))
+                conn.commit()
+                conn.close()
+                (_fn10.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn10.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn10_orig
+        except Exception:
+            check("Operator sifati tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

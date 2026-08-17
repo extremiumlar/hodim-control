@@ -84,6 +84,7 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  funnelOperators: (month: string) => ["funnel", "operators", month] as const,
   targetProgress: (period: string) => ["funnel", "target", "progress", period] as const,
   targetSplit: (period: string) => ["funnel", "target", "split", period] as const,
   funnelTarget: (period: string, target?: number) =>
@@ -1061,5 +1062,13 @@ export const useTargetProgress = (period: string) =>
   useQuery({
     queryKey: qk.targetProgress(period),
     queryFn: () => api.funnelTargetProgress(period),
+    placeholderData: keepPreviousData,
+  });
+
+// ─── Operator kesimida konversiya (7-bosqich) ───
+export const useFunnelOperators = (month: string) =>
+  useQuery({
+    queryKey: qk.funnelOperators(month),
+    queryFn: () => api.funnelOperators(month),
     placeholderData: keepPreviousData,
   });

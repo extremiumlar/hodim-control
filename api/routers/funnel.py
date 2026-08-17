@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from api.deps import get_db, require_roles
 from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
+from api.services import funnel_operators
 from api.services import target_calc
 from api.services import target_split
 from api.services import target_track
@@ -358,3 +359,19 @@ async def get_target_progress(
     """Reja / haqiqiy / farq + oy oxiri prognozi (6-bosqich)."""
     _resolve_range(period, None, None)
     return await target_track.progress(db, period)
+
+
+@router.get("/operators")
+async def get_operator_quality(
+    month: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Operator/menejer kesimida KONVERSIYA — «kim yaxshi yopadi» (7-bosqich).
+
+    Mavjud statistikadan farqi: u mehnat HAJMINI (nechta tashrif), bu esa
+    SIFATNI (bergan lidining qanchasi aylandi) ko'rsatadi."""
+    day_from, day_to = _resolve_range(month, date_from, date_to)
+    return await funnel_operators.operator_quality(db, day_from, day_to)
