@@ -3069,6 +3069,150 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Operator sifati tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: bo'g'in tahlili va stsenariylar (7-bosqich, 1-2 band) --")
+        try:
+            import asyncio as _aio11
+            from datetime import timezone as _tz11
+
+            from db.base import async_session as _asess11
+            from api.services import funnel as _fn11
+            from api.services import funnel_analysis as _fa
+            from api.services import target_calc as _tc11
+
+            conn = db()
+            cur = conn.cursor()
+            AL = 985001
+            A_PERIOD = "2021-03"
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (AL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (AL,))
+            cur.execute("delete from funnel_month where period=?", (A_PERIOD,))
+            conn.commit()
+
+            _fn11_orig = (
+                list(_fn11.CRM_UYSOT_INVITE_PIPE_STATUS_IDS),
+                list(_fn11.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn11.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn11.CRM_UYSOT_INVITE_PIPE_STATUS_IDS = [8786]
+            _fn11.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn11.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                a_ts = int(datetime(2021, 3, 10, 9, tzinfo=_tz11.utc).timestamp())
+                a_det = datetime(2021, 3, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                def alead(i):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?)",
+                        (AL + i, 8779, "T-Yangi", 1, "T-op", 1, a_ts, a_ts, a_det, a_det))
+
+                def aev(i, to_id):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',?,'T-bosqich',1,'T-op',1,?,?)",
+                        (AL + i, to_id, a_ts, a_det))
+
+                # 100 lid -> 20 taklif -> 10 tashrif -> 2 shartnoma
+                for i in range(100):
+                    alead(i)
+                for i in range(20):
+                    aev(i, 8786)
+                for i in range(10):
+                    aev(i, 8787)
+                for i in range(2):
+                    aev(i, 8788)
+                conn.commit()
+
+                async def _leak():
+                    async with _asess11() as s:
+                        return await _fa.leak_analysis(s, A_PERIOD)
+
+                lk = _aio11.run(_leak())
+                steps = {s["label"]: s for s in lk["steps"]}
+                check("Tahlil: lid->taklif bo'g'inida 80 ta yo'qoldi (80%)",
+                      steps["Lid → ofisga taklif"]["lost"] == 80
+                      and steps["Lid → ofisga taklif"]["loss_pct"] == 80.0,
+                      f"{steps['Lid → ofisga taklif']}")
+                check("Tahlil: taklif->tashrif 10 ta (50%)",
+                      steps["Taklif → tashrif"]["lost"] == 10
+                      and steps["Taklif → tashrif"]["loss_pct"] == 50.0,
+                      f"{steps['Taklif → tashrif']}")
+                check("Tahlil: tashrif->shartnoma 8 ta (80%)",
+                      steps["Tashrif → shartnoma"]["lost"] == 8, f"{steps['Tashrif → shartnoma']}")
+                check("Tahlil: eng katta yo'qotish — birinchi bo'g'in",
+                      lk["biggest_leak"]["label"] == "Lid → ofisga taklif",
+                      f"{lk['biggest_leak']}")
+                check("Tahlil: umumiy konversiya 2% (2/100)",
+                      lk["overall_conversion"] == 2.0, f"={lk['overall_conversion']}")
+                check("Tahlil: CPL yo'q -> pul ustuni bo'sh (0 emas!)",
+                      all(s["money_lost"] is None for s in lk["steps"]),
+                      f"{[s['money_lost'] for s in lk['steps']]}")
+                check("Tahlil: «~yo'qolgan shartnoma» o'rtacha konversiyadan (80 × 2%)",
+                      steps["Lid → ofisga taklif"]["contracts_lost"] == 1.6,
+                      f"={steps['Lid → ofisga taklif']['contracts_lost']}")
+
+                # STSENARIY: maqsad va farazlar bilan
+                cur.execute(
+                    "insert into funnel_month (period, target_contracts, assumptions, updated_at)"
+                    " values (?,?,?,datetime('now'))",
+                    (A_PERIOD, 10,
+                     '{"lead_to_visit": 10.0, "visit_to_contract": 20.0, "cpl": 50000}'))
+                conn.commit()
+
+                async def _sc():
+                    async with _asess11() as s:
+                        return await _fa.scenarios(s, A_PERIOD, 20)
+
+                sc = _aio11.run(_sc())
+                by = {s["key"]: s for s in sc["scenarios"]}
+                # lid->shartnoma = 10% × 20% = 2%; 10 uy uchun 500 lid;
+                # byudjet = 500 × 50 000 = 25 mln; +20% = 5 mln -> 100 lid -> +2 uy
+                check("Stsenariy: byudjet +20% -> +100 lid",
+                      by["budget_up"]["extra_leads"] == 100, f"={by['budget_up']['extra_leads']}")
+                check("Stsenariy: byudjet +20% -> +2 uy",
+                      by["budget_up"]["extra_contracts"] == 2.0,
+                      f"={by['budget_up']['extra_contracts']}")
+                konv_key = "Tashrif → shartnoma +1 punkt"
+                # 500 lid × (10% × 21%) = 10.5 -> +0.5 uy
+                check("Stsenariy: tashrif->shartnoma +1 punkt -> +0.5 uy",
+                      by[konv_key]["extra_contracts"] == 0.5,
+                      f"={by[konv_key]['extra_contracts']}")
+                check("Stsenariy: faraz manbai ko'rsatiladi (qo'lda kiritilgan)",
+                      "override" in (by["budget_up"]["sources"] or []),
+                      f"={by['budget_up']['sources']}")
+
+                # Ma'lumot yetmasa — halol «hisoblanmadi»
+                cur.execute("delete from funnel_month where period=?", (A_PERIOD,))
+                conn.commit()
+                sc2 = _aio11.run(_sc())
+                b2 = {s["key"]: s for s in sc2["scenarios"]}
+                check("Stsenariy: maqsad yo'q -> hisoblanmaydi va sababi aytiladi",
+                      b2["budget_up"]["extra_contracts"] is None
+                      and "maqsad" in (b2["budget_up"].get("missing") or []),
+                      f"{b2['budget_up']}")
+
+                r_api = client.get(f"{API_BASE}/funnel/analysis?period={A_PERIOD}",
+                                   headers=auth(boss_t))
+                check("Tahlil(API): 200 va ikkala bo'lim qaytadi",
+                      r_api.status_code == 200 and "leaks" in r_api.json()
+                      and "scenarios" in r_api.json(), f"kod={r_api.status_code}")
+            finally:
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (AL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (AL,))
+                cur.execute("delete from funnel_month where period=?", (A_PERIOD,))
+                conn.commit()
+                conn.close()
+                (_fn11.CRM_UYSOT_INVITE_PIPE_STATUS_IDS,
+                 _fn11.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn11.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn11_orig
+        except Exception:
+            check("Bo'g'in tahlili tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from api.deps import get_db, require_roles
 from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
+from api.services import funnel_analysis
 from api.services import funnel_operators
 from api.services import target_calc
 from api.services import target_split
@@ -375,3 +376,18 @@ async def get_operator_quality(
     SIFATNI (bergan lidining qanchasi aylandi) ko'rsatadi."""
     day_from, day_to = _resolve_range(month, date_from, date_to)
     return await funnel_operators.operator_quality(db, day_from, day_to)
+
+
+@router.get("/analysis")
+async def get_analysis(
+    period: str,
+    budget_step: int = Query(20, ge=5, le=200),
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bo'g'in tahlili + «agar ...» stsenariylari (7-bosqich, 1 va 2-band)."""
+    _resolve_range(period, None, None)
+    return {
+        "leaks": await funnel_analysis.leak_analysis(db, period),
+        "scenarios": await funnel_analysis.scenarios(db, period, budget_step),
+    }

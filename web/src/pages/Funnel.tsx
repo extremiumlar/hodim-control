@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { AlertTriangle, Filter, Info } from "lucide-react";
 import EconomicsCard from "@/components/funnel/EconomicsCard";
+import LeakAnalysis from "@/components/funnel/LeakAnalysis";
 import OperatorQuality from "@/components/funnel/OperatorQuality";
 import TargetCalculator from "@/components/funnel/TargetCalculator";
 import TargetProgress from "@/components/funnel/TargetProgress";
@@ -285,6 +286,8 @@ export default function FunnelPage() {
       <TargetCalculator period={month} canEdit={canEdit} />
 
       <TargetSplit period={month} canEdit={canEdit} />
+
+      <LeakAnalysis period={month} />
 
       <OperatorQuality month={month} />
 

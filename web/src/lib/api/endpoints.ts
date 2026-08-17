@@ -19,6 +19,7 @@ import type {
   CelebrationMediaRow,
   Economics,
   TargetPlan,
+  FunnelAnalysis,
   OperatorQuality,
   TargetProgress,
   TargetSplit,
@@ -755,6 +756,8 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelAnalysis: (period: string) =>
+    apiFetch<FunnelAnalysis>(`/funnel/analysis?period=${period}`),
   funnelOperators: (month: string) =>
     apiFetch<OperatorQuality>(`/funnel/operators?month=${month}`),
   funnelTargetProgress: (period: string) =>

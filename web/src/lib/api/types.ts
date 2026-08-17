@@ -123,6 +123,48 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface LeakStep {
+  label: string;
+  entered: number;
+  passed: number;
+  lost: number;
+  loss_pct: number | null;
+  pass_pct: number | null;
+  money_lost: number | null;
+  contracts_lost: number | null;
+}
+
+export interface ScenarioRow {
+  key: string;
+  label: string;
+  detail: string | null;
+  extra_leads: number | null;
+  extra_contracts: number | null;
+  budget_saved?: number | null;
+  missing?: string[];
+  sources?: string[];
+}
+
+export interface FunnelAnalysis {
+  leaks: {
+    period: string;
+    total_leads: number;
+    contracts: number;
+    overall_conversion: number | null;
+    cpl: number | null;
+    steps: LeakStep[];
+    biggest_leak: { label: string; lost: number } | null;
+    mature: boolean | null;
+    note: string;
+  };
+  scenarios: {
+    period: string;
+    target_contracts: number | null;
+    scenarios: ScenarioRow[];
+    confidence: string;
+  };
+}
+
 export interface OperatorQualityRow {
   responsible_id: number;
   user_id: number | null;
