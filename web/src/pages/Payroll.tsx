@@ -62,6 +62,13 @@ function PreflightSection({ period }: { period: string }) {
 
   const groups: { items: ReadinessIssue[]; label: string; hint: string }[] = [
     { items: data.no_salary_rate, label: "Stavka kiritilmagan", hint: "bu xodim hisobga kirmaydi" },
+    // §5.3 — eng jim va eng qimmat kamchilik: yozuvi yo'q kun «kelmagan»
+    // sanalib kunlik ulush ayiriladi. Shuning uchun ro'yxatning TEPASIDA.
+    {
+      items: data.missing_attendance ?? [],
+      label: "Davomat yozuvi umuman yo'q",
+      hint: "«kelmagan» sanaladi va oylikdan ayiriladi — tekshiring",
+    },
     { items: data.pending_overtime, label: "Qo'shimcha ish tasdiqlanmagan", hint: "hisobga kirmaydi" },
     { items: data.attendance.no_schedule, label: "Ish jadvali yo'q", hint: "kechikish taxminiy" },
     { items: data.attendance.open_checkouts, label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt noaniq" },

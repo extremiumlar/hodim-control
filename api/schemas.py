@@ -1387,6 +1387,9 @@ class PayrollPreflightOut(BaseModel):
     attendance: AttendanceReadiness
     no_salary_rate: list[ReadinessIssue]
     pending_overtime: list[ReadinessIssue]
+    # §5.3 — ish kuni bo'lib, o'tgan, LEKIN davomat yozuvi umuman yo'q
+    # kunlar. Ular jimgina «kelmagan» sanalib oylikdan pul kesadi.
+    missing_attendance: list[ReadinessIssue] = []
 
 
 class PayrollCalculateRequest(BaseModel):

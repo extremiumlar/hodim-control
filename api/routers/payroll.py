@@ -1153,13 +1153,48 @@ async def preflight(
         for e in pending_rows
     ]
 
-    ok = attendance_readiness["ok"] and not no_salary_rate and not pending_overtime
+    # ── §5.3: davomat yozuvi UMUMAN yo'q kunlar ──
+    # NEGA MUHIM: `collect_attendance` yozuvi yo'q ish kunini «kelmagan» deb
+    # sanaydi va oylikdan kunlik ulushni ayiradi. Yozuv esa ikki sababdan
+    # yo'q bo'lishi mumkin: (a) xodim rostdan kelmagan — ayirma o'rinli;
+    # (b) kechqurungi `write_absent_records` o'sha kuni ishlamagan (cron
+    # o'chgan, tizim yangi ko'tarilgan) — bu holda xodim BEGUNOH jazolanadi.
+    # Tizim ikkalasini farqlay olmaydi, shuning uchun HR ga KO'RSATAMIZ.
+    #
+    # `collect_attendance` xodim boshiga ~2 so'rov qiladi. Bu preflight
+    # allaqachon og'ir (`collect_readiness`) va §4.2 dan keyin sahifada
+    # BIR MARTA so'raladi — qo'shimcha yuk maqbul.
+    # Ro'yxat chegaralangan: juda eski davr so'ralsa (hech kimda yozuv yo'q)
+    # 15 xodim × 26 kun = 390 element bo'lib javob shishib ketardi.
+    MISSING_LIMIT = 200
+    missing_attendance: list[ReadinessIssue] = []
+    for u in users:
+        if len(missing_attendance) >= MISSING_LIMIT:
+            break
+        for d in await collect_attendance(db, u, period):
+            if d["is_working"] and d["status"] == "absent" and d["attendance"] is None:
+                missing_attendance.append(
+                    ReadinessIssue(
+                        user_id=u.id,
+                        full_name=u.full_name,
+                        date=d["date"],
+                        detail="Davomat yozuvi umuman yo'q — «kelmagan» deb sanaladi",
+                    )
+                )
+
+    ok = (
+        attendance_readiness["ok"]
+        and not no_salary_rate
+        and not pending_overtime
+        and not missing_attendance
+    )
     return PayrollPreflightOut(
         period=period,
         ok=ok,
         attendance=attendance_readiness,
         no_salary_rate=no_salary_rate,
         pending_overtime=pending_overtime,
+        missing_attendance=missing_attendance,
     )
 
 

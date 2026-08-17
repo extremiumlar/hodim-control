@@ -998,6 +998,9 @@ export interface PayrollPreflight {
   attendance: AttendanceReadiness;
   no_salary_rate: ReadinessIssue[];
   pending_overtime: ReadinessIssue[];
+  /** Ish kuni bo'lib, o'tgan, lekin davomat yozuvi UMUMAN yo'q kunlar —
+   *  ular jimgina «kelmagan» sanalib oylikdan pul kesadi (§5.3). */
+  missing_attendance: ReadinessIssue[];
 }
 
 /** Fon rejimidagi hisoblash holati (§4.3). `state`:
