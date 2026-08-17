@@ -227,4 +227,15 @@ async def health() -> dict:
     except (OSError, ValueError):
         cron_age = None  # heartbeat o'qilmadi — tashqi kuzatuvchi buni "noma'lum" deb ko'radi
 
-    return {"status": "ok", "cron_age_seconds": cron_age}
+    # `notifications_enabled` — SINOV QO'RIQCHISI uchun. `test.py` shu
+    # bayroqqa qarab, xabarlar yoqiq serverga qarshi ishlashdan BOSH TORTADI:
+    # aks holda sinov davri («2022-03») uchun haqiqiy xodimlarga Telegram/push
+    # xabari borib qoladi (2026-08-17 da ikki marta shunday bo'ldi).
+    # Maxfiy emas — faqat rejim belgisi.
+    from api.config import settings as _s
+
+    return {
+        "status": "ok",
+        "cron_age_seconds": cron_age,
+        "notifications_enabled": _s.notifications_enabled,
+    }

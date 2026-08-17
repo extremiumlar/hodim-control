@@ -67,6 +67,39 @@ def db() -> sqlite3.Connection:
 # Sozlash / tozalash — xatoga chidamli (har biri alohida try/except)
 # ─────────────────────────────────────────────────────────────────
 
+def require_notifications_off() -> None:
+    """Xabarlar YOQIQ serverga qarshi testni ISHGA TUSHIRMAYDI.
+
+    NEGA: test bazadagi HAQIQIY xodimlar bilan ishlaydi — sinov davri
+    («2022-03», «2021-05») uchun hisoblash/tasdiqlash amallari Boshliq va
+    HR ga Telegram/push xabari yuboradi. 2026-08-17 da bu IKKI MARTA sodir
+    bo'ldi: birinchisida `BOT_TOKEN` bo'shatilgan, lekin push kanali ochiq
+    qolgan edi; ikkinchisida esa server oddiy rejimda qayta ishga
+    tushirilgani unutilgan edi.
+
+    Endi bu insonning e'tiboriga emas, TEKSHIRUVGA bog'liq.
+    """
+    import httpx
+
+    try:
+        r = httpx.get(f"{API_BASE}/health", timeout=10)
+        holat = r.json()
+    except Exception as e:  # noqa: BLE001
+        print(f"XATO: API ({API_BASE}) javob bermadi: {e}")
+        sys.exit(1)
+
+    if holat.get("notifications_enabled") is not False:
+        print("=" * 70)
+        print("TO'XTATILDI: API xabar yuborish YOQIQ holatda ishlayapti.")
+        print("Test haqiqiy xodimlarga Telegram/push yuborib yuboradi.")
+        print()
+        print("Serverni shu rejimda qayta ishga tushiring:")
+        print("  NOTIFICATIONS_ENABLED=false .venv/Scripts/python.exe -m uvicorn"
+              " api.main:app --host 127.0.0.1 --port 8000")
+        print("=" * 70)
+        sys.exit(1)
+
+
 def setup() -> dict:
     """T- sinov ma'lumotlarini yaratadi: 2 xodim, ish jadvali, ofis."""
     ctx: dict = {}
@@ -3762,6 +3795,55 @@ def test_payroll_engine() -> None:
             check("Payroll: overtime amount (fixed_rate, 20000/soat x 2 soat) =40000",
                   abs(float(ot2["amount"]) - 40_000.0) < 1, f"={ot2['amount']}")
 
+            # ── §3.4: «vaqtni QO'SHIB-AYIRIB umumiy berish» ──
+            # Egasining talabi shu edi: ortiqcha ham, KAM ishlangan vaqt ham
+            # bitta songa yig'ilsin. Shuning uchun `minutes` manfiy bo'lishi
+            # MUMKIN va oy bo'yicha ortiqchadan ayiriladi.
+            await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id == u1.id))
+            s.add(OvertimeEntry(user_id=u1.id, date=day1, minutes=-105, source="auto_attendance",
+                                 status="approved"))
+            await s.commit()
+            ot_neg = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            check("Payroll §3.4: KAM ishlangan vaqt manfiy sanaladi (-105 daq)",
+                  ot_neg["minutes"] == -105, f"={ot_neg['minutes']}")
+            check("Payroll §3.4: manfiy vaqt summasi ham manfiy (-35000)",
+                  abs(float(ot_neg["amount"]) + 35_000.0) < 1, f"={ot_neg['amount']}")
+
+            # Aralash kunlar: +120 va -30 -> sof +90
+            await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id == u1.id))
+            s.add(OvertimeEntry(user_id=u1.id, date=day1, minutes=120, source="auto_attendance",
+                                 status="approved"))
+            s.add(OvertimeEntry(user_id=u1.id, date=day2, minutes=-30, source="auto_attendance",
+                                 status="approved"))
+            await s.commit()
+            ot_mix = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            check("Payroll §3.4: aralash kunlar qo'shilib-ayirilib +90 daq",
+                  ot_mix["minutes"] == 90, f"={ot_mix['minutes']}")
+
+            # Kunlik cheklov IKKI TOMONGA simmetrik: cap=60 bo'lsa
+            # +120 -> +60, -30 esa tegilmaydi -> sof +30
+            profile.daily_cap_minutes = 60
+            await s.commit()
+            ot_cap = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            check("Payroll §3.4: kunlik cheklov ikki tomonga simmetrik (+60-30=+30)",
+                  ot_cap["minutes"] == 30, f"={ot_cap['minutes']}")
+
+            # Manfiy tomonda ham cheklov ishlashi kerak: -105 -> -60
+            await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id == u1.id))
+            s.add(OvertimeEntry(user_id=u1.id, date=day1, minutes=-105, source="auto_attendance",
+                                 status="approved"))
+            await s.commit()
+            ot_cap_neg = await pr.compute_overtime(s, u1, PERIOD, profile, days)
+            check("Payroll §3.4: cheklov MANFIY tomonda ham qo'llanadi (-60)",
+                  ot_cap_neg["minutes"] == -60, f"={ot_cap_neg['minutes']}")
+
+            # Sinovdan keyin asl holatga (keyingi tekshiruvlar buzilmasin)
+            profile.daily_cap_minutes = None
+            await s.execute(delete(OvertimeEntry).where(OvertimeEntry.user_id == u1.id))
+            s.add(OvertimeEntry(user_id=u1.id, date=day1, minutes=120, source="manual",
+                                 status="approved"))
+            await s.commit()
+
             # ── QoolAdjustment (avans) — minus ──
             s.add(PayrollAdjustment(user_id=u1.id, period=PERIOD, kind="minus", amount=50_000,
                                      reason="T-sinov avans", created_by=u1.id))
@@ -6135,11 +6217,19 @@ def test_kpi_rates() -> None:
 
     conn = db()
     cur = conn.cursor()
-    uid = None
+    uid = kpi_pos_id = None
     try:
+        # Lavozim SHART: `metrics_for` bo'sh bo'lsa `calculate_bonus` hech
+        # qanday ko'rsatkichni ko'rmaydi va §2.6(a) tekshiruvi ma'nosiz
+        # bo'lib qolardi. «suhbat» ga stavka beriladi, «tashrif» ga YO'Q —
+        # aynan shu farq `missing_rates` da ko'rinishi kerak.
         cur.execute(
-            "insert into users (full_name, role, is_active, bot_started, created_at)"
-            " values (?,?,1,0,datetime('now'))", ("T-Kpi", "employee"))
+            "insert into positions (name, metrics, is_active, created_at)"
+            " values (?,?,1,datetime('now'))", ("T-Kpi-Lavozim", '["suhbat", "tashrif"]'))
+        kpi_pos_id = cur.lastrowid
+        cur.execute(
+            "insert into users (full_name, role, position_id, is_active, bot_started, created_at)"
+            " values (?,?,?,1,0,datetime('now'))", ("T-Kpi", "employee", kpi_pos_id))
         uid = cur.lastrowid
         conn.commit()
 
@@ -6192,13 +6282,36 @@ def test_kpi_rates() -> None:
         check("xodim stavkasi global'dan USTUN (4000)", eski == _Dec("4000.00"), f"={eski}")
         check("tarix ishlaydi — keyingi sanada 6000", yangi == _Dec("6000.00"), f"={yangi}")
         check("sozlanmagan ko'rsatkich -> None (0 EMAS)", yoq is None, f"={yoq}")
+
+        # §2.6(a): stavka sozlanmagan bo'lsa bonus 0 chiqadi, LEKIN sabab
+        # breakdown'da yozilib qoladi. HR «nega bonus 0» degan savolga bir
+        # qarashda javob topsin — 0 stavka (ataylab bepul) va stavka YO'Q
+        # (hali kiritilmagan) BOSHQA-BOSHQA holat.
+        from api.services.bonus import calculate_bonus as _calc_bonus
+
+        async def _bonus_breakdown():
+            async with async_session() as s3:
+                u = await s3.get(_U, uid)
+                return await _calc_bonus(s3, u, "2020-09")
+
+        natija = _aio.run(_bonus_breakdown())
+        bd = natija["breakdown"]
+        check("§2.6a: stavkasiz ko'rsatkich bonusga 0 qo'shadi",
+              float(natija["amount"]) == 0.0, f"={natija['amount']}")
+        check("§2.6a: breakdown'da `missing_rates` sababi qoladi",
+              "missing_rates" in bd and len(bd["missing_rates"]) > 0, f"={bd.get('missing_rates')}")
+        check("§2.6a: sozlangan ko'rsatkich `missing_rates` ga TUSHMAYDI",
+              "suhbat" not in bd.get("missing_rates", []), f"={bd.get('missing_rates')}")
     finally:
         if uid is not None:
             cur.execute("delete from kpi_rates where scope='user' and scope_id=?", (uid,))
             cur.execute("delete from kpi_rates where scope='global' and metric='suhbat' and note='T-sinov'")
             cur.execute("delete from kpi_rates where scope='global' and metric='suhbat'")
             cur.execute("delete from audit_logs where action='kpi_rate_created'")
+            cur.execute("delete from bonuses where user_id=?", (uid,))
             cur.execute("delete from users where id=?", (uid,))
+        if kpi_pos_id is not None:
+            cur.execute("delete from positions where id=?", (kpi_pos_id,))
             conn.commit()
         conn.close()
 
@@ -7059,6 +7172,8 @@ def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
     print("=" * 60)
+    require_notifications_off()
+
     ctx: dict = {}
     try:
         ctx = setup()
