@@ -2158,3 +2158,39 @@ class FunnelMonth(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class FunnelSettings(Base):
+    """Voronka hisobining QOIDALARI — rahbar panelidan boshqariladi (yagona
+    qator, id=1). `AiConfig` bilan bir xil naqsh.
+
+    NEGA PANELDA, .ENV DA EMAS: bular texnik sozlama emas, BIZNES qarori.
+    «Bekor qilingan shartnoma sotuvdan ayrilsinmi?» degan savolga javobni
+    dasturchi emas, egasi beradi va u vaqt o'tib o'zgarishi mumkin — har
+    safar deploy kutib o'tirmasin.
+
+    Bosqich ID'lari ham shu yerda: ular CRM'ga bog'liq va voronkaning
+    boshqa bosqichlaridan (`.env` dagi tashrif/shartnoma/taklif) farqli
+    o'laroq, bu ikkitasi KEYIN qo'shildi va ularni tanlash uchun panelda
+    tayyor ro'yxat bor (bosqich nomlari bizning jurnalimizdan olinadi,
+    CRM'ga so'rov ketmaydi)."""
+
+    __tablename__ = "funnel_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # doim 1
+    # «Bekor qilingan shartnoma» bosqichlari (masalan «Muvaffaqiyatsiz yopildi»)
+    cancelled_pipe_status_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Yoqilsa: shartnomaga yetgan, lekin keyin bekor bo'lgan lid SOTUV
+    # sanalmaydi. O'chiq bo'lsa (default) — hozirgi xatti-harakat saqlanadi.
+    subtract_cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # «Sifatsiz lead» bosqichlari
+    low_quality_pipe_status_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Yoqilsa: hozirgi holati «sifatsiz» bo'lgan lid LID SONIGA kirmaydi,
+    # ya'ni konversiya maxraji tozalanadi.
+    exclude_low_quality: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

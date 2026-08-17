@@ -119,7 +119,10 @@ async def _lead_ids_reached(
 
 async def _lead_ids_ever_reached(db: AsyncSession, stage: str, lead_ids: set[int]) -> set[int]:
     """Berilgan lidlardan qaysilari shu bosqichga QACHONDIR yetgan (kogorta
-    uchun — vaqt chegarasi YO'Q, aynan shu vaqt siljishini hal qiladi)."""
+    uchun — vaqt chegarasi YO'Q, aynan shu vaqt siljishini hal qiladi).
+
+    «Bekor qilingan shartnoma» qoidasi yoqilgan bo'lsa: shartnomaga yetgan,
+    lekin KEYIN bekor bosqichiga o'tgan lid sotuv sanalmaydi."""
     ids = _ids_at_or_after(stage)
     if not ids or not lead_ids:
         return set()
@@ -131,6 +134,28 @@ async def _lead_ids_ever_reached(db: AsyncSession, stage: str, lead_ids: set[int
             LeadEvent.crm_lead_id.in_(lead_ids),
         )
         .distinct()
+    )
+    reached = set(rows)
+    if stage == STAGE_CONTRACT:
+        reached -= await _cancelled_lead_ids(db, reached)
+    return reached
+
+
+async def _cancelled_lead_ids(db: AsyncSession, lead_ids: set[int]) -> set[int]:
+    """Shartnomasi BEKOR qilingan lidlar (qoida panelda yoqilgan bo'lsa).
+
+    Hozirgi HOLAT bo'yicha tekshiriladi, voqea bo'yicha emas: lid bekorga
+    o'tib, keyin yana shartnomaga qaytsa — u sotuv bo'lib qolishi kerak."""
+    from api.services import funnel_settings
+
+    rule = await funnel_settings.rules(db)
+    if not rule["subtract_cancelled"] or not lead_ids:
+        return set()
+    rows = await db.scalars(
+        select(CrmLeadState.crm_lead_id).where(
+            CrmLeadState.crm_lead_id.in_(lead_ids),
+            CrmLeadState.pipe_status_id.in_(rule["cancelled_ids"]),
+        )
     )
     return set(rows)
 
@@ -175,6 +200,11 @@ async def _cohort_lead_ids(
     bo'lib qolardi (`strftime` vs `extract(epoch)`). Jadval kichik (bir necha
     ming lid), shuning uchun sodda va ikkala bazada bir xil ishlaydigan yo'l
     tanlandi."""
+    from api.services import funnel_settings
+
+    rule = await funnel_settings.rules(db)
+    low_quality = rule["low_quality_ids"] if rule["exclude_low_quality"] else set()
+
     start_epoch, end_epoch = _epoch(start_utc), _epoch(end_utc)
     rows = list(
         await db.execute(
@@ -182,12 +212,17 @@ async def _cohort_lead_ids(
                 CrmLeadState.crm_lead_id,
                 CrmLeadState.crm_created_ts,
                 CrmLeadState.first_seen_at,
+                CrmLeadState.pipe_status_id,
             )
         )
     )
     ids: set[int] = set()
     approx = 0
-    for lead_id, created_ts, first_seen_at in rows:
+    for lead_id, created_ts, first_seen_at, pipe_status_id in rows:
+        # «Sifatsiz lead» qoidasi yoqilgan bo'lsa — bunday lid maxrajga
+        # kirmaydi (konversiya tozalanadi). Panelda yoqiladi.
+        if low_quality and pipe_status_id in low_quality:
+            continue
         if created_ts is not None:
             ts = int(created_ts)
             is_approx = False
@@ -215,6 +250,9 @@ async def period_funnel(db: AsyncSession, day_from: date, day_to: date) -> dict:
     invite = await _lead_ids_reached(db, STAGE_INVITE, start_utc, end_utc)
     visit = await _lead_ids_reached(db, STAGE_VISIT, start_utc, end_utc)
     contract = await _lead_ids_reached(db, STAGE_CONTRACT, start_utc, end_utc)
+    # Bekor qilinganlar davr kesimida ham sanalmasin — aks holda bitta
+    # sozlama ikki ko'rinishda ikki xil son berardi.
+    contract -= await _cancelled_lead_ids(db, contract)
 
     # ⚠️ QO'NG'IROQ QATORLARI LID ZANJIRIDAN TASHQARIDA. Qo'ng'iroq operator
     # kesimida o'lchanadi va lidga bog'lanmaydi: bitta lidga 5 marta qo'ng'iroq

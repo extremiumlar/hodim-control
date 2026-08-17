@@ -3246,6 +3246,161 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Bo'g'in tahlili tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: qoidalar panelda (bekor shartnoma / sifatsiz lid) --")
+        try:
+            import asyncio as _aio12
+            from datetime import timezone as _tz12
+
+            from db.base import async_session as _asess12
+            from api.services import funnel as _fn12
+            from api.services import funnel_settings as _fs
+
+            conn = db()
+            cur = conn.cursor()
+            SL = 986001
+            S_FROM, S_TO = date(2021, 2, 1), date(2021, 2, 28)
+            CANCEL_ID, LOWQ_ID = 999111, 999222
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (SL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (SL,))
+            _fs_before = cur.execute(
+                "select cancelled_pipe_status_ids, subtract_cancelled,"
+                " low_quality_pipe_status_ids, exclude_low_quality from funnel_settings"
+                " where id=1").fetchone()
+            cur.execute("delete from funnel_settings where id=1")
+            conn.commit()
+
+            _fn12_orig = (
+                list(_fn12.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn12.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn12.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn12.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                s_ts = int(datetime(2021, 2, 10, 9, tzinfo=_tz12.utc).timestamp())
+                s_det = datetime(2021, 2, 10, 9).isoformat(sep=" ", timespec="seconds")
+
+                def slead(i, now_stage):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?)",
+                        (SL + i, now_stage, "T-hozirgi", 1, "T-op", 1, s_ts, s_ts, s_det, s_det))
+
+                def sev(i, to_id):
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',?,'T-bosqich',1,'T-op',1,?,?)",
+                        (SL + i, to_id, s_ts, s_det))
+
+                # 0,1: shartnoma qilgan va shunday qolgan
+                slead(0, 8788); sev(0, 8787); sev(0, 8788)
+                slead(1, 8788); sev(1, 8787); sev(1, 8788)
+                # 2: shartnoma qilib, KEYIN bekor bo'lgan (hozirgi holati — bekor)
+                slead(2, CANCEL_ID); sev(2, 8787); sev(2, 8788); sev(2, CANCEL_ID)
+                # 3: sifatsiz lead (hech qayerga yetmagan)
+                slead(3, LOWQ_ID)
+                # 4: oddiy lid
+                slead(4, 8779)
+                conn.commit()
+
+                async def _coh():
+                    async with _asess12() as s:
+                        return await _fn12.cohort_funnel(s, S_FROM, S_TO)
+
+                async def _set(**kw):
+                    async with _asess12() as s:
+                        return await _fs.update_settings(s, kw, None)
+
+                # ── Default: IKKALA qoida ham O'CHIQ ──
+                d0 = _aio12.run(_coh())
+                b0 = {r["key"]: r["value"] for r in d0["rows"]}
+                check("Qoida: default o'chiq — 5 lid, 3 shartnoma (bekor ham sanaladi)",
+                      b0["lead"] == 5 and b0["contract"] == 3,
+                      f"lid={b0['lead']}, shartnoma={b0['contract']}")
+
+                # ── Bekor qilinganni ayirish ──
+                _aio12.run(_set(subtract_cancelled=True,
+                                cancelled_pipe_status_ids=[CANCEL_ID]))
+                d1 = _aio12.run(_coh())
+                b1 = {r["key"]: r["value"] for r in d1["rows"]}
+                check("Qoida: bekor qilingan shartnoma ayrildi (3 -> 2)",
+                      b1["contract"] == 2, f"shartnoma={b1['contract']}")
+                check("Qoida: lid soni o'zgarmadi (faqat shartnomaga ta'sir)",
+                      b1["lead"] == 5, f"lid={b1['lead']}")
+
+                # ── Bosqich tanlanmasa qoida ISHLAMAYDI ──
+                _aio12.run(_set(subtract_cancelled=True, cancelled_pipe_status_ids=[]))
+                d2 = _aio12.run(_coh())
+                b2 = {r["key"]: r["value"] for r in d2["rows"]}
+                check("Qoida: yoqiq-u bosqich tanlanmagan -> qoida ishlamaydi",
+                      b2["contract"] == 3, f"shartnoma={b2['contract']}")
+
+                # ── Sifatsiz lid maxrajdan chiqsin ──
+                _aio12.run(_set(subtract_cancelled=False, cancelled_pipe_status_ids=[CANCEL_ID],
+                                exclude_low_quality=True, low_quality_pipe_status_ids=[LOWQ_ID]))
+                d3 = _aio12.run(_coh())
+                b3 = {r["key"]: r["value"] for r in d3["rows"]}
+                check("Qoida: sifatsiz lid maxrajdan chiqdi (5 -> 4)",
+                      b3["lead"] == 4, f"lid={b3['lead']}")
+                check("Qoida: sifatsiz chiqarilgach konversiya ko'tariladi",
+                      d3["rows"][-1]["conv_from_lead"] > d0["rows"][-1]["conv_from_lead"],
+                      f"{d0['rows'][-1]['conv_from_lead']} -> {d3['rows'][-1]['conv_from_lead']}")
+
+                # ── Ikkalasi birga ──
+                _aio12.run(_set(subtract_cancelled=True, cancelled_pipe_status_ids=[CANCEL_ID],
+                                exclude_low_quality=True, low_quality_pipe_status_ids=[LOWQ_ID]))
+                d4 = _aio12.run(_coh())
+                b4 = {r["key"]: r["value"] for r in d4["rows"]}
+                check("Qoida: ikkalasi birga — 4 lid, 2 shartnoma",
+                      b4["lead"] == 4 and b4["contract"] == 2,
+                      f"lid={b4['lead']}, shartnoma={b4['contract']}")
+
+                # ── Bosqich ro'yxati CRM'siz to'ldiriladi ──
+                async def _stages():
+                    async with _asess12() as s:
+                        return await _fs.known_stages(s)
+                st = _aio12.run(_stages())
+                check("Qoida: bosqich ro'yxati o'z jurnalimizdan (CRM so'rovsiz)",
+                      any(x["pipe_status_id"] == CANCEL_ID for x in st), f"{len(st)} ta bosqich")
+
+                # ── API ──
+                r_get = client.get(f"{API_BASE}/funnel/settings", headers=auth(boss_t))
+                check("Qoida(API): sozlama va bosqichlar qaytadi",
+                      r_get.status_code == 200 and "stages" in r_get.json(),
+                      f"kod={r_get.status_code}")
+                s_emp = cur.execute(
+                    "select id from users where role='employee' and is_active=1 limit 1").fetchone()
+                if s_emp:
+                    r_deny = client.post(
+                        f"{API_BASE}/funnel/settings",
+                        headers=auth(token_for(s_emp[0], "employee")),
+                        json={"subtract_cancelled": True})
+                    check("Qoida(API): oddiy xodim o'zgartira OLMAYDI -> 403",
+                          r_deny.status_code == 403, f"kod={r_deny.status_code}")
+                r_ok = client.post(f"{API_BASE}/funnel/settings", headers=auth(boss_t),
+                                   json={"subtract_cancelled": False})
+                check("Qoida(API): Boshliq saqlay oladi", r_ok.status_code == 200,
+                      f"kod={r_ok.status_code}")
+            finally:
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (SL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (SL,))
+                cur.execute("delete from funnel_settings where id=1")
+                if _fs_before:
+                    cur.execute(
+                        "insert into funnel_settings (id, cancelled_pipe_status_ids,"
+                        " subtract_cancelled, low_quality_pipe_status_ids, exclude_low_quality,"
+                        " updated_at) values (1,?,?,?,?,datetime('now'))", _fs_before)
+                conn.commit()
+                conn.close()
+                (_fn12.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn12.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn12_orig
+        except Exception:
+            check("Voronka qoidalari tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

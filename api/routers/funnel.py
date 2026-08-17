@@ -19,6 +19,7 @@ from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
 from api.services import funnel_analysis
 from api.services import funnel_operators
+from api.services import funnel_settings
 from api.services import target_calc
 from api.services import target_split
 from api.services import target_track
@@ -391,3 +392,52 @@ async def get_analysis(
         "leaks": await funnel_analysis.leak_analysis(db, period),
         "scenarios": await funnel_analysis.scenarios(db, period, budget_step),
     }
+
+
+class FunnelSettingsIn(BaseModel):
+    cancelled_pipe_status_ids: list[int] | None = None
+    subtract_cancelled: bool | None = None
+    low_quality_pipe_status_ids: list[int] | None = None
+    exclude_low_quality: bool | None = None
+
+
+@router.get("/settings")
+async def get_funnel_settings(
+    _actor: User = Depends(_viewer), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Voronka qoidalari + tanlash uchun CRM bosqichlari ro'yxati."""
+    row = await funnel_settings.get_settings(db)
+    return {
+        "cancelled_pipe_status_ids": row.cancelled_pipe_status_ids or [],
+        "subtract_cancelled": row.subtract_cancelled,
+        "low_quality_pipe_status_ids": row.low_quality_pipe_status_ids or [],
+        "exclude_low_quality": row.exclude_low_quality,
+        "stages": await funnel_settings.known_stages(db),
+        # Yoqilgan-u, bosqich tanlanmagan holat — panel ogohlantirishi uchun
+        "effective": {
+            k: v for k, v in (await funnel_settings.rules(db)).items() if isinstance(v, bool)
+        },
+    }
+
+
+@router.post("/settings")
+async def save_funnel_settings(
+    payload: FunnelSettingsIn, actor: User = Depends(_editor), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Qoidalarni saqlaydi. Bu BIZNES qarori — shuning uchun auditga yoziladi:
+    konversiya raqamlari o'zgarganda «kim, qachon, nimani yoqdi» ko'rinsin."""
+    row = await funnel_settings.update_settings(db, payload.model_dump(), actor.id)
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="funnel_settings_changed",
+            after={
+                "subtract_cancelled": row.subtract_cancelled,
+                "cancelled_ids": row.cancelled_pipe_status_ids,
+                "exclude_low_quality": row.exclude_low_quality,
+                "low_quality_ids": row.low_quality_pipe_status_ids,
+            },
+        )
+    )
+    await db.commit()
+    return {"ok": True}

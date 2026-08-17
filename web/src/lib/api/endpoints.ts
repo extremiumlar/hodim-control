@@ -20,6 +20,7 @@ import type {
   Economics,
   TargetPlan,
   FunnelAnalysis,
+  FunnelRules,
   OperatorQuality,
   TargetProgress,
   TargetSplit,
@@ -756,6 +757,16 @@ export const api = {
   funnel: (mode: "period" | "cohort", month?: string) =>
     apiFetch<FunnelData>(`/funnel?mode=${mode}${month ? `&month=${month}` : ""}`),
   funnelMonths: (months = 6) => apiFetch<FunnelMonths>(`/funnel/months?months=${months}`),
+  funnelSettings: () => apiFetch<FunnelRules>("/funnel/settings"),
+  saveFunnelSettings: (body: {
+    cancelled_pipe_status_ids?: number[];
+    subtract_cancelled?: boolean;
+    low_quality_pipe_status_ids?: number[];
+    exclude_low_quality?: boolean;
+  }) => apiFetch<{ ok: boolean }>("/funnel/settings", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   funnelAnalysis: (period: string) =>
     apiFetch<FunnelAnalysis>(`/funnel/analysis?period=${period}`),
   funnelOperators: (month: string) =>

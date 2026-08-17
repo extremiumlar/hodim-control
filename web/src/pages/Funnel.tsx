@@ -11,6 +11,7 @@
 import { useState } from "react";
 import { AlertTriangle, Filter, Info } from "lucide-react";
 import EconomicsCard from "@/components/funnel/EconomicsCard";
+import FunnelSettingsCard from "@/components/funnel/FunnelSettingsCard";
 import LeakAnalysis from "@/components/funnel/LeakAnalysis";
 import OperatorQuality from "@/components/funnel/OperatorQuality";
 import TargetCalculator from "@/components/funnel/TargetCalculator";
@@ -294,6 +295,8 @@ export default function FunnelPage() {
       <ChannelCard month={month} groupBy={groupBy} setGroupBy={setGroupBy} />
 
       <EconomicsCard period={month} groupBy={groupBy} canEdit={canEdit} />
+
+      <FunnelSettingsCard canEdit={canEdit} />
 
       <Card>
         <CardHeader>

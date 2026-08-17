@@ -123,6 +123,15 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface FunnelRules {
+  cancelled_pipe_status_ids: number[];
+  subtract_cancelled: boolean;
+  low_quality_pipe_status_ids: number[];
+  exclude_low_quality: boolean;
+  stages: { pipe_status_id: number; name: string }[];
+  effective: Record<string, boolean>;
+}
+
 export interface LeakStep {
   label: string;
   entered: number;
