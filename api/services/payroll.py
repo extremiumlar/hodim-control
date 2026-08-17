@@ -333,7 +333,7 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
 
         if not row["is_working"]:
             status = "weekend"
-        elif d > today:
+        elif d >= today:
             # ⚠️ ENG MUHIM TUZATISH (2026-08-15). Ilgari bu shox YO'Q edi va
             # kelajakdagi ish kunlari `att is None` sababli 'absent' bo'lardi.
             # Oqibati jonli bazada: 15-avgustda hisoblanganda oyning qolgan
@@ -347,6 +347,15 @@ async def collect_attendance(db: AsyncSession, user: User, period: str) -> list[
             # DIQQAT: kunlik ulush maxraji (`full_scheduled`) ATAYIN butun oy
             # bo'yicha qoladi — aks holda bitta kelmagan kun uchun ayirma
             # ~2 barobar oshib ketardi (5 mln / 11 kun ≠ 5 mln / 26 kun).
+            #
+            # BUGUN HAM shu yerga kiradi (`>=`, `>` emas — 2026-08-17). Sabab:
+            # kun hali TUGAMAGAN. HR ertalab soat 10:00 da hisoblasa, hali
+            # ishga yetib kelmagan HAMMA xodim «kelmagan» sanalib pul
+            # yo'qotardi; kechqurungi `write_absent_records` esa o'sha kunni
+            # ancha keyin yopadi. Oy yakunlanganda bu zarar keltirmaydi:
+            # avtomatik hisob keyingi oyning 1-kuni ishlaydi, ya'ni `today`
+            # davrdan tashqarida bo'lib, oyning oxirgi kuni ham to'liq
+            # sanaladi.
             status = "future"
         elif excused:
             status = "excused"
