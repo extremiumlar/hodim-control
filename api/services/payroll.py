@@ -909,7 +909,13 @@ async def build_payslip(
     # yo'q / kunlarim kam" deb chalkashadi — shuning uchun UI shu bayroqqa
     # qarab "Oraliq hisob — {sana}gacha" deb yozadi.
     future_days = sum(1 for d in days if d["status"] == "future")
-    counted_through = max((d["date"] for d in days if d["status"] != "future"), default=None)
+    # ⚠️ `status != "future"` bo'yicha olish NOTO'G'RI edi: kelajakdagi DAM
+    # kunlari «weekend» deb belgilanadi (bu tekshiruv `d > today` dan oldin
+    # turadi), shuning uchun 15-avgustda ham `counted_through` 30-avgustni
+    # ko'rsatib, HR ga «oy deyarli hisoblangan» degan yolg'on taassurot
+    # berardi. To'g'ri javob — oddiygina min(bugun, oy oxiri).
+    _bugun = today_local()
+    counted_through = max((d["date"] for d in days if d["date"] <= _bugun), default=None)
     breakdown = {
         "policy": _policy_snapshot(policy),
         "overtime_profile": _profile_snapshot(overtime_profile),
