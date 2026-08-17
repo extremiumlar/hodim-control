@@ -84,6 +84,7 @@ export const qk = {
   celebrationSettings: ["celebration", "settings"] as const,
   funnel: (mode: string, month?: string) => ["funnel", mode, month ?? "current"] as const,
   funnelMonths: (months: number) => ["funnel", "months", months] as const,
+  targetProgress: (period: string) => ["funnel", "target", "progress", period] as const,
   targetSplit: (period: string) => ["funnel", "target", "split", period] as const,
   funnelTarget: (period: string, target?: number) =>
     ["funnel", "target", period, target ?? null] as const,
@@ -1054,3 +1055,11 @@ export const useTargetSplit = (period: string) =>
 // Norma yozilgani uchun jamoa normalari ro'yxati ham yangilanadi
 export const useApplyTargetSplit = (period: string) =>
   useApiMutation(api.applyTargetSplit, [qk.targetSplit(period), qk.teamNorms]);
+
+// ─── Reja/fakt kuzatuvi (6-bosqich) ───
+export const useTargetProgress = (period: string) =>
+  useQuery({
+    queryKey: qk.targetProgress(period),
+    queryFn: () => api.funnelTargetProgress(period),
+    placeholderData: keepPreviousData,
+  });

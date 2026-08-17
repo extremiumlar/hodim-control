@@ -2829,6 +2829,125 @@ def run_tests(ctx: dict) -> None:
         except Exception:
             check("Target tarqatish tekshiruvi", False, traceback.format_exc(limit=2).strip())
 
+        print("\n-- VORONKA: reja/fakt kuzatuvi va prognoz (6-bosqich) --")
+        try:
+            import asyncio as _aio9
+            from datetime import timezone as _tz9
+
+            from db.base import async_session as _asess9
+            from api.services import target_track as _tt
+            from api.services import funnel as _fn9
+
+            conn = db()
+            cur = conn.cursor()
+            P_PERIOD = "2021-10"
+            PL = 983001
+            P_TG = 999780001
+            cur.execute("delete from funnel_month where period=?", (P_PERIOD,))
+            cur.execute("delete from lead_events where crm_lead_id >= ?", (PL,))
+            cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (PL,))
+            cur.execute("delete from users where telegram_id between ? and ?", (P_TG, P_TG + 9))
+            conn.commit()
+
+            _fn9_orig = (
+                list(_fn9.CRM_UYSOT_VISIT_PIPE_STATUS_IDS),
+                list(_fn9.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS),
+            )
+            _fn9.CRM_UYSOT_VISIT_PIPE_STATUS_IDS = [8787]
+            _fn9.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS = [8788]
+
+            try:
+                # Maqsad: 10 shartnoma; tashrif->shartnoma 10% -> 100 tashrif
+                cur.execute(
+                    "insert into funnel_month (period, target_contracts, assumptions, updated_at)"
+                    " values (?,?,?,datetime('now'))",
+                    (P_PERIOD, 10, '{"visit_to_contract": 10.0, "lead_to_visit": 5.0}'))
+
+                # 15-oktabrgacha 30 ta tashrif (reja bo'yicha ~50 bo'lishi kerak)
+                p_ts = int(datetime(2021, 10, 5, 9, tzinfo=_tz9.utc).timestamp())
+                p_det = datetime(2021, 10, 5, 9).isoformat(sep=" ", timespec="seconds")
+                for i in range(30):
+                    cur.execute(
+                        "insert into crm_lead_state (crm_lead_id, pipe_status_id, stage_name,"
+                        " responsible_id, responsible_name, first_responsible_id, crm_updated_ts,"
+                        " crm_created_ts, first_seen_at, last_seen_at)"
+                        " values (?,?,?,?,?,?,?,?,?,?)",
+                        (PL + i, 8779, "T-Yangi", 1, "T-op", 1, p_ts, p_ts, p_det, p_det))
+                    cur.execute(
+                        "insert into lead_events (crm_lead_id, event_type, from_pipe_status_id,"
+                        " from_stage_name, to_pipe_status_id, to_stage_name, to_responsible_id,"
+                        " to_responsible_name, first_responsible_id, crm_updated_ts, detected_at)"
+                        " values (?,'stage_change',8779,'T-Yangi',8787,'T-Tashrif',1,'T-op',1,?,?)",
+                        (PL + i, p_ts, p_det))
+                conn.commit()
+
+                async def _prog(today):
+                    async with _asess9() as s:
+                        return await _tt.progress(s, P_PERIOD, today=today)
+
+                # Oyning yarmi (15-oktabr): kalendar asosida ~48% o'tgan
+                pr = _aio9.run(_prog(date(2021, 10, 15)))
+                by = {r["key"]: r for r in pr["rows"]}
+                check("Kuzatuv: oylik reja zanjirdan olinadi (100 tashrif)",
+                      by["visits"]["plan_month"] == 100, f"={by['visits']['plan_month']}")
+                check("Kuzatuv: haqiqiy son davr kesimidan (30 tashrif)",
+                      by["visits"]["actual"] == 30, f"={by['visits']['actual']}")
+                check("Kuzatuv: «hozir kutilgan» = reja × o'tgan ulush",
+                      by["visits"]["expected_now"] == round(100 * pr["elapsed"]["share"]),
+                      f"={by['visits']['expected_now']}, ulush={pr['elapsed']['share']}")
+                check("Kuzatuv: rejadan orqada bo'lsa «orqada» deb belgilanadi",
+                      by["visits"]["status"] == "orqada", f"={by['visits']['status']}")
+                check("Kuzatuv: prognoz = haqiqiy / o'tgan ulush",
+                      by["visits"]["forecast"] == round(30 / pr["elapsed"]["share"]),
+                      f"={by['visits']['forecast']}")
+                check("Kuzatuv: prognoz rejadan past ekani ko'rsatiladi (manfiy farq)",
+                      by["visits"]["forecast_gap"] is not None
+                      and by["visits"]["forecast_gap"] < 0,
+                      f"={by['visits']['forecast_gap']}")
+                check("Kuzatuv: eng orqada qolgan bo'g'in aniqlanadi",
+                      pr["weakest"] is not None, f"={pr['weakest']}")
+
+                # Oy boshida (2-kun) prognoz KO'RSATILMAYDI
+                pr2 = _aio9.run(_prog(date(2021, 10, 2)))
+                by2 = {r["key"]: r for r in pr2["rows"]}
+                check("Kuzatuv: oy boshida prognoz berilmaydi (namuna kichik)",
+                      pr2["forecast_ready"] is False and by2["visits"]["forecast"] is None,
+                      f"ulush={pr2['elapsed']['share']}, prognoz={by2['visits']['forecast']}")
+                check("Kuzatuv: shunda digest qatori ham chiqmaydi",
+                      _tt.digest_line(pr2) is None, "digest qatori chiqdi")
+
+                # Digest qatori: prognoz tayyor bo'lganda ogohlantiradi
+                line = _tt.digest_line(pr)
+                check("Kuzatuv: digest qatori «reja ostida» deb ogohlantiradi",
+                      line is not None and "Reja ostida" in line, f"={line}")
+                check("Kuzatuv: digest qatorida maqsad va prognoz bor",
+                      line is not None and "10" in line, f"={line}")
+
+                # Maqsadsiz oy — kuzatuv yo'q
+                async def _nop():
+                    async with _asess9() as s:
+                        return await _tt.progress(s, "2021-12", today=date(2021, 12, 20))
+                np = _aio9.run(_nop())
+                check("Kuzatuv: maqsadsiz oyda kuzatuv yo'q",
+                      np["ready"] is False, f"{np.get('reason')}")
+                check("Kuzatuv: maqsadsiz oyda digest jim qoladi",
+                      _tt.digest_line(np) is None, "digest qatori chiqdi")
+
+                r_api = client.get(f"{API_BASE}/funnel/target/progress?period={P_PERIOD}",
+                                   headers=auth(boss_t))
+                check("Kuzatuv(API): 200", r_api.status_code == 200, f"kod={r_api.status_code}")
+            finally:
+                cur.execute("delete from funnel_month where period in (?,?)", (P_PERIOD, "2021-12"))
+                cur.execute("delete from lead_events where crm_lead_id >= ?", (PL,))
+                cur.execute("delete from crm_lead_state where crm_lead_id >= ?", (PL,))
+                cur.execute("delete from users where telegram_id between ? and ?", (P_TG, P_TG + 9))
+                conn.commit()
+                conn.close()
+                (_fn9.CRM_UYSOT_VISIT_PIPE_STATUS_IDS,
+                 _fn9.CRM_UYSOT_CONTRACT_PIPE_STATUS_IDS) = _fn9_orig
+        except Exception:
+            check("Reja/fakt kuzatuvi tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
         print("\n-- ISSIQ LID: sovish qoidasi, eslatmalar, taqsimlash, statistika --")
         try:
             import asyncio as _aio

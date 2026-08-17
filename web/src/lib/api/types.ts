@@ -123,6 +123,31 @@ export interface FunnelData {
   maturity_days?: number;
 }
 
+export interface TargetProgressRow {
+  key: string;
+  label: string;
+  plan_month: number | null;
+  expected_now: number | null;
+  actual: number;
+  diff: number | null;
+  forecast: number | null;
+  forecast_gap: number | null;
+  status: string;
+}
+
+export interface TargetProgress {
+  period: string;
+  ready: boolean;
+  reason?: string;
+  target_contracts?: number;
+  elapsed: { share: number; basis: string; days_passed: number; days_total: number };
+  forecast_ready: boolean;
+  min_elapsed: number;
+  rows: TargetProgressRow[];
+  weakest: { key: string; label: string } | null;
+  baseline_confidence?: string;
+}
+
 export interface TargetSplitEmployee {
   user_id: number;
   full_name: string;

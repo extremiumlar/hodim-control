@@ -19,6 +19,7 @@ from api.services import ad_spend as ad_spend_service
 from api.services import funnel as funnel_service
 from api.services import target_calc
 from api.services import target_split
+from api.services import target_track
 from db.models import AuditLog, Role, User
 
 router = APIRouter(prefix="/funnel", tags=["funnel"])
@@ -346,3 +347,14 @@ async def apply_target_split(
     )
     await db.commit()
     return result
+
+
+@router.get("/target/progress")
+async def get_target_progress(
+    period: str,
+    _actor: User = Depends(_viewer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reja / haqiqiy / farq + oy oxiri prognozi (6-bosqich)."""
+    _resolve_range(period, None, None)
+    return await target_track.progress(db, period)

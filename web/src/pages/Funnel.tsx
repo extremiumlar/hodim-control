@@ -12,6 +12,7 @@ import { useState } from "react";
 import { AlertTriangle, Filter, Info } from "lucide-react";
 import EconomicsCard from "@/components/funnel/EconomicsCard";
 import TargetCalculator from "@/components/funnel/TargetCalculator";
+import TargetProgress from "@/components/funnel/TargetProgress";
 import TargetSplit from "@/components/funnel/TargetSplit";
 import PageHeader from "@/components/PageHeader";
 import { MonthPicker, currentMonthKey } from "@/components/PeriodPicker";
@@ -277,6 +278,8 @@ export default function FunnelPage() {
       </p>
 
       <FunnelCard data={funnel.data} isLoading={funnel.isLoading} />
+
+      <TargetProgress period={month} />
 
       <TargetCalculator period={month} canEdit={canEdit} />
 

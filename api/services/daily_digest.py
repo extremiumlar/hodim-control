@@ -143,6 +143,26 @@ async def _freshness_line(db: AsyncSession) -> str | None:
     return f"🕐 Lid/tashrif ma'lumoti yangilangan: {local_ts:%H:%M}"
 
 
+async def _target_progress_line(db: AsyncSession, day: date) -> str | None:
+    """Oylik maqsad bo'yicha temp va prognoz (voronka 6-bosqich).
+
+    Reja ataylab «yangi kanal qurish shart emas» degan edi — shuning uchun
+    bu YANGI xabar emas, mavjud kunlik digestga qo'shiladigan bir necha
+    qator. Maqsad qo'yilmagan yoki prognoz hali beqaror bo'lsa (oy boshi)
+    — umuman ko'rinmaydi, kunlik shovqin bo'lmasin.
+
+    Xato digestni yiqitmasin: voronka hisobi ancha yangi va u sinsa
+    kunlik hisobot butunlay ketmay qolardi."""
+    from api.services import target_track
+
+    try:
+        data = await target_track.progress(db, f"{day:%Y-%m}", today=day)
+        return target_track.digest_line(data)
+    except Exception:  # noqa: BLE001
+        logger.exception("Digestda maqsad prognozini hisoblashda xato")
+        return None
+
+
 async def _hot_lead_line(db: AsyncSession, day: date) -> str | None:
     """Issiq lid aniqlik hisoboti — bugun umuman issiq lid bo'lmasa jim
     (funksiya o'chiq/faoliyatsiz kunda shovqin qilmasin)."""
@@ -322,6 +342,9 @@ async def build_daily_digest(db: AsyncSession, day: date | None = None) -> dict:
     hot_lead_line = await _hot_lead_line(db, day)
     if hot_lead_line:
         parts.append(hot_lead_line)
+    target_line = await _target_progress_line(db, day)
+    if target_line:
+        parts.append(target_line)
     parts.append("")
     legend = (
         "<i>📞 qo'ng'iroq (kechaga nisbatan) · 🗣 gaplashgan vaqt (s=soat, d=daqiqa) · "
