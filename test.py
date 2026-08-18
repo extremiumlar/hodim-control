@@ -7279,6 +7279,99 @@ def test_explanation_letters() -> None:
         conn.close()
 
 
+def test_future_days_rule() -> None:
+    """S-01 (TZ 2.3) — oy o'rtasida hisoblanganda KELAJAK kunlari «kelmagan»
+    sanalmasligi. Bu qoidani KODGA qotirib qo'yadigan qo'riqchi.
+
+    NEGA KERAK: bu tizimning eng qimmat xatosi bo'lgan. Oy o'rtasida
+    hisoblanganda oyning QOLGAN kunlari `att is None` sababli «kelmagan»
+    bo'lib, kunlik ulush oylikdan ayirilardi — Abdulaziz 10 000 000 o'rniga
+    4 615 400 so'm olgan edi. Tuzatilgan (d151269), lekin qoida test bilan
+    bog'lanmagan edi: kimdir `future` shoxini olib tashlasa jimgina qaytardi.
+
+    SOF FUNKSIYA sinovi — baza kerak emas: `collect_attendance` qaytaradigan
+    kunlar ro'yxati qo'lda yasaladi.
+    """
+    from decimal import Decimal as _D
+    from types import SimpleNamespace as _NS
+
+    from api.services import payroll as pr
+
+    print("\n" + "=" * 60)
+    print("S-01: KELAJAK KUNLARI «KELMAGAN» SANALMASIN")
+    print("=" * 60)
+
+    # Fikstura: 30 kunlik oy, 1-26 ish kuni, 27-30 dam. Bugun — 15-kun.
+    OYLIK = _D("5200000")
+    ISH_KUNI = 26
+    RATE = _NS(amount=OYLIK, pay_basis="monthly", effective_from=date(2026, 6, 1))
+    POLICY = _NS(absent_mode="deduct_daily", absent_fine=_D("0"))
+    BOSHI = date(2026, 6, 1)
+
+    def kun(d, ish=True, holat="present", ishlangan=480):
+        return {
+            "date": d, "is_working": ish, "start": "09:00", "end": "18:00",
+            "scheduled_minutes": 480 if ish else 0, "attendance": None,
+            "excused": False, "excused_paid": True, "status": holat,
+            "late_minutes": 0, "worked_minutes": ishlangan,
+        }
+
+    def qur(bugun_kuni, kelmagan=frozenset()):
+        """`bugun_kuni` dan boshlab (o'zi ham) — `future`."""
+        kunlar = []
+        for i in range(1, ISH_KUNI + 1):
+            d = date(2026, 6, i)
+            if i >= bugun_kuni:
+                kunlar.append(kun(d, holat="future", ishlangan=0))
+            elif i in kelmagan:
+                kunlar.append(kun(d, holat="absent", ishlangan=0))
+            else:
+                kunlar.append(kun(d))
+        for i in range(ISH_KUNI + 1, 31):
+            kunlar.append(kun(date(2026, 6, i), ish=False, holat="weekend", ishlangan=0))
+        return kunlar
+
+    def baza(kunlar):
+        b, _item, ayirma, _unpaid = pr.compute_base(RATE, None, kunlar, BOSHI, POLICY)
+        return b, ayirma
+
+    # (1) Oy o'rtasi, hech kim qolmagan -> TO'LIQ oylik, ayirma YO'Q
+    b1, ayirma1 = baza(qur(15))
+    check("S-01: oy o'rtasida to'liq oylik (kelajak kunlari ayirilmaydi)",
+          b1 == OYLIK, f"base={b1}, kutilgan={OYLIK}")
+    check("S-01: kelajak kunlari uchun ayirma qatori YO'Q",
+          ayirma1 is None, f"={ayirma1}")
+
+    # (2) HAQIQIY kelmagan kun HAMON ayiriladi
+    b2, ayirma2 = baza(qur(15, kelmagan={5, 6}))
+    kutilgan = OYLIK - OYLIK / ISH_KUNI * 2
+    check("S-01: haqiqiy kelmagan kun ayiriladi (2 kun)",
+          abs(b2 - kutilgan) < 1, f"base={b2}, kutilgan={kutilgan}")
+    check("S-01: ayirma qatorida aynan 2 kun",
+          ayirma2 is not None and ayirma2["quantity"] == 2, f"={ayirma2}")
+    check("S-01: kunlik ulush maxraji BUTUN oy (11 kun emas, 26 kun)",
+          abs(abs(_D(str(ayirma2["amount"]))) - OYLIK / ISH_KUNI * 2) < 1,
+          f"={ayirma2['amount']}")
+
+    # (3) REGRESSIYA: oy tugagach natija AYNAN bir xil qoladi
+    b3, _ = baza(qur(ISH_KUNI + 1, kelmagan={5, 6}))
+    check("S-01: oy tugagach hisob o'zgarmaydi (o'tmishga tegilmagan)",
+          abs(b3 - b2) < 1, f"oy tugagach={b3}, oy o'rtasida={b2}")
+
+    # (4) BUGUNGI kun ham «hali tugamagan» (3a18520)
+    kunlar_bugun = qur(15)
+    bugungi = [d for d in kunlar_bugun if d["date"] == date(2026, 6, 15)]
+    check("S-01: BUGUNGI kun ham `future` (ertalab hisoblansa jazolamaydi)",
+          len(bugungi) == 1 and bugungi[0]["status"] == "future",
+          f"={bugungi[0]['status'] if bugungi else 'topilmadi'}")
+
+    # (5) Kelmagan-kun JARIMASI ham kelajakni sanamaydi
+    POLICY_FIX = _NS(absent_mode="fixed", absent_fine=_D("100000"))
+    jarima = pr.compute_absent_fine(qur(15), POLICY_FIX)
+    check("S-01: kelajak kunlari uchun jarima ham YO'Q",
+          jarima["absent_days"] == 0 and float(jarima["amount"]) == 0.0, f"={jarima}")
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -7351,6 +7444,11 @@ def main() -> None:
         test_payroll_engine()
     except Exception:
         print("Payroll testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_future_days_rule()
+    except Exception:
+        print("S-01 kelajak kunlari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()
