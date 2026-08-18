@@ -12,7 +12,7 @@
 2. Bosqichlar **tartib bilan** bajariladi. Har bosqichning «Oldin» qatorida sharti yozilgan — u bajarilmagan bo'lsa boshlamang.
 3. **Har seans oxirida majburiy:** testlar yashil → commit → master'ga merge → serverga deploy → jonli tekshiruv. Yarim qolgan ish keyingi seansga o'tkazilmaydi.
 4. Har bosqichda **«Qabul mezoni»** bor. Uning hammasi ✅ bo'lmaguncha bosqich tugagan hisoblanmaydi.
-5. Agar bosqich davomida TZ da yozilmagan qaror kerak bo'lsa — **egasidan so'rang**, o'zingiz o'ylab topmang. TZ ning o'zi shu tamoyilga qurilgan.
+5. TZ da yozilmagan qaror chiqsa — **o'zingiz tanlamang**. Agar qoida vaqt o'tib o'zgarishi mumkin bo'lsa (ushlanma qoldig'i, muddat, limit, summa) — uni **HR panelidagi sozlamaga** chiqaring, default eng xavfsiz tomonga qo'ying. Faqat bir marta qabul qilinadigan tamoyil bo'lsagina egasidan so'rang. Batafsil: hujjat oxiri, 3-band.
 
 **Jami:** 84 bosqich · 4 blok. Blok oxirida tizim **ishlaydigan holatda** bo'ladi (TZ 5-qism: «uch oy davomida hech narsa ko'rinmasligi eng katta xavf»).
 
@@ -138,18 +138,44 @@ D BLOK (to'ldiruvchi) — A, B, C tugagach
 
 **Ish**
 1. `FinePolicy.fine_applies_to` default'ini `bonus_first` ga o'zgartirish (migratsiya: mavjud qatorlarni ham ko'chirish — lekin **eski payslip'larga tegmaslik**).
-2. `payroll.build_payslip`: `bonus_first` rejimida jarima **avval bonusdan**, qolgani (agar bonus yetmasa) — egasining qaroriga ko'ra: ushlanmaydi yoki oylikdan. **Bu qarorni egasidan so'rang.**
-3. Band-darajasidagi breakdown: hozir `items` faqat `net_salary` ko'rinishida yig'iladi (kodda «ma'lum cheklov» deb yozilgan). `bonus_first` uchun alohida qatorlar: `bonus` (to'liq), `fine_from_bonus` (manfiy), qoldiq.
-4. `net` yakuniy summasi o'zgarmasligini tekshiring (matematik jihatdan bir xil bo'lishi kerak) — o'zgarsa bu **bug**, qidiring.
+2. `payroll.build_payslip`: `bonus_first` rejimida ushlanma **avval bonusdan** olinadi.
+3. ⭐ **QOLDIQ QOIDASI — HR PANELIDAN BOSHQARILADI, kodda qotirilmaydi.**
+   Bonus ushlanmadan kam bo'lsa qolgani nima bo'ladi — bu biznes qarori va u
+   vaqt o'tib o'zgarishi mumkin. Shuning uchun **agent egasidan so'ramaydi va
+   o'zi tanlamaydi** — sozlamani panelga chiqaradi (naqsh: `funnel_settings`
+   va `FunnelSettingsCard.tsx`).
+
+   `FinePolicy.fine_remainder_mode` (yangi ustun), uch qiymat:
+
+   | Qiymat | Nima bo'ladi | Izoh |
+   |---|---|---|
+   | `drop` | Qoldiq **umuman ushlanmaydi** | 🟢 **DEFAULT** — huquqiy jihatdan eng xavfsiz (ish haqiga tegilmaydi) |
+   | `carry_next_month` | Qoldiq keyingi oy bonusidan olinadi | Iqtisodiy natija saqlanadi, ish haqiga tegilmaydi |
+   | `from_salary` | Qoldiq oylikdan ushlanadi | 🔴 Panelda **qizil ogohlantirish** bilan: «faqat qonunda nazarda tutilgan hollarda» |
+
+   Sozlama har uch darajada ishlaydi (`resolve_policy`: xodim > lavozim >
+   global) — mavjud qoida naqshi buzilmasin.
+4. HR paneli (`/payroll/settings`): qoida tanlanadi + har variant ostida bir
+   qatorlik izoh. `from_salary` tanlansa ogohlantirish ko'rsatiladi va
+   `AuditLog` ga yoziladi (kim, qachon, nimaga o'zgartirdi).
+5. `carry_next_month` uchun qoldiq qayerda saqlanadi: `PayrollAdjustment`
+   yaratilmasin (u pul yozuvi) — `Payslip.breakdown` ga `fine_carried` maydoni
+   va keyingi davr hisobida o'qiladi.
+6. Band-darajasidagi breakdown: hozir `items` faqat `net_salary` ko'rinishida
+   yig'iladi (kodda «ma'lum cheklov» deb yozilgan). `bonus_first` uchun alohida
+   qatorlar: `bonus` (to'liq), `fine_from_bonus` (manfiy), qoldiq holati.
 
 **Qabul mezoni**
-- [ ] Yangi qoida default `bonus_first`
-- [ ] Payslip qatorlarida jarima QAYERDAN olingani ko'rinadi
-- [ ] Bonus jarimadan kam bo'lgan holat sinovdan o'tgan
+- [ ] Yangi qoida default `bonus_first` + `fine_remainder_mode='drop'`
+- [ ] Uchala qoldiq rejimi HR panelidan tanlanadi, kodda qotirilmagan
+- [ ] `from_salary` tanlanganda ogohlantirish chiqadi va auditga yoziladi
+- [ ] Payslip qatorlarida ushlanma QAYERDAN olingani ko'rinadi
 - [ ] O'tgan davrlar payslip'i **o'zgarmagan** (qulflangan davrlar qayta hisoblanmaydi)
-- [ ] Test: 3+ ssenariy (bonus > jarima, bonus < jarima, bonus = 0)
+- [ ] Test: 3 rejim × 3 holat (bonus > ushlanma, bonus < ushlanma, bonus = 0) = 9 ssenariy
+- [ ] `carry_next_month` da qoldiq keyingi oyda **bir marta** olinadi (ikki marta emas)
 
-**Tuzoq:** `apply_fine_cap` (oylik cheklov) `bonus_first` da ham ishlashi kerak. Cheklov bazadan hisoblanadi — bonusdan emas.
+**Tuzoq 1:** `apply_fine_cap` (oylik cheklov) `bonus_first` da ham ishlashi kerak. Cheklov bazadan hisoblanadi — bonusdan emas.
+**Tuzoq 2:** Sozlama o'zgarsa **o'tgan davrlar qayta hisoblanmasin** — qulflangan davr `PayrollLocked` bilan himoyalangan, lekin qulflanmagan eski davr ham tegilmasligi kerak. Yangi qoida faqat **keyingi hisobdan** kuchga kiradi.
 
 ---
 
@@ -1498,7 +1524,14 @@ D BLOK (to'ldiruvchi) — A, B, C tugagach
 
 1. **Bosqichni bo'lish mumkin, birlashtirish — yo'q.** 5–6 soatdan oshsa ikkiga bo'ling va raqamiga `a`/`b` qo'shing.
 2. **Har seans oxirida deploy.** «Keyingi seansda deploy qilaman» — taqiqlanadi: yarim ish serverda va lokalda farq qilib qoladi.
-3. **TZ da yo'q qaror — egasidan so'raladi.** Ayniqsa: jarima → bonus o'tishining tafsilotlari (S-02), sinov muddati uzunligi, e'lon kunlik limiti, bonus summalari.
+3. **TZ da yo'q qaror — o'zingiz tanlamang.** Ikki yo'l bor va tartib shu:
+   **(a) Qoida vaqt o'tib o'zgarishi mumkinmi?** — bo'lsa **panelga sozlama qilib chiqaring**
+   (naqsh: `funnel_settings` + `FunnelSettingsCard.tsx`), default eng xavfsiz tomonga qo'ying.
+   Masalan: ushlanma qoldig'i (S-02), sinov muddati uzunligi, e'lon kunlik limiti,
+   tavsiya bonusi summasi, ta'til to'qnashuvi chegarasi.
+   **(b) Faqat bir marta qabul qilinadigan tamoyil bo'lsa** — egasidan so'rang.
+   Shubha bo'lsa — (a) ni tanlang: sozlama ortiqcha bo'lsa zarari yo'q, kodda
+   qotirilgan qaror esa keyin migratsiya talab qiladi.
 4. **Parallel seans bo'lishi mumkin.** Commitdan oldin `git status`, faqat **o'z** fayllaringizni `git add` qiling, migratsiya ID sini tekshiring.
 5. **Har modul yakunida bitta savol:** «xodim boshqa birovning ma'lumotini ko'ra oladimi?» Javob «yo'q» bo'lmaguncha modul tayyor emas (TZ yakuniy tavsiyasi).
 6. **HR ishi parallel ketsin:** agent 3.1 ni yozayotganda HR kurs materiallarini tayyorlasin. Aks holda modul tayyor bo'ladi, ichi bo'sh qoladi — bu tizimda allaqachon **to'rt marta** takrorlangan.
