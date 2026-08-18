@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     # kalit ikkovini ham yopadi.
     notifications_enabled: bool = True
 
+    # ── Tizim boshlanish davri (2026-08-18, TZ §5.4 Qadam 3) ──
+    # Shu davrdan OLDINGI oy uchun oylik hisoblanmaydi. Egasining aniq
+    # ruxsati bilan 1-avgustgacha bo'lgan ma'lumot o'chirilgan, ya'ni eski
+    # davrni hisoblash MA'LUMOTSIZ natija berardi: hamma kun «kelmagan»
+    # bo'lib chiqib, ulkan ayirmali payslip yasalardi. Bo'sh qoldirilsa
+    # cheklov ishlamaydi (eski xatti-harakat).
+    payroll_start_period: str = ""
+
     database_url: str = "sqlite+aiosqlite:///./app.db"
 
     jwt_secret: str = _PLACEHOLDER_JWT_SECRET

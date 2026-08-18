@@ -566,6 +566,13 @@ export const useDecideOvertimeEntry = () =>
 export const useUpsertGlobalOvertimeProfile = () =>
   useApiMutation(api.upsertGlobalOvertimeProfile, [qk.overtimeProfiles]);
 
+export const useBulkApplyOvertimeProfile = () =>
+  useApiMutation(
+    ({ userIds, data }: { userIds: number[]; data: Parameters<typeof api.bulkApplyOvertimeProfile>[1] }) =>
+      api.bulkApplyOvertimeProfile(userIds, data),
+    [qk.overtimeProfiles]
+  );
+
 export const useBulkDecideOvertime = () =>
   useApiMutation(
     ({ period, decision }: { period: string; decision: "approved" | "rejected" }) =>

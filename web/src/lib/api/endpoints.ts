@@ -407,6 +407,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  // Bir necha (yoki hamma) xodimga bir vaqtda profil yozish.
+  // `userIds` bo'sh -> barcha faol kuzatiladigan xodim.
+  bulkApplyOvertimeProfile: (userIds: number[], data: OvertimeProfileInput) =>
+    apiFetch<{ applied: number; created: number; updated: number }>(
+      "/payroll/overtime-profiles/bulk",
+      { method: "POST", body: JSON.stringify({ user_ids: userIds, profile: data }) }
+    ),
   // Barcha xodimga default profil (§3.2) — xodim qatori bo'lsa u bosadi.
   upsertGlobalOvertimeProfile: (data: OvertimeProfileInput) =>
     apiFetch<OvertimeProfile>("/payroll/overtime-profiles/global", {

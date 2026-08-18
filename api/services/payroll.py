@@ -1140,6 +1140,17 @@ async def run_payroll(
     «12/20 xodim» deb ko'rsatadi. Chaqiruvchi COMMIT qilmasligi kerak —
     yarim hisoblangan payslip'lar ko'rinib qolmasin (progress ustuni
     ATAYLAB alohida sessiyada yangilanadi, `payroll_jobs.py` ga qarang)."""
+    # Tizim boshlanishidan OLDINGI davr hisoblanmaydi (TZ §5.4 Qadam 3).
+    # Ma'lumot o'chirilgan bo'lsa, u davrni hisoblash hamma kunni «kelmagan»
+    # deb sanab, ulkan ayirmali soxta payslip yasardi.
+    from api.config import settings as _cfg
+
+    if _cfg.payroll_start_period and period < _cfg.payroll_start_period:
+        raise PayrollLocked(
+            f"«{period}» — tizim boshlanishidan ({_cfg.payroll_start_period}) oldingi davr. "
+            "Bu davr ma'lumoti o'chirilgan, shuning uchun hisoblanmaydi."
+        )
+
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
     if period_row is not None and period_row.locked:
         raise PayrollLocked(f"«{period}» davri qulflangan — avval qulfni ochish kerak")

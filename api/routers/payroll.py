@@ -579,6 +579,93 @@ async def list_overtime_profiles(
     return out
 
 
+class OvertimeBulkApply(BaseModel):
+    """Bir necha xodimga bir vaqtda profil qo'llash."""
+
+    user_ids: list[int]
+    profile: OvertimeProfileIn
+
+
+@router.post("/overtime-profiles/bulk")
+async def bulk_apply_overtime_profile(
+    payload: OvertimeBulkApply, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Tanlangan xodimlarga BIR VAQTDA profil yozadi (egasining talabi
+    2026-08-18: «hammaga birdaniga yoki bir nechta xodimga yoki bitta
+    xodimga yoqish»).
+
+    Uchala holat ham shu bitta yo'l bilan qoplanadi:
+      • bitta xodim   → `user_ids` da bitta id;
+      • bir nechtasi  → ro'yxat;
+      • HAMMASI       → `user_ids` bo'sh ro'yxat (barcha faol, davomat
+        kuzatiladigan xodim olinadi).
+
+    ⚠️ «Hammaga» uchun GLOBAL profil ham bor (`PUT .../global`) va odatda
+    U AFZAL: yangi ishga kirgan xodim o'z-o'zidan qamrab olinadi. Bu
+    endpoint esa har xodimga ALOHIDA qator yozadi — global qoidadan
+    farq qiladigan guruh kerak bo'lganda ishlatiladi."""
+    if payload.user_ids:
+        users = list(await db.scalars(select(User).where(User.id.in_(payload.user_ids))))
+        topilmadi = set(payload.user_ids) - {u.id for u in users}
+        if topilmadi:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"Xodim topilmadi: {sorted(topilmadi)}"
+            )
+    else:
+        users = list(
+            await db.scalars(
+                select(User).where(
+                    User.role.in_(PAYROLL_TRACKED_ROLES), User.is_active.is_(True)
+                )
+            )
+        )
+
+    qiymatlar = payload.profile.model_dump()
+    mavjud = {
+        p.user_id: p
+        for p in await db.scalars(
+            select(OvertimeProfile).where(
+                OvertimeProfile.scope == "user",
+                OvertimeProfile.user_id.in_([u.id for u in users]),
+            )
+        )
+    }
+
+    yangilandi = yaratildi = 0
+    for u in users:
+        profile = mavjud.get(u.id)
+        if profile is None:
+            db.add(OvertimeProfile(user_id=u.id, scope="user", updated_by=actor.id, **qiymatlar))
+            yaratildi += 1
+        else:
+            for field, value in qiymatlar.items():
+                setattr(profile, field, value)
+            profile.updated_by = actor.id
+            yangilandi += 1
+
+    # Audit BITTA yozuv — 20 ta alohida qator jurnalni ishlatib bo'lmas
+    # holga keltirardi (ommaviy amalda naqsh `overtime_bulk_decided` bilan
+    # bir xil).
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="overtime_profile_bulk_applied",
+            target_user_id=None,
+            before=None,
+            after={
+                "xodimlar": [u.id for u in users],
+                "soni": len(users),
+                "yaratildi": yaratildi,
+                "yangilandi": yangilandi,
+                "hammaga": not payload.user_ids,
+                **qiymatlar,
+            },
+        )
+    )
+    await db.commit()
+    return {"applied": len(users), "created": yaratildi, "updated": yangilandi}
+
+
 @router.put("/overtime-profiles/global", response_model=OvertimeProfileOut)
 async def upsert_global_overtime_profile(
     payload: OvertimeProfileIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)

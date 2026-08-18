@@ -40,6 +40,7 @@ import {
   usePositions,
   useSetFinePolicyEditor,
   useUpsertFinePolicy,
+  useBulkApplyOvertimeProfile,
   useUpsertGlobalOvertimeProfile,
   useUpsertOvertimeProfile,
   useUsers,
@@ -526,14 +527,21 @@ function OvertimeProfileDialog({
   initial,
   onClose,
 }: {
-  /** `{scope:"global"}` — barchaga default; `{scope:"user"}` — istisno. */
-  target: { scope: "global" } | { scope: "user"; userId: number } | null;
+  /** `{scope:"global"}` — barchaga default; `{scope:"user"}` — istisno;
+   *  `{scope:"bulk"}` — tanlangan bir necha xodimga bir vaqtda. */
+  target:
+    | { scope: "global" }
+    | { scope: "user"; userId: number }
+    | { scope: "bulk"; userIds: number[] }
+    | null;
   initial: OvertimeProfile | null;
   onClose: () => void;
 }) {
   const upsert = useUpsertOvertimeProfile();
   const upsertGlobal = useUpsertGlobalOvertimeProfile();
+  const bulkApply = useBulkApplyOvertimeProfile();
   const isGlobal = target?.scope === "global";
+  const isBulk = target?.scope === "bulk";
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [autoApprove, setAutoApprove] = useState(initial?.auto_approve ?? false);
   const [mode, setMode] = useState<"derived" | "fixed_rate">(initial?.mode ?? "derived");
@@ -565,6 +573,16 @@ function OvertimeProfileDialog({
     };
     const ok = { onSuccess: () => { toast.success("Profil saqlandi"); onClose(); } };
     if (target.scope === "global") upsertGlobal.mutate(data, ok);
+    else if (target.scope === "bulk")
+      bulkApply.mutate(
+        { userIds: target.userIds, data },
+        {
+          onSuccess: (r) => {
+            toast.success(`${r.applied} xodimga qo'llandi`);
+            onClose();
+          },
+        }
+      );
     else upsert.mutate({ userId: target.userId, data }, ok);
   };
 
@@ -573,12 +591,18 @@ function OvertimeProfileDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            {isGlobal ? "Hamma uchun qo'shimcha ish" : "Qo'shimcha ish profili (istisno)"}
+            {isGlobal
+              ? "Hamma uchun qo'shimcha ish"
+              : isBulk
+                ? `Tanlangan ${target && target.scope === "bulk" ? target.userIds.length : 0} xodimga qo'llash`
+                : "Qo'shimcha ish profili (istisno)"}
           </DialogTitle>
           <DialogDescription>
             {isGlobal
               ? "Bu sozlama BARCHA xodimga amal qiladi — yangi ishga kirganlar ham avtomatik qamrab olinadi."
-              : "Bu xodimga alohida qoida. Kiritilsa, hamma uchun sozlamadan USTUN turadi."}
+              : isBulk
+                ? "Har biriga ALOHIDA qator yoziladi. Ular umumiy sozlamadan ustun turadi."
+                : "Bu xodimga alohida qoida. Kiritilsa, hamma uchun sozlamadan USTUN turadi."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -660,8 +684,13 @@ function OvertimeProfileDialog({
             <Button type="button" variant="outline" onClick={onClose}>
               Bekor qilish
             </Button>
-            <Button type="submit" disabled={upsert.isPending || upsertGlobal.isPending}>
-              {upsert.isPending || upsertGlobal.isPending ? "Saqlanmoqda..." : "Saqlash"}
+            <Button
+              type="submit"
+              disabled={upsert.isPending || upsertGlobal.isPending || bulkApply.isPending}
+            >
+              {upsert.isPending || upsertGlobal.isPending || bulkApply.isPending
+                ? "Saqlanmoqda..."
+                : "Saqlash"}
             </Button>
           </DialogFooter>
         </form>
@@ -674,9 +703,15 @@ function OvertimeProfileTab() {
   const profilesQuery = useOvertimeProfiles();
   const usersQuery = useUsers();
   const [editing, setEditing] = useState<
-    { scope: "global" } | { scope: "user"; userId: number } | null
+    | { scope: "global" }
+    | { scope: "user"; userId: number }
+    | { scope: "bulk"; userIds: number[] }
+    | null
   >(null);
   const [addUserId, setAddUserId] = useState<number | null>(null);
+  // Ommaviy tanlov — egasining talabi: «hammaga birdaniga yoki bir nechta
+  // xodimga yoki bitta xodimga yoqish».
+  const [tanlangan, setTanlangan] = useState<Set<number>>(new Set());
 
   const rows = profilesQuery.data ?? [];
   // §3.2: profil endi IKKI DARAJALI. Global qator — barchaga default,
@@ -744,7 +779,12 @@ function OvertimeProfileTab() {
       ? null
       : editing.scope === "global"
         ? globalProfile
-        : (userProfiles.find((p) => p.user_id === editing.userId) ?? null);
+        : editing.scope === "bulk"
+          ? null
+          : (userProfiles.find((p) => p.user_id === editing.userId) ?? null);
+
+  const hammaXodim = (usersQuery.data ?? []).filter((u) => u.role !== "boss" && u.is_active);
+  const hammaTanlandi = tanlangan.size > 0 && tanlangan.size === hammaXodim.length;
 
   return (
     <div className="space-y-4">
@@ -785,6 +825,60 @@ function OvertimeProfileTab() {
           </div>
           <Button size="sm" onClick={() => setEditing({ scope: "global" })}>
             {globalProfile ? "O'zgartirish" : "Hammaga yoqish"}
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Ommaviy yoqish: hammaga / bir nechtaga / bittaga ── */}
+      <div className="rounded-xl border border-slate-200 p-4">
+        <div className="mb-2 text-sm font-medium">Tanlab yoqish</div>
+        <p className="mb-3 text-xs text-slate-500">
+          Xodimlarni belgilang va bitta bosishda profil yozing. Belgilanganlarga{" "}
+          <b>alohida qator</b> yoziladi — ular umumiy sozlamadan ustun turadi.
+        </p>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {hammaXodim.map((u) => {
+            const belgilangan = tanlangan.has(u.id);
+            return (
+              <button
+                key={u.id}
+                type="button"
+                onClick={() =>
+                  setTanlangan((oldSet) => {
+                    const yangi = new Set(oldSet);
+                    if (yangi.has(u.id)) yangi.delete(u.id);
+                    else yangi.add(u.id);
+                    return yangi;
+                  })
+                }
+                className={`rounded-full border px-3 py-1 text-xs transition ${
+                  belgilangan
+                    ? "border-slate-800 bg-slate-800 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                }`}
+              >
+                {u.full_name}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setTanlangan(hammaTanlandi ? new Set() : new Set(hammaXodim.map((u) => u.id)))
+            }
+          >
+            {hammaTanlandi ? "Belgilashni bekor qilish" : "Hammasini belgilash"}
+          </Button>
+          <Button
+            size="sm"
+            disabled={tanlangan.size === 0}
+            onClick={() => setEditing({ scope: "bulk", userIds: [...tanlangan] })}
+          >
+            Tanlanganlarga qo'llash
+            {tanlangan.size > 0 ? ` (${tanlangan.size})` : ""}
           </Button>
         </div>
       </div>
@@ -839,7 +933,10 @@ function OvertimeProfileTab() {
       <OvertimeProfileDialog
         target={editing}
         initial={editingProfile}
-        onClose={() => setEditing(null)}
+        onClose={() => {
+          setEditing(null);
+          setTanlangan(new Set());
+        }}
       />
     </div>
   );
