@@ -875,6 +875,8 @@ export interface FinePolicy {
   monthly_cap_percent: number | null;
   monthly_cap_amount: number | null;
   fine_applies_to: "bonus_first" | "net_salary";
+  /** Bonus ushlanmadan kam bo'lsa qoldiq nima bo'ladi (S-02). */
+  fine_remainder_mode: "drop" | "carry_next_month" | "from_salary";
   /** Issiq lid: necha daqiqada sovuydi (bo'sh = 10) va sovutgani uchun jarima. */
   hot_lead_cool_minutes: number | null;
   hot_lead_fine: number | null;
@@ -896,6 +898,7 @@ export interface FinePolicyInput {
   monthly_cap_percent?: number | null;
   monthly_cap_amount?: number | null;
   fine_applies_to?: "bonus_first" | "net_salary";
+  fine_remainder_mode?: "drop" | "carry_next_month" | "from_salary";
   hot_lead_cool_minutes?: number | null;
   hot_lead_fine?: number | null;
   is_active?: boolean;

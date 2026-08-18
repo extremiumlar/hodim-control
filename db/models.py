@@ -110,8 +110,26 @@ class AbsentMode(str, enum.Enum):
 
 
 class FineAppliesTo(str, enum.Enum):
-    bonus_first = "bonus_first"  # avval bonusdan, qolgani oylikdan
-    net_salary = "net_salary"  # to'g'ridan-to'g'ri oylikdan (QAROR — default, 8.4-band)
+    """Ushlanma QAYERDAN olinadi.
+
+    2026-08-18 (yangi TZ 2.1, S-02): default `net_salary` dan `bonus_first`
+    ga o'zgartirildi. Sabab HUQUQIY — ish haqidan to'g'ridan-to'g'ri ushlab
+    qolish O'zbekiston Mehnat kodeksida cheklangan; bonus esa rag'bat to'lovi
+    va uni kamaytirish xavfsizroq."""
+
+    bonus_first = "bonus_first"  # avval bonusdan, qoldig'i `fine_remainder_mode` bo'yicha
+    net_salary = "net_salary"  # to'g'ridan-to'g'ri oylikdan
+
+
+class FineRemainderMode(str, enum.Enum):
+    """`bonus_first` rejimida bonus ushlanmadan KAM bo'lsa qoldiq nima bo'ladi.
+
+    Bu BIZNES qarori va vaqt o'tib o'zgarishi mumkin — shuning uchun kodda
+    qotirilmaydi, HR panelidan tanlanadi (yangi TZ, agent eslatmasi 3-band)."""
+
+    drop = "drop"  # qoldiq umuman ushlanmaydi — DEFAULT, huquqiy jihatdan eng xavfsiz
+    carry_next_month = "carry_next_month"  # keyingi oy bonusidan olinadi
+    from_salary = "from_salary"  # oylikdan ushlanadi — faqat qonun ruxsat bergan hollarda
 
 
 class OvertimeEntryStatus(str, enum.Enum):
@@ -1733,7 +1751,14 @@ class FinePolicy(Base):
     early_leave_per_minute: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     monthly_cap_percent: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     monthly_cap_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
-    fine_applies_to: Mapped[str] = mapped_column(String(20), default=FineAppliesTo.net_salary.value)
+    fine_applies_to: Mapped[str] = mapped_column(
+        String(20), default=FineAppliesTo.bonus_first.value, server_default="bonus_first"
+    )
+    # Bonus ushlanmadan kam bo'lsa qoldiq nima bo'ladi — HR panelidan
+    # tanlanadi. Default `drop`: ish haqiga UMUMAN tegilmaydi.
+    fine_remainder_mode: Mapped[str] = mapped_column(
+        String(20), default=FineRemainderMode.drop.value, server_default="drop"
+    )
     # ── Issiq lid (speed-to-lead) qoidasi — egasining talabi 2026-08-06 ──
     # Lid CRM'da yaratilganidan keyin shuncha daqiqa ichida aloqa qo'ng'irog'i
     # bo'lmasa — lid "sovutilgan" hisoblanadi: guruhga chiqadi va shu summa

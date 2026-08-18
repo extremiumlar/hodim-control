@@ -7372,6 +7372,246 @@ def test_future_days_rule() -> None:
           jarima["absent_days"] == 0 and float(jarima["amount"]) == 0.0, f"={jarima}")
 
 
+def test_fine_from_bonus() -> None:
+    """S-02 (yangi TZ 2.1) — ushlanma avval BONUSDAN, qoldiq HR qoidasiga ko'ra.
+
+    NEGA: ushlanma to'g'ridan-to'g'ri ish haqidan olinardi
+    (`fine_applies_to='net_salary'`). TZ bo'yicha bu O'zbekiston Mehnat
+    kodeksiga zid. Endi default `bonus_first`, qoldiq esa panelda tanlanadi.
+
+    Bu blok `split_fine` ni SOF funksiya sifatida sinaydi — 3 rejim x 3 holat.
+    """
+    from decimal import Decimal as _D
+    from types import SimpleNamespace as _NS
+
+    from api.services import payroll as pr
+
+    print("\n" + "=" * 60)
+    print("S-02: USHLANMA AVVAL BONUSDAN")
+    print("=" * 60)
+
+    def qoida(applies="bonus_first", remainder="drop"):
+        return _NS(fine_applies_to=applies, fine_remainder_mode=remainder)
+
+    NOL = _D("0")
+    USHLANMA = _D("300000")
+
+    # ── Holat 1: bonus > ushlanma (hammasi bonusdan) ──
+    for rejim in ("drop", "carry_next_month", "from_salary"):
+        r = pr.split_fine(USHLANMA, _D("500000"), NOL, qoida(remainder=rejim))
+        check(f"S-02 [{rejim}] bonus > ushlanma -> hammasi bonusdan",
+              r["from_bonus"] == USHLANMA and r["from_salary"] == NOL
+              and r["carried_out"] == NOL and r["dropped"] == NOL, f"={r}")
+
+    # ── Holat 2: bonus < ushlanma (qoldiq bor) ──
+    r = pr.split_fine(USHLANMA, _D("100000"), NOL, qoida(remainder="drop"))
+    check("S-02 [drop] bonus < ushlanma -> qoldiq OLINMAYDI",
+          r["from_bonus"] == _D("100000") and r["from_salary"] == NOL
+          and r["dropped"] == _D("200000") and r["carried_out"] == NOL, f"={r}")
+
+    r = pr.split_fine(USHLANMA, _D("100000"), NOL, qoida(remainder="carry_next_month"))
+    check("S-02 [carry] bonus < ushlanma -> qoldiq KEYINGI OYGA",
+          r["from_bonus"] == _D("100000") and r["from_salary"] == NOL
+          and r["carried_out"] == _D("200000") and r["dropped"] == NOL, f"={r}")
+
+    r = pr.split_fine(USHLANMA, _D("100000"), NOL, qoida(remainder="from_salary"))
+    check("S-02 [from_salary] bonus < ushlanma -> qoldiq OYLIKDAN",
+          r["from_bonus"] == _D("100000") and r["from_salary"] == _D("200000")
+          and r["carried_out"] == NOL and r["dropped"] == NOL, f"={r}")
+
+    # ── Holat 3: bonus = 0 ──
+    r = pr.split_fine(USHLANMA, NOL, NOL, qoida(remainder="drop"))
+    check("S-02 [drop] bonus = 0 -> ushlanma UMUMAN olinmaydi",
+          r["from_bonus"] == NOL and r["from_salary"] == NOL
+          and r["dropped"] == USHLANMA, f"={r}")
+
+    r = pr.split_fine(USHLANMA, NOL, NOL, qoida(remainder="carry_next_month"))
+    check("S-02 [carry] bonus = 0 -> hammasi keyingi oyga",
+          r["carried_out"] == USHLANMA and r["from_salary"] == NOL, f"={r}")
+
+    r = pr.split_fine(USHLANMA, NOL, NOL, qoida(remainder="from_salary"))
+    check("S-02 [from_salary] bonus = 0 -> hammasi oylikdan",
+          r["from_salary"] == USHLANMA and r["from_bonus"] == NOL, f"={r}")
+
+    # ── Eski rejim buzilmagan (regressiya) ──
+    r = pr.split_fine(USHLANMA, _D("500000"), NOL, qoida(applies="net_salary"))
+    check("S-02: `net_salary` rejimi avvalgidek — hammasi oylikdan",
+          r["from_salary"] == USHLANMA and r["from_bonus"] == NOL, f"={r}")
+
+    # ── Qoida umuman yo'q -> eski (xavfsiz) xatti-harakat ──
+    r = pr.split_fine(USHLANMA, _D("500000"), NOL, None)
+    check("S-02: qoida yo'q bo'lsa oylikdan (eski xatti-harakat)",
+          r["from_salary"] == USHLANMA, f"={r}")
+
+    # ── O'tgan oydan ko'chgan qoldiq shu oyda olinadi ──
+    r = pr.split_fine(_D("50000"), _D("500000"), _D("200000"), qoida(remainder="carry_next_month"))
+    check("S-02: o'tgan oy qoldig'i shu oy bonusidan olinadi (50k+200k)",
+          r["from_bonus"] == _D("250000") and r["carried_out"] == NOL, f"={r}")
+
+    r = pr.split_fine(_D("50000"), _D("100000"), _D("200000"), qoida(remainder="carry_next_month"))
+    check("S-02: qoldiq yana yetmasa — qolgani KEYINGI oyga (150k)",
+          r["from_bonus"] == _D("100000") and r["carried_out"] == _D("150000"), f"={r}")
+
+    # ── Ushlanma yo'q bo'lsa hech narsa qilinmaydi ──
+    r = pr.split_fine(NOL, _D("500000"), NOL, qoida())
+    check("S-02: ushlanma 0 -> hamma qiymat 0",
+          all(v == NOL for v in r.values()), f"={r}")
+
+    # ── Yaxlit tekshiruv: hech qachon KO'PROQ olinmaydi ──
+    for bonus in (NOL, _D("100000"), _D("500000")):
+        for rejim in ("drop", "carry_next_month", "from_salary"):
+            r = pr.split_fine(USHLANMA, bonus, _D("70000"), qoida(remainder=rejim))
+            jami = r["from_bonus"] + r["from_salary"] + r["carried_out"] + r["dropped"]
+            check(f"S-02 [{rejim}, bonus={int(bonus)}] taqsimot yig'indisi buzilmadi",
+                  jami == USHLANMA + _D("70000"), f"jami={jami}, kutilgan={USHLANMA + _D('70000')}")
+
+
+def test_fine_from_bonus_e2e() -> None:
+    """S-02 — PAYSLIP darajasida: ushlanma bonusdan olinadimi, qoldiq
+    keyingi oyga BIR MARTA ko'chadimi, qatorlar yig'indisi `net` ga tengmi.
+
+    `split_fine` sof funksiyasi alohida sinaladi (`test_fine_from_bonus`);
+    bu yerda ZANJIR tekshiriladi — o'tgan oy payslip'idan qoldiqni o'qish
+    faqat shu yo'lda ishlaydi.
+    """
+    import asyncio
+    from decimal import Decimal as _D
+
+    print("\n" + "=" * 60)
+    print("S-02: PAYSLIP ZANJIRI (bonus_first + qoldiq)")
+    print("=" * 60)
+
+    OY1, OY2 = "2019-03", "2019-04"
+
+    async def _run():
+        from sqlalchemy import delete as _del, select as _sel
+
+        from api.services import payroll as pr
+        from db.base import async_session
+        from db.models import (
+            Attendance, Bonus, FinePolicy, Payslip, PayslipItem, User,
+            WorkScheduleOverride, WorkScheduleWeekly,
+        )
+
+        async with async_session() as s2:
+            # Eski qoldiqni tozalash (avvalgi qulagan yurishdan)
+            eski = list(await s2.scalars(_sel(User.id).where(User.full_name == "T-FineBonus")))
+            if eski:
+                pids = list(await s2.scalars(_sel(Payslip.id).where(Payslip.user_id.in_(eski))))
+                if pids:
+                    await s2.execute(_del(PayslipItem).where(PayslipItem.payslip_id.in_(pids)))
+                for M in (Payslip, Bonus, Attendance, WorkScheduleOverride, WorkScheduleWeekly):
+                    await s2.execute(_del(M).where(M.user_id.in_(eski)))
+                await s2.execute(_del(FinePolicy).where(FinePolicy.scope == "user",
+                                                        FinePolicy.scope_id.in_(eski)))
+                await s2.execute(_del(User).where(User.id.in_(eski)))
+                await s2.commit()
+
+            u = User(telegram_id=999700501, full_name="T-FineBonus", role="employee",
+                     bot_started=True, is_active=True)
+            s2.add(u)
+            await s2.flush()
+
+            for wd in range(7):
+                s2.add(WorkScheduleWeekly(user_id=u.id, weekday=wd, is_working=False))
+            kunlar = [date(2019, 3, 4), date(2019, 3, 5), date(2019, 3, 6)]
+            for d in kunlar:
+                s2.add(WorkScheduleOverride(user_id=u.id, date=d, is_working=True,
+                                            start_time="09:00", end_time="18:00"))
+                s2.add(Attendance(user_id=u.id, date=d, status="late", late_minutes=60,
+                                  worked_minutes=420))
+            # Ushlanma: 3 kun x 100 000 = 300 000. Bonus 150 000 -> qoldiq 150 000.
+            s2.add(FinePolicy(scope="user", scope_id=u.id, is_active=True,
+                              free_late_minutes_per_month=0, fine_mode="per_day",
+                              fine_per_day=100_000, absent_mode="none",
+                              monthly_cap_amount=1_000_000,
+                              fine_applies_to="bonus_first",
+                              fine_remainder_mode="carry_next_month"))
+            s2.add(Bonus(user_id=u.id, period=OY1, amount=150_000, breakdown={}))
+            s2.add(Bonus(user_id=u.id, period=OY2, amount=500_000, breakdown={}))
+            await s2.commit()
+            return u.id
+
+    async def _hisobla(uid, period):
+        from sqlalchemy import select as _sel
+
+        from api.services import payroll as pr
+        from db.base import async_session
+        from db.models import Payslip, PayslipItem
+
+        async with async_session() as s2:
+            await pr.run_payroll(s2, period, user_ids=[uid])
+        async with async_session() as s2:
+            slip = await s2.scalar(_sel(Payslip).where(Payslip.user_id == uid,
+                                                       Payslip.period == period))
+            items = list(await s2.scalars(
+                _sel(PayslipItem).where(PayslipItem.payslip_id == slip.id)
+            ))
+            return slip, items
+
+    uid = None
+    try:
+        uid = asyncio.run(_run())
+
+        # ── 1-oy: ushlanma 300k, bonus 150k -> 150k bonusdan, 150k keyingi oyga
+        slip1, items1 = asyncio.run(_hisobla(uid, OY1))
+        bd1 = slip1.breakdown or {}
+        check("S-02 e2e: 150 000 bonusdan olindi",
+              abs(bd1.get("fine_from_bonus", 0) - 150_000) < 1, f"={bd1.get('fine_from_bonus')}")
+        check("S-02 e2e: oylikdan HECH NARSA olinmadi",
+              abs(bd1.get("fine_from_salary", 0)) < 1, f"={bd1.get('fine_from_salary')}")
+        check("S-02 e2e: 150 000 keyingi oyga ko'chdi",
+              abs(bd1.get("fine_carried_out", 0) - 150_000) < 1, f"={bd1.get('fine_carried_out')}")
+        check("S-02 e2e: payslip'da «keyingi oyga o'tdi» qatori bor",
+              any(i.kind == "fine_waived" for i in items1),
+              f"={[i.kind for i in items1]}")
+        check("S-02 e2e: ushlanma qatorida MANBA ko'rsatilgan",
+              any("bonusdan" in (i.label or "") for i in items1),
+              f"={[i.label for i in items1]}")
+        jami1 = sum(float(i.amount) for i in items1)
+        check("S-02 e2e: qatorlar yig'indisi = net (1-oy)",
+              abs(jami1 - float(slip1.net)) <= 50, f"qatorlar={jami1}, net={slip1.net}")
+
+        # ── 2-oy: ushlanma yo'q, lekin o'tgan oy qoldig'i 150k olinadi
+        slip2, items2 = asyncio.run(_hisobla(uid, OY2))
+        bd2 = slip2.breakdown or {}
+        check("S-02 e2e: o'tgan oy qoldig'i 2-oyda o'qildi",
+              abs(bd2.get("fine_carried_in", 0) - 150_000) < 1, f"={bd2.get('fine_carried_in')}")
+        check("S-02 e2e: qoldiq 2-oy bonusidan olindi",
+              abs(bd2.get("fine_from_bonus", 0) - 150_000) < 1, f"={bd2.get('fine_from_bonus')}")
+        check("S-02 e2e: 2-oyda yangi qoldiq qolmadi",
+              abs(bd2.get("fine_carried_out", 0)) < 1, f"={bd2.get('fine_carried_out')}")
+        check("S-02 e2e: 2-oy payslip'ida «o'tgan oydan» qatori bor",
+              any(i.kind == "fine_carry_in" for i in items2), f"={[i.kind for i in items2]}")
+        jami2 = sum(float(i.amount) for i in items2)
+        check("S-02 e2e: qatorlar yig'indisi = net (2-oy)",
+              abs(jami2 - float(slip2.net)) <= 50, f"qatorlar={jami2}, net={slip2.net}")
+
+        # ── IDEMPOTENT: 2-oyni qayta hisoblasak qoldiq IKKI MARTA olinmasin
+        net_oldin = float(slip2.net)
+        slip2b, _ = asyncio.run(_hisobla(uid, OY2))
+        check("S-02 e2e: qayta hisoblanganda qoldiq IKKI MARTA olinmaydi",
+              abs(float(slip2b.net) - net_oldin) < 1,
+              f"birinchi={net_oldin}, ikkinchi={slip2b.net}")
+    except Exception:
+        check("S-02 e2e (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        if uid is not None:
+            conn = db()
+            cur = conn.cursor()
+            cur.execute("delete from payslip_items where payslip_id in"
+                        " (select id from payslips where user_id=?)", (uid,))
+            for t in ("payslips", "bonuses", "attendance", "work_schedule_override",
+                      "work_schedule_weekly"):
+                cur.execute(f"delete from {t} where user_id=?", (uid,))
+            cur.execute("delete from fine_policies where scope='user' and scope_id=?", (uid,))
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from users where id=?", (uid,))
+            cur.execute("delete from payroll_periods where period in (?,?)", (OY1, OY2))
+            conn.commit()
+            conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -7449,6 +7689,16 @@ def main() -> None:
         test_future_days_rule()
     except Exception:
         print("S-01 kelajak kunlari testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_fine_from_bonus()
+    except Exception:
+        print("S-02 ushlanma testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_fine_from_bonus_e2e()
+    except Exception:
+        print("S-02 e2e testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

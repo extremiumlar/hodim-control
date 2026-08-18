@@ -36,8 +36,10 @@ from db.models import (
     Bonus,
     ExcusedDay,
     ExcusedStatus,
+    FineAppliesTo,
     FineMode,
     FinePolicy,
+    FineRemainderMode,
     NormHoursSource,
     OvertimeEntry,
     OvertimeEntryStatus,
@@ -494,6 +496,64 @@ def apply_fine_cap(late_amount: Decimal, absent_amount: Decimal, base_amount: De
     return late_amount * ratio, absent_amount * ratio, raw_total, True
 
 
+def split_fine(
+    total_fine: Decimal,
+    bonus_amount: Decimal,
+    carried_in: Decimal,
+    policy: FinePolicy | None,
+) -> dict:
+    """Ushlanma QAYERDAN olinishini taqsimlaydi (yangi TZ 2.1 / S-02).
+
+    Kirish:
+      `total_fine`  — shu oyning ushlanmasi (cap QO'LLANGANDAN KEYIN);
+      `bonus_amount`— shu oy bonusi (to'liq, kamaytirilmagan);
+      `carried_in`  — o'tgan oydan ko'chib kelgan qoldiq (`carry_next_month`).
+
+    Chiqish: `from_bonus`, `from_salary`, `carried_out`, `dropped`.
+
+    QOIDA:
+      • `net_salary` — hammasi oylikdan (eski xatti-harakat);
+      • `bonus_first` — avval bonusdan, bonus yetmasa qoldiq
+        `fine_remainder_mode` bo'yicha:
+          `drop`             → umuman ushlanmaydi (DEFAULT, eng xavfsiz);
+          `carry_next_month` → keyingi oy bonusiga o'tadi;
+          `from_salary`      → oylikdan ushlanadi.
+
+    ⚠️ `carried_in` ATAYLAB bonusdan oldin emas, BIRGA hisoblanadi: o'tgan
+    oyning qoldig'i ham, shu oyning ushlanmasi ham bir xil manbadan (bonus)
+    olinadi. Aks holda tartib qaysi biri «omadli» bo'lishini hal qilib
+    qo'yardi va natija tushuntirib bo'lmas holga kelardi.
+
+    ⚠️ CAP bu funksiyaga KIRMAYDI — u bazadan hisoblanadi va chaqiruvchida
+    allaqachon qo'llangan (S-02 «Tuzoq 1»). Bonusdan olish cheklovni
+    kengaytirmaydi."""
+    nol = Decimal("0")
+    yigindi = total_fine + carried_in
+    if yigindi <= 0:
+        return {"from_bonus": nol, "from_salary": nol, "carried_out": nol, "dropped": nol}
+
+    rejim = policy.fine_applies_to if policy is not None else FineAppliesTo.net_salary.value
+    if rejim != FineAppliesTo.bonus_first.value:
+        return {"from_bonus": nol, "from_salary": yigindi, "carried_out": nol, "dropped": nol}
+
+    from_bonus = min(bonus_amount, yigindi) if bonus_amount > 0 else nol
+    qoldiq = yigindi - from_bonus
+    if qoldiq <= 0:
+        return {"from_bonus": from_bonus, "from_salary": nol, "carried_out": nol, "dropped": nol}
+
+    qoldiq_rejimi = (
+        policy.fine_remainder_mode
+        if policy is not None and getattr(policy, "fine_remainder_mode", None)
+        else FineRemainderMode.drop.value
+    )
+    if qoldiq_rejimi == FineRemainderMode.from_salary.value:
+        return {"from_bonus": from_bonus, "from_salary": qoldiq, "carried_out": nol, "dropped": nol}
+    if qoldiq_rejimi == FineRemainderMode.carry_next_month.value:
+        return {"from_bonus": from_bonus, "from_salary": nol, "carried_out": qoldiq, "dropped": nol}
+    # `drop` — default va noma'lum qiymat uchun ham (xavfsiz tomon)
+    return {"from_bonus": from_bonus, "from_salary": nol, "carried_out": nol, "dropped": qoldiq}
+
+
 def compute_base(
     rate, first_rate, days: list[dict], period_start: date, policy: FinePolicy | None = None
 ) -> tuple[Decimal, dict | None, dict | None]:
@@ -821,6 +881,27 @@ async def build_payslip(
     adj_plus = sum((_dec(a.amount) for a in adjustments if a.kind == PayrollAdjustmentKind.plus.value), Decimal("0"))
     adj_minus = sum((_dec(a.amount) for a in adjustments if a.kind == PayrollAdjustmentKind.minus.value), Decimal("0"))
 
+    # ── S-02: ushlanma QAYERDAN olinadi ──
+    # O'tgan oy `carry_next_month` rejimida qoldiq qoldirgan bo'lsa, u shu
+    # oyga ko'chadi. Manba — o'tgan oy payslip'ining `breakdown` i
+    # (`PayrollAdjustment` ATAYLAB ishlatilmaydi: u PUL yozuvi, bu esa
+    # hisobning oraliq holati).
+    #
+    # IDEMPOTENT: shu oy qayta-qayta hisoblansa ham har safar O'SHA
+    # o'tgan oy qatoridan o'qiydi — qoldiq ikki marta olinmaydi.
+    carried_in = Decimal("0")
+    if policy is not None and policy.fine_applies_to == FineAppliesTo.bonus_first.value:
+        oldingi = previous_period(period_start)
+        oldingi_slip = await db.scalar(
+            select(Payslip).where(Payslip.user_id == user.id, Payslip.period == oldingi)
+        )
+        if oldingi_slip is not None and oldingi_slip.breakdown:
+            carried_in = _dec(oldingi_slip.breakdown.get("fine_carried_out"))
+
+    taqsim = split_fine(late_fine + absent_fine, bonus_amount, carried_in, policy)
+    fine_from_bonus = taqsim["from_bonus"]
+    fine_from_salary = taqsim["from_salary"]
+
     gross = round_money(base_amount + overtime["amount"] + bonus_amount + adj_plus)
     # ⭐ MA'LUM CHEKLOV: `fine_applies_to` (bonus_first/net_salary) `net` YAKUNIY
     # summasiga TA'SIR QILMAYDI — matematik jihatdan bonusdan avval yechish yoki
@@ -833,7 +914,20 @@ async def build_payslip(
     # `bonus_first` tanlansa HAM net to'g'ri chiqadi, lekin item-darajasidagi
     # "avval bonusdan yechildi" ko'rinishi hali qurilmagan — Bosqich 3/4da HR
     # shu rejimni tanlasa qo'shiladi.
-    net = round_money(base_amount + overtime["amount"] + bonus_amount + adj_plus - late_fine - absent_fine - adj_minus)
+    # ⚠️ ENDI `fine_applies_to` YAKUNIY summaga TA'SIR QILADI (ilgari qilmasdi).
+    # Sabab: `bonus_first` rejimida bonus yetmasa qoldiq `drop` yoki
+    # `carry_next_month` bo'lishi mumkin — ya'ni shu oyda UMUMAN ushlanmaydi.
+    # Shuning uchun ayirma `late_fine + absent_fine` emas, TAQSIMLANGAN
+    # qismlar yig'indisi.
+    net = round_money(
+        base_amount
+        + overtime["amount"]
+        + bonus_amount
+        + adj_plus
+        - fine_from_bonus
+        - fine_from_salary
+        - adj_minus
+    )
 
     items: list[dict] = []
     if base_item is not None:
@@ -870,11 +964,23 @@ async def build_payslip(
         )
     if bonus_amount > 0:
         items.append({"kind": "bonus", "label": "Bonus (KPI)", "quantity": None, "rate": None, "amount": bonus_amount})
+    # ── Ushlanma qatorlari (S-02) ──
+    # Manba qator MATNIDA ko'rsatiladi: xodim «pulim qayerdan kesildi»
+    # degan savolga payslip'ning o'zidan javob topsin.
+    if fine_from_bonus > 0 and fine_from_salary > 0:
+        manba = " (bonus va oylikdan)"
+    elif fine_from_bonus > 0:
+        manba = " (bonusdan)"
+    elif fine_from_salary > 0:
+        manba = " (oylikdan)"
+    else:
+        manba = ""
+
     if late_fine > 0:
         items.append(
             {
                 "kind": "fine_late",
-                "label": f"Kechikish jarimasi — {late['fined_days']} kun",
+                "label": f"Kechikish ushlanmasi — {late['fined_days']} kun{manba}",
                 "quantity": Decimal(late["fined_days"]),
                 "rate": _dec(policy.fine_per_day) if policy and policy.fine_per_day is not None else None,
                 "amount": -late_fine,
@@ -884,10 +990,40 @@ async def build_payslip(
         items.append(
             {
                 "kind": "fine_absent",
-                "label": f"Kelmagan kun — {absent['absent_days']} kun",
+                "label": f"Kelmagan kun ushlanmasi — {absent['absent_days']} kun{manba}",
                 "quantity": Decimal(absent["absent_days"]),
                 "rate": _dec(policy.absent_fine) if policy and policy.absent_fine is not None else None,
                 "amount": -absent_fine,
+            }
+        )
+    # O'tgan oydan ko'chib kelgan qoldiq — ALOHIDA qator, aks holda summa
+    # «qayerdan chiqdi» degan savol tug'ilardi.
+    if carried_in > 0:
+        items.append(
+            {
+                "kind": "fine_carry_in",
+                "label": f"O'tgan oydan qolgan ushlanma{manba}",
+                "quantity": None,
+                "rate": None,
+                "amount": -carried_in,
+            }
+        )
+    # Olinmagan qism — MUSBAT qator. Busiz qatorlar yig'indisi `net` ga teng
+    # bo'lmay qolardi (bu invariant testda qo'riqlanadi).
+    olinmagan = taqsim["carried_out"] + taqsim["dropped"]
+    if olinmagan > 0:
+        izoh = (
+            "Ushlanma qoldig'i keyingi oyga o'tdi"
+            if taqsim["carried_out"] > 0
+            else "Ushlanma qoldig'i olinmadi (bonus yetmadi)"
+        )
+        items.append(
+            {
+                "kind": "fine_waived",
+                "label": izoh,
+                "quantity": None,
+                "rate": None,
+                "amount": olinmagan,
             }
         )
     for a in adjustments:
@@ -930,6 +1066,16 @@ async def build_payslip(
         "overtime_profile": _profile_snapshot(overtime_profile),
         "rate_id": rate.id if rate is not None else None,
         "fine_applies_to": policy.fine_applies_to if policy else None,
+        # S-02 — ushlanma taqsimoti. `fine_carried_out` KEYINGI oy hisobida
+        # o'qiladi (`carried_in`), shuning uchun nomi aniq.
+        "fine_remainder_mode": (
+            getattr(policy, "fine_remainder_mode", None) if policy else None
+        ),
+        "fine_from_bonus": float(fine_from_bonus),
+        "fine_from_salary": float(fine_from_salary),
+        "fine_carried_in": float(carried_in),
+        "fine_carried_out": float(taqsim["carried_out"]),
+        "fine_dropped": float(taqsim["dropped"]),
         "cap_applied": cap_applied,
         "raw_fine_total": float(raw_fine_total),
         "is_interim": future_days > 0,

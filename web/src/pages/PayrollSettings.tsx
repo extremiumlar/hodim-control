@@ -62,7 +62,8 @@ const emptyPolicyDraft = (): FinePolicyInput => ({
   early_leave_enabled: false,
   monthly_cap_percent: 20,
   monthly_cap_amount: null,
-  fine_applies_to: "net_salary",
+  fine_applies_to: "bonus_first",
+  fine_remainder_mode: "drop",
   // Issiq lid (2026-08-06, egasining talabi): boshlang'ich 10 daqiqa / 0 so'm
   hot_lead_cool_minutes: 10,
   hot_lead_fine: 0,
@@ -99,6 +100,7 @@ function FinePolicyDialog({
         monthly_cap_percent: initial.monthly_cap_percent,
         monthly_cap_amount: initial.monthly_cap_amount,
         fine_applies_to: initial.fine_applies_to,
+        fine_remainder_mode: initial.fine_remainder_mode ?? "drop",
         hot_lead_cool_minutes: initial.hot_lead_cool_minutes ?? 10,
         hot_lead_fine: initial.hot_lead_fine ?? 0,
         is_active: initial.is_active,
@@ -240,7 +242,7 @@ function FinePolicyDialog({
               />
             </div>
             <div>
-              <Label>Jarima qayerdan yechiladi</Label>
+              <Label>Ushlanma qayerdan olinadi</Label>
               <Select
                 value={draft.fine_applies_to}
                 onValueChange={(v) => setDraft((d) => ({ ...d, fine_applies_to: v as FinePolicyInput["fine_applies_to"] }))}
@@ -249,12 +251,57 @@ function FinePolicyDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="bonus_first">Avval bonusdan (tavsiya etiladi)</SelectItem>
                   <SelectItem value="net_salary">To'g'ridan-to'g'ri oylikdan</SelectItem>
-                  <SelectItem value="bonus_first">Avval bonusdan</SelectItem>
                 </SelectContent>
               </Select>
+              {draft.fine_applies_to === "net_salary" && (
+                <p className="mt-1 text-xs text-rose-700">
+                  ⚠️ Ish haqidan to'g'ridan-to'g'ri ushlab qolish qonunda cheklangan.
+                  Odatda <b>avval bonusdan</b> tanlanadi.
+                </p>
+              )}
             </div>
           </div>
+
+          {/* S-02: bonus ushlanmadan kam bo'lsa qoldiq nima bo'ladi. Bu
+              BIZNES qarori — kodda qotirilmaydi, shuning uchun panelda. */}
+          {draft.fine_applies_to === "bonus_first" && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Label>Bonus yetmasa, qolgan qismi nima bo'ladi</Label>
+              <Select
+                value={draft.fine_remainder_mode ?? "drop"}
+                onValueChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    fine_remainder_mode: v as FinePolicyInput["fine_remainder_mode"],
+                  }))
+                }
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="drop">Umuman olinmaydi</SelectItem>
+                  <SelectItem value="carry_next_month">Keyingi oy bonusidan olinadi</SelectItem>
+                  <SelectItem value="from_salary">Oylikdan ushlanadi</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-slate-600">
+                {draft.fine_remainder_mode === "carry_next_month"
+                  ? "Qoldiq keyingi oyga o'tadi va o'sha oy bonusidan olinadi. Ish haqiga tegilmaydi."
+                  : draft.fine_remainder_mode === "from_salary"
+                    ? "Qoldiq to'g'ridan-to'g'ri ish haqidan ushlanadi."
+                    : "Bonus qancha bo'lsa shuncha olinadi, qolgani hisobdan chiqariladi. Ish haqiga tegilmaydi."}
+              </p>
+              {draft.fine_remainder_mode === "from_salary" && (
+                <p className="mt-2 rounded border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs text-rose-800">
+                  🔴 <b>Diqqat:</b> ish haqidan ushlab qolish faqat qonunda nazarda tutilgan
+                  hollarda mumkin. Bu tanlov <b>auditga yoziladi</b> (kim va qachon yoqqani).
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Issiq lid qoidasi — egasining talabi (2026-08-06). Faqat GLOBAL
               qoidada o'qiladi (backend: hot_lead.hot_lead_rules), shuning uchun
@@ -401,7 +448,13 @@ function FinePolicyTab() {
       id: "applies_to",
       header: "Manba",
       cell: ({ row }) =>
-        row.original.fine_applies_to === "bonus_first" ? "Avval bonusdan" : "To'g'ridan-to'g'ri oylikdan",
+        row.original.fine_applies_to === "bonus_first"
+          ? `Avval bonusdan · qoldiq: ${
+              { drop: "olinmaydi", carry_next_month: "keyingi oyga", from_salary: "oylikdan" }[
+                row.original.fine_remainder_mode ?? "drop"
+              ]
+            }`
+          : "To'g'ridan-to'g'ri oylikdan",
     },
     {
       id: "actions",

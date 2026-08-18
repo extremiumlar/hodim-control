@@ -277,6 +277,27 @@ async def upsert_policy(
             after={"scope": payload.scope, "scope_id": payload.scope_id, **payload.model_dump()},
         )
     )
+    # S-02: ish haqidan ushlab qolish HUQUQIY jihatdan xavfli tanlov —
+    # alohida, qidirsa darhol topiladigan audit yozuvi qoldiriladi.
+    # (Umumiy `fine_policy_upserted` yozuvi ichida ko'milib ketmasin: bu
+    # aynan tekshiruvda so'raladigan qaror.)
+    if payload.fine_remainder_mode == "from_salary" and (
+        before is None or before.get("fine_remainder_mode") != "from_salary"
+    ):
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="fine_remainder_from_salary_enabled",
+                target_user_id=payload.scope_id if payload.scope == "user" else None,
+                before={"fine_remainder_mode": before.get("fine_remainder_mode") if before else None},
+                after={
+                    "scope": payload.scope,
+                    "scope_id": payload.scope_id,
+                    "fine_remainder_mode": "from_salary",
+                    "izoh": "Ushlanma qoldig'i ISH HAQIDAN ushlanadigan qilib qo'yildi",
+                },
+            )
+        )
     await db.commit()
     await db.refresh(policy)
     row = FinePolicyOut.model_validate(policy)

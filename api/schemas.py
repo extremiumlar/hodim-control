@@ -973,7 +973,11 @@ class FinePolicyIn(BaseModel):
     early_leave_per_minute: float | None = Field(default=None, ge=0)
     monthly_cap_percent: float | None = Field(default=None, ge=0, le=100)
     monthly_cap_amount: float | None = Field(default=None, ge=0)
-    fine_applies_to: str = "net_salary"
+    # S-02 (huquqiy): default `bonus_first` — ushlanma avval BONUSDAN.
+    fine_applies_to: str = "bonus_first"
+    # Bonus yetmasa qoldiq nima bo'ladi. Default `drop` — ish haqiga
+    # umuman tegilmaydi (eng xavfsiz).
+    fine_remainder_mode: str = "drop"
     # Issiq lid qoidasi (2026-08-06): lid necha daqiqada "sovuydi" va har bir
     # sovutilgan lid uchun jarima. Faqat GLOBAL qoidada o'qiladi (hot_lead.py:
     # hot_lead_rules) — lavozim/xodim darajasida hozircha ishlatilmaydi.
@@ -1009,6 +1013,13 @@ class FinePolicyIn(BaseModel):
             raise ValueError("noto'g'ri fine_applies_to")
         return v
 
+    @field_validator("fine_remainder_mode")
+    @classmethod
+    def _valid_remainder_mode(cls, v: str) -> str:
+        if v not in {"drop", "carry_next_month", "from_salary"}:
+            raise ValueError("noto'g'ri fine_remainder_mode")
+        return v
+
     @model_validator(mode="after")
     def _check_combination(self):
         if self.scope == "global":
@@ -1042,6 +1053,7 @@ class FinePolicyOut(BaseModel):
     monthly_cap_percent: float | None
     monthly_cap_amount: float | None
     fine_applies_to: str
+    fine_remainder_mode: str = "drop"
     hot_lead_cool_minutes: int | None = None
     hot_lead_fine: float | None = None
     is_active: bool
