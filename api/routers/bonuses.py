@@ -5,8 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
-from api.routers.payroll import can_view_payroll
+from api.deps import assert_can_view, get_current_user, get_db, require_roles, verify_bot_secret
 from api.schemas import BonusMyOut, BonusOut
 from api.services.bonus import calculate_bonus
 from api.notify import notify_user
@@ -132,14 +131,12 @@ async def list_bonuses(
     # (`actor` hatto `_` ga bog'langan va ishlatilmasdi) — ya'ni ROP istalgan
     # `user_id` ni berib, jumladan Boshliqning bonus summasi va breakdown'ini
     # o'qib olardi. Bonus — oylik bilan bir xil darajadagi ma'lumot,
-    # shuning uchun qamrov ham `can_view_payroll` bilan bir xil.
+    # shuning uchun qamrov ham oylik bilan bir xil (S-06 qatlami).
+    # S-06: markazlashgan qamrov qatlami (begonaga 404).
+    await assert_can_view(actor, user_id, db)
     target = await db.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
-    if not can_view_payroll(actor, target):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "Bu xodimning bonus ma'lumotini ko'rish huquqingiz yo'q"
-        )
 
     query = select(Bonus).where(Bonus.user_id == user_id).order_by(Bonus.period.desc())
     return list(await db.scalars(query))

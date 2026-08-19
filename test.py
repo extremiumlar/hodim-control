@@ -4274,8 +4274,12 @@ def test_payroll_api() -> None:
             check("tafsilotda items ro'yxati bor", len(detail.get("items", [])) >= 1,
                   f"soni={len(detail.get('items', []))}")
 
+            # S-06 (TZ 4-qism): begona yozuvga 404, 403 EMAS. 403 «yozuv bor,
+            # lekin ruxsat yo'q» degani — ya'ni o'sha xodim MAVJUDLIGINI
+            # oshkor qiladi. TZ buni ataylab taqiqlaydi.
             r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{outsider_uid}", headers=auth(rop_t))
-            check("ROP begona xodim tafsilotiga -> 403", r.status_code == 403, f"kod={r.status_code}")
+            check("ROP begona xodim tafsilotiga -> 404 (S-06: 403 emas)",
+                  r.status_code == 404, f"kod={r.status_code}")
 
             r = client.get(f"{API_BASE}/payroll/{PERIOD}/user/{emp_uid}", headers=auth(emp_t))
             check("xodim /payroll/*/user -> 403 (VIEW_ROLES'da yo'q)", r.status_code == 403,
@@ -7868,6 +7872,146 @@ def test_bot_menu_from_server() -> None:
         conn.close()
 
 
+def test_view_scope() -> None:
+    """S-06 (TZ 4-qism) — «xodim faqat o'ziga tegishlisini ko'radi».
+
+    Ilgari bu qoida 10 dan ortiq joyda QO'LDA yozilgan edi va ular BIR XIL
+    EMAS edi: payroll ROP ga lavozim bo'yicha jamoani ham ko'rsatardi,
+    ish kundaligi esa faqat bevosita bo'ysunuvchilarni. Endi yagona qatlam
+    — `api/deps.py::scoped_user_ids` / `assert_can_view`.
+
+    ⚠️ 404, 403 EMAS: 403 «yozuv bor, lekin ruxsat yo'q» degani, ya'ni
+    begona xodim MAVJUDLIGINI oshkor qiladi.
+    """
+    import asyncio
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-06: MARKAZLASHGAN KO'RINISH FILTRI")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    ids = {}
+    try:
+        # Ikki ROP, har birida bittadan xodim + bir «begona» xodim
+        for nom, rol, tg in (
+            ("T-Scope-Rop1", "rop", 999700201),
+            ("T-Scope-Rop2", "rop", 999700202),
+            ("T-Scope-Emp1", "employee", 999700203),
+            ("T-Scope-Emp2", "employee", 999700204),
+            ("T-Scope-Hr", "hr", 999700205),
+        ):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " created_at) values (?,?,?,0,1,datetime('now'))", (tg, nom, rol))
+            ids[nom] = cur.lastrowid
+        cur.execute("update users set manager_id=? where id=?",
+                    (ids["T-Scope-Rop1"], ids["T-Scope-Emp1"]))
+        cur.execute("update users set manager_id=? where id=?",
+                    (ids["T-Scope-Rop2"], ids["T-Scope-Emp2"]))
+        conn.commit()
+
+        rop1_t = token_for(ids["T-Scope-Rop1"], "rop")
+        emp1_t = token_for(ids["T-Scope-Emp1"], "employee")
+        hr_t = token_for(ids["T-Scope-Hr"], "hr")
+
+        # ── (1) Xizmat qatlami: qamrov to'g'ri hisoblanadimi ──
+        from api.deps import scoped_user_ids
+        from db.base import async_session
+        from db.models import User as _U
+
+        async def _qamrov(uid):
+            async with async_session() as s2:
+                u = await s2.get(_U, uid)
+                return await scoped_user_ids(u, s2)
+
+        hr_scope = asyncio.run(_qamrov(ids["T-Scope-Hr"]))
+        check("S-06: HR qamrovi CHEKLOVSIZ (None)", hr_scope is None, "=" + str(hr_scope))
+
+        rop1_scope = asyncio.run(_qamrov(ids["T-Scope-Rop1"]))
+        check("S-06: ROP o'zini ko'radi",
+              ids["T-Scope-Rop1"] in rop1_scope, "=" + str(sorted(rop1_scope)))
+        check("S-06: ROP O'Z jamoasini ko'radi",
+              ids["T-Scope-Emp1"] in rop1_scope, "=" + str(sorted(rop1_scope)))
+        check("S-06: ROP BOSHQA ROP ni ko'rmaydi",
+              ids["T-Scope-Rop2"] not in rop1_scope, "=" + str(sorted(rop1_scope)))
+        check("S-06: ROP HR ni ko'rmaydi",
+              ids["T-Scope-Hr"] not in rop1_scope, "=" + str(sorted(rop1_scope)))
+
+        emp_scope = asyncio.run(_qamrov(ids["T-Scope-Emp1"]))
+        check("S-06: xodim FAQAT o'zini ko'radi",
+              emp_scope == {ids["T-Scope-Emp1"]}, "=" + str(emp_scope))
+
+        # `rop_sees_team=False` — ba'zi modullarda ROP jamoani ham ko'rmaydi
+        async def _qatiy(uid):
+            async with async_session() as s2:
+                u = await s2.get(_U, uid)
+                return await scoped_user_ids(u, s2, rop_sees_team=False)
+
+        qatiy = asyncio.run(_qatiy(ids["T-Scope-Rop1"]))
+        check("S-06: `rop_sees_team=False` -> ROP faqat o'zi",
+              qatiy == {ids["T-Scope-Rop1"]}, "=" + str(qatiy))
+
+        # ── (2) HTTP: begona so'rov 404 (403 EMAS) ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            begona = ids["T-Scope-Emp2"]
+            oz = ids["T-Scope-Emp1"]
+
+            r = c.get(f"/bonuses?user_id={begona}", headers=auth(rop1_t))
+            check("S-06: ROP begona xodim bonusini so'radi -> 404 (403 emas)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+            r = c.get(f"/bonuses?user_id={oz}", headers=auth(rop1_t))
+            check("S-06: ROP O'Z jamoasi bonusini ko'radi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:100])
+            r = c.get(f"/bonuses?user_id={begona}", headers=auth(hr_t))
+            check("S-06: HR hammani ko'radi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+
+            r = c.get(f"/payroll/2019-01/user/{begona}", headers=auth(rop1_t))
+            check("S-06: ROP begona payslip -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # Xodim bu endpointlarga ROL bo'yicha kirolmaydi -> 403
+            # (bu BOSHQA holat: «bunday imkoniyat yo'q», «bu yozuv sizniki
+            # emas» emas — shuning uchun 404 emas, 403 to'g'ri).
+            r = c.get(f"/bonuses?user_id={oz}", headers=auth(emp1_t))
+            check("S-06: xodimga rol bo'yicha yopiq -> 403 (404 emas)",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── (3) Ro'yxat endpointlari filtrlanadimi ──
+            r = c.get("/requests?status_filter=pending", headers=auth(rop1_t))
+            check("S-06: ROP murojaatlar ro'yxati -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+            if r.status_code == 200:
+                yot = [x for x in r.json() if x.get("user_id") == begona]
+                check("S-06: ro'yxatda BEGONA xodim yo'q", not yot, "=" + str(yot[:2]))
+
+            r = c.get("/excused-days?status_filter=pending", headers=auth(rop1_t))
+            check("S-06: ROP sababli kunlar ro'yxati -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+            if r.status_code == 200:
+                yot = [x for x in r.json() if x.get("user_id") == begona]
+                check("S-06: sababli kunlarda BEGONA xodim yo'q", not yot, "=" + str(yot[:2]))
+    except Exception:
+        check("S-06 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        if ids:
+            hammasi = list(ids.values())
+            qm = ",".join("?" * len(hammasi))
+            cur.execute(f"update users set manager_id=null where manager_id in ({qm})", hammasi)
+            for t in ("bonuses", "payslips", "excused_days", "attendance", "work_log_entries"):
+                try:
+                    cur.execute(f"delete from {t} where user_id in ({qm})", hammasi)
+                except sqlite3.OperationalError:
+                    pass
+            cur.execute(f"delete from audit_logs where target_user_id in ({qm})"
+                        f" or actor_id in ({qm})", hammasi + hammasi)
+            cur.execute(f"delete from users where id in ({qm})", hammasi)
+            conn.commit()
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -7965,6 +8109,11 @@ def main() -> None:
         test_bot_menu_from_server()
     except Exception:
         print("S-05b bot menyu testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_view_scope()
+    except Exception:
+        print("S-06 qamrov testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

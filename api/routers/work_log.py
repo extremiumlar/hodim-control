@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, scoped_user_ids, require_roles, verify_bot_secret
 from api.notify import notify_user
 from api.schemas import (
     WorkLogBotCreate,
@@ -270,10 +270,15 @@ async def coverage(
         .where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
         .order_by(User.full_name)
     )
-    # Maxfiylik (excused_days list_excused_days bilan bir qoida): ROP faqat
-    # o'z jamoasini ko'radi.
-    if actor.role == Role.rop.value:
-        query = query.where(User.manager_id == actor.id)
+    # S-06: qamrov MARKAZLASHGAN qatlamdan. DIQQAT — bu ROP uchun ko'rinishni
+    # BIR OZ KENGAYTIRADI: ilgari faqat bevosita bo'ysunuvchilar (`manager_id`)
+    # ko'rinardi, endi lavozimi «ROP boshqaradi» deb belgilanganlar ham.
+    # Bu ATAYLAB: o'sha ROP o'sha xodimning PAYSLIP'ini allaqachon ko'ra
+    # olardi (`can_view_payroll`), ya'ni ish kundaligini yashirish mantiqsiz
+    # nomuvofiqlik edi.
+    allowed = await scoped_user_ids(actor, db)
+    if allowed is not None:
+        query = query.where(User.id.in_(allowed))
     users = list(await db.scalars(query))
     if not users:
         return WorkLogCoverageOut(month=first.strftime("%Y-%m"), rows=[])

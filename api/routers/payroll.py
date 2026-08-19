@@ -24,7 +24,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.audit_json import row_to_dict
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import (
+    assert_can_view,
+    get_current_user,
+    get_db,
+    require_roles,
+    scoped_user_ids,
+    verify_bot_secret,
+)
 from api.schemas import (
     BotLateStatusOut,
     BotPayslipOut,
@@ -1453,9 +1460,11 @@ async def export_payroll(
     u pastda `Content-Disposition` SARLAVHASIGA to'g'ridan-to'g'ri
     qo'yiladi, ya'ni tekshirilmasa qo'shtirnoqni yopib, sarlavhaga begona
     parametr qo'shish mumkin edi."""
-    user_ids = None
-    if actor.role == Role.rop.value:
-        user_ids = [u.id for u in await _visible_users(db, actor)]
+    # S-06 «Tuzoq»: EKSPORT ham markazlashgan qamrovdan o'tadi. TZ buni
+    # alohida aytgan — eksport odatda unutiladi va butun jadval Excel'ga
+    # tushib ketadi.
+    allowed = await scoped_user_ids(actor, db)
+    user_ids = None if allowed is None else sorted(allowed)
     buffer = await build_payroll_xlsx(db, period, user_ids=user_ids)
     filename = f"oylik_{period}.xlsx"
     return StreamingResponse(
@@ -1469,11 +1478,12 @@ async def export_payroll(
 async def payslip_detail(
     period: str, user_id: int, actor: User = Depends(_require_view), db: AsyncSession = Depends(get_db)
 ) -> PayslipDetailOut:
+    # S-06: qamrov MARKAZLASHGAN qatlamdan. Begona xodim so'ralsa 404 —
+    # 403 «bunday xodim bor» degan ma'lumotni bergan bo'lardi.
+    await assert_can_view(actor, user_id, db)
     target = await db.get(User, user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
-    if not can_view_payroll(actor, target):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimning payroll ma'lumotini ko'rish huquqingiz yo'q")
 
     payslip = await db.scalar(select(Payslip).where(Payslip.user_id == user_id, Payslip.period == period))
     if payslip is None:

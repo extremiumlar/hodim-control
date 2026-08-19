@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, scoped_user_ids, require_roles, verify_bot_secret
 from api.schemas import (
     ExcusedDayCreate,
     ExcusedDayDecide,
@@ -291,11 +291,10 @@ async def list_excused_days(
     # (`tasks.py: list_tasks`, `norms.py: team_norms`) — shu qoidani bu yerga
     # ham qo'llaymiz. HR/Boshliq/Dasturchi — avvalgidek hammasini ko'radi
     # (qarorni ular chiqaradi, `DECIDE_ROLES`).
-    if actor.role == Role.rop.value:
-        team_ids = [
-            u.id for u in await db.scalars(select(User).where(User.manager_id == actor.id))
-        ]
-        query = query.where(ExcusedDay.user_id.in_([*team_ids, actor.id]))
+    # S-06: markazlashgan qamrov (ro'yxat ichida `actor.id` allaqachon bor).
+    allowed = await scoped_user_ids(actor, db)
+    if allowed is not None:
+        query = query.where(ExcusedDay.user_id.in_(allowed))
 
     items = list(await db.scalars(query))
     return await _to_out_many(items, db)

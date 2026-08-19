@@ -53,6 +53,75 @@ def is_superadmin(user: User) -> bool:
     return user.role == Role.dasturchi.value
 
 
+# ─────────────────────────────────────────────────────────────
+# KO'RINISH QAMROVI — markazlashgan qatlam (TZ 4-qism, S-06)
+# ─────────────────────────────────────────────────────────────
+# TZ ning istisnosiz qoidasi: «XODIM FAQAT O'ZIGA TEGISHLI MA'LUMOTNI
+# KO'RADI». Ilgari bu qoida har endpointda QO'LDA yozilardi
+# (`can_view_payroll`, `_visible_users`, `manager_id == actor.id` ...) —
+# 10 dan ortiq joyda. Yangi modul qo'shilganda tekshiruvni unutish oson,
+# unutilsa esa xato JIM: begona xodim ma'lumoti ko'rinib turaveradi.
+#
+# ⚠️ 404, 403 EMAS. 403 «yozuv BOR, lekin sizga ruxsat yo'q» degani —
+# bu ham ma'lumot (masalan «bunday xodim bor»). TZ 4-qism buni ataylab
+# taqiqlaydi.
+
+VIEW_ALL_ROLES = {Role.hr.value, Role.boss.value, Role.dasturchi.value}
+
+
+async def scoped_user_ids(
+    actor: User, db: AsyncSession, *, rop_sees_team: bool = True
+) -> set[int] | None:
+    """`actor` ko'ra oladigan xodim ID lari. `None` — CHEKLOVSIZ (hammasi).
+
+    Qamrov matritsasi (TZ 4-qism):
+      • HR / Boshliq / Dasturchi → hammasi (`None`);
+      • ROP → o'zi + jamoasi (bevosita `manager_id` yoki lavozimi
+        «ROP boshqaradi» deb belgilangan xodimlar);
+      • qolganlar → faqat o'zi.
+
+    `rop_sees_team=False` — ROP bu modulda jamoasini ham KO'RMAYDI (faqat
+    o'zini). TZ ba'zi modullarda aynan shuni talab qiladi (masalan kadr
+    hujjatlari) — u yerda «rahbar ham begona» hisoblanadi.
+
+    `None` va `{...}` farqi MUHIM: chaqiruvchi `None` ni «filtr qo'yma»
+    deb tushunadi. Bo'sh to'plam qaytarilsa hech kim ko'rinmasdi."""
+    if actor.role in VIEW_ALL_ROLES:
+        return None
+    if actor.role == Role.rop.value and rop_sees_team:
+        # Bevosita bo'ysunuvchilar + lavozimi «ROP boshqaradi» deb
+        # belgilangan xodimlar (`can_view_payroll` bilan AYNAN bir xil
+        # qoida — u shu funksiyaning sinxron ko'rinishi).
+        rows = list(
+            await db.scalars(
+                select(User).where(User.role == Role.employee.value)
+            )
+        )
+        team = {
+            u.id
+            for u in rows
+            if u.manager_id == actor.id
+            or (
+                u.position is not None
+                and u.position.managed_by_roles
+                and Role.rop.value in u.position.managed_by_roles
+            )
+        }
+        return team | {actor.id}
+    return {actor.id}
+
+
+async def assert_can_view(
+    actor: User, target_user_id: int, db: AsyncSession, *, rop_sees_team: bool = True
+) -> None:
+    """Begona xodim so'ralsa 404 ko'taradi (topilmagandek).
+
+    Endpointda BITTA qator: `await assert_can_view(actor, user_id, db)`."""
+    allowed = await scoped_user_ids(actor, db, rop_sees_team=rop_sees_team)
+    if allowed is not None and target_user_id not in allowed:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topilmadi")
+
+
 async def require_dasturchi(user: User = Depends(get_current_user)) -> User:
     """`/admin/*` — cheklovsiz boshqaruv endpointlari FAQAT Dasturchi uchun."""
     if not is_superadmin(user):

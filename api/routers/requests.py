@@ -32,7 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
+from api.deps import get_current_user, get_db, scoped_user_ids, require_roles, verify_bot_secret
 from api.notify import notify_user
 from api.schemas import (
     LeaveBalanceOut,
@@ -746,11 +746,10 @@ async def list_requests(
         query = query.where(EmployeeRequest.status == status_filter)
     if kind:
         query = query.where(EmployeeRequest.kind == kind)
-    if actor.role == Role.rop.value:
-        team = list(await db.scalars(select(User.id).where(User.manager_id == actor.id)))
-        if not team:
-            return []
-        query = query.where(EmployeeRequest.user_id.in_(team))
+    # S-06: markazlashgan qamrov.
+    allowed = await scoped_user_ids(actor, db)
+    if allowed is not None:
+        query = query.where(EmployeeRequest.user_id.in_(allowed))
     return await _to_out_many(list(await db.scalars(query)), db)
 
 
