@@ -7612,6 +7612,134 @@ def test_fine_from_bonus_e2e() -> None:
             conn.close()
 
 
+def test_me_sections() -> None:
+    """S-04 (TZ 2.6) — «kim nimani ko'radi» endi BITTA joyda.
+
+    Ilgari uch joyda edi: `web/src/Layout.tsx` (yon panel),
+    `web/src/lib/employeeNav.ts` (kabinet) va `bot/keyboards.py` (bot).
+    Muvofiqlik INSON e'tiboriga qolgan edi — `employeeNav.ts` boshida
+    «bot bilan AYNAN bir xil bo'lishi shart» degan ogohlantirish turibdi.
+
+    Bu blok ENG MUHIM shartni qo'riqlaydi: yangi manba hozirgi yon panel
+    bilan AYNAN mos (regressiya yo'q). Ro'yxat qo'lda yozilgan — u
+    `Layout.tsx` dan MUSTAQIL, aks holda test hech narsani isbotlamasdi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-04: /me/sections — YAGONA MANBA")
+    print("=" * 60)
+
+    # `web/src/Layout.tsx: NAV_GROUPS` dan QO'LDA ko'chirilgan (2026-08-19).
+    # Shartsiz bandlar — har rahbarda ko'rinadi.
+    RAHBAR_DOIM = [
+        "/", "/statistics", "/reports",
+        "/attendance", "/excused-days", "/work-schedule", "/work-log", "/offices",
+        "/lead-stats", "/funnel", "/norms",
+        "/payroll",
+        "/users", "/audit-logs",
+        "/check-in",
+    ]
+    # Faqat hr/boss/dasturchi (ROP'da YO'Q)
+    RAHBAR_PAYROLL = ["/overtime", "/requests", "/appeals", "/positions", "/celebration"]
+
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    try:
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── ROL MATRITSASI ──
+            natijalar = {}
+            for rol in ("boss", "hr", "rop", "dasturchi"):
+                mgr = None
+                row = cur.execute(
+                    "select id from users where role=? and is_active=1 limit 1", (rol,)
+                ).fetchone()
+                if not row:
+                    continue
+                t = token_for(row[0], rol)
+                r = c.get("/me/sections", headers=auth(t))
+                if r.status_code != 200:
+                    check(f"S-04: /me/sections [{rol}] -> 200", False,
+                          "kod=" + str(r.status_code) + " " + r.text[:120])
+                    continue
+                yollar = [x["path"] for x in r.json()]
+                natijalar[rol] = yollar
+                check(f"S-04: /me/sections [{rol}] -> 200", True, f"{len(yollar)} bo'lim")
+
+            # Har rahbarda shartsiz bandlar BOR
+            for rol, yollar in natijalar.items():
+                yetishmaydi = [p for p in RAHBAR_DOIM if p not in yollar]
+                check(f"S-04 [{rol}]: yon panelning shartsiz bandlari to'liq",
+                      not yetishmaydi, "yetishmaydi=" + str(yetishmaydi))
+
+            # ROP payroll bandlarini KO'RMAYDI, hr/boss/dasturchi KO'RADI
+            if "rop" in natijalar:
+                ortiqcha = [p for p in RAHBAR_PAYROLL if p in natijalar["rop"]]
+                check("S-04 [rop]: payroll bandlari KO'RINMAYDI",
+                      not ortiqcha, "ortiqcha=" + str(ortiqcha))
+            for rol in ("hr", "boss", "dasturchi"):
+                if rol not in natijalar:
+                    continue
+                yetishmaydi = [p for p in RAHBAR_PAYROLL if p not in natijalar[rol]]
+                check(f"S-04 [{rol}]: payroll bandlari KO'RINADI",
+                      not yetishmaydi, "yetishmaydi=" + str(yetishmaydi))
+
+            # «Dasturchi rejimi» — FAQAT dasturchida
+            for rol, yollar in natijalar.items():
+                bormi = "/dasturchi" in yollar
+                check(f"S-04 [{rol}]: /dasturchi {'bor' if rol == 'dasturchi' else 'YO_Q'}",
+                      bormi == (rol == "dasturchi"), f"bor={bormi}")
+
+            # ── XODIM ──
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " created_at) values (999700301,'T-Sections','employee',0,1,datetime('now'))")
+            uid = cur.lastrowid
+            conn.commit()
+            emp_t = token_for(uid, "employee")
+            r = c.get("/me/sections", headers=auth(emp_t))
+            check("S-04: xodim uchun -> 200", r.status_code == 200, "kod=" + str(r.status_code))
+            emp = r.json() if r.status_code == 200 else []
+            yollar = [x["path"] for x in emp]
+
+            check("S-04: xodimga KABINET to'plami keladi (yon panel emas)",
+                  all(x["audience"] == "employee" for x in emp), "=" + str(yollar[:5]))
+            check("S-04: xodim rahbar sahifalarini KO'RMAYDI",
+                  "/users" not in yollar and "/payroll" not in yollar
+                  and "/audit-logs" not in yollar, "=" + str(yollar))
+            for kerak in ("/check-in", "/me/payroll", "/me/stats", "/me/excused"):
+                check(f"S-04: xodimda {kerak} bor", kerak in yollar, "=" + str(yollar))
+            check("S-04: bo'limlar tartiblangan",
+                  [x["order"] for x in emp] == sorted(x["order"] for x in emp),
+                  "=" + str([x["order"] for x in emp]))
+            check("S-04: har bandda mijozga kerakli maydonlar bor",
+                  all(x.get("key") and x.get("label") and x.get("path") and x.get("icon")
+                      for x in emp), "=" + str(emp[:1]))
+
+            # `can_edit_attendance` bayrog'i bo'limni OCHADI
+            check("S-04: bayroqsiz xodimda «Davomat tuzatish» YO'Q",
+                  "/attendance" not in yollar, "=" + str(yollar))
+            cur.execute("update users set can_edit_attendance=1 where id=?", (uid,))
+            conn.commit()
+            r2 = c.get("/me/sections", headers=auth(emp_t))
+            yollar2 = [x["path"] for x in r2.json()] if r2.status_code == 200 else []
+            check("S-04: bayroq berilgach «Davomat tuzatish» PAYDO bo'ladi",
+                  "/attendance" in yollar2, "=" + str(yollar2))
+
+            # Autentifikatsiyasiz — 401
+            r3 = c.get("/me/sections")
+            check("S-04: tokensiz -> 401", r3.status_code == 401, "kod=" + str(r3.status_code))
+    except Exception:
+        check("S-04 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        if uid is not None:
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -7699,6 +7827,11 @@ def main() -> None:
         test_fine_from_bonus_e2e()
     except Exception:
         print("S-02 e2e testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_me_sections()
+    except Exception:
+        print("S-04 sections testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

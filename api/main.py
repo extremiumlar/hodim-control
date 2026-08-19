@@ -73,6 +73,7 @@ from api.routers import (
     lead_events,
     mobilograf,
     monitored_groups,
+    me_sections,
     norms,
     payroll,
     playbook,
@@ -144,6 +145,8 @@ async def _mark_uysot_request_context(request: Request, call_next):
 
 app.include_router(auth.router)
 app.include_router(users.router)
+# Menyu bo'limlari — YAGONA manba (TZ 2.6). Mijozlar shundan quradi.
+app.include_router(me_sections.router)
 app.include_router(attendance.router)
 app.include_router(tasks.router)
 app.include_router(excused_days.router)
