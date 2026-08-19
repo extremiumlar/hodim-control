@@ -61,130 +61,38 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_CELEBRATION,
 })
 
-# Lavozimda menu_flags belgilanmagan bo'lsa (yoki xodimga lavozim biriktirilmagan
-# bo'lsa) — barcha tugmalar ko'rinadi (orqaga moslik).
-DEFAULT_MENU_FLAGS = {"tasks": True, "norm": True, "kpi": True, "excused": True, "payroll": True}
 
 
-def main_menu(
-    role: str, menu_flags: dict | None = None, metrics: list | None = None
-) -> ReplyKeyboardMarkup:
-    """Asosiy menyu — xodimning lavozimiga (`menu_flags`) qarab moslashadi.
+def main_menu(rows: list[list[str]] | None) -> ReplyKeyboardMarkup:
+    """Serverdan kelgan tugma qatorlarini klaviaturaga aylantiradi.
 
-    "📈 Statistikam" har doim ko'rinadi (har bir xodim o'z statistikasini olishi
-    mumkin); rahbar rollarga qo'shimcha boshqaruv tugmalari chiqadi.
+    ⚠️ ILGARI bu funksiya menyuni O'ZI qurardi: rol, `menu_flags` va
+    lavozim ko'rsatkichlari bo'yicha ~20 ta shart. AYNAN o'sha shartlar
+    saytda ham (ikki joyda) takrorlanardi va muvofiqlik inson e'tiboriga
+    qolgan edi. Endi qoida bitta joyda — `api/services/sections.py` —
+    va bot faqat CHIZADI (TZ 2.6 / S-05b).
 
-    "🧲 Lidlar statistikasi" — rahbar rollarga hamda sotuv operatorlariga (lavozim
-    ko'rsatkichlarida suhbat/tashrif borlarga; lavozim biriktirilmagan bo'lsa —
-    backend defaulti bilan mos ravishda ko'rinadi). Haqiqiy ruxsat backendda
-    tekshiriladi — tugma faqat qulaylik."""
-    flags = {**DEFAULT_MENU_FLAGS, **(menu_flags or {})}
-    # Backend metrics_for() bilan bir xil default: lavozim yo'q — suhbat+tashrif
-    sales_metrics = {"suhbat", "tashrif"} & set(metrics if metrics is not None else ["suhbat", "tashrif"])
-    show_lead_stats = role in MANAGER_ROLES or bool(sales_metrics)
-
-    rows: list[list[KeyboardButton]] = []
-
-    # UX2-C1: davomat kuzatiladigan har kimga (Boshliqdan tashqari) —
-    # «Keldim/Ketdim» sahifasiga to'g'ridan-to'g'ri yo'l. Eng tepada, chunki
-    # bu kuniga 2 marta bosiladigan eng muhim tugma.
-    if role != "boss":
-        rows.append([KeyboardButton(text=BTN_CHECKIN)])
-
-    if flags.get("tasks"):
-        rows.append([KeyboardButton(text=BTN_TASKS)])
-
-    # Ish kundaligi — Boshliqdan tashqari hammaga (BTN_PAYROLL bilan bir xil
-    # qamrov: xodim ham, HR/ROP/Dasturchi ham o'z kundaligini yuritadi).
-    # Kuniga bir necha marta bosiladi, shuning uchun tepada.
-    if role != "boss":
-        rows.append([KeyboardButton(text=BTN_WORK_LOG)])
-
-    metrics_row = []
-    if flags.get("norm"):
-        metrics_row.append(KeyboardButton(text=BTN_NORM))
-    if flags.get("kpi"):
-        metrics_row.append(KeyboardButton(text=BTN_KPI))
-    if metrics_row:
-        rows.append(metrics_row)
-
-    stats_row = [KeyboardButton(text=BTN_MY_STATS)]
-    if flags.get("excused"):
-        stats_row.append(KeyboardButton(text=BTN_EXCUSED))
-    rows.append(stats_row)
-
-    # E'tiroz/Shikoyat — Boshliqdan tashqari hammaga (u qabul qiluvchi tomon).
-    # Sababli kun qatoridan keyin: ikkalasi ham «murojaat» turkumidagi
-    # tugmalar, xodim ularni yonma-yon izlaydi.
-    if role != "boss":
-        rows.append([KeyboardButton(text=BTN_REQUESTS)])
-
-    # Ish jadvali — barcha xodimlarga (o'zini ko'radi), rahbarlar hammani ko'radi
-    rows.append([KeyboardButton(text=BTN_SCHEDULE)])
-
-    # Oylik — Boshliqdan tashqari hamma (davomat/payroll bilan bir xil qamrov,
-    # ATTENDANCE_TRACKED_ROLES/PAYROLL_TRACKED_ROLES): xodim ham, HR/ROP/
-    # Dasturchi ham o'z oyligini shu yerdan ko'radi.
-    if flags.get("payroll") and role != "boss":
-        rows.append([KeyboardButton(text=BTN_PAYROLL)])
-
-    # Soatlik reja — kunlik normasi kuzatiladigan (suhbat/tashrif/video) xodimlarga
-    has_trackable_metric = bool(
-        set(metrics if metrics is not None else ["suhbat", "tashrif"])
-        & {"suhbat", "tashrif", "oddiy_video", "dumaloq_video"}
+    `rows` bo'sh yoki `None` bo'lsa (API javob bermadi yoki eski versiya)
+    — MINIMAL zaxira klaviatura. Ataylab to'liq ro'yxat EMAS: aks holda
+    bu yerda ikkinchi manba paydo bo'lib, tuzatilgan muammo qaytardi."""
+    if not rows:
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=BTN_CHECKIN)]], resize_keyboard=True
+        )
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=t) for t in row] for row in rows],
+        resize_keyboard=True,
     )
-    if role not in MANAGER_ROLES and has_trackable_metric:
-        rows.append([KeyboardButton(text=BTN_HOURLY_PLAN)])
-
-    if show_lead_stats and role not in MANAGER_ROLES:
-        rows.append([KeyboardButton(text=BTN_LEAD_STATS)])
-
-    # Sotuv AI — sotuv xodimlariga YORDAMCHI (mijoz savoliga rasmiy javob varianti)
-    if role not in MANAGER_ROLES and bool(sales_metrics):
-        rows.append([KeyboardButton(text=BTN_SALES_AI)])
-
-    if role in MANAGER_ROLES:
-        rows.append([KeyboardButton(text=BTN_ASSIGN_TASK), KeyboardButton(text=BTN_CHANGE_NORM)])
-        rows.append([KeyboardButton(text=BTN_TASK_CONTROL), KeyboardButton(text=BTN_GLOBAL_STATS)])
-        rows.append([KeyboardButton(text=BTN_LEAD_STATS), KeyboardButton(text=BTN_HOURLY_PLAN_CONTROL)])
-        # Davomat (kelib-ketish) — kim nechada keldi/kechikdi statistikasi
-        rows.append([KeyboardButton(text=BTN_ATTENDANCE_STATS)])
-        if role in {"hr", "boss", "dasturchi"}:
-            # Xodim o'zi bot ishlata olmagan holatda (masalan kasal) HR/Boshliq
-            # uning nomidan sababli kunni to'g'ridan-to'g'ri belgilaydi
-            # (decide_excused_day bilan bir xil qamrov — ROP bu yerda ham yo'q).
-            rows.append([KeyboardButton(text=BTN_MARK_EXCUSED)])
-        if role in {"rop", "boss", "dasturchi"}:
-            # Sotuv AI sinovi — rahbar mijoz savolini yozib javob sifatini tekshiradi
-            rows.append([KeyboardButton(text=BTN_SALES_AI)])
-        if role in {"boss", "dasturchi"}:
-            # KPI qayta hisoblash va audit jurnali — faqat eng yuqori daraja
-            rows.append([KeyboardButton(text=BTN_CALC_KPI), KeyboardButton(text=BTN_REPORT)])
-            rows.append([KeyboardButton(text=BTN_AUDIT), KeyboardButton(text=BTN_PANEL)])
-            # Operatorni vaqtincha "band" (yig'ilish/vazifa) deb belgilash —
-            # shu vaqt davomida real-vaqtli harakatsizlik ogohlantirishi kelmaydi
-            rows.append([KeyboardButton(text=BTN_SET_BUSY)])
-            # Anketa + Bilim bazasi + Sotuv playbook — YAGONA dashboard orqali
-            # (ilgari ikkita alohida tugma edi; anketani boshlashni faqat
-            # Dasturchi qila oladi, backend shu cheklovni saqlaydi).
-            rows.append([KeyboardButton(text=BTN_AI_CENTER)])
-            # Tashrif/shartnoma tabrik videosi — Boshliq/Dasturchi (HR uchun
-            # pastda alohida qo'shiladi, chunki u bu shoxga kirmaydi)
-            rows.append([KeyboardButton(text=BTN_CELEBRATION)])
-        else:
-            rows.append([KeyboardButton(text=BTN_REPORT), KeyboardButton(text=BTN_PANEL)])
-            if role == "hr":
-                rows.append([KeyboardButton(text=BTN_CELEBRATION)])
-
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def menu_for_user(user: dict | None) -> ReplyKeyboardMarkup:
-    """API'dan kelgan foydalanuvchi lug'atidan (position.menu_flags bilan) menyu
-    quradi — barcha handlerlar uchun umumiy yordamchi."""
-    role = user.get("role", "employee") if user else "employee"
-    position = (user or {}).get("position") or {}
-    return main_menu(role, position.get("menu_flags"), position.get("metrics"))
+    """API javobidagi tayyor menyudan klaviatura — barcha handlerlar uchun.
+
+    `bot_menu` maydonini `GET /users/by-telegram/{id}` qaytaradi. Bot
+    foydalanuvchini menyu chizishdan oldin baribir oladi, ya'ni QO'SHIMCHA
+    so'rov yo'q va menyu HAR DOIM yangi (kesh eskirishi mumkin emas —
+    rol o'zgarsa keyingi javobda darhol aks etadi)."""
+    return main_menu((user or {}).get("bot_menu"))
 
 
 def cancel_menu() -> ReplyKeyboardMarkup:

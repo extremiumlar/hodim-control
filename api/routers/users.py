@@ -27,6 +27,7 @@ from db.models import (
     WorkScheduleOverride,
     WorkScheduleWeekly,
 )
+from api.services.sections import bot_menu_rows
 from api.schemas import (
     CrmOperatorRow,
     CrmVisitOperatorRow,
@@ -310,11 +311,18 @@ async def create_user(
 
 
 @router.get("/by-telegram/{telegram_id}", response_model=UserOut, dependencies=[Depends(verify_bot_secret)])
-async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)) -> User:
+async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)) -> UserOut:
+    """Bot foydalanuvchini shu yerdan oladi — javobda BOT MENYUSI ham bor.
+
+    Menyu serverda quriladi (`sections.bot_menu_rows`), ya'ni «kim qaysi
+    tugmani ko'radi» qoidasi sayt bilan BIR MANBADAN (TZ 2.6 / S-05b).
+    Bot endi shartlarni o'zi hisoblamaydi — tayyor qatorlarni chizadi."""
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-    return user
+    out = UserOut.model_validate(user)
+    out.bot_menu = bot_menu_rows(user)
+    return out
 
 
 @router.get("/{user_id}/invite-link")

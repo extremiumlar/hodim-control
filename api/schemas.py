@@ -108,6 +108,14 @@ class UserOut(BaseModel):
     crm_external_id: str | None
     crm_visit_external_id: str | None = None
     has_face: bool = False
+    # Bot menyusi — SERVERDA qurilgan tugma qatorlari (TZ 2.6 / S-05b).
+    # Bot buni to'g'ridan-to'g'ri `ReplyKeyboardMarkup` ga aylantiradi.
+    #
+    # NEGA AYNAN SHU JAVOBDA, alohida endpointda emas: bot foydalanuvchi
+    # ma'lumotini menyu chizishdan OLDIN baribir oladi. Alohida so'rov
+    # bo'lsa har xabarda qo'shimcha tarmoq sayohati bo'lardi; keshlansa esa
+    # rol o'zgarganda eski menyu qolib ketardi (TZ ogohlantirgan tuzoq).
+    bot_menu: list[list[str]] | None = None
     # Ishga kirgan sana — `created_at` (tizimga qo'shilgan payt) bilan
     # ADASHTIRMANG. Ta'til staji/balansi shundan hisoblanadi.
     hire_date: dt.date | None = None

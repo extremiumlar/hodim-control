@@ -7740,6 +7740,134 @@ def test_me_sections() -> None:
         conn.close()
 
 
+def test_bot_menu_from_server() -> None:
+    """S-05b (TZ 2.6) — bot menyusi endi SERVERDA quriladi.
+
+    Ilgari `bot/keyboards.py::main_menu` ~20 ta shartni O'ZI hisoblardi va
+    AYNAN o'sha shartlar saytda ham (ikki joyda) takrorlanardi. Endi qoida
+    `api/services/sections.py` da, bot faqat chizadi.
+
+    Bu blok ikkita narsani qo'riqlaydi:
+      (a) menyu ESKI ko'rinishni saqlagan (oltin namuna — qo'lda yozilgan);
+      (b) bot javobida `bot_menu` keladi va tugmalar tanish.
+    """
+    import httpx
+
+    from api.services.sections import bot_menu_rows
+
+    print("\n" + "=" * 60)
+    print("S-05b: BOT MENYUSI SERVERDAN")
+    print("=" * 60)
+
+    class _Pos:
+        def __init__(self, flags, metrics):
+            self.menu_flags = flags
+            self.metrics = metrics
+
+    class _U:
+        def __init__(self, role, flags=None, metrics=None):
+            self.role = role
+            # ⚠️ `is None` SHART: `metrics=[]` (ataylab bo'sh lavozim) va
+            # `metrics=None` (lavozim biriktirilmagan) BOSHQA-BOSHQA holat.
+            # `if flags or metrics` deb yozilsa bo'sh ro'yxat «lavozim yo'q»
+            # ga aylanib, sinov noto'g'ri natija bergan edi.
+            self.position = (
+                None if (flags is None and metrics is None) else _Pos(flags, metrics)
+            )
+            self.can_edit_fine_policy = False
+            self.can_edit_attendance = False
+
+    # ── (a) OLTIN NAMUNA: oddiy xodim, lavozimsiz ──
+    # Qo'lda yozilgan — `bot_menu_rows` dan MUSTAQIL, aks holda test
+    # o'zini o'zi tasdiqlagan bo'lardi.
+    kutilgan = [
+        ["✅ Keldim / Ketdim"],
+        ["📋 Vazifalarim"],
+        ["📝 Ish kundaligi"],
+        ["📊 Bugungi normam", "💰 Oylik KPI'm"],
+        ["📈 Statistikam", "🙋 Sababli kun so'rash"],
+        ["📮 Murojaatlarim"],
+        ["🗓 Ish jadvali"],
+        ["💵 Mening oyligim"],
+        ["📋 Bugungi rejam"],
+        ["🧲 Lidlar statistikasi"],
+        ["🤖 Sotuv AI"],
+    ]
+    haqiqiy = bot_menu_rows(_U("employee"))
+    check("S-05b: oddiy xodim menyusi eski ko'rinishda",
+          haqiqiy == kutilgan, "=" + str(haqiqiy))
+
+    # ── Boshliq: shaxsiy «Keldim/Ketdim» va oylik YO'Q, boshqaruv bor ──
+    boss = bot_menu_rows(_U("boss"))
+    tekis_boss = [b for row in boss for b in row]
+    check("S-05b: Boshliqda «Keldim / Ketdim» YO'Q",
+          "✅ Keldim / Ketdim" not in tekis_boss, "=" + str(tekis_boss[:4]))
+    check("S-05b: Boshliqda «Mening oyligim» YO'Q",
+          "💵 Mening oyligim" not in tekis_boss, "=" + str(tekis_boss))
+    for kerak in ("📤 Vazifa berish", "🧾 Audit jurnali", "🎬 Tabrik videolari"):
+        check(f"S-05b: Boshliqda «{kerak}» bor", kerak in tekis_boss, "=" + str(tekis_boss))
+
+    # ── ROP: boshqaruv bor, lekin «Xodim uchun sababli kun» YO'Q ──
+    rop = [b for row in bot_menu_rows(_U("rop")) for b in row]
+    check("S-05b: ROP «Xodim uchun sababli kun» ni KO'RMAYDI",
+          "🙋 Xodim uchun sababli kun" not in rop, "=" + str(rop))
+    check("S-05b: ROP «Sotuv AI» ni ko'radi", "🤖 Sotuv AI" in rop, "=" + str(rop))
+    check("S-05b: ROP «Audit jurnali» ni KO'RMAYDI",
+          "🧾 Audit jurnali" not in rop, "=" + str(rop))
+
+    # ── Lavozim bayroqlari tugmani YOPADI ──
+    yopiq = [b for row in bot_menu_rows(_U("employee", flags={"tasks": False, "payroll": False}))
+             for b in row]
+    check("S-05b: `tasks=False` -> «Vazifalarim» yo'q",
+          "📋 Vazifalarim" not in yopiq, "=" + str(yopiq))
+    check("S-05b: `payroll=False` -> «Mening oyligim» yo'q",
+          "💵 Mening oyligim" not in yopiq, "=" + str(yopiq))
+
+    # ── `metrics=[]` (ataylab bo'sh) va `None` (lavozim yo'q) FARQI ──
+    bosh = [b for row in bot_menu_rows(_U("employee", metrics=[])) for b in row]
+    yoq = [b for row in bot_menu_rows(_U("employee", metrics=None)) for b in row]
+    check("S-05b: `metrics=[]` -> lid statistikasi YO'Q",
+          "🧲 Lidlar statistikasi" not in bosh, "=" + str(bosh))
+    check("S-05b: lavozimsiz (`None`) -> lid statistikasi BOR (eski default)",
+          "🧲 Lidlar statistikasi" in yoq, "=" + str(yoq))
+
+    # ── (b) Bot API javobida menyu keladi ──
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    try:
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999700401,'T-BotMenu','employee',1,1,datetime('now'))")
+        uid = cur.lastrowid
+        conn.commit()
+        with httpx.Client(base_url=API_BASE, timeout=20) as c:
+            r = c.get("/users/by-telegram/999700401", headers=bot_secret_hdr())
+            check("S-05b: /users/by-telegram -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            menyu = r.json().get("bot_menu") if r.status_code == 200 else None
+            check("S-05b: javobda `bot_menu` bor", bool(menyu), "=" + str(menyu))
+            check("S-05b: javobdagi menyu server hisobi bilan bir xil",
+                  menyu == kutilgan, "=" + str(menyu))
+
+            # Bot tomoni: qatorlardan klaviatura quriladi
+            from bot.keyboards import main_menu
+            km = main_menu(menyu)
+            check("S-05b: bot qatorlarni klaviaturaga aylantiradi",
+                  len(km.keyboard) == len(kutilgan), "=" + str(len(km.keyboard)))
+            zaxira = main_menu(None)
+            check("S-05b: menyu kelmasa MINIMAL zaxira (ikkinchi manba emas)",
+                  len(zaxira.keyboard) == 1, "=" + str(len(zaxira.keyboard)))
+    except Exception:
+        check("S-05b (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        if uid is not None:
+            cur.execute("delete from audit_logs where target_user_id=? or actor_id=?", (uid, uid))
+            cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -7832,6 +7960,11 @@ def main() -> None:
         test_me_sections()
     except Exception:
         print("S-04 sections testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_bot_menu_from_server()
+    except Exception:
+        print("S-05b bot menyu testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

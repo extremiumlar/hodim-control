@@ -202,3 +202,113 @@ def sections_for(user: User) -> list[Section]:
         (s for s in ALL_SECTIONS if s.audience == kerakli and s.visible(ctx)),
         key=lambda s: s.order,
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# BOT KLAVIATURASI (S-05b)
+# ─────────────────────────────────────────────────────────────
+# Bot `ReplyKeyboardMarkup` ishlatadi — unda `path` emas, tugma MATNI va
+# QATOR tuzilishi muhim (ikkita tugma yonma-yon turishi mumkin). Shuning
+# uchun bot uchun alohida quruvchi: u SHU fayldagi `SectionCtx` ni
+# ishlatadi, ya'ni ko'rinish shartlari saytdagi bilan BIR MANBADAN.
+#
+# NEGA BOT MENYUSI SAYTNIKIDAN FARQ QILADI: bot — SHAXSIY vosita, sayt esa
+# boshqaruv konsoli. Botda rahbar ham «Vazifalarim», «Mening oyligim» kabi
+# shaxsiy tugmalarni ko'radi; saytda esa u yon panelni ko'radi, kabinetni
+# emas. Bu mahsulot qarori, texnik nomuvofiqlik emas.
+
+BTN_TASKS = "📋 Vazifalarim"
+BTN_NORM = "📊 Bugungi normam"
+BTN_KPI = "💰 Oylik KPI'm"
+BTN_PAYROLL = "💵 Mening oyligim"
+BTN_PANEL = "📈 Panelim"
+BTN_EXCUSED = "🙋 Sababli kun so'rash"
+BTN_WORK_LOG = "📝 Ish kundaligi"
+BTN_REQUESTS = "📮 Murojaatlarim"
+BTN_ASSIGN_TASK = "📤 Vazifa berish"
+BTN_MY_STATS = "📈 Statistikam"
+BTN_GLOBAL_STATS = "📊 Umumiy statistika"
+BTN_ATTENDANCE_STATS = "🕐 Davomat statistikasi"
+BTN_LEAD_STATS = "🧲 Lidlar statistikasi"
+BTN_SCHEDULE = "🗓 Ish jadvali"
+BTN_HOURLY_PLAN = "📋 Bugungi rejam"
+BTN_HOURLY_PLAN_CONTROL = "📋 Xodim rejasi"
+BTN_CHANGE_NORM = "🎯 Norma o'zgartirish"
+BTN_TASK_CONTROL = "📋 Vazifalar nazorati"
+BTN_CALC_KPI = "💰 Oylik KPI hisoblash"
+BTN_REPORT = "📥 Hisobot (Excel)"
+BTN_AUDIT = "🧾 Audit jurnali"
+BTN_AI_CENTER = "🧠 Sotuv AI markazi"
+BTN_CELEBRATION = "🎬 Tabrik videolari"
+BTN_SET_BUSY = "⏸ Band qilish"
+BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
+BTN_SALES_AI = "🤖 Sotuv AI"
+BTN_CHECKIN = "✅ Keldim / Ketdim"
+
+
+def bot_menu_rows(user: User) -> list[list[str]]:
+    """Bot asosiy menyusi — tugma matnlari, QATORLARGA bo'lingan holda.
+
+    Tartib va qator tuzilishi `bot/keyboards.py::main_menu` ning avvalgi
+    ko'rinishini AYNAN takrorlaydi (S-05b qabul mezoni: «bot menyusi eski
+    ko'rinish bilan aynan bir xil»)."""
+    c = build_ctx(user)
+    rows: list[list[str]] = []
+
+    # ── Shaxsiy qism (rahbarda ham bor) ──
+    if c.role != "boss":
+        rows.append([BTN_CHECKIN])
+    if c.flags.get("tasks"):
+        rows.append([BTN_TASKS])
+    if c.role != "boss":
+        rows.append([BTN_WORK_LOG])
+
+    metrics_row = []
+    if c.flags.get("norm"):
+        metrics_row.append(BTN_NORM)
+    if c.flags.get("kpi"):
+        metrics_row.append(BTN_KPI)
+    if metrics_row:
+        rows.append(metrics_row)
+
+    stats_row = [BTN_MY_STATS]
+    if c.flags.get("excused"):
+        stats_row.append(BTN_EXCUSED)
+    rows.append(stats_row)
+
+    if c.role != "boss":
+        rows.append([BTN_REQUESTS])
+    rows.append([BTN_SCHEDULE])
+    if c.flags.get("payroll") and c.role != "boss":
+        rows.append([BTN_PAYROLL])
+    if not c.is_manager and c.has_trackable_metric:
+        rows.append([BTN_HOURLY_PLAN])
+
+    show_lead_stats = c.is_manager or c.has_sales_metric
+    if show_lead_stats and not c.is_manager:
+        rows.append([BTN_LEAD_STATS])
+    if not c.is_manager and c.has_sales_metric:
+        rows.append([BTN_SALES_AI])
+
+    # ── Boshqaruv qismi ──
+    if c.is_manager:
+        rows.append([BTN_ASSIGN_TASK, BTN_CHANGE_NORM])
+        rows.append([BTN_TASK_CONTROL, BTN_GLOBAL_STATS])
+        rows.append([BTN_LEAD_STATS, BTN_HOURLY_PLAN_CONTROL])
+        rows.append([BTN_ATTENDANCE_STATS])
+        if c.role in {"hr", "boss", "dasturchi"}:
+            rows.append([BTN_MARK_EXCUSED])
+        if c.role in {"rop", "boss", "dasturchi"}:
+            rows.append([BTN_SALES_AI])
+        if c.role in {"boss", "dasturchi"}:
+            rows.append([BTN_CALC_KPI, BTN_REPORT])
+            rows.append([BTN_AUDIT, BTN_PANEL])
+            rows.append([BTN_SET_BUSY])
+            rows.append([BTN_AI_CENTER])
+            rows.append([BTN_CELEBRATION])
+        else:
+            rows.append([BTN_REPORT, BTN_PANEL])
+            if c.role == "hr":
+                rows.append([BTN_CELEBRATION])
+
+    return rows
