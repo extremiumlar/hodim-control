@@ -1,3 +1,19 @@
+/** `GET /me/sections` — menyu bandi. Manba: `api/services/sections.py`
+ *  (TZ 2.6). Mijozda QATTIQ YOZILGAN ro'yxat bo'lmasligi kerak. */
+export interface MeSection {
+  key: string;
+  label: string;
+  path: string;
+  /** lucide-react ikonasi NOMI — mijozda map orqali komponentga aylanadi. */
+  icon: string;
+  order: number;
+  audience: "manager" | "employee";
+  group: string;
+  bot_button: string | null;
+  /** `/` uchun true — aks holda hamma yo'l unga mos kelardi. */
+  exact: boolean;
+}
+
 export interface PositionBrief {
   id: number;
   name: string;

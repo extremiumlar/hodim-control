@@ -8,12 +8,12 @@
 import { Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 
-import { useAuth } from "@/lib/auth";
 import { splitSections } from "@/lib/employeeNav";
+import { useMySections } from "@/lib/queries";
 
 export default function More() {
-  const { user } = useAuth();
-  const { more } = splitSections(user);
+  const { data: sections = [] } = useMySections();
+  const { more } = splitSections(sections);
 
   if (!more.length) {
     return (

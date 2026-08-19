@@ -17,6 +17,7 @@ import type { Office, Position, WorkDayEntry } from "./api/types";
 // ─── Query kalitlari (invalidatsiya shu kalitlar orqali) ───
 export const qk = {
   me: ["me"] as const,
+  mySections: ["me", "sections"] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
@@ -133,6 +134,18 @@ function useApiMutation<TData, TVariables>(
     },
   });
 }
+
+/** Menyu bandlari — serverdan (TZ 2.6, S-05).
+ *
+ *  `staleTime` uzun: menyu seans davomida deyarli o'zgarmaydi, har
+ *  sahifada qayta so'ralsa yon panel bekorga miltillardi. Rol yoki
+ *  lavozim o'zgarsa foydalanuvchi qayta kiradi va ro'yxat yangilanadi. */
+export const useMySections = () =>
+  useQuery({
+    queryKey: qk.mySections,
+    queryFn: api.mySections,
+    staleTime: 10 * 60 * 1000,
+  });
 
 // ─── Davomat ───
 export const useMyAttendanceToday = () =>

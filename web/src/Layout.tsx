@@ -31,10 +31,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "./lib/auth";
-import { useAppeals, useExcusedDays, useExplanations, useRequests } from "./lib/queries";
+import { useAppeals, useExcusedDays, useExplanations, useMySections, useRequests } from "./lib/queries";
 import { cn } from "./lib/utils";
 import { BRAND_NAME } from "./lib/brand";
 import { sectionTitle, splitSections } from "./lib/employeeNav";
+import { sectionIcon } from "./lib/sectionIcons";
+import type { MeSection } from "./lib/api/types";
 import EmployeeTabBar from "@/components/EmployeeTabBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,18 +60,19 @@ const ROLE_LABELS: Record<string, string> = {
   dasturchi: "Dasturchi",
 };
 
+/**
+ * Menyu bandi — SERVERDAN keladi (`GET /me/sections`, TZ 2.6 / S-05).
+ *
+ * Ilgari bu yerda `NAV_GROUPS` qattiq yozilgan ro'yxat bor edi va AYNAN
+ * shu ro'yxat bot hamda xodim kabinetida ham takrorlanardi. Endi manba
+ * bitta: `api/services/sections.py`. Serverda bo'lim qo'shilsa, bu yerda
+ * kod O'ZGARMASDAN paydo bo'ladi.
+ */
 interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
   end?: boolean;
-  onlyPositionsManager?: boolean; // faqat hr/boss/dasturchi
-  onlyPayrollManager?: boolean; // faqat hr/boss/dasturchi (ROP'da yo'q)
-  // hr/boss/dasturchi YOKI «kechikish normasi» huquqi shaxsan berilganlar.
-  // `onlyPayrollManager` dan ATAYLAB alohida — u «Qo'shimcha ish»ni ham
-  // yopadi, uni esa bayroq ochmaydi (backend 403 beradi).
-  onlyFinePolicyEditor?: boolean;
-  onlyDasturchi?: boolean; // faqat dasturchi (super-admin)
 }
 
 interface NavGroup {
@@ -77,68 +80,40 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV_GROUPS: NavGroup[] = [
-  {
-    title: "Boshqaruv",
-    items: [
-      { to: "/", label: "Bosh sahifa", icon: LayoutDashboard, end: true },
-      { to: "/statistics", label: "Statistika", icon: BarChart3 },
-      { to: "/reports", label: "Hisobotlar", icon: FileSpreadsheet },
-    ],
-  },
-  {
-    title: "Davomat",
-    items: [
-      { to: "/attendance", label: "Davomat", icon: CalendarCheck },
-      { to: "/excused-days", label: "Sababli kunlar", icon: CalendarX },
-      { to: "/work-schedule", label: "Ish jadvali", icon: Clock },
-      { to: "/work-log", label: "Ish kundaligi", icon: NotebookPen },
-      { to: "/offices", label: "Ofislar", icon: MapPin },
-    ],
-  },
-  {
-    title: "Sotuv",
-    items: [
-      { to: "/lead-stats", label: "Lidlar", icon: TrendingUp },
-      { to: "/funnel", label: "Voronka", icon: Filter },
-      { to: "/norms", label: "Normalar", icon: Target },
-    ],
-  },
-  {
-    title: "Ish haqi",
-    items: [
-      { to: "/payroll", label: "Ish haqi", icon: Banknote },
-      { to: "/overtime", label: "Qo'shimcha ish", icon: TimerReset, onlyPayrollManager: true },
-      { to: "/payroll/settings", label: "Sozlamalar", icon: Settings, onlyFinePolicyEditor: true },
-    ],
-  },
-  {
-    title: "Ma'muriyat",
-    items: [
-      { to: "/users", label: "Foydalanuvchilar", icon: Users },
-      // ROP'da yo'q — `onlyPayrollManager` bilan bir xil qamrov (hr/boss/
-      // dasturchi), backend `appeals.py: MANAGE_ROLES` ham shunday.
-      { to: "/requests", label: "Arizalar", icon: FileText, onlyPayrollManager: true },
-      { to: "/appeals", label: "E'tiroz/Shikoyat", icon: Scale, onlyPayrollManager: true },
-      { to: "/positions", label: "Lavozimlar", icon: Briefcase, onlyPositionsManager: true },
-      { to: "/celebration", label: "Tabrik videolari", icon: Clapperboard, onlyPayrollManager: true },
-      { to: "/audit-logs", label: "Audit", icon: ScrollText },
-      { to: "/dasturchi", label: "Dasturchi rejimi", icon: ShieldAlert, onlyDasturchi: true },
-    ],
-  },
-];
+/** Serverdan kelgan tekis ro'yxatni yon panel guruhlariga yig'adi.
+ *  Tartib `order` bo'yicha (server allaqachon tartiblab yuboradi), guruh
+ *  esa BIRINCHI uchragan joyida paydo bo'ladi — ya'ni guruhlar tartibi ham
+ *  serverda hal qilinadi. */
+function toGroups(sections: MeSection[]): { groups: NavGroup[]; loose: NavItem[] } {
+  const groups: NavGroup[] = [];
+  const loose: NavItem[] = [];
+  for (const s of sections) {
+    const item: NavItem = {
+      to: s.path,
+      label: s.label,
+      icon: sectionIcon(s.icon),
+      end: s.exact || undefined,
+    };
+    if (!s.group) {
+      loose.push(item);
+      continue;
+    }
+    const found = groups.find((g) => g.title === s.group);
+    if (found) found.items.push(item);
+    else groups.push({ title: s.group, items: [item] });
+  }
+  return { groups, loose };
+}
 
-const CHECK_IN_ITEM: NavItem = { to: "/check-in", label: "Mening davomatim", icon: UserCheck };
-
-// Joriy sahifa sarlavhasi (yuqori panel uchun)
-function pageTitle(pathname: string): string {
+// Joriy sahifa sarlavhasi (yuqori panel uchun). Manba — o'sha serverdan
+// kelgan ro'yxat: sarlavha va menyu bandi bir xil nomni ko'rsatsin.
+function pageTitle(pathname: string, sections: MeSection[]): string {
   if (pathname === "/") return "Bosh sahifa";
   if (pathname.startsWith("/employees/")) return "Xodim profili";
-  const all = [...NAV_GROUPS.flatMap((g) => g.items), CHECK_IN_ITEM];
-  const found = all
-    .filter((i) => i.to !== "/")
-    .sort((a, b) => b.to.length - a.to.length)
-    .find((i) => pathname === i.to || pathname.startsWith(i.to + "/"));
+  const found = sections
+    .filter((s) => s.path !== "/")
+    .sort((a, b) => b.path.length - a.path.length)
+    .find((s) => pathname === s.path || pathname.startsWith(s.path + "/"));
   return found?.label ?? BRAND_NAME;
 }
 
@@ -194,33 +169,24 @@ function SidebarLink({
 
 function SidebarNav({
   collapsed,
-  canManagePositions,
-  canManagePayroll,
-  canEditFinePolicy,
-  isDasturchi,
+  sections,
   onNavigate,
   badges = {},
 }: {
   collapsed: boolean;
-  canManagePositions: boolean;
-  canManagePayroll: boolean;
-  canEditFinePolicy: boolean;
-  isDasturchi: boolean;
+  /** `GET /me/sections` javobi — server allaqachon FILTRLAB va tartiblab
+   *  yuborgan. Mijozda rol sharti YO'Q (S-05 qabul mezoni). */
+  sections: MeSection[];
   onNavigate?: () => void;
   /** UX-G1: yo'l -> kutilayotgan ishlar soni. */
   badges?: Record<string, number>;
 }) {
+  const { groups, loose } = toGroups(sections);
   return (
     <div className="flex h-full flex-col">
       <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-3">
-        {NAV_GROUPS.map((group) => {
-          const items = group.items.filter(
-            (i) =>
-              (!i.onlyPositionsManager || canManagePositions) &&
-              (!i.onlyPayrollManager || canManagePayroll) &&
-              (!i.onlyFinePolicyEditor || canEditFinePolicy) &&
-              (!i.onlyDasturchi || isDasturchi)
-          );
+        {groups.map((group) => {
+          const items = group.items;
           if (!items.length) return null;
           return (
             <div key={group.title}>
@@ -244,10 +210,14 @@ function SidebarNav({
           );
         })}
       </nav>
-      <div className="px-2 pb-3">
-        <Separator className="mb-3" />
-        <SidebarLink item={CHECK_IN_ITEM} collapsed={collapsed} onNavigate={onNavigate} />
-      </div>
+      {loose.length > 0 && (
+        <div className="px-2 pb-3">
+          <Separator className="mb-3" />
+          {loose.map((item) => (
+            <SidebarLink key={item.to} item={item} collapsed={collapsed} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -302,14 +272,17 @@ export default function Layout() {
   const { user } = useAuth();
   const location = useLocation();
   const embedded = useEmbedded(location.search);
-  const isManager = ["hr", "rop", "boss", "dasturchi"].includes(user?.role ?? "");
-  const canManagePositions = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
-  const canManagePayroll = ["hr", "boss", "dasturchi"].includes(user?.role ?? "");
-  // ATAYLAB alohida: `canManagePayroll` «Qo'shimcha ish» havolasini ham
-  // boshqaradi, uni esa bayroq OCHMAYDI (backend 403 beradi). Ikkalasini
-  // bitta qilib qo'ysam, huquq egasi bosib bo'lmaydigan havolani ko'rardi.
-  const canEditFinePolicy = canManagePayroll || !!user?.can_edit_fine_policy;
-  const isDasturchi = user?.role === "dasturchi";
+  // Menyu SERVERDAN (TZ 2.6 / S-05). Qattiq yozilgan rol shartlari olib
+  // tashlandi — ular endi `api/services/sections.py` da, YAGONA joyda.
+  const sectionsQuery = useMySections();
+  const sections = sectionsQuery.data ?? [];
+  // Rozetka (badge) so'rovlarini kimga yuborish — buni ham SHU ro'yxatdan
+  // aniqlaymiz, roldan emas. Aks holda mijozda yana rol sharti paydo
+  // bo'lardi va S-05 ning maqsadi buzilardi: bo'lim ko'rinmasa, unga tegishli
+  // so'rov ham yuborilmasligi kerak.
+  const hasSection = (path: string) => sections.some((x) => x.path === path);
+  const isManager = sections.some((x) => x.audience === "manager");
+  const canManagePayroll = hasSection("/appeals");
 
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar_collapsed") === "1");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -354,8 +327,8 @@ export default function Layout() {
   // shuning uchun tab-bar kerak. Sidebar EMAS: telefonni bir qo'lda ushlab
   // turganda barmoq ekran pastiga yetadi, yuqorisiga yetmaydi.
   if (!isManager) {
-    const { tabs, more } = splitSections(user);
-    const title = sectionTitle(location.pathname) ?? BRAND_NAME;
+    const { tabs, more } = splitSections(sections);
+    const title = sectionTitle(location.pathname, sections) ?? BRAND_NAME;
     return (
       <div className="min-h-screen bg-slate-50">
         <header className="sticky top-0 z-30 border-b border-slate-200 bg-white">
@@ -400,14 +373,7 @@ export default function Layout() {
               {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </Button>
           </div>
-          <SidebarNav
-            collapsed={collapsed}
-            canManagePositions={canManagePositions}
-            canManagePayroll={canManagePayroll}
-            canEditFinePolicy={canEditFinePolicy}
-            isDasturchi={isDasturchi}
-            badges={navBadges}
-          />
+          <SidebarNav collapsed={collapsed} sections={sections} badges={navBadges} />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -427,10 +393,7 @@ export default function Layout() {
                 <div className="h-[calc(100vh-3.5rem)]">
                   <SidebarNav
                     collapsed={false}
-                    canManagePositions={canManagePositions}
-                    canManagePayroll={canManagePayroll}
-                    canEditFinePolicy={canEditFinePolicy}
-                    isDasturchi={isDasturchi}
+                    sections={sections}
                     onNavigate={() => setMobileOpen(false)}
                     badges={navBadges}
                   />
@@ -438,7 +401,7 @@ export default function Layout() {
               </SheetContent>
             </Sheet>
 
-            <h1 className="truncate text-base font-semibold">{pageTitle(location.pathname)}</h1>
+            <h1 className="truncate text-base font-semibold">{pageTitle(location.pathname, sections)}</h1>
             <div className="ml-auto">
               <UserMenu />
             </div>

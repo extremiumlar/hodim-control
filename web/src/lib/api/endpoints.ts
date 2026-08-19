@@ -35,6 +35,7 @@ import type {
   FinePolicyInput,
   LateStatRow,
   ManualAttendancePayload,
+  MeSection,
   CrmOperatorRow,
   CrmVisitOperatorRow,
   LeadStageDay,
@@ -79,6 +80,8 @@ import type {
 
 export const api = {
   me: () => apiFetch<User>("/users/me"),
+  // Menyu — serverdan (TZ 2.6). Mijozda ro'yxat qattiq yozilmaydi.
+  mySections: () => apiFetch<MeSection[]>("/me/sections"),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
   myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>
