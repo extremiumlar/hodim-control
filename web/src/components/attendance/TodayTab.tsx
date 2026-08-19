@@ -500,7 +500,7 @@ export default function TodayTab({
               ))}
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              Ish jadvali bo'yicha dam kuni — kechikish va jarima hisoblanmaydi.
+              Ish jadvali bo'yicha dam kuni — kechikish va ushlanma hisoblanmaydi.
             </p>
           </CardContent>
         </Card>

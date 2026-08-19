@@ -1028,7 +1028,7 @@ class FinePolicyIn(BaseModel):
             raise ValueError("'position'/'user' scope uchun scope_id majburiy")
         if self.monthly_cap_percent is None and self.monthly_cap_amount is None:
             raise ValueError(
-                "Oylik jarima chegarasi (cap) majburiy — foiz yoki qat'iy summa kiriting"
+                "Oylik ushlanma chegarasi (cap) majburiy — foiz yoki qat'iy summa kiriting"
             )
         if self.fine_mode == "per_day" and self.fine_per_day is None:
             raise ValueError("fine_mode='per_day' uchun fine_per_day majburiy")

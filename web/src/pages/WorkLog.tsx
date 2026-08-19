@@ -205,7 +205,7 @@ export default function WorkLog() {
     <div className="space-y-4">
       <PageHeader
         title="Ish kundaligi"
-        description="Xodimlar kun davomida bajargan ishlarini yozib boradi. Bu yerda faqat ko'rinadi — hech qanday jarima hisoblanmaydi."
+        description="Xodimlar kun davomida bajargan ishlarini yozib boradi. Bu yerda faqat ko'rinadi — hech qanday ushlanma hisoblanmaydi."
       >
         <MonthNav month={month} maxMonth={currentMonthKey()} onChange={setMonth} />
       </PageHeader>

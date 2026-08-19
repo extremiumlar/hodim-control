@@ -149,7 +149,7 @@ export default function MeAppeals() {
           </div>
           <p className="mt-1.5 text-xs text-slate-400">
             {kind === "objection"
-              ? "Aniq qarorga qarshi: kechikish jarimasi, kelmagan kun yoki oylik hisobi."
+              ? "Aniq qarorga qarshi: kechikish ushlanmasi, kelmagan kun yoki oylik hisobi."
               : "Erkin mavzu: ish sharoiti, jamoa va boshqalar."}
           </p>
         </div>

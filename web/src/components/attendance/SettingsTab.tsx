@@ -127,8 +127,8 @@ export default function SettingsTab({
             },
             {
               to: "/payroll/settings",
-              title: "💵 Jarima qoidalari",
-              desc: "Kechikish limiti va jarima stavkasi",
+              title: "💵 Ushlanma qoidalari",
+              desc: "Kechikish limiti va ushlanma stavkasi",
             },
           ].map((l) => (
             <Link

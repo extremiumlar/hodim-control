@@ -39,7 +39,7 @@ def _payslip_text(data: dict) -> str:
     if data.get("bonus_amount"):
         lines.append(f"Bonus: +{_fmt_money(data['bonus_amount'])}")
     if data.get("fine_amount"):
-        lines.append(f"Kechikish jarimasi: −{_fmt_money(data['fine_amount'])}")
+        lines.append(f"Kechikish ushlanmasi: −{_fmt_money(data['fine_amount'])}")
     if data.get("absent_deduction"):
         lines.append(f"Kelmagan kun ushlanmasi: −{_fmt_money(data['absent_deduction'])}")
     # Avans va qo'lda kiritilgan qo'shimcha/ushlanmalar (2026-08-13). Bular
@@ -82,7 +82,7 @@ async def show_late_status(callback: CallbackQuery) -> None:
     data = await api_client.my_payroll_late_status(callback.from_user.id)
     if data.get("free_limit_minutes") is None:
         await callback.message.answer(
-            "Kechikish jarimasi qoidasi hali sozlanmagan — hozircha kechikish uchun jarima yo'q."
+            "Kechikish ushlanmasi qoidasi hali sozlanmagan — hozircha kechikish uchun ushlanma yo'q."
         )
         return
 
@@ -93,8 +93,8 @@ async def show_late_status(callback: CallbackQuery) -> None:
     if remaining > 0:
         lines.append(f"Yana {remaining} daqiqa bepul kechikish qoldi.")
     else:
-        lines.append("Limit tugagan — shu kundan keyingi har bir kechikkan kunga jarima yoziladi.")
+        lines.append("Limit tugagan — shu kundan keyingi har bir kechikkan kunga ushlanma yoziladi.")
         fined = data.get("fined_days_so_far", 0)
         if fined:
-            lines.append(f"Bu oy allaqachon <b>{fined}</b> kun jarimalandi.")
+            lines.append(f"Bu oy allaqachon <b>{fined}</b> kun ushlanmaga tushdi.")
     await callback.message.answer("\n".join(lines))

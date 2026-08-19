@@ -188,13 +188,13 @@ async def _hot_lead_line(db: AsyncSession, day: date) -> str | None:
         line += f"\n❄️ <b>Sovutilgan lidlar: {total_cooled} ta</b>"
         for c in cooled:
             fine_part = (
-                f" · jarima {int(round(c['fine'])):,}".replace(",", " ") + " so'm"
+                f" · ushlanma {int(round(c['fine'])):,}".replace(",", " ") + " so'm"
                 if c["fine"] > 0
                 else ""
             )
             line += f"\n   • {html.escape(c['full_name'])} — {c['count']} ta{fine_part}"
         if total_fine > 0:
-            line += f"\n   Jami jarima: {int(round(total_fine)):,}".replace(",", " ") + " so'm"
+            line += f"\n   Jami ushlanma: {int(round(total_fine)):,}".replace(",", " ") + " so'm"
     return line
 
 

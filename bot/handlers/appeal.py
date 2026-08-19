@@ -109,7 +109,7 @@ async def show_appeal_menu(message: Message, state: FSMContext) -> None:
         "📮 <b>Murojaatlarim</b>\n\n"
         "<b>Ariza</b> — kelajakka so'rov: ta'til, avans, ma'lumotnoma.\n"
         "<b>E'tiroz</b> — allaqachon chiqarilgan qarorga qarshi (kechikish "
-        "jarimasi, kelmagan kun, oylik hisobi).\n"
+        "ushlanmasi, kelmagan kun, oylik hisobi).\n"
         "<b>Shikoyat</b> — erkin mavzu (ish sharoiti, jamoa). Xohlasangiz "
         "anonim yuborasiz.",
         reply_markup=_start_kb(),

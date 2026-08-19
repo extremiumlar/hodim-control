@@ -73,7 +73,7 @@ function PreflightSection({ period }: { period: string }) {
     { items: data.attendance.no_schedule, label: "Ish jadvali yo'q", hint: "kechikish taxminiy" },
     { items: data.attendance.open_checkouts, label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt noaniq" },
     { items: data.attendance.auto_closed, label: "Avtomatik yopilgan kunlar", hint: "ishlangan vaqt taxminiy" },
-    { items: data.attendance.pending_excused, label: "Sababli kun hal qilinmagan", hint: "jarimani bekor qilishi mumkin" },
+    { items: data.attendance.pending_excused, label: "Sababli kun hal qilinmagan", hint: "ushlanmani bekor qilishi mumkin" },
     { items: data.attendance.no_face, label: "Yuz ro'yxatdan o'tmagan", hint: "check-in qila olmaydi" },
   ].filter((g) => g.items.length > 0);
 
@@ -196,7 +196,7 @@ function PayslipDetailDialog({
               <div>
                 <div className="text-xs text-slate-400">Kechikish</div>
                 <div>
-                  {d.late_days} kun ({d.fined_late_days} jarimali)
+                  {d.late_days} kun ({d.fined_late_days} ushlanmali)
                 </div>
               </div>
               <div>
@@ -356,7 +356,7 @@ function PayrollTable({
           <span>
             {row.original.late_days} kun
             {row.original.fined_late_days > 0 && (
-              <span className="text-rose-600"> ({row.original.fined_late_days} jarimali)</span>
+              <span className="text-rose-600"> ({row.original.fined_late_days} ushlanmali)</span>
             )}
           </span>
         ) : (
@@ -365,7 +365,7 @@ function PayrollTable({
     },
     {
       id: "fine",
-      header: "Jarima",
+      header: "Ushlanma",
       cell: ({ row }) => {
         const total = row.original.fine_amount + row.original.absent_deduction;
         return total > 0 ? <span className="text-rose-600">−{fmtMoney(total)}</span> : "—";
@@ -408,7 +408,7 @@ function PayrollTable({
     <div className="space-y-6">
       <PageHeader
         title="Ish haqi"
-        description="Oylik ish haqi, kechikish jarimasi va qo'shimcha ish hisob-kitobi."
+        description="Oylik ish haqi, kechikish ushlanmasi va qo'shimcha ish hisob-kitobi."
       >
         <MonthPicker value={period} onChange={setPeriod} />
         {rows.length > 0 && (
@@ -498,7 +498,7 @@ function PayrollTable({
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatCard label="Xodimlar" value={rows.length} icon={Users} />
           <StatCard label="Jami sof (net)" value={fmtMoney(totals.net)} icon={Banknote} />
-          <StatCard label="Jami jarima" value={fmtMoney(totals.fine)} warn={totals.fine > 0} />
+          <StatCard label="Jami ushlanma" value={fmtMoney(totals.fine)} warn={totals.fine > 0} />
           <StatCard label="Jami qo'shimcha ish" value={fmtMoney(totals.overtime)} />
         </div>
       )}

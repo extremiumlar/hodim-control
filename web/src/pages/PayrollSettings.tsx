@@ -120,7 +120,7 @@ function FinePolicyDialog({
       return;
     }
     if (capMissing) {
-      toast.error("Oylik jarima chegarasi (foiz yoki qat'iy summa) majburiy");
+      toast.error("Oylik ushlanma chegarasi (foiz yoki qat'iy summa) majburiy");
       return;
     }
     upsert.mutate(draft, {
@@ -135,7 +135,7 @@ function FinePolicyDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{initial ? "Qoidani tahrirlash" : "Yangi jarima qoidasi"}</DialogTitle>
+          <DialogTitle>{initial ? "Qoidani tahrirlash" : "Yangi ushlanma qoidasi"}</DialogTitle>
           <DialogDescription>
             Qamrov: xodim &gt; lavozim &gt; global. Aniqrog'i doim ustun turadi.
           </DialogDescription>
@@ -218,7 +218,7 @@ function FinePolicyDialog({
               />
             </div>
             <div>
-              <Label htmlFor="fp-fine-day">Jarima (so'm/kun, limitdan keyin)</Label>
+              <Label htmlFor="fp-fine-day">Ushlanma (so'm/kun, limitdan keyin)</Label>
               <Input
                 id="fp-fine-day"
                 type="number"
@@ -232,7 +232,7 @@ function FinePolicyDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="fp-absent">Kelmagan kun jarimasi (so'm)</Label>
+              <Label htmlFor="fp-absent">Kelmagan kun ushlanmasi (so'm)</Label>
               <Input
                 id="fp-absent"
                 type="number"
@@ -327,7 +327,7 @@ function FinePolicyDialog({
                   />
                 </div>
                 <div>
-                  <Label htmlFor="fp-hot-fine">Sovutgani uchun jarima (so'm)</Label>
+                  <Label htmlFor="fp-hot-fine">Sovutgani uchun ushlanma (so'm)</Label>
                   <Input
                     id="fp-hot-fine"
                     type="number"
@@ -339,16 +339,16 @@ function FinePolicyDialog({
               </div>
               <p className="mt-2 text-xs text-orange-800">
                 Lid CRM'ga tushgandan keyin shu vaqt ichida qo'ng'iroq bo'lmasa — operator
-                lidni «sovutgan» hisoblanadi: guruhga ismi bilan chiqadi va shu jarima
+                lidni «sovutgan» hisoblanadi: guruhga ismi bilan chiqadi va shu ushlanma
                 e'lon qilinadi. Operatorga 3/5/7/9-daqiqada shaxsiy ogohlantirish boradi.
-                Jarima 0 bo'lsa xabarda summa ko'rsatilmaydi.
+                Ushlanma 0 bo'lsa xabarda summa ko'rsatilmaydi.
               </p>
             </div>
           )}
 
           <div>
             <Label className="mb-1.5 block">
-              Oylik jarima chegarasi (cap) <span className="text-rose-600">*</span>
+              Oylik ushlanma chegarasi (cap) <span className="text-rose-600">*</span>
             </Label>
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -378,7 +378,7 @@ function FinePolicyDialog({
               />
             </div>
             <p className="mt-1 text-xs text-slate-400">
-              Ikkalasidan kamida bittasi majburiy — jarima summasi shu chegaradan oshmaydi.
+              Ikkalasidan kamida bittasi majburiy — ushlanma summasi shu chegaradan oshmaydi.
             </p>
           </div>
 
@@ -427,7 +427,7 @@ function FinePolicyTab() {
     },
     {
       id: "fine",
-      header: "Jarima/kun",
+      header: "Ushlanma/kun",
       cell: ({ row }) => (row.original.fine_per_day != null ? fmtMoney(row.original.fine_per_day) : "—"),
     },
     {
@@ -493,7 +493,7 @@ function FinePolicyTab() {
         error={query.error ? query.error.message : null}
         onRetry={() => query.refetch()}
         empty={{
-          text: "Hali jarima qoidasi yo'q — jarima tizimi to'liq O'CHIQ. Global qoida qo'shing.",
+          text: "Hali ushlanma qoidasi yo'q — ushlanma tizimi to'liq O'CHIQ. Global qoida qo'shing.",
         }}
       />
       <FinePolicyDialog open={creating} onClose={() => setCreating(false)} initial={null} />
@@ -977,7 +977,7 @@ function FinePolicyEditorsCard() {
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-xs text-slate-500">
-          Tanlangan odam <b>faqat jarima qoidasini</b> o'zgartira oladi — oylik hisoblash,
+          Tanlangan odam <b>faqat ushlanma qoidasini</b> o'zgartira oladi — oylik hisoblash,
           tasdiqlash va stavkalar unga ochilmaydi. HR/Boshliq/Dasturchida bu huquq roli
           bo'yicha allaqachon bor.
         </p>
@@ -1055,13 +1055,13 @@ export default function PayrollSettings() {
         title="Ish haqi sozlamalari"
         description={
           isPayrollManager
-            ? "Jarima qoidasi va qo'shimcha ish profillari. Oylik/KPI stavkalari «Ish haqi» sahifasiga ko'chirildi."
-            : "Sizga kechikish/jarima qoidasini o'zgartirish huquqi berilgan."
+            ? "Ushlanma qoidasi va qo'shimcha ish profillari. Oylik/KPI stavkalari «Ish haqi» sahifasiga ko'chirildi."
+            : "Sizga kechikish/ushlanma qoidasini o'zgartirish huquqi berilgan."
         }
       />
       <Tabs defaultValue="policy">
         <TabsList>
-          <TabsTrigger value="policy">Jarima qoidasi</TabsTrigger>
+          <TabsTrigger value="policy">Ushlanma qoidasi</TabsTrigger>
           {isPayrollManager && <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>}
         </TabsList>
         <TabsContent value="policy">

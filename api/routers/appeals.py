@@ -91,7 +91,7 @@ _TOPIC_LABELS = {
 _NEXT_STEP = {
     AppealTopic.attendance.value: (
         "Endi tuzatishni kiriting: «Sababli kunlar» bo'limidan xodim uchun "
-        "o'sha kunni belgilang (davomat va jarima o'z-o'zidan qayta hisoblanadi)."
+        "o'sha kunni belgilang (davomat va ushlanma o'z-o'zidan qayta hisoblanadi)."
     ),
     AppealTopic.payroll.value: (
         "Endi tuzatishni kiriting: «Ish haqi» bo'limida o'sha davr uchun "

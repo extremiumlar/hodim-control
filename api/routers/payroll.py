@@ -1768,13 +1768,13 @@ async def late_warnings_tick(
             fine = float(event["fine_per_day"]) if event["fine_per_day"] is not None else 0
             text = (
                 "⚠️ Diqqat: bu oy bepul kechikish limitingiz tugadi. Bugundan boshlab har kechikkan "
-                f"kunga {fine:,.0f} so'm jarima yoziladi.".replace(",", " ")
+                f"kunga {fine:,.0f} so'm ushlanma yoziladi.".replace(",", " ")
             )
             limit_reached += 1
         else:
             text = (
                 f"🕐 Ogohlantirish: bepul kechikish limitingizdan atigi {event['remaining_minutes']} daqiqa "
-                "qoldi. Keyingi kechikish jarima boshlanishiga olib kelishi mumkin."
+                "qoldi. Keyingi kechikish ushlanma boshlanishiga olib kelishi mumkin."
             )
         await notify_user(db, user, Category.LATE_WARNING, text, data={"path": "/check-in"})
         warned += 1

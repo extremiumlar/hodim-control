@@ -287,7 +287,7 @@ export default function SalaryRateTab({ period }: { period: string }) {
                 Stavkasi yo'q — {missingRate.length} xodim
               </div>
               <p className="mt-0.5 text-xs text-amber-800">
-                Ularga oylik ham, jarima ham hisoblanmaydi. Ismni bosing.
+                Ularga oylik ham, ushlanma ham hisoblanmaydi. Ismni bosing.
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {missingRate.map((u: ReadinessIssue) => (

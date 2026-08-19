@@ -30,8 +30,8 @@ export default function LateStatusCard() {
       </div>
       {overLimit ? (
         <p className="mt-1 text-xs">
-          Limit tugagan — shu kundan keyingi har bir kechikkan kunga jarima yoziladi
-          {data.fined_days_so_far > 0 && ` (bu oy allaqachon ${data.fined_days_so_far} kun jarimalandi)`}.
+          Limit tugagan — shu kundan keyingi har bir kechikkan kunga ushlanma yoziladi
+          {data.fined_days_so_far > 0 && ` (bu oy allaqachon ${data.fined_days_so_far} kun ushlanmaga tushdi)`}.
         </p>
       ) : (
         <p className="mt-1 text-xs text-slate-500">

@@ -336,8 +336,8 @@ function ExplanationsSection() {
       <CardContent>
         <p className="mb-3 text-xs text-slate-500">
           Sababsiz kelmagan kun uchun tizim xodimdan tushuntirish so'raydi.{" "}
-          <b>«Sababli deb qabul qilish»</b> — o'sha kun sababli kunga o'tadi va jarima
-          tushadi. <b>«Rad etish»</b> — jarima o'z kuchida qoladi.
+          <b>«Sababli deb qabul qilish»</b> — o'sha kun sababli kunga o'tadi va ushlanma
+          tushadi. <b>«Rad etish»</b> — ushlanma o'z kuchida qoladi.
         </p>
 
         {query.isLoading ? (
@@ -388,7 +388,7 @@ function ExplanationsSection() {
                       onClick={() =>
                         decide.mutate(
                           { reqId: r.id, accept: false },
-                          { onSuccess: () => toast.success("Rad etildi — jarima qoladi") }
+                          { onSuccess: () => toast.success("Rad etildi — ushlanma qoladi") }
                         )
                       }
                     >

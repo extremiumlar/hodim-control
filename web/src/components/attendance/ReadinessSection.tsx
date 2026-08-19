@@ -36,7 +36,7 @@ export default function ReadinessSection({
     { key: "no_schedule", label: "Ish jadvali yo'q", hint: "kechikish taxminiy hisoblanadi" },
     { key: "open_checkouts", label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt 0 bo'lib qolgan" },
     { key: "auto_closed", label: "Avtomatik yopilgan", hint: "ishlangan vaqt taxminiy" },
-    { key: "pending_excused", label: "Sababli kun hal qilinmagan", hint: "jarimani bekor qilishi mumkin" },
+    { key: "pending_excused", label: "Sababli kun hal qilinmagan", hint: "ushlanmani bekor qilishi mumkin" },
     { key: "no_face", label: "Yuz ro'yxatdan o'tmagan", hint: "umuman check-in qila olmaydi" },
   ];
 

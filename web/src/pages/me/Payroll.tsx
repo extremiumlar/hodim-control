@@ -105,7 +105,7 @@ export default function MyPayroll() {
           ))}
         {!!data.bonus_amount && <Row label="Bonus" amount={data.bonus_amount} sign="+" />}
         {!!data.fine_amount && (
-          <Row label="Kechikish jarimasi" amount={data.fine_amount} sign="−" />
+          <Row label="Kechikish ushlanmasi" amount={data.fine_amount} sign="−" />
         )}
         {!!data.absent_deduction && (
           <Row label="Kelmagan kun ushlanmasi" amount={data.absent_deduction} sign="−" />

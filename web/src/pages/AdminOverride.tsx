@@ -75,7 +75,7 @@ const ENTITY_META: Record<string, { label: string; fields: string[]; soft: boole
   salary_rate: { label: "Oylik stavka", fields: ["amount", "pay_basis", "note"], soft: true },
   payroll_adjustment: { label: "Qo'lda qo'shimcha/ushlanma", fields: ["amount", "kind", "reason"], soft: false },
   fine_policy: {
-    label: "Jarima qoidasi",
+    label: "Ushlanma qoidasi",
     fields: [
       "free_late_minutes_per_month", "fine_mode", "fine_per_day", "absent_mode", "absent_fine",
       "monthly_cap_percent", "monthly_cap_amount", "fine_applies_to", "is_active", "grace_minutes",

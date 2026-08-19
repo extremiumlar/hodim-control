@@ -326,7 +326,7 @@ async def build_payroll_xlsx(db: AsyncSession, period: str, user_ids: list[int] 
     ws.append(
         [
             "Xodim", "Holat", "Asosiy oylik", "Qo'shimcha ish", "Bonus", "Qo'shimchalar (+)",
-            "Kechikish jarimasi", "Kelmagan kun ushlanmasi", "Qo'shimchalar (-)", "Jami (gross)", "Netto",
+            "Kechikish ushlanmasi", "Kelmagan kun ushlanmasi", "Qo'shimchalar (-)", "Jami (gross)", "Netto",
         ]
     )
     for cell in ws[2]:

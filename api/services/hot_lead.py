@@ -168,7 +168,7 @@ def _notify_text(lead: HotLead, cool_minutes: int, fine: float) -> str:
         "Qo'ng'iroq CRM'dan avtomatik tekshiriladi."
     )
     if fine > 0:
-        lines.append(f"💸 Sovutsang jarima: <b>{_fmt_money(fine)}</b>.")
+        lines.append(f"💸 Sovutsang ushlanma: <b>{_fmt_money(fine)}</b>.")
     return "\n".join(lines)
 
 
@@ -527,7 +527,7 @@ def _reminder_text(step: int, cool_minutes: int, lead: HotLead, fine: float) -> 
     ohangida, senlab. Har bosqichda bosim ortadi."""
     left = max(0, cool_minutes - step)
     who = _lead_label(lead)
-    fine_part = f" Jarima: {_fmt_money(fine)}." if fine > 0 else ""
+    fine_part = f" Ushlanma: {_fmt_money(fine)}." if fine > 0 else ""
     if step <= 3:
         return (
             f"⏰ <b>{step} daqiqa bo'ldi</b> — «{who}» ga hali qo'ng'iroq qilmading.\n"
@@ -536,18 +536,18 @@ def _reminder_text(step: int, cool_minutes: int, lead: HotLead, fine: float) -> 
     if step <= 5:
         return (
             f"🔥 <b>{step} daqiqa!</b> «{who}» sovib boryapti.\n"
-            f"Hoziroq telefon qil — {left} daqiqadan keyin jarima yozaman.{fine_part}"
+            f"Hoziroq telefon qil — {left} daqiqadan keyin ushlanma yozaman.{fine_part}"
         )
     if step <= 7:
         return (
             f"⚠️ <b>{step} daqiqa bo'ldi — oxirgi ogohlantirish!</b>\n"
-            f"«{who}» ga qo'ng'iroq qilmasang, {left} daqiqadan keyin jarimaga tushasan "
+            f"«{who}» ga qo'ng'iroq qilmasang, {left} daqiqadan keyin ushlanmaga tushasan "
             f"va guruhga chiqaraman.{fine_part}"
         )
     return (
         f"🚨 <b>{step} daqiqa! Atigi {left} daqiqa qoldi.</b>\n"
         f"«{who}» ga hoziroq qo'ng'iroq qil. Aks holda «lidni sovutdi» deb guruhga "
-        f"ismingni yozib chiqaraman va jarima yozaman.{fine_part}"
+        f"ismingni yozib chiqaraman va ushlanma yozaman.{fine_part}"
     )
 
 
@@ -662,9 +662,9 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
             operator = await db.get(User, lead.user_id)
         who = operator.full_name.strip() if operator else "mas'ul topilmadi"
         fine_line = (
-            f"💸 Jarima: <b>{_fmt_money(fine)}</b>"
+            f"💸 Ushlanma: <b>{_fmt_money(fine)}</b>"
             if fine > 0
-            else "💸 Jarima: belgilanmagan (HR panelidan sozlanadi)"
+            else "💸 Ushlanma: belgilanmagan (HR panelidan sozlanadi)"
         )
         text = (
             "❄️ <b>ISSIQ LID SOVUTILDI</b>\n"
@@ -693,7 +693,7 @@ async def escalate_stale(db: AsyncSession, dry_run: bool) -> dict:
                     Category.SALES_SIGNALS,
                     f"❄️ «{_lead_label(lead)}» lidini sovutding — {minutes} daqiqa "
                     f"qo'ng'iroq qilmading. Guruhga chiqarildi."
-                    + (f"\n💸 Jarima: <b>{_fmt_money(fine)}</b>." if fine > 0 else ""),
+                    + (f"\n💸 Ushlanma: <b>{_fmt_money(fine)}</b>." if fine > 0 else ""),
                     data={"path": "/me/lead-stats"},
                     force_telegram=True,
                 )
@@ -742,7 +742,7 @@ async def send_corrections(db: AsyncSession, dry_run: bool) -> dict:
             text = (
                 "✅ <b>Tuzatildi — sen aslida qo'ng'iroq qilgan ekansan</b>\n"
                 f"👤 {_lead_label(lead)} — qo'ng'iroq CRM'da topildi ({speed_min} daqiqada). "
-                "Bu lid «sovutilgan» hisobidan chiqarildi, jarima qo'llanmaydi."
+                "Bu lid «sovutilgan» hisobidan chiqarildi, ushlanma qo'llanmaydi."
             )
         else:
             text = (
