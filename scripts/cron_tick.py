@@ -83,6 +83,10 @@ SYSTEM_HEALTH_LOCK_STALE_MINUTES = 6
 # ikki marta yozib yurmasin.
 PAYROLL_LOCK = ROOT / "logs" / "payroll.lock"
 PAYROLL_LOCK_STALE_MINUTES = 20
+# Umumiy og'ir ishlar navbati (TZ 2.2 / S-07) — Excel eksporti va h.k.
+# Lock uzunroq: bitta hisobot bir necha daqiqa olishi mumkin.
+BACKGROUND_LOCK = ROOT / "logs" / "background_jobs.lock"
+BACKGROUND_LOCK_STALE_MINUTES = 20
 AUTO_PLAN_LOCK = ROOT / "logs" / "auto_plan.lock"
 AUTO_PLAN_LOCK_STALE_MINUTES = 6
 # Bosqich 4b (2026-08-13) — qolgan ticklar. `group_digest` HAR DAQIQA
@@ -390,6 +394,20 @@ async def _run_payroll_inprocess(now: datetime) -> None:
     await _run_service_inprocess(now, "oylik hisobi", PAYROLL_LOCK, PAYROLL_LOCK_STALE_MINUTES, runner)
 
 
+async def _run_background_jobs_inprocess(now: datetime) -> None:
+    """Navbatdagi og'ir ish (Excel eksporti va h.k.) — HAR DAQIQA.
+
+    Navbat bo'sh bo'lsa bu bitta yengil SELECT. Ish bajarilsa Passenger
+    ishchisiga umuman tegilmaydi — aynan shuning uchun cron'da (TZ 2.2)."""
+    async def runner(db):
+        from api.services.background_jobs import background_tick
+        return await background_tick(db)
+
+    await _run_service_inprocess(
+        now, "fon ishlari", BACKGROUND_LOCK, BACKGROUND_LOCK_STALE_MINUTES, runner
+    )
+
+
 async def _run_system_health_inprocess(now: datetime) -> None:
     async def runner(db):
         from api.services import system_health
@@ -566,6 +584,9 @@ async def main() -> None:
     # Oylik navbati — HAR DAQIQA. Digestdan keyin, chunki digest vaqt-sezgir;
     # navbat bo'sh bo'lganda bu atigi bitta SELECT.
     await _run_payroll_inprocess(now)
+    # Umumiy og'ir ishlar navbati (TZ 2.2) — oylikdan keyin, chunki oylik
+    # vaqt-sezgirroq (HR tugmani bosib kutib turadi).
+    await _run_background_jobs_inprocess(now)
     if now.minute % 5 == 3:
         await _run_playbook_inprocess(now)
     if now.minute % 30 == 17:

@@ -2219,3 +2219,44 @@ class FunnelSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class BackgroundJobStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class BackgroundJob(Base):
+    """Og'ir ishlar navbati (yangi TZ 2.2 / S-07).
+
+    NEGA KERAK: cPanel Passenger'da konkurentlik = 1 — bitta uzoq so'rov
+    BUTUN saytni navbatga qo'yadi. Excel eksporti, hujjat generatsiyasi va
+    shunga o'xshash ishlar so'rov ichida bajarilmasligi kerak.
+
+    Oylik hisobi uchun allaqachon shunday navbat bor
+    (`payroll_periods.calc_state`), lekin u O'SHA modulga xos (progress,
+    davr qulfi). Bu esa UMUMIY mexanizm: yangi og'ir ish qo'shilganda
+    faqat ishlovchi funksiya yoziladi.
+
+    ⚠️ Holat FAQAT bazada. Cron har daqiqada YANGI jarayon ishga tushiradi,
+    ya'ni modul darajasidagi navbat/lock ishlamaydi."""
+
+    __tablename__ = "background_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(10), default=BackgroundJobStatus.queued.value, server_default="queued", index=True
+    )
+    # Kim so'ragan — natija SHU odamga yuboriladi.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    # Natija Telegram'da qoladi (serverda fayl SAQLANMAYDI — disk kvotasi tor).
+    result_file_id: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    result_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

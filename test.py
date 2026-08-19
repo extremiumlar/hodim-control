@@ -8012,6 +8012,132 @@ def test_view_scope() -> None:
         conn.close()
 
 
+def test_background_jobs() -> None:
+    """S-07 (TZ 2.2) — og'ir ish so'rov ichida BAJARILMAYDI.
+
+    cPanel Passenger'da konkurentlik = 1: Excel eksporti so'rov ichida
+    yasalgani uchun o'sha vaqt davomida BUTUN sayt javob bermasdi. Endi
+    so'rov navbatga qo'yadi (202), og'ir ishni cron jarayoni bajaradi.
+
+    Qabul mezonlari (TZ):
+      • eksport so'rov ichida bajarilmaydi;
+      • foydalanuvchi «tayyorlanmoqda» xabarini oladi;
+      • bitta ish IKKI MARTA bajarilmaydi;
+      • xato bo'lsa `failed` va sabab yoziladi, cron O'LMAYDI.
+    """
+    import asyncio
+    import time
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-07: OG'IR ISH NAVBATI")
+    print("=" * 60)
+
+    from api.services.background_jobs import background_tick, enqueue
+    from db.base import async_session
+    from db.models import BackgroundJob
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    job_ids = []
+    try:
+        # ── (1) So'rov DARHOL qaytadi ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            t0 = time.perf_counter()
+            r = c.post("/reports/export-async?date_from=2019-01-01&date_to=2019-01-31",
+                       headers=auth(mgr_t))
+            davomiylik = time.perf_counter() - t0
+            # Telegram ulanmagan rahbar bo'lsa 400 — bu ham to'g'ri xatti-harakat
+            if r.status_code == 400:
+                check("S-07: Telegramsiz rahbarga tushunarli xato",
+                      "Telegram" in r.text, "=" + r.text[:120])
+            else:
+                check("S-07: eksport so'rovi -> 202 (natija emas, NAVBAT)",
+                      r.status_code == 202, "kod=" + str(r.status_code) + " " + r.text[:120])
+                check("S-07: so'rov TEZ qaytadi (og'ir ish ichida emas)",
+                      davomiylik < 2.0, f"{davomiylik:.2f}s")
+                job = r.json()
+                job_ids.append(job.get("job_id"))
+                check("S-07: javobda `job_id` va «tayyorlanmoqda» xabari bor",
+                      job.get("job_id") and "tayyorlanmoqda" in (job.get("message") or ""),
+                      "=" + str(job))
+
+                # Holat endpointi
+                r2 = c.get(f"/reports/jobs/{job['job_id']}", headers=auth(mgr_t))
+                check("S-07: holat endpointi -> 200 va `queued`",
+                      r2.status_code == 200 and r2.json().get("status") == "queued",
+                      "kod=" + str(r2.status_code) + " " + r2.text[:100])
+
+                # Begona ish -> 404 (S-06 qoidasi)
+                r3 = c.get("/reports/jobs/999999", headers=auth(mgr_t))
+                check("S-07: begona/yo'q ishga -> 404", r3.status_code == 404,
+                      "kod=" + str(r3.status_code))
+
+        # ── (2) Ish navbatga TUSHDI, cron uni oladi ──
+        async def _tick():
+            async with async_session() as s2:
+                return await background_tick(s2)
+
+        if job_ids:
+            natija = asyncio.run(_tick())
+            check("S-07: cron navbatdagi ishni bajardi",
+                  natija.get("ran") == "report_export" and natija.get("ok") is True,
+                  "=" + str(natija))
+            check("S-07: fayl yasaldi (baytlar bor)",
+                  (natija.get("bytes") or 0) > 1000, "=" + str(natija.get("bytes")))
+
+            # ── (3) IKKI MARTA bajarilmaydi ──
+            ikkinchi = asyncio.run(_tick())
+            check("S-07: o'sha ish IKKINCHI marta olinmaydi",
+                  ikkinchi.get("ran") is None, "=" + str(ikkinchi))
+
+            holat = cur.execute("select status from background_jobs where id=?",
+                                (job_ids[0],)).fetchone()
+            check("S-07: ish holati `done`", holat and holat[0] == "done", "=" + str(holat))
+
+        # ── (4) Xato bo'lsa `failed` + sabab, cron o'lmaydi ──
+        async def _xato_ish():
+            async with async_session() as s2:
+                j = await enqueue(s2, "report_export", {"date_from": "buzuq"}, mgr[0])
+                await s2.commit()
+                return j.id
+
+        xato_id = asyncio.run(_xato_ish())
+        job_ids.append(xato_id)
+        natija = asyncio.run(_tick())
+        check("S-07: xato ish cron'ni O'LDIRMAYDI (javob qaytdi)",
+              natija.get("ok") is False, "=" + str(natija))
+        row = cur.execute("select status, error from background_jobs where id=?",
+                          (xato_id,)).fetchone()
+        check("S-07: xato ish `failed` bo'ldi va SABAB yozildi",
+              row and row[0] == "failed" and row[1], "=" + str(row))
+
+        # ── (5) Noma'lum tur navbatga UMUMAN tushmaydi ──
+        async def _nomalum():
+            async with async_session() as s2:
+                try:
+                    await enqueue(s2, "yolgon_ish", {}, mgr[0])
+                    return "o'tdi"
+                except ValueError as e:
+                    return str(e)
+
+        check("S-07: noma'lum ish turi rad etiladi",
+              "noma'lum" in asyncio.run(_nomalum()), "=" + asyncio.run(_nomalum()))
+    except Exception:
+        check("S-07 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        cur.execute("delete from background_jobs")
+        conn.commit()
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -8114,6 +8240,11 @@ def main() -> None:
         test_view_scope()
     except Exception:
         print("S-06 qamrov testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_background_jobs()
+    except Exception:
+        print("S-07 fon ishlari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

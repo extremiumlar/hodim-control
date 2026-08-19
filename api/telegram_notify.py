@@ -2,13 +2,21 @@ import httpx
 
 from api.config import settings
 
+# ⚠️ HAR BIR yuboruvchi funksiya `notifications_enabled` ni TEKSHIRADI.
+#
+# NEGA AYNAN SHU YERDA (yuqoriroqda emas): qo'riqchi ilgari faqat
+# `notify_user` da edi, lekin `send_media_file` / `send_file_id` kabi
+# TO'G'RIDAN-TO'G'RI chaqiruvlar uni chetlab o'tardi. 2026-08-19 da aynan
+# shu tufayli sinov paytida haqiqiy Excel fayli rahbarga yuborilib ketdi.
+# Transport qatlami — yagona to'g'ri joy: undan pastda hech narsa yo'q.
+
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 
 async def send_message(chat_id: int, text: str, reply_markup: dict | None = None) -> dict | None:
     """API'dan Telegram'ga chiquvchi xabar yuborish. Token bo'lmasa jim o'tkazib yuboriladi
     (masalan lokal sinovda bot ishga tushirilmagan bo'lishi mumkin)."""
-    if not settings.bot_token:
+    if not settings.bot_token or not settings.notifications_enabled:
         return None
 
     url = TELEGRAM_API.format(token=settings.bot_token, method="sendMessage")
@@ -53,7 +61,7 @@ async def send_file_id(
     `file_type`: "photo" -> sendPhoto, "video" -> sendVideo,
     "animation" -> sendAnimation (GIF), qolgani -> sendDocument.
     """
-    if not settings.bot_token:
+    if not settings.bot_token or not settings.notifications_enabled:
         return None
 
     method, field = _MEDIA_METHODS.get(file_type, ("sendDocument", "document"))
@@ -92,7 +100,7 @@ async def send_media_file(
     bilan, ya'ni bayt qayta yuborilmaydi va serverda fayl saqlanmaydi.
 
     Telegram Bot API cheklovi: yuklanadigan fayl 50 MB dan oshmasin."""
-    if not settings.bot_token:
+    if not settings.bot_token or not settings.notifications_enabled:
         return None
 
     method, field = _MEDIA_METHODS.get(file_type, ("sendDocument", "document"))
@@ -126,7 +134,7 @@ async def edit_reply_markup(chat_id: int, message_id: int, reply_markup: dict) -
 
     Tabrik postidagi «👏 Tabriklash (N)» sanog'i shu orqali o'sadi — video
     qayta yuborilmaydi, faqat tugma almashadi."""
-    if not settings.bot_token:
+    if not settings.bot_token or not settings.notifications_enabled:
         return None
 
     url = TELEGRAM_API.format(token=settings.bot_token, method="editMessageReplyMarkup")
