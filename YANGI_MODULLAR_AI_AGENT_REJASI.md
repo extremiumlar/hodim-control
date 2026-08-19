@@ -109,6 +109,27 @@ D BLOK (to'ldiruvchi) — A, B, C tugagach
 > TZ: «Bular hal qilinmasa, yangi modullar mavjud muammolarni kattalashtiradi.»
 > 9 bosqich · A blok tugagach tizim yangi modullarni qabul qilishga tayyor.
 
+## ✅ A BLOK BAJARILDI (2026-08-19) — 9/9
+
+| Bosqich | Holat | Commit |
+|---|---|---|
+| S-01 kelajak kunlari | ✅ | `fd5a967` |
+| S-02 ushlanma → bonusdan | ✅ | `c9f11e0` |
+| S-03 «ushlanma» atamasi | ✅ | `c6d283f` |
+| S-04 `GET /me/sections` | ✅ | `bb1e802` |
+| S-05 uchala mijoz | ✅ | `24c672c`, `28e82fa` |
+| S-06 ko'rinish filtri | ✅ | `2836f95` |
+| S-07 og'ir ish → cron | ✅ | `4d74815`, `7292ac7` |
+| S-08 sozlanmagan modullar | ✅ | `6a5b4c7` |
+| S-09 bayramlar + ta'til check-in | ✅ | `4eded9d` |
+
+**⚠️ DEPLOY QILINMAGAN:** 9 ta commit lokalda turibdi (IP CSF/LFD blokida).
+Blok ochilgach: `git pull && alembic upgrade heads` — ikkita migratsiya bor
+(`background_jobs`, `holidays`).
+
+**Kutilayotgan qiymatlar (HR kiritadi):** KPI stavkalari (suhbat/tashrif/video),
+qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
+
 ---
 
 ### S-01 · Kelajakdagi kunlar muammosini TEKSHIRISH (2.3)
