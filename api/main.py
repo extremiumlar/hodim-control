@@ -67,6 +67,7 @@ from api.routers import (
     excused_days,
     funnel,
     hot_lead,
+    holidays,
     hourly_plan,
     idle_watch,
     knowledge,
@@ -161,6 +162,7 @@ app.include_router(bonuses.router)
 app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
+app.include_router(holidays.router)
 app.include_router(work_schedule.router)
 app.include_router(work_log.router)
 app.include_router(appeals.router)

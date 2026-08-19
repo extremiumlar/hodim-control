@@ -861,10 +861,15 @@ class AttendanceOut(BaseModel):
     status: str
     is_weekend: bool
     note: str | None = None
-    # Check-in javobida ko'rsatiladigan ogohlantirish (ARIZALAR_REJASI.md
-    # Bosqich 0.2): masalan xodim TASDIQLANGAN sababli kunda ishga kelgan.
-    # Bloklamaydi — real hayotda ta'tildan chaqirib olinadi; lekin xodim ham,
-    # rahbar ham bu holatdan xabardor bo'lishi kerak.
+    # Check-in javobida ko'rsatiladigan ogohlantirish — bloklamaydigan,
+    # lekin xodim bilishi kerak bo'lgan holat uchun bo'sh joy.
+    #
+    # HOZIR HECH KIM TO'LDIRMAYDI. Yagona ishlatuvchisi «tasdiqlangan
+    # sababli kunda ishga kelish» edi (ARIZALAR_REJASI.md Bosqich 0.2) —
+    # u yangi TZ 2.9 / S-09 da OGOHLANTIRISHDAN RAD ETISHGA o'zgardi
+    # (`OnLeaveError`), chunki xodim bir vaqtda ham «ta'tilda», ham
+    # «ishda» bo'lib qolardi. Maydon saqlanmoqda: mijozlar (CheckIn.tsx)
+    # uni allaqachon o'qiydi, ya'ni keyingi shunday holat uchun tayyor.
     warning: str | None = None
 
 

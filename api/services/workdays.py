@@ -53,12 +53,20 @@ async def range_days(db: AsyncSession, user: User, start: date, end: date) -> li
         )
     }
 
+    # Bayramlar (S-09) — `payroll.month_schedule` bilan BIR XIL ustuvorlik:
+    # override > bayram > haftalik > default.
+    from api.services.holidays import holiday_dates
+
+    bayramlar = await holiday_dates(db, start, end)
+
     out: list[dict] = []
     d = start
     while d <= end:
         ov = overrides.get(d)
         if ov is not None:
             is_working = ov.is_working
+        elif d in bayramlar:
+            is_working = False
         else:
             w = weekly.get(d.weekday())
             is_working = w.is_working if w is not None else d.weekday() < 5

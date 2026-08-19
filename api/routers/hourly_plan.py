@@ -46,6 +46,12 @@ async def _effective_today(db: AsyncSession, user: User, day: date) -> tuple[boo
             return False, "", ""
         return True, ov.start_time or DEFAULT_START, ov.end_time or DEFAULT_END
 
+    # Bayram (S-09): umumiy jadvaldan kuchli, override'dan kuchsiz.
+    from api.services.holidays import is_holiday
+
+    if await is_holiday(db, day):
+        return False, "", ""
+
     w = await db.scalar(
         select(WorkScheduleWeekly).where(
             WorkScheduleWeekly.user_id == user.id, WorkScheduleWeekly.weekday == day.weekday()

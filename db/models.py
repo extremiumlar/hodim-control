@@ -2260,3 +2260,28 @@ class BackgroundJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class HolidayKind(str, enum.Enum):
+    state = "state"  # davlat bayrami
+    company = "company"  # kompaniya qarori (masalan korporativ dam kun)
+
+
+class Holiday(Base):
+    """Dam olish deb e'lon qilingan kunlar (yangi TZ 2.9 / S-09).
+
+    NEGA KERAK: tizim bayramni oddiy ish kuni deb sanardi. Oqibati ikki
+    tomonlama — xodim kelmagani uchun «kelmagan kun» ushlanmasiga tushardi,
+    normalar esa bajarilmagan bo'lib ko'rinardi.
+
+    Sana UNIKAL: bir kun ikki marta e'lon qilinmasin (HR ro'yxatni yildan
+    yilga ko'chirganda takrorlash oson)."""
+
+    __tablename__ = "holidays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[str] = mapped_column(String(10), default=HolidayKind.state.value)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

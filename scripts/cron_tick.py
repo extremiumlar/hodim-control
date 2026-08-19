@@ -609,6 +609,11 @@ async def main() -> None:
     # (daqiqa aniq mos kelgani uchun takrorlanmaydi).
     if now.day == 3 and now.hour == 10 and now.minute == 0:
         await _run_misc_inprocess(now, "reklama xarajati eslatmasi", "ad_spend_reminder_tick")
+    # Keyingi yil bayramlari (S-09) — dekabrning 1 va 15-kuni ertalab.
+    # Ikki marta: birinchisi o'tkazib yuborilsa yangi yilgacha yana imkon
+    # qolsin. Ro'yxat kiritilgan bo'lsa tick jim qaytadi.
+    if now.month == 12 and now.day in (1, 15) and now.hour == 10 and now.minute == 0:
+        await _run_misc_inprocess(now, "bayramlar eslatmasi", "holidays_reminder_tick")
     # Tabrik videolari — HAR DAQIQA: guruhga tashrif/shartnoma xabari kech
     # bormasin. Ish yengil (bitta indeksli SELECT, odatda bo'sh javob).
     await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")

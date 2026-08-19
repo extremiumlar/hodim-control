@@ -114,6 +114,11 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
         for w in await db.scalars(select(WorkScheduleWeekly).where(WorkScheduleWeekly.weekday == day.weekday()))
     }
     default_schedule = (day.weekday() < 5, None, None)
+    # Bayram (S-09): override'dan keyin, haftalik jadvaldan oldin turadi —
+    # bayramda hech kim «kelmagan» ro'yxatiga tushmasin.
+    from api.services.holidays import is_holiday as _is_holiday
+
+    bugun_bayram = await _is_holiday(db, day)
 
     expected: list[User] = []  # bugun ishlashi kerak bo'lganlar
     present: list[tuple[User, Attendance]] = []
@@ -126,7 +131,12 @@ async def collect_day(db: AsyncSession, day=None) -> dict:
     late_out: list[tuple[User, Attendance, int]] = []
 
     for u in employees:
-        is_working, start, end = overrides_by_user.get(u.id, weekly_by_user.get(u.id, default_schedule))
+        if u.id in overrides_by_user:
+            is_working, start, end = overrides_by_user[u.id]
+        elif bugun_bayram:
+            is_working, start, end = False, None, None
+        else:
+            is_working, start, end = weekly_by_user.get(u.id, default_schedule)
         if not is_working:
             continue  # dam olish kuni — ro'yxatga kirmaydi
         expected.append(u)

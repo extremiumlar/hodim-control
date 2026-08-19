@@ -11,6 +11,7 @@ import { format, subDays } from "date-fns";
 import { Copy, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
+import HolidaysTab from "@/components/attendance/HolidaysTab";
 import ScheduleOverviewTab from "@/components/attendance/ScheduleOverviewTab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -566,13 +567,17 @@ function SingleEmployeeEditor({
   );
 }
 
+/** URL dagi `?tab=` qiymati (S-09 da «bayram» qo'shildi). */
+type Tab = "umumiy" | "bitta" | "bayram";
+
 export default function WorkSchedule() {
   const usersQuery = useUsers();
   // UX2-A14: tab va xodim endi URLda (?tab=bitta&user=12) — matritsa/tayyorlik
   // bannaridan "shu xodimning jadvalini sozla" deb TO'G'RIDAN-TO'G'RI havola
   // qilish mumkin; sahifa yangilansa ham tanlov saqlanadi.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: "umumiy" | "bitta" = searchParams.get("tab") === "bitta" ? "bitta" : "umumiy";
+  const rawTab = searchParams.get("tab");
+  const tab: Tab = rawTab === "bitta" || rawTab === "bayram" ? rawTab : "umumiy";
   const urlUser = Number(searchParams.get("user")) || null;
   const [selectedId, setSelectedId] = useState<number | null>(urlUser);
 
@@ -587,7 +592,7 @@ export default function WorkSchedule() {
     }
   }, [usersQuery.data, selectedId]);
 
-  function update(next: { tab?: "umumiy" | "bitta"; user?: number }) {
+  function update(next: { tab?: Tab; user?: number }) {
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
       if (next.tab) p.set("tab", next.tab);
@@ -600,10 +605,11 @@ export default function WorkSchedule() {
   return (
     <div className="space-y-4">
       <PageHeader title="Ish jadvali" />
-      <Tabs value={tab} onValueChange={(v) => update({ tab: v as "umumiy" | "bitta" })}>
+      <Tabs value={tab} onValueChange={(v) => update({ tab: v as Tab })}>
         <TabsList className="w-full justify-start overflow-x-auto md:w-auto">
           <TabsTrigger value="umumiy" className="flex-shrink-0">Umumiy</TabsTrigger>
           <TabsTrigger value="bitta" className="flex-shrink-0">Bitta xodim</TabsTrigger>
+          <TabsTrigger value="bayram" className="flex-shrink-0">Bayramlar</TabsTrigger>
         </TabsList>
         <TabsContent value="umumiy" className="mt-4">
           <ScheduleOverviewTab onPick={(id) => update({ tab: "bitta", user: id })} />
@@ -613,6 +619,9 @@ export default function WorkSchedule() {
             selectedId={selectedId}
             onSelectUser={(id) => update({ user: id })}
           />
+        </TabsContent>
+        <TabsContent value="bayram" className="mt-4">
+          <HolidaysTab />
         </TabsContent>
       </Tabs>
     </div>

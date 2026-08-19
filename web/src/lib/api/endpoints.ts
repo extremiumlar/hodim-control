@@ -5,6 +5,7 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  Holiday,
   LeaveBalance,
   RequestCalc,
   RequestDecideResult,
@@ -84,6 +85,22 @@ export const api = {
   // Menyu — serverdan (TZ 2.6). Mijozda ro'yxat qattiq yozilmaydi.
   mySections: () => apiFetch<MeSection[]>("/me/sections"),
   setupStatus: () => apiFetch<SetupItem[]>("/me/setup-status"),
+
+  // ── Bayramlar (TZ 2.9 / S-09) ──
+  holidays: (year?: number) =>
+    apiFetch<Holiday[]>(`/holidays${year ? `?year=${year}` : ""}`),
+  addHoliday: (body: { date: string; name: string; kind: string }) =>
+    apiFetch<Holiday>("/holidays", { method: "POST", body: JSON.stringify(body) }),
+  addHolidaysBulk: (body: {
+    items: { date: string; name: string; kind: string }[];
+    overwrite?: boolean;
+  }) =>
+    apiFetch<{ added: number; updated: number; skipped: number }>("/holidays/bulk", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteHoliday: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/holidays/${id}`, { method: "DELETE" }),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
   myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>

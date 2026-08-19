@@ -19,6 +19,7 @@ export const qk = {
   me: ["me"] as const,
   mySections: ["me", "sections"] as const,
   setupStatus: ["me", "setup-status"] as const,
+  holidays: (year?: number) => ["holidays", year ?? "all"] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
@@ -157,6 +158,25 @@ export const useSetupStatus = (enabled = true) =>
     enabled,
     staleTime: 5 * 60 * 1000,
   });
+
+// ─── Bayramlar (TZ 2.9 / S-09) ───
+/** Bayram ro'yxati. Ish kuni hisobiga ta'sir qilgani uchun `staleTime` uzun —
+ *  ro'yxat yiliga bir marta o'zgaradi. */
+export const useHolidays = (year?: number) =>
+  useQuery({
+    queryKey: qk.holidays(year),
+    queryFn: () => api.holidays(year),
+    staleTime: 30 * 60 * 1000,
+  });
+
+export const useAddHoliday = () =>
+  useApiMutation(api.addHoliday, [["holidays"], qk.setupStatus]);
+
+export const useAddHolidaysBulk = () =>
+  useApiMutation(api.addHolidaysBulk, [["holidays"], qk.setupStatus]);
+
+export const useDeleteHoliday = () =>
+  useApiMutation(api.deleteHoliday, [["holidays"], qk.setupStatus]);
 
 // ─── Davomat ───
 export const useMyAttendanceToday = () =>

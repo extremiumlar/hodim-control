@@ -114,6 +114,11 @@ async def build_month_cells(
         )
     }
 
+    # Bayramlar (S-09) — bir marta olinadi, `schedule_for` sof qoladi.
+    from api.services.holidays import holiday_dates
+
+    bayramlar = await holiday_dates(db, first, last)
+
     def schedule_for(uid: int, day: date) -> tuple[bool, str | None, str | None]:
         """(is_working, start, end) — override > haftalik > default.
         `hourly_plan._effective_today` bilan AYNAN bir qoida, lekin so'rovsiz
@@ -123,6 +128,8 @@ async def build_month_cells(
             if not ov.is_working:
                 return False, None, None
             return True, ov.start_time or DEFAULT_START, ov.end_time or DEFAULT_END
+        if day in bayramlar:
+            return False, None, None
         w = weekly_by_user_wd.get((uid, day.weekday()))
         if w is not None:
             if not w.is_working:

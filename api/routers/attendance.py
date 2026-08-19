@@ -36,6 +36,7 @@ from api.services.attendance import (
     collect_readiness,
     find_similar_face,
     local_hm_to_utc,
+    OnLeaveError,
     perform_check_in,
     perform_check_out,
     recompute_attendance,
@@ -163,38 +164,22 @@ async def my_check_in(
             payload.liveness,
             payload.accuracy,
         )
-    except CheckError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
-
-    out = _att_out(att, user.full_name)
-    # Bosqich 0.2: sababli kunda ishga kelish BLOKLANMAYDI (real hayotda
-    # ta'tildan chaqirib olinadi), lekin jimgina o'tkazib ham yuborilmaydi —
-    # aks holda "ta'tildaman" deb hisoblangan xodim tizimda ishlab yuraveradi
-    # va bu faqat oylik hisoblanganda bilinadi.
-    #
-    # Eski Django variantida bu holat butunlay bloklangan edi
-    # (`verifix/backend/attendance/services.py`), lekin blok noto'g'ri:
-    # xodim ta'tilda bo'la turib ishga chaqirilishi normal holat.
-    if att.status == AttendanceStatus.excused.value:
-        out.warning = (
-            "Bugun siz uchun sababli kun belgilangan. Kelganingiz qayd etildi, "
-            "lekin kechikish hisoblanmaydi. Agar ta'tilingiz tugagan bo'lsa — "
-            "HR ga xabar bering."
-        )
-        # Bosqich 5: agar bu sababli kun TA'TIL ARIZASIDAN kelgan bo'lsa,
-        # HR dan qaror so'raymiz (ta'til qisqartirilsinmi?). Davomat oqimini
-        # bloklamaydi — xato bo'lsa ham check-in allaqachon yozilgan.
+    except OnLeaveError as e:
+        # S-09: rad etamiz, lekin JIMGINA emas — xodim eshik oldida turib
+        # qolmasin. HR ga darhol xabar ketadi va u sababli kunni bekor
+        # qilishi mumkin, keyin xodim qayta uradi.
         try:
             from api.routers.requests import note_interruption
 
-            req = await note_interruption(db, user, att.date)
-            if req is not None:
-                out.warning += " Rahbariyatga xabar berildi."
+            await note_interruption(db, user, today_local())
         except Exception:  # noqa: BLE001
-            logger.exception("Ta'til uzilishini qayd etib bo'lmadi (check-in davom etdi)")
-            # Sessiya yarim holatda qolmasin — javob baribir qaytadi.
+            logger.exception("Ta'til uzilishini qayd etib bo'lmadi (check-in rad etildi)")
             await db.rollback()
-    return out
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    except CheckError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+    return _att_out(att, user.full_name)
 
 
 @router.post("/me/check-out", response_model=AttendanceOut)
@@ -608,9 +593,19 @@ async def _dashboard_payload(db: AsyncSession) -> dict:
         )
     }
     default_working = today.weekday() < 5
+    # Bayram (S-09): umumiy jadvaldan KUCHLI, lekin xodimga atayin qo'yilgan
+    # override'dan kuchsiz — bayram navbatchiligi bo'lishi mumkin.
+    from api.services.holidays import is_holiday as _is_holiday
+
+    bugun_bayram = await _is_holiday(db, today)
 
     def _works_today(u: User) -> bool:
-        row = overrides_by_user.get(u.id) or weekly_by_user.get(u.id)
+        ov = overrides_by_user.get(u.id)
+        if ov is not None:
+            return bool(ov.is_working)
+        if bugun_bayram:
+            return False
+        row = weekly_by_user.get(u.id)
         if row is not None:
             return bool(row.is_working)
         return default_working
@@ -906,9 +901,19 @@ async def remind_all_employees(
         )
     }
     default_working = today.weekday() < 5
+    # Bayram (S-09): umumiy jadvaldan KUCHLI, lekin xodimga atayin qo'yilgan
+    # override'dan kuchsiz — bayram navbatchiligi bo'lishi mumkin.
+    from api.services.holidays import is_holiday as _is_holiday
+
+    bugun_bayram = await _is_holiday(db, today)
 
     def _works_today(u: User) -> bool:
-        row = overrides_by_user.get(u.id) or weekly_by_user.get(u.id)
+        ov = overrides_by_user.get(u.id)
+        if ov is not None:
+            return bool(ov.is_working)
+        if bugun_bayram:
+            return False
+        row = weekly_by_user.get(u.id)
         if row is not None:
             return bool(row.is_working)
         return default_working

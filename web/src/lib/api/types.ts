@@ -1389,3 +1389,11 @@ export interface ExplanationRequestRow {
   decided_at: string | null;
   decision_note: string | null;
 }
+
+/** Bayram kuni (TZ 2.9 / S-09) — ish kuni hisobidan chiqariladi. */
+export type Holiday = {
+  id: number;
+  date: string;
+  name: string;
+  kind: "state" | "company";
+};

@@ -133,6 +133,50 @@ async def ad_spend_reminder_tick(db: AsyncSession) -> dict:
     return {"ok": True, "missing": missing, "notified": len(targets)}
 
 
+async def holidays_reminder_tick(db: AsyncSession) -> dict:
+    """Keyingi yil bayramlari kiritilmagan bo'lsa HR ga eslatma (TZ 2.9 / S-09).
+
+    NEGA KERAK: bayram ro'yxati yiliga bir marta kiritiladi va aynan shuning
+    uchun unutiladi. Unutilsa 1-yanvarda butun jamoa «kelmagan» bo'lib
+    ushlanmaga tushadi — xato oyliq hisoblanguncha bilinmaydi.
+
+    Dekabrda yuboriladi (cron sanani o'zi tanlaydi). Ro'yxat kiritilgan
+    bo'lsa hech kimga xabar ketmaydi."""
+    from sqlalchemy import select
+
+    from api.notify import notify_user
+    from api.services.holidays import missing_year
+    from api.services.push import Category
+    from db.models import Role, User
+
+    from api.timeutil import today_local
+
+    keyingi = today_local().year + 1
+    if not await missing_year(db, keyingi):
+        return {"ok": True, "year": keyingi, "missing": False}
+
+    targets = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_((Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+    text = (
+        f"📅 <b>{keyingi}-yil bayramlari kiritilmagan</b>\n\n"
+        "Kiritilmasa bayram kunlari oddiy ish kuni sifatida sanaladi: "
+        "xodimlar «kelmagan» bo'lib ushlanmaga tushadi va normalar "
+        "bajarilmagan ko'rinadi.\n"
+        "Sayt → <b>Ish jadvali</b> → «Bayramlar»."
+    )
+    for user in targets:
+        await notify_user(db, user, Category.APPROVALS, text,
+                          data={"path": "/work-schedule"})
+    return {"ok": True, "year": keyingi, "missing": True, "notified": len(targets)}
+
+
 async def lead_source_tick(db: AsyncSession) -> dict:
     """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
 

@@ -260,6 +260,14 @@ async def month_schedule(db: AsyncSession, user: User, period: str) -> list[dict
             select(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id == user.id)
         )
     }
+    # Bayramlar (S-09): umumiy jadvaldan KUCHLI, lekin xodimga atayin
+    # qo'yilgan kunlik override'dan kuchsiz — bayram navbatchiligi bo'lishi
+    # mumkin va bu qaror HR tomonidan aniq kiritilgan.
+    from api.services.holidays import holiday_dates
+
+    bayramlar = await holiday_dates(
+        db, period_start, date.fromordinal(period_end.toordinal() - 1)
+    )
 
     days: list[dict] = []
     d = period_start
@@ -268,6 +276,8 @@ async def month_schedule(db: AsyncSession, user: User, period: str) -> list[dict
         if ov is not None:
             is_working = ov.is_working
             start, end = (ov.start_time or DEFAULT_START, ov.end_time or DEFAULT_END) if is_working else ("", "")
+        elif d in bayramlar:
+            is_working, start, end = False, "", ""
         else:
             w = weekly.get(d.weekday())
             if w is not None:

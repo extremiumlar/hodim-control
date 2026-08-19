@@ -1227,11 +1227,55 @@ def run_tests(ctx: dict) -> None:
                 "latitude": OFFICE[0], "longitude": OFFICE[1],
                 "face_descriptor": FACE, "liveness": 0.9,
             })
-            check("sababli kunda check-in -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
-            body = r.json() if r.status_code == 200 else {}
-            check("5.1: late_minutes=0 (sababli kun, aks holda kech qolgan bo'lardi)",
-                  body.get("late_minutes") == 0, f"late={body.get('late_minutes')}")
-            check("5.1: status='excused'", body.get("status") == "excused", f"status={body.get('status')}")
+            # ⚠️ QAROR O'ZGARDI (yangi TZ 2.9 / S-09). Ilgari sababli kunda
+            # check-in ATAYIN o'tkazilardi (200 + ogohlantirish) — «ta'tildan
+            # chaqirib olish normal» degan mulohaza bilan. Amalda bu xodimni
+            # bir vaqtning o'zida ham «ta'tilda», ham «ishda» qilib qo'ydi va
+            # oylik/norma/davomat uchta har xil javob berardi. Endi RAD
+            # etiladi, HR ga esa xabar boradi.
+            check("S-09: sababli kunda check-in RAD etildi -> 400",
+                  r.status_code == 400, f"kod={r.status_code} {r.text[:150]}")
+            check("S-09: rad etish sababi aytilgan (sababli kun)",
+                  r.status_code == 400 and "sababli kun" in r.text,
+                  r.text[:150])
+            qator = cur.execute(
+                "select count(*) from attendance where user_id=?", (ex_uid,)).fetchone()[0]
+            check("S-09: rad etilgach davomat yozuvi YARATILMADI", qator == 0,
+                  f"qatorlar={qator}")
+
+            # 5.1 ning ASL qoidasi kuchda: sababli kunda kechikish yozilmaydi.
+            # Endi bu check-in orqali emas (u bloklangan), balki qo'lda
+            # kiritilgan / avtomatik qayta hisoblangan yozuv orqali sinaladi —
+            # HR ta'tildagi kunni qo'lda tuzatishi mumkin.
+            try:
+                import asyncio as _aio
+
+                from db.base import async_session as _sess
+
+                async def _qayta():
+                    from api.services.attendance import recompute_attendance
+                    from db.models import Attendance as _Att
+                    from db.models import User as _U
+                    from sqlalchemy import select as _sel
+                    async with _sess() as s3:
+                        u3 = await s3.get(_U, ex_uid)
+                        att3 = _Att(user_id=ex_uid, date=date.today(),
+                                    check_in_time=datetime.utcnow())
+                        s3.add(att3)
+                        await s3.flush()
+                        await recompute_attendance(s3, att3, u3)
+                        await s3.commit()
+                        row = await s3.scalar(
+                            _sel(_Att).where(_Att.user_id == ex_uid))
+                        return row.status, row.late_minutes
+
+                st, lt = _aio.run(_qayta())
+                check("5.1: late_minutes=0 (sababli kun, aks holda kech qolgan bo'lardi)",
+                      lt == 0, f"late={lt}")
+                check("5.1: status='excused'", st == "excused", f"status={st}")
+            except Exception:
+                check("5.1 qayta hisob tekshiruvi", False,
+                      traceback.format_exc(limit=2).strip())
 
             cur.execute("delete from attendance where user_id=?", (ex_uid,))
             cur.execute("delete from work_schedule_weekly where user_id=?", (ex_uid,))
@@ -8250,6 +8294,280 @@ def test_setup_status() -> None:
         conn.close()
 
 
+def test_holidays() -> None:
+    """S-09 (TZ 2.9) — bayram ish kuni sifatida sanalmasin, ta'tildagi
+    xodim check-in qilolmasin.
+
+    Qabul mezonlari (TZ):
+      • bayram kuni ish kuni sifatida sanalmaydi (hamma hisoblagichda);
+      • ta'tildagi xodim check-in qilolmaydi;
+      • bayram kiritilmagan bo'lsa «Sozlanmagan modullar» da ko'rinadi.
+
+    Alohida tekshiriladigan CHEGARA HOLAT (TZ talabi): bayram + sababli
+    kun + dam olish kuni BIR KUNGA to'g'ri kelsa hisob buzilmasin —
+    kun ikki marta ayirilmasin va manfiy natija chiqmasin.
+
+    USTUVORLIK ham tekshiriladi: xodimga ATAYIN qo'yilgan kunlik override
+    bayramdan kuchli (bayram navbatchiligi), bayram esa haftalik
+    andozadan kuchli.
+    """
+    import asyncio
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-09: BAYRAMLAR + TA'TILDAGI CHECK-IN")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    # Kelasi yilning YANVARI — jonli ma'lumotga tegmaslik uchun ataylab
+    # kelajak: o'sha oyda hech kimning davomati/oyligi yo'q.
+    yil = _date.today().year + 1
+    # 4 dan 10 gacha bo'lgan oraliqda ish kuni (Du-Ju) bo'lgan sana tanlaymiz.
+    bayram_kuni = next(
+        d for d in (_date(yil, 1, n) for n in range(4, 12)) if d.weekday() < 5
+    )
+    dam_kuni = next(
+        d for d in (_date(yil, 1, n) for n in range(4, 12)) if d.weekday() >= 5
+    )
+    ish_kuni2 = bayram_kuni + _td(days=1) if (bayram_kuni + _td(days=1)).weekday() < 5 \
+        else bayram_kuni + _td(days=3)
+    davr = f"{yil}-01"
+
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    try:
+        # Oldingi UZILGAN yurishning qoldig'i natijani buzmasin: birinchi
+        # tekshiruv «bayramdan oldin bu kun ish kuni edi» degan boshlang'ich
+        # holatga tayanadi. Tozalash faqat oxirida bo'lsa, test yarmida
+        # yiqilgan yurishdan keyingi safar noto'g'ri FAIL berardi.
+        cur.execute("delete from holidays where name like 'T-%' or name='Takror'")
+        cur.execute("delete from users where full_name='T-Holiday'")
+        conn.commit()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999700901,'T-Holiday','employee',0,1,datetime('now'))")
+        uid = cur.lastrowid
+        conn.commit()
+
+        async def _sched(period=davr):
+            from api.services.payroll import month_schedule
+            from db.models import User as U
+            async with async_session() as s2:
+                u = await s2.get(U, uid)
+                return {d["date"]: d["is_working"] for d in await month_schedule(s2, u, period)}
+
+        async def _range(a, b):
+            from api.services.workdays import range_days
+            from db.models import User as U
+            async with async_session() as s2:
+                u = await s2.get(U, uid)
+                return {d["date"]: d["is_working"] for d in await range_days(s2, u, a, b)}
+
+        # ── 1) Boshlang'ich holat: bayram yo'q, oddiy ish kuni ──
+        oldin = asyncio.run(_sched())
+        check("S-09: bayramdan OLDIN kun ish kuni edi",
+              oldin.get(bayram_kuni) is True, f"{bayram_kuni} -> {oldin.get(bayram_kuni)}")
+        ish_kuni_oldin = sum(1 for v in oldin.values() if v)
+
+        # ── 2) HTTP orqali bayram qo'shish (HR paneli yo'li) ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/holidays", headers=auth(mgr_t),
+                       json={"date": bayram_kuni.isoformat(), "name": "T-Bayram",
+                             "kind": "state"})
+            check("S-09: POST /holidays -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            hid = r.json().get("id") if r.status_code == 201 else None
+
+            # Takroriy sana -> 409 (HR ro'yxatni ikki marta yuborishi normal)
+            r2 = c.post("/holidays", headers=auth(mgr_t),
+                        json={"date": bayram_kuni.isoformat(), "name": "Takror",
+                              "kind": "state"})
+            check("S-09: takroriy sana -> 409", r2.status_code == 409,
+                  "kod=" + str(r2.status_code))
+
+            # Oddiy xodim qo'sha olmaydi (lekin KO'RA oladi)
+            emp_t = token_for(uid, "employee")
+            r3 = c.post("/holidays", headers=auth(emp_t),
+                        json={"date": ish_kuni2.isoformat(), "name": "X", "kind": "state"})
+            check("S-09: oddiy xodim qo'sha olmaydi -> 403", r3.status_code == 403,
+                  "kod=" + str(r3.status_code))
+            r4 = c.get("/holidays", headers=auth(emp_t), params={"year": yil})
+            check("S-09: oddiy xodim ro'yxatni KO'RADI -> 200", r4.status_code == 200,
+                  "kod=" + str(r4.status_code))
+
+            # ── 3) Ro'yxatni bir marta kiritish (bulk) ──
+            r5 = c.post("/holidays/bulk", headers=auth(mgr_t), json={
+                "items": [
+                    {"date": bayram_kuni.isoformat(), "name": "Takror", "kind": "state"},
+                    {"date": dam_kuni.isoformat(), "name": "T-DamBayram", "kind": "company"},
+                ],
+                "overwrite": False,
+            })
+            check("S-09: bulk -> 200", r5.status_code == 200, "kod=" + str(r5.status_code))
+            if r5.status_code == 200:
+                j = r5.json()
+                check("S-09: bulk borini o'tkazib yubordi, yangisini qo'shdi",
+                      j.get("added") == 1 and j.get("skipped") == 1, "=" + str(j))
+
+        # ── 4) Bayram ish kuni sifatida SANALMAYDI ──
+        keyin = asyncio.run(_sched())
+        check("S-09: bayram kuni endi ish kuni EMAS",
+              keyin.get(bayram_kuni) is False, f"{bayram_kuni} -> {keyin.get(bayram_kuni)}")
+        check("S-09: oydagi ish kunlari ayni 1 taga kamaydi",
+              sum(1 for v in keyin.values() if v) == ish_kuni_oldin - 1,
+              f"{ish_kuni_oldin} -> {sum(1 for v in keyin.values() if v)}")
+        check("S-09: qolgan kunlarga tegmadi",
+              all(keyin[d] == v for d, v in oldin.items() if d != bayram_kuni),
+              "=" + str([d for d, v in oldin.items() if d != bayram_kuni and keyin[d] != v]))
+
+        # ── 5) CHEGARA: bayram DAM OLISH kuniga to'g'ri kelsa ──
+        # Kun ikki marta ayirilmasin — u allaqachon ish kuni emas edi.
+        check("S-09: dam kuniga tushgan bayram hisobni BUZMADI",
+              keyin.get(dam_kuni) is False and
+              sum(1 for v in keyin.values() if v) == ish_kuni_oldin - 1,
+              f"{dam_kuni} -> {keyin.get(dam_kuni)}")
+
+        # ── 6) `workdays.range_days` ham bilishi kerak ──
+        rd = asyncio.run(_range(_date(yil, 1, 1), _date(yil, 1, 31)))
+        check("S-09: workdays.range_days da ham bayram ish kuni emas",
+              rd.get(bayram_kuni) is False, f"{bayram_kuni} -> {rd.get(bayram_kuni)}")
+
+        # ── 7) USTUVORLIK: override bayramdan KUCHLI ──
+        cur.execute(
+            "insert into work_schedule_override (user_id, date, is_working, start_time,"
+            " end_time, updated_at) values (?,?,1,'09:00','18:00',datetime('now'))",
+            (uid, bayram_kuni.isoformat()))
+        conn.commit()
+        ustun = asyncio.run(_sched())
+        check("S-09: override bayramdan KUCHLI (bayram navbatchiligi)",
+              ustun.get(bayram_kuni) is True, f"{bayram_kuni} -> {ustun.get(bayram_kuni)}")
+        cur.execute("delete from work_schedule_override where user_id=?", (uid,))
+        conn.commit()
+
+        # ── 8) USTUVORLIK: bayram haftalik andozadan KUCHLI ──
+        cur.execute(
+            "insert into work_schedule_weekly (user_id, weekday, is_working, start_time,"
+            " end_time, updated_at) values (?,?,1,'09:00','18:00',datetime('now'))",
+            (uid, bayram_kuni.weekday()))
+        conn.commit()
+        haftalik = asyncio.run(_sched())
+        check("S-09: bayram haftalik andozadan KUCHLI",
+              haftalik.get(bayram_kuni) is False,
+              f"{bayram_kuni} -> {haftalik.get(bayram_kuni)}")
+        cur.execute("delete from work_schedule_weekly where user_id=?", (uid,))
+        conn.commit()
+
+        # ── 9) UCHALASI BIR KUNDA: bayram + sababli kun + dam kuni ──
+        # `target_split._working_days` sababli kunni AYIRADI; kun allaqachon
+        # bayram/dam kuni bo'lsa ikki marta ayirilmasligi kerak.
+        cur.execute(
+            "insert into excused_days (user_id, date, reason, status, created_at)"
+            " values (?,?,'T-tatil','approved',datetime('now'))",
+            (uid, dam_kuni.isoformat()))
+        conn.commit()
+
+        async def _wd():
+            from api.services import target_split
+            from db.models import User as U
+            async with async_session() as s2:
+                u = await s2.get(U, uid)
+                excused = (await target_split._excused_map(s2, davr)).get(uid, set())  # noqa: SLF001
+                return await target_split._working_days(s2, u, davr, excused)  # noqa: SLF001
+
+        uch = asyncio.run(_wd())
+        check("S-09: bayram+sababli+dam kuni bir kunda — ish kuni MANFIY emas",
+              uch >= 0, "=" + str(uch))
+        check("S-09: uchtasi to'g'ri kelganda kun IKKI marta ayirilmadi",
+              uch == ish_kuni_oldin - 1, f"kutilgan={ish_kuni_oldin - 1}, chiqdi={uch}")
+
+        # ── 10) TA'TILDAGI XODIM CHECK-IN QILOLMAYDI ──
+        bugun = _date.today()
+        cur.execute(
+            "insert into excused_days (user_id, date, reason, status, created_at)"
+            " values (?,?,'T-tatil','approved',datetime('now'))", (uid, bugun.isoformat()))
+        conn.commit()
+
+        async def _checkin():
+            from api.services.attendance import CheckError, OnLeaveError, perform_check_in
+            from db.models import User as U
+            async with async_session() as s2:
+                u = await s2.get(U, uid)
+                try:
+                    await perform_check_in(s2, u, None, None)
+                except OnLeaveError as e:
+                    return "on_leave", str(e)
+                except CheckError as e:
+                    return "other", str(e)
+                return "ok", ""
+
+        turi, xabar = asyncio.run(_checkin())
+        check("S-09: ta'tildagi xodim check-in qilolmadi", turi == "on_leave",
+              f"{turi}: {xabar[:100]}")
+        check("S-09: rad etish xabari TUSHUNARLI (nima qilishni aytadi)",
+              turi == "on_leave" and "HR" in xabar and len(xabar) > 60,
+              "=" + xabar[:120])
+
+        # Sababli kun olib tashlansa — check-in yana boshqa sababga tayanadi
+        # (bu yerda GPS/yuz), ya'ni «ta'til» to'sig'i o'tdi.
+        cur.execute("delete from excused_days where user_id=? and date=?",
+                    (uid, bugun.isoformat()))
+        conn.commit()
+        turi2, xabar2 = asyncio.run(_checkin())
+        check("S-09: sababli kun olingach «ta'til» to'sig'i yo'qoldi",
+              turi2 != "on_leave", f"{turi2}: {xabar2[:80]}")
+
+        # ── 11) «Sozlanmagan modullar» da ko'rinishi ──
+        from api.services.setup_status import collect_setup_status
+
+        async def _holat():
+            async with async_session() as s2:
+                return {i.key: i.ready for i in await collect_setup_status(s2)}
+
+        check("S-09: bayram kiritilgani «Sozlanmagan» ro'yxatidan chiqardi",
+              asyncio.run(_holat()).get("holidays") is True,
+              "=" + str(asyncio.run(_holat()).get("holidays")))
+
+        # ── 12) O'chirish ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            if hid:
+                rd2 = c.delete(f"/holidays/{hid}", headers=auth(mgr_t))
+                check("S-09: DELETE /holidays -> 200", rd2.status_code == 200,
+                      "kod=" + str(rd2.status_code))
+                qayta = asyncio.run(_sched())
+                check("S-09: bayram o'chirilgach kun yana ish kuni bo'ldi",
+                      qayta.get(bayram_kuni) is True,
+                      f"{bayram_kuni} -> {qayta.get(bayram_kuni)}")
+            rd3 = c.delete("/holidays/99999999", headers=auth(mgr_t))
+            check("S-09: yo'q bayramni o'chirish -> 404", rd3.status_code == 404,
+                  "kod=" + str(rd3.status_code))
+    except Exception:
+        check("S-09 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from holidays where name like 'T-%' or name='Takror'")
+            if uid:
+                cur.execute("delete from excused_days where user_id=?", (uid,))
+                cur.execute("delete from work_schedule_override where user_id=?", (uid,))
+                cur.execute("delete from work_schedule_weekly where user_id=?", (uid,))
+                cur.execute("delete from attendance where user_id=?", (uid,))
+                cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -8362,6 +8680,11 @@ def main() -> None:
         test_setup_status()
     except Exception:
         print("S-08 setup-status testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_holidays()
+    except Exception:
+        print("S-09 bayramlar testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

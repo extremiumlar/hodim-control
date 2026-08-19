@@ -37,6 +37,14 @@ class CheckError(Exception):
     """Davomat xatosi — matni to'g'ridan-to'g'ri foydalanuvchiga ko'rsatiladi."""
 
 
+class OnLeaveError(CheckError):
+    """Xodim tasdiqlangan sababli kunda (ta'til/kasallik) — check-in rad etildi.
+
+    Alohida sinf: chaqiruvchi (router) buni «oddiy xato» dan ajratib, HR ga
+    «ta'tildagi xodim ishga kelmoqchi bo'ldi» xabarini yuboradi. Xodim eshik
+    oldida turib qolmasin — HR darhol qaror qabul qiladi."""
+
+
 def face_similarity(stored: list[float] | None, other: list[float] | None) -> float:
     """0..1 oraliqdagi o'xshashlik (1 = mukammal, 0 = boshqa odam). hodim_crm bilan
     bir xil: 1 - evklid masofa (face-api.js deskriptorlari ~0-1 masofada). Masofa
@@ -409,6 +417,24 @@ async def perform_check_in(
         raise CheckError("Boshliq roli uchun davomat kuzatuvi yoqilmagan.")
     day = today_local()
     is_working, start, end = await _effective_today(db, user, day)
+
+    # ⚠️ QAROR O'ZGARDI (yangi TZ 2.9 / S-09). Ilgari (Bosqich 0.2) sababli
+    # kunda check-in ATAYIN bloklanmasdi — «ta'tildan chaqirib olish normal»
+    # deb hisoblangan va faqat ogohlantirish chiqarilardi. Amalda bu ikki
+    # manbani bir-biriga zid holatga olib keldi: xodim ham «ta'tilda», ham
+    # «ishda» bo'lib qoldi; oylik, normalar va davomat statistikasi uchta
+    # har xil javob berardi.
+    #
+    # Endi rad etiladi, LEKIN jimgina emas: router HR ga darhol xabar beradi
+    # (`OnLeaveError`), HR ta'tilni bekor qilsa xodim qayta urinadi. Ya'ni
+    # «chaqirib olish» yo'li ochiq qoladi, faqat u endi QAYD ETILADI.
+    if await is_excused_day(db, user.id, day):
+        raise OnLeaveError(
+            "Bugun siz uchun tasdiqlangan sababli kun (ta'til/kasallik) "
+            "belgilangan — «Keldim» qilish mumkin emas. Agar ishga "
+            "chaqirilgan bo'lsangiz, HR sababli kunni bekor qilishi kerak. "
+            "HR ga xabar berildi."
+        )
 
     _validate_face(user, descriptor, liveness)
     dist = await _validate_location(db, lat, lng, accuracy, user)

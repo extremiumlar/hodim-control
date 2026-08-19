@@ -118,6 +118,11 @@ async def _effective_week(db: AsyncSession, user: User, start: date) -> WorkWeek
         )
     }
 
+    # Bayramlar (S-09): override'dan keyin, haftalik andozadan oldin.
+    from api.services.holidays import holiday_dates
+
+    bayramlar = await holiday_dates(db, week_start, week_end)
+
     days: list[EffectiveDay] = []
     for i in range(7):
         d = week_start + timedelta(days=i)
@@ -127,6 +132,14 @@ async def _effective_week(db: AsyncSession, user: User, start: date) -> WorkWeek
                 EffectiveDay(
                     date=d, weekday=d.weekday(), is_working=ov.is_working,
                     start_time=ov.start_time, end_time=ov.end_time, source="override", note=ov.note,
+                )
+            )
+            continue
+        if d in bayramlar:
+            days.append(
+                EffectiveDay(
+                    date=d, weekday=d.weekday(), is_working=False,
+                    start_time=None, end_time=None, source="holiday",
                 )
             )
             continue
@@ -151,10 +164,14 @@ async def _effective_week(db: AsyncSession, user: User, start: date) -> WorkWeek
     return WorkWeekOut(user_id=user.id, user_full_name=user.full_name, days=days)
 
 
-def _build_week(user: User, weekly: dict, overrides: dict, week_start: date) -> WorkWeekOut:
+def _build_week(
+    user: User, weekly: dict, overrides: dict, week_start: date,
+    bayramlar: set[date] | None = None,
+) -> WorkWeekOut:
     """`_effective_week`ning bitta xodim uchun sof (so'rovsiz) versiyasi — 3.5-band:
     `all_week` barcha xodimlar uchun oldindan BITTA so'rovda olingan `weekly`/
     `overrides` lug'atlaridan foydalanadi, har biriga alohida murojaat qilmaydi."""
+    bayramlar = bayramlar or set()
     days: list[EffectiveDay] = []
     for i in range(7):
         d = week_start + timedelta(days=i)
@@ -164,6 +181,14 @@ def _build_week(user: User, weekly: dict, overrides: dict, week_start: date) -> 
                 EffectiveDay(
                     date=d, weekday=d.weekday(), is_working=ov.is_working,
                     start_time=ov.start_time, end_time=ov.end_time, source="override", note=ov.note,
+                )
+            )
+            continue
+        if d in bayramlar:
+            days.append(
+                EffectiveDay(
+                    date=d, weekday=d.weekday(), is_working=False,
+                    start_time=None, end_time=None, source="holiday",
                 )
             )
             continue
@@ -466,7 +491,10 @@ async def _all_week_payload(db: AsyncSession, start: date | None) -> list[WorkWe
             )
         )
     }
-    return [_build_week(u, weekly, overrides, week_start) for u in users]
+    from api.services.holidays import holiday_dates
+
+    bayramlar = await holiday_dates(db, week_start, week_end)
+    return [_build_week(u, weekly, overrides, week_start, bayramlar) for u in users]
 
 
 @router.get("/all/week", response_model=list[WorkWeekOut])
