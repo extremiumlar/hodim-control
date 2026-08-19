@@ -36,6 +36,7 @@ import type {
   LateStatRow,
   ManualAttendancePayload,
   MeSection,
+  SetupItem,
   CrmOperatorRow,
   CrmVisitOperatorRow,
   LeadStageDay,
@@ -82,6 +83,7 @@ export const api = {
   me: () => apiFetch<User>("/users/me"),
   // Menyu — serverdan (TZ 2.6). Mijozda ro'yxat qattiq yozilmaydi.
   mySections: () => apiFetch<MeSection[]>("/me/sections"),
+  setupStatus: () => apiFetch<SetupItem[]>("/me/setup-status"),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
   myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>

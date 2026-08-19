@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user
+from api.deps import get_current_user, get_db, require_roles
 from api.services.sections import sections_for
-from db.models import User
+from api.services.setup_status import collect_setup_status
+from db.models import Role, User
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -50,4 +52,33 @@ async def my_sections(user: User = Depends(get_current_user)) -> list[SectionOut
             exact=s.exact,
         )
         for s in sections_for(user)
+    ]
+
+
+class SetupItemOut(BaseModel):
+    key: str
+    label: str
+    ready: bool
+    missing: str
+    link: str
+    critical: bool
+
+
+@router.get("/setup-status", response_model=list[SetupItemOut])
+async def setup_status(
+    _actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> list[SetupItemOut]:
+    """Qaysi modul sozlanmagani (TZ 2.7 / S-08).
+
+    FAQAT HR/Boshliq/Dasturchi: ro'yxatda «stavka kiritilmagan» kabi
+    boshqaruv ma'lumoti bor va uni tuzatish ham o'sha rollarning ishi.
+
+    Sozlanmaganlari BIRINCHI keladi — sahifa ularni tepada ko'rsatadi."""
+    return [
+        SetupItemOut(
+            key=i.key, label=i.label, ready=i.ready,
+            missing=i.missing, link=i.link, critical=i.critical,
+        )
+        for i in await collect_setup_status(db)
     ]

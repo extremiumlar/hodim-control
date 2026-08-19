@@ -8138,6 +8138,118 @@ def test_background_jobs() -> None:
         conn.close()
 
 
+def test_setup_status() -> None:
+    """S-08 (TZ 2.7) — mexanizmi tayyor, lekin QIYMATI yo'q modullar ko'rinsin.
+
+    Jonli isbot (2026-08-17): `kpi_rates` jadvali BUTUNLAY bo'sh edi —
+    kod to'g'ri ishlardi, ko'paytiriladigan stavka yo'q edi. Buni topguncha
+    butun oylik tekshiruvi kerak bo'ldi. Endi bosh sahifada ko'rinadi.
+
+    Qabul mezonlari (TZ):
+      • har qator to'g'ridan-to'g'ri sozlash sahifasiga olib boradi;
+      • hammasi sozlangan bo'lsa ro'yxatda sozlanmagan qolmaydi;
+      • yangi modul qo'shish uchun bitta qator yetadi.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-08: SOZLANMAGAN MODULLAR")
+    print("=" * 60)
+
+    from api.services.setup_status import _TEKSHIRUVLAR, collect_setup_status
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    kpi_id = None
+    try:
+        async def _holat():
+            async with async_session() as s2:
+                return await collect_setup_status(s2)
+
+        items = asyncio.run(_holat())
+        check("S-08: ro'yxat bo'sh emas", len(items) >= 7, "=" + str(len(items)))
+        check("S-08: har bandda havola bor",
+              all(i.link.startswith("/") for i in items),
+              "=" + str([i.link for i in items]))
+        check("S-08: har bandda «nima yetishmayapti» yozilgan",
+              all(len(i.missing) > 10 for i in items), "=" + str([i.key for i in items]))
+
+        # Sozlanmaganlar TEPADA, ular ichida muhimlari birinchi
+        tayyor_indeks = [n for n, i in enumerate(items) if i.ready]
+        sozlanmagan_indeks = [n for n, i in enumerate(items) if not i.ready]
+        if tayyor_indeks and sozlanmagan_indeks:
+            check("S-08: sozlanmaganlar TEPADA",
+                  max(sozlanmagan_indeks) < min(tayyor_indeks),
+                  f"sozlanmagan={sozlanmagan_indeks}, tayyor={tayyor_indeks}")
+        muhim = [n for n, i in enumerate(items) if not i.ready and i.critical]
+        oddiy = [n for n, i in enumerate(items) if not i.ready and not i.critical]
+        if muhim and oddiy:
+            check("S-08: MUHIM modullar oddiylaridan yuqorida",
+                  max(muhim) < min(oddiy), f"muhim={muhim}, oddiy={oddiy}")
+
+        # ── Qiymat kiritilsa modul «tayyor» bo'ladi ──
+        oldin = {i.key: i.ready for i in items}
+        check("S-08: KPI stavkasi hozir yo'q (boshlang'ich holat)",
+              oldin.get("kpi_rates") is False, "=" + str(oldin.get("kpi_rates")))
+
+        cur.execute(
+            "insert into kpi_rates (scope, scope_id, metric, amount, effective_from,"
+            " changed_by, created_at) values ('global',null,'suhbat',1000,'2019-01-01',?,"
+            "datetime('now'))", (mgr[0],))
+        kpi_id = cur.lastrowid
+        conn.commit()
+
+        keyin = {i.key: i.ready for i in asyncio.run(_holat())}
+        check("S-08: stavka kiritilgach modul «tayyor» bo'ldi",
+              keyin.get("kpi_rates") is True, "=" + str(keyin.get("kpi_rates")))
+        check("S-08: boshqa modullar holati o'zgarmadi",
+              all(keyin[k] == v for k, v in oldin.items() if k != "kpi_rates"),
+              "=" + str({k: (oldin[k], keyin[k]) for k in oldin if oldin[k] != keyin[k]}))
+
+        # ── Kengaytirilishi: bitta qator yetadi ──
+        check("S-08: ro'yxat bitta joyda e'lon qilingan (kengaytirish oson)",
+              len(_TEKSHIRUVLAR) == len(items), f"{len(_TEKSHIRUVLAR)} vs {len(items)}")
+
+        # ── HTTP + ruxsat ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.get("/me/setup-status", headers=auth(mgr_t))
+            check("S-08: /me/setup-status rahbarga -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+            if r.status_code == 200:
+                check("S-08: javob tuzilishi to'g'ri",
+                      all({"key", "label", "ready", "missing", "link", "critical"} <= set(x)
+                          for x in r.json()), "=" + str(r.json()[:1]))
+
+            # Oddiy xodim ko'ra olmaydi
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " created_at) values (999700601,'T-Setup','employee',0,1,datetime('now'))")
+            emp_id = cur.lastrowid
+            conn.commit()
+            r2 = c.get("/me/setup-status", headers=auth(token_for(emp_id, "employee")))
+            check("S-08: oddiy xodimga -> 403", r2.status_code == 403,
+                  "kod=" + str(r2.status_code))
+            cur.execute("delete from users where id=?", (emp_id,))
+            conn.commit()
+    except Exception:
+        check("S-08 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        if kpi_id is not None:
+            cur.execute("delete from kpi_rates where id=?", (kpi_id,))
+        cur.execute("delete from users where full_name='T-Setup'")
+        conn.commit()
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -8245,6 +8357,11 @@ def main() -> None:
         test_background_jobs()
     except Exception:
         print("S-07 fon ishlari testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_setup_status()
+    except Exception:
+        print("S-08 setup-status testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

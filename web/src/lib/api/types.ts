@@ -14,6 +14,17 @@ export interface MeSection {
   exact: boolean;
 }
 
+/** `GET /me/setup-status` — mexanizmi tayyor, lekin QIYMATI yo'q modul
+ *  (TZ 2.7). `critical` — bu modulsiz PUL noto'g'ri hisoblanadi. */
+export interface SetupItem {
+  key: string;
+  label: string;
+  ready: boolean;
+  missing: string;
+  link: string;
+  critical: boolean;
+}
+
 export interface PositionBrief {
   id: number;
   name: string;

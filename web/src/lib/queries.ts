@@ -18,6 +18,7 @@ import type { Office, Position, WorkDayEntry } from "./api/types";
 export const qk = {
   me: ["me"] as const,
   mySections: ["me", "sections"] as const,
+  setupStatus: ["me", "setup-status"] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
@@ -145,6 +146,16 @@ export const useMySections = () =>
     queryKey: qk.mySections,
     queryFn: api.mySections,
     staleTime: 10 * 60 * 1000,
+  });
+
+/** Sozlanmagan modullar (TZ 2.7). Faqat HR/Boshliq/Dasturchida chaqiriladi —
+ *  boshqa rolga endpoint 403 beradi, ya'ni bekorga so'rov yubormaymiz. */
+export const useSetupStatus = (enabled = true) =>
+  useQuery({
+    queryKey: qk.setupStatus,
+    queryFn: api.setupStatus,
+    enabled,
+    staleTime: 5 * 60 * 1000,
   });
 
 // ─── Davomat ───
