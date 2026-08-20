@@ -96,6 +96,12 @@ GROUP_DIGEST_LOCK = ROOT / "logs" / "group_digest.lock"
 GROUP_DIGEST_LOCK_STALE_MINUTES = 5
 CRON_MISC_LOCK = ROOT / "logs" / "cron_misc.lock"
 CRON_MISC_LOCK_STALE_MINUTES = 5
+
+# Xabar navbati (Avans TZ B-03) — O'Z lock'i bilan. `cron_misc` bilan
+# bo'lishilsa, boshqa sekin tick tufayli xabarlar kechikardi; navbat esa
+# har daqiqa aniq ishlashi kerak. Lock qisqa: bir tick 20 xabar yuboradi.
+OUTBOX_LOCK = ROOT / "logs" / "outbox.lock"
+OUTBOX_LOCK_STALE_MINUTES = 3
 # Davomat eslatmasi VAQT-SEZGIR (10/5/0 nuqta): lock uzoq turib qolsa
 # "10 daqiqa qoldi" xabari umuman tushmay ketadi. Shuning uchun stale qisqa.
 ATTENDANCE_REMINDER_LOCK = ROOT / "logs" / "attendance_reminder.lock"
@@ -333,6 +339,20 @@ async def _run_hot_lead_inprocess(now: datetime) -> None:
         return await tick(db)
 
     await _run_service_inprocess(now, "issiq lid", HOT_LEAD_LOCK, HOT_LEAD_LOCK_STALE_MINUTES, runner)
+
+
+async def _run_outbox_inprocess(now: datetime) -> None:
+    """Chiquvchi xabarlar navbati (B-03) — HAR DAQIQA.
+
+    Bo'sh navbatda ish yengil: bitta indeksli SELECT va darhol qaytish.
+    Ikki cron jarayoni bir vaqtda ishlasa ham xavfsiz — navbatdan olish
+    bazada atomar (`outbox._claim`), fayl lock faqat ortiqcha ishni
+    kesish uchun."""
+    async def runner(db):
+        from api.services.outbox import tick
+        return await tick(db)
+
+    await _run_service_inprocess(now, "xabar navbati", OUTBOX_LOCK, OUTBOX_LOCK_STALE_MINUTES, runner)
 
 
 async def _run_idle_watch_inprocess(now: datetime) -> None:
@@ -622,6 +642,8 @@ async def main() -> None:
     # Tabrik videolari — HAR DAQIQA: guruhga tashrif/shartnoma xabari kech
     # bormasin. Ish yengil (bitta indeksli SELECT, odatda bo'sh javob).
     await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")
+    # Xabar navbati (B-03) — HAR DAQIQA, o'z lock'i bilan.
+    await _run_outbox_inprocess(now)
     if now.minute == 0:
         await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
         await _run_hourly_plan_inprocess(now)

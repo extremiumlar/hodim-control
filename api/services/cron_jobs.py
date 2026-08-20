@@ -293,6 +293,21 @@ async def lead_source_tick(db: AsyncSession) -> dict:
     return await lead_source.enrich_tick(db)
 
 
+async def outbox_tick(db: AsyncSession) -> dict:
+    """Chiquvchi xabarlar navbatini yuboradi (Avans TZ B-03).
+
+    Har daqiqada chaqirilishi mo'ljallangan. Bir tick'da eng ko'pi bilan
+    `outbox.BATCH_SIZE` xabar — Telegram rate-limitiga urilmaslik uchun;
+    qolgani keyingi tick'da ketadi.
+
+    IKKI JARAYON XAVFSIZ: navbatdan olish atomar `UPDATE ... WHERE
+    status='pending'` bilan bo'ladi (production cron ikki nusxada
+    ishlaydi)."""
+    from api.services import outbox
+
+    return await outbox.tick(db)
+
+
 async def celebration_tick(db: AsyncSession) -> dict:
     """Tashrif/shartnoma tabriklarini guruhga e'lon qilish — ZAXIRA yo'l.
 

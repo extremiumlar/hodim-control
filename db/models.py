@@ -2061,6 +2061,60 @@ class AdvanceSettings(Base):
     )
 
 
+class OutboxStatus(str, enum.Enum):
+    pending = "pending"
+    sending = "sending"   # bir jarayon band qildi (B-03 qo'riqchisi)
+    sent = "sent"
+    failed = "failed"
+
+
+class Outbox(Base):
+    """Chiquvchi xabarlar navbati (Avans TZ B-03) — ⭐ umumiy poydevor.
+
+    MUAMMO: hozir xabarlar SO'ROV ICHIDA yuboriladi. Telegram sekinlashsa
+    yoki 429 bersa, foydalanuvchi so'rovi o'sha yerda kutib turadi
+    (cPanel'da konkurentlik 1 — bitta sekin xabar butun saytni qotiradi).
+    Xabar yo'qolsa esa iz ham qolmaydi: qayta urinish mexanizmi yo'q.
+
+    Navbat orqali: so'rov xabarni BAZAGA yozadi va darhol javob qaytaradi,
+    yuborishni cron o'z jarayonida bajaradi.
+
+    IKKI JARAYON MUAMMOSI (production cPanel'da cron ikki nusxada ishlaydi
+    — `uysot-rate-budget` xotirasidagi holat): navbatdan olish `pending`
+    dan `sending` ga ATOMAR `UPDATE ... WHERE status='pending'` bilan
+    o'tadi va band qilgan jarayon `claimed_by` tokeni bo'yicha o'z
+    qatorlarini oladi. Shu sababli bitta xabarni ikki jarayon ola olmaydi.
+
+    `dedupe_key` — takrorlanmaslik kafolati (masalan «avans kuni,
+    2026-08, xodim 42»): UNIQUE, ya'ni ikkinchi qo'yish jimgina
+    o'tkazib yuboriladi. B-04 dagi «oyiga bir marta» qo'riqchisi aynan
+    shu maydon bilan ishlaydi.
+    """
+
+    __tablename__ = "outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    # Xabar turi — hisobot va filtr uchun (masalan "advance_day").
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    # {"text": "...", "reply_markup": {...}} — yuborish uchun yetarli hamma narsa.
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(
+        String(10), default=OutboxStatus.pending.value, server_default="pending", index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Shu paytdan OLDIN yuborilmaydi (kechiktirilgan xabar uchun).
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Qaysi jarayon band qilgani va qachon — osilib qolgan `sending`
+    # qatorlarni qaytarib olish uchun (jarayon o'lib qolsa).
+    claimed_by: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PushToken(Base):
     """Mobil ilovaning push manzili (Expo push token).
 

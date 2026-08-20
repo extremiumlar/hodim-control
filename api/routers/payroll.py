@@ -2308,6 +2308,18 @@ async def calculate_monthly_cron(
     return result
 
 
+@router.post("/outbox-tick", dependencies=[Depends(verify_bot_secret)])
+async def outbox_tick(db: AsyncSession = Depends(get_db)) -> dict:
+    """Chiquvchi xabarlar navbatini yuboradi (Avans TZ B-03).
+
+    Mantiq `api/services/outbox.py` da — cPanel cron uni SAYTGA so'rov
+    yubormasdan, o'z jarayonida bajaradi (`scripts/cron_tick.py`). Bu
+    endpoint Docker/scheduler rejimi va qo'lda tekshiruv uchun."""
+    from api.services.outbox import tick as _tick
+
+    return await _tick(db)
+
+
 @router.post("/late-warnings-tick", dependencies=[Depends(verify_bot_secret)])
 async def late_warnings_tick(
     payload: PayrollDateTickRequest, db: AsyncSession = Depends(get_db)

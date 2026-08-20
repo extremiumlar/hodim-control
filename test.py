@@ -10962,6 +10962,11 @@ def main() -> None:
         print("Avans sozlamalari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_outbox()
+    except Exception:
+        print("Xabar navbati testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -12937,6 +12942,237 @@ def test_advance_settings() -> None:
         conn.close()
     except Exception:
         pass
+
+
+def test_outbox() -> None:
+    """Chiquvchi xabarlar navbati (Avans TZ B-03).
+
+    MUAMMO: xabarlar SO'ROV ICHIDA yuboriladi. cPanel'da konkurentlik 1
+    — Telegram 3 soniya javob bermasa butun sayt kutadi; xabar yo'qolsa
+    qayta urinish ham, iz ham qolmaydi.
+
+    Tekshiriladi:
+      1. Navbatga qo'yish va cron yuborishi
+      2. `dedupe_key` — bir xabar ikki marta navbatga tushmaydi
+      3. ⭐ Ikki jarayon (parallel tick) bitta xabarni IKKI MARTA yubormaydi
+      4. Rate-limit: bir tick'da `BATCH_SIZE` dan ko'p yuborilmaydi
+      5. 3 urinishdan keyin `failed` va HR ga ogohlantirish
+      6. `sending` da osilib qolgan qator qaytarib olinadi
+      7. Kelajakka rejalashtirilgan xabar hozir yuborilmaydi
+
+    JONLI TELEGRAMGA CHIQMAYDI: `outbox.send_message` patch qilinadi
+    (⚠️ test-telegram-xavfi).
+    """
+    print("\n=== XABAR NAVBATI (B-03) ===")
+    import asyncio as _asyncio
+    from datetime import datetime as _dt, timedelta as _td
+
+    from api.services import outbox as ob
+    from db.base import async_session
+    from db.models import Outbox as _Ob, OutboxStatus as _St
+    from sqlalchemy import delete as _del, select as _sel
+
+    KIND = "T-Outbox"
+    CHAT = 999609001
+
+    def cleanup_ob():
+        try:
+            c2 = db()
+            c2.execute("delete from outbox where kind=?", (KIND,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  Navbat tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    cleanup_ob()
+
+    async def _run():
+        out = {}
+        yuborilgan: list = []
+        rejim = {"mode": "ok"}
+
+        async def _fake_send(chat_id, text, reply_markup=None):
+            """Patch qilingan yuboruvchi — jonli Telegramga CHIQMAYDI."""
+            if rejim["mode"] == "fail":
+                return None            # `send_message` xatoda None qaytaradi
+            if rejim["mode"] == "raise":
+                raise RuntimeError("tarmoq uzildi")
+            yuborilgan.append((chat_id, text))
+            return {"ok": True}
+
+        orig = ob.send_message
+        ob.send_message = _fake_send
+        try:
+            # ── 1. Navbatga qo'yish va yuborish ──
+            async with async_session() as s:
+                await ob.enqueue(s, CHAT, KIND, "birinchi xabar")
+                await ob.enqueue(s, CHAT, KIND, "ikkinchi xabar")
+                await s.commit()
+                out["tick1"] = await ob.tick(s)
+                out["sent_texts"] = list(yuborilgan)
+                out["statuses1"] = [
+                    (r.status, r.attempts, r.sent_at is not None)
+                    for r in await s.scalars(_sel(_Ob).where(_Ob.kind == KIND))
+                ]
+
+            # ── 2. dedupe_key ──
+            async with async_session() as s:
+                a = await ob.enqueue(s, CHAT, KIND, "takrorlanmas", dedupe_key="T-Outbox:2026-08:42")
+                await s.commit()
+                b = await ob.enqueue(s, CHAT, KIND, "takrorlanmas", dedupe_key="T-Outbox:2026-08:42")
+                await s.commit()
+                out["dedupe"] = (a is not None, b is None)
+                out["dedupe_count"] = await s.scalar(
+                    _sel(func.count()).select_from(_Ob).where(_Ob.dedupe_key == "T-Outbox:2026-08:42")
+                )
+
+            # ── 7. Kelajakdagi xabar hozir yuborilmaydi ──
+            async with async_session() as s:
+                await ob.enqueue(s, CHAT, KIND, "keyinroq",
+                                 scheduled_at=_dt.utcnow() + _td(hours=2))
+                await s.commit()
+
+            yuborilgan.clear()
+            async with async_session() as s:
+                out["tick2"] = await ob.tick(s)
+            out["tick2_texts"] = list(yuborilgan)
+
+            # ── 3. Parallel tick: ikki jarayon bitta xabarni olmasin ──
+            async with async_session() as s:
+                await s.execute(_del(_Ob).where(_Ob.kind == KIND))
+                for i in range(6):
+                    await ob.enqueue(s, CHAT, KIND, f"parallel-{i}")
+                await s.commit()
+
+            yuborilgan.clear()
+
+            async def _one_tick():
+                async with async_session() as s2:
+                    return await ob.tick(s2)
+
+            r1, r2 = await _asyncio.gather(_one_tick(), _one_tick())
+            out["parallel"] = (r1["sent"], r2["sent"])
+            out["parallel_total"] = r1["sent"] + r2["sent"]
+            out["parallel_unique"] = len({t for _, t in yuborilgan})
+            out["parallel_calls"] = len(yuborilgan)
+
+            # ── 4. Rate-limit ──
+            async with async_session() as s:
+                await s.execute(_del(_Ob).where(_Ob.kind == KIND))
+                for i in range(ob.BATCH_SIZE + 7):
+                    await ob.enqueue(s, CHAT, KIND, f"ko'p-{i}")
+                await s.commit()
+            yuborilgan.clear()
+            async with async_session() as s:
+                out["batch"] = await ob.tick(s)
+            out["batch_sent"] = len(yuborilgan)
+
+            # ── 5. Uch urinishdan keyin `failed` ──
+            async with async_session() as s:
+                await s.execute(_del(_Ob).where(_Ob.kind == KIND))
+                await ob.enqueue(s, CHAT, KIND, "yiqiladigan")
+                await s.commit()
+            rejim["mode"] = "fail"
+            hr_alert: list = []
+
+            async def _fake_alert(_db, rows):
+                hr_alert.append(len(rows))
+
+            orig_alert = ob._alert_hr
+            ob._alert_hr = _fake_alert
+            try:
+                for _ in range(ob.MAX_ATTEMPTS + 1):
+                    async with async_session() as s:
+                        await ob.tick(s)
+            finally:
+                ob._alert_hr = orig_alert
+            rejim["mode"] = "ok"
+            async with async_session() as s:
+                row = await s.scalar(_sel(_Ob).where(_Ob.kind == KIND))
+                out["failed_row"] = (row.status, row.attempts, row.last_error)
+            out["hr_alert"] = hr_alert
+
+            # ── 6a. BAND QILINGAN (yangi `sending`) qatorni ikkinchi
+            #        jarayon OLMAYDI. Yuqoridagi `gather` SQLite'da
+            #        ketma-ket bajarildi (bo'linish 6/0), shuning uchun
+            #        qo'riqchining o'zini alohida tekshiramiz.
+            async with async_session() as s:
+                await s.execute(_del(_Ob).where(_Ob.kind == KIND))
+                r = await ob.enqueue(s, CHAT, KIND, "band qilingan")
+                await s.commit()
+                r.status = _St.sending.value
+                r.claimed_by = "boshqa-jarayon"
+                r.claimed_at = _dt.utcnow()          # YANGI band — stale emas
+                await s.commit()
+            yuborilgan.clear()
+            async with async_session() as s:
+                out["claimed_by_other"] = await ob.tick(s)
+            out["claimed_texts"] = list(yuborilgan)
+
+            # ── 6. Osilib qolgan `sending` qaytarib olinadi ──
+            async with async_session() as s:
+                await s.execute(_del(_Ob).where(_Ob.kind == KIND))
+                r = await ob.enqueue(s, CHAT, KIND, "osilib qolgan")
+                await s.commit()
+                r.status = _St.sending.value
+                r.claimed_by = "eski-jarayon"
+                r.claimed_at = _dt.utcnow() - _td(minutes=ob.STALE_MINUTES + 5)
+                await s.commit()
+            yuborilgan.clear()
+            async with async_session() as s:
+                out["stale"] = await ob.tick(s)
+            out["stale_texts"] = list(yuborilgan)
+            return out
+        finally:
+            ob.send_message = orig
+
+    from sqlalchemy import func
+
+    try:
+        out = _asyncio.run(_run())
+    except Exception:
+        check("navbat testi ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_ob()
+        return
+
+    check("navbatga qo'yilgan xabar cron orqali yuborildi",
+          out["tick1"]["sent"] == 2 and len(out["sent_texts"]) == 2, str(out["tick1"]))
+    check("yuborilgan qator `sent` va sana bilan belgilanadi",
+          all(st == "sent" and at == 1 and ok for st, at, ok in out["statuses1"]),
+          str(out["statuses1"]))
+
+    check("`dedupe_key`: ikkinchi qo'yish o'tkazib yuboriladi",
+          out["dedupe"] == (True, True), str(out["dedupe"]))
+    check("bazada bitta qator qoldi", out["dedupe_count"] == 1, str(out["dedupe_count"]))
+
+    check("kelajakka rejalashtirilgan xabar hozir yuborilmaydi",
+          "keyinroq" not in [t for _, t in out["tick2_texts"]],
+          str([t for _, t in out["tick2_texts"]]))
+
+    check("⭐ parallel tick: har xabar BIR marta yuborildi",
+          out["parallel_total"] == 6 and out["parallel_calls"] == 6
+          and out["parallel_unique"] == 6,
+          f"jami={out['parallel_total']}, chaqiruv={out['parallel_calls']}, "
+          f"noyob={out['parallel_unique']}, bo'linish={out['parallel']}")
+
+    check("rate-limit: bir tick'da BATCH_SIZE dan ko'p emas",
+          out["batch_sent"] == ob.BATCH_SIZE, f"={out['batch_sent']} (limit {ob.BATCH_SIZE})")
+
+    st, att, err = out["failed_row"]
+    check(f"{ob.MAX_ATTEMPTS} urinishdan keyin `failed`",
+          st == "failed" and att == ob.MAX_ATTEMPTS, f"status={st}, urinish={att}")
+    check("xato sababi saqlangan", bool(err), str(err))
+    check("HR ga ogohlantirish bir marta bordi",
+          out["hr_alert"] == [1], str(out["hr_alert"]))
+
+    check("boshqa jarayon band qilgan xabar OLINMAYDI (ikki marta ketmaydi)",
+          out["claimed_by_other"]["claimed"] == 0 and not out["claimed_texts"],
+          f"{out['claimed_by_other']}, matnlar={out['claimed_texts']}")
+    check("osilib qolgan `sending` qaytarib olindi va yuborildi",
+          out["stale"]["reclaimed"] == 1 and out["stale"]["sent"] == 1,
+          str(out["stale"]))
+
+    cleanup_ob()
 
 if __name__ == "__main__":
     main()

@@ -421,8 +421,33 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 
 ---
 
-### B-03 · Outbox — xabar navbati
+### B-03 · Outbox — xabar navbati — ✅ BAJARILDI (2026-08-20)
 **Oldin:** B-01 · **~6 soat** · ⭐ **Boshqa modullar ham ishlatadi**
+
+> **Bajarilgani:** `outbox` jadvali (migratsiya `av06a7b8c9d0`) +
+> `api/services/outbox.py`: `enqueue()` / `tick()`.
+> `cron_jobs.outbox_tick` va `scripts/cron_tick.py` da HAR DAQIQA
+> (O'Z lock'i bilan — `cron_misc` dagi sekin tick tufayli xabar
+> kechikmasin). Endpoint `POST /payroll/outbox-tick` (Docker/qo'lda
+> tekshiruv uchun). Test: `test_outbox` (12/12).
+>
+> **Uch qo'riqchi:**
+> 1. **Ikki jarayon.** Productionда cron IKKI nusxada ishlaydi
+>    (`uysot-rate-budget` xotirasi). Navbatdan olish atomar
+>    `UPDATE ... SET status='sending', claimed_by=:token WHERE
+>    status='pending'`, keyin jarayon FAQAT o'z tokeni bo'yicha oladi.
+>    Test band qilingan qatorni ikkinchi tick olmasligini tekshiradi.
+> 2. **Osilib qolish.** Jarayon yuborish o'rtasida o'lsa qator abadiy
+>    `sending` bo'lib qolardi — `_reclaim_stale()` 10 daqiqadan keyin
+>    uni `pending` ga qaytaradi.
+> 3. **Takror.** `dedupe_key` UNIQUE + `IntegrityError` ushlanadi
+>    (poyga holati uchun). B-04 dagi «oyiga bir marta» aynan shu
+>    maydon bilan ishlaydi — alohida jadval kerak emas.
+>
+> **Bitta ataylab qilingan istisno:** navbat nosozligi haqidagi HR
+> ogohlantirishi navbatdan O'TMAYDI, to'g'ridan-to'g'ri yuboriladi —
+> buzilgan navbatga «navbat buzilgan» xabarini qo'yish uni ham
+> yo'qotish demak.
 
 **Ish**
 1. `outbox`: `id`, `chat_id`, `kind`, `payload` (JSON), `status` (kutmoqda/yuborildi/xato), `attempts`, `last_error`, `scheduled_at`, `sent_at`.
@@ -431,10 +456,11 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 4. ⚠️ Xabar **so'rov ichida yuborilmaydi** — hamma joyda outbox orqali.
 
 **Qabul mezoni**
-- [ ] Xabar navbatga qo'yiladi va cron yuboradi
-- [ ] 3 urinishdan keyin `xato` va HR ga xabar
-- [ ] Bir xabar ikki marta yuborilmaydi (parallel tick testi)
-- [ ] Rate-limit hisobga olingan
+- [x] Xabar navbatga qo'yiladi va cron yuboradi
+- [x] 3 urinishdan keyin `failed` va HR ga xabar (test: aynan bir marta)
+- [x] Bir xabar ikki marta yuborilmaydi — parallel tick + band qilingan
+      qatorni ikkinchi tick olmasligi alohida tekshiriladi
+- [x] Rate-limit hisobga olingan (`BATCH_SIZE=20`, ortiqchasi keyingi tick'da)
 
 **Tuzoq:** Cron har daqiqada yangi jarayon — navbat faqat bazada. Lock yoki `status='running'` bilan ikki jarayon bitta xabarni olmasin.
 
