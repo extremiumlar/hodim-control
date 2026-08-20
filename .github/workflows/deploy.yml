@@ -81,16 +81,26 @@ jobs:
             echo "  Port $PORT"
             echo "  User $USER_NAME"
           } >> ~/.ssh/config
-          # Kanal beqaror — bir necha marta urinamiz (watchdog jurnalida
-          # ham ba'zi tiklar 000 qaytargan).
-          for i in 1 2 3 4 5; do
+          # Kanal beqaror: watchdog jurnalida server soatlab yetib
+          # kelmay, keyin qaytadi (08:07 ✓, 10:02 ✓, 10:59 ✗, 11:36 ✗).
+          # Shuning uchun sabr uzun — 20 urinish, ~15 daqiqa. Ish oqimi
+          # baribir QO'LDA ishga tushadi, ya'ni bekorga kutmaydi.
+          for i in $(seq 1 20); do
             if ssh deploy-target 'echo ULANDI; hostname' ; then
               exit 0
             fi
-            echo "urinish $i muvaffaqiyatsiz — 20 soniyadan keyin qayta"
-            sleep 20
+            echo "urinish $i muvaffaqiyatsiz — 40 soniyadan keyin qayta"
+            sleep 40
           done
-          echo "::error::Serverga ulanib bo'lmadi (5 urinish)."
+          # Ikki xil sabab bo'lishi mumkin — ularni ajratib beramiz,
+          # aks holda «ulanmadi» degan xabar bilan qolinardi.
+          echo "SSH ulanmadi. HTTPS holatini tekshiramiz:"
+          CODE=$(curl -sS --max-time 25 -o /dev/null -w '%{http_code}'             "https://nuriddin-building.uz/api/health" || echo 000)
+          if [ "$CODE" = "200" ]; then
+            echo "::error::Sayt OCHIQ (HTTP 200), lekin SSH porti yopiq — bu server FIREWALL'i (CSF) GitHub IP'sini bloklayotganini bildiradi. cPanel → ConfigServer Security & Firewall da GitHub Actions IP oralig'ini ruxsat ro'yxatiga qo'shish kerak, yoki VPN orqali qo'lda deploy qiling."
+          else
+            echo "::error::Server umuman javob bermayapti (HTTPS ham: $CODE). Kanal/server tiklanganda qayta urinib ko'ring."
+          fi
           exit 1
 
       - name: Zaxira nusxa (migratsiyadan OLDIN)
