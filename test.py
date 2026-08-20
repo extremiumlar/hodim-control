@@ -9344,6 +9344,270 @@ def test_deadlines_cron() -> None:
         conn.close()
 
 
+def _docx_fixture(paragraphs: str) -> bytes:
+    """Eng kichik ishlaydigan `.docx` — sinov uchun.
+
+    Haqiqiy Word fayli emas, lekin `docx_render` uchun yetarli: u faqat
+    ZIP va `word/*.xml` bilan ishlaydi."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr(
+            "word/document.xml",
+            '<?xml version="1.0"?><w:document xmlns:w="x"><w:body>'
+            + paragraphs
+            + "</w:body></w:document>",
+        )
+    return buf.getvalue()
+
+
+def _docx_text(data: bytes) -> str:
+    import io
+    import re
+    import zipfile
+
+    xml = zipfile.ZipFile(io.BytesIO(data)).read("word/document.xml").decode("utf-8")
+    return "".join(m.group(1) for m in re.finditer(r"<w:t[^>]*>(.*?)</w:t>", xml, re.S))
+
+
+def test_docx_render() -> None:
+    """S-14 (TZ 3.3) — `.docx` shablonini to'ldirish, kutubxonasiz.
+
+    Qabul mezonlari (TZ):
+      • shablondan to'ldirilgan `.docx` chiqadi;
+      • BO'LINGAN belgi holati sinovdan o'tgan (fixture: bo'lingan `w:t`);
+      • yangi kutubxona qo'shilmagan (`requirements.txt` o'zgarmagan);
+      • generatsiya so'rov ichida emas, FON ishida.
+
+    ASOSIY TUZOQ — BO'LINGAN BELGI. Wordda `{{fish}}` deb yozilgani fayl
+    ichida uchta run'ga bo'linib ketishi mumkin (imlo tekshiruvi, til
+    belgisi, kursor joyi). Oddiy `replace` bunda hech narsa topmaydi:
+    shablon ko'zga to'g'ri ko'rinadi-yu, natija bo'sh chiqadi.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-14: HUJJAT GENERATSIYASI (docx, kutubxonasiz)")
+    print("=" * 60)
+
+    from api.services.docx_render import find_placeholders, render
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    # ── 1) YANGI KUTUBXONA QO'SHILMAGAN ──
+    try:
+        req = (Path(__file__).resolve().parent / "api" / "requirements.txt").read_text(
+            encoding="utf-8"
+        ).lower()
+        yomon = [x for x in ("python-docx", "docxtpl", "lxml", "docx2python") if x in req]
+        check("S-14: docx kutubxonasi QO'SHILMAGAN", not yomon, "=" + str(yomon))
+
+        import api.services.docx_render as mod
+
+        manba = Path(mod.__file__).read_text(encoding="utf-8")
+        tashqi = [
+            ln.strip() for ln in manba.splitlines()
+            if ln.startswith(("import ", "from ")) and not any(
+                ln.startswith(p) for p in (
+                    "import io", "import re", "import zipfile", "from __future__")
+            )
+        ]
+        check("S-14: modul FAQAT standart kutubxonadan foydalanadi",
+              not tashqi, "=" + str(tashqi))
+    except Exception:
+        check("S-14 bog'liqlik tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 2) BUTUN belgi ──
+    try:
+        d = _docx_fixture("<w:p><w:r><w:t>Hurmatli {{fish}}!</w:t></w:r></w:p>")
+        out, qolgan = render(d, {"fish": "Ali Valiyev"})
+        check("S-14: butun belgi almashtirildi",
+              _docx_text(out) == "Hurmatli Ali Valiyev!" and not qolgan,
+              "=" + _docx_text(out))
+
+        # ── 3) BO'LINGAN belgi — ASOSIY TUZOQ ──
+        d = _docx_fixture(
+            "<w:p><w:r><w:t>Hurmatli {{</w:t></w:r>"
+            "<w:r><w:t>fi</w:t></w:r><w:r><w:t>sh</w:t></w:r>"
+            "<w:r><w:t>}}, xush kelibsiz</w:t></w:r></w:p>"
+        )
+        out, qolgan = render(d, {"fish": "Ali Valiyev"})
+        check("S-14: UCHGA BO'LINGAN belgi ham almashtirildi",
+              _docx_text(out) == "Hurmatli Ali Valiyev, xush kelibsiz" and not qolgan,
+              "=" + _docx_text(out))
+        check("S-14: bo'lingan belgi ro'yxatda ham topiladi",
+              find_placeholders(d) == ["fish"], "=" + str(find_placeholders(d)))
+
+        # ── 4) Bitta abzatsda ikki belgi, biri bo'lingan ──
+        d = _docx_fixture(
+            "<w:p><w:r><w:t>{{a}} va {{</w:t></w:r><w:r><w:t>b}}</w:t></w:r></w:p>"
+        )
+        out, _ = render(d, {"a": "BIR", "b": "IKKI"})
+        check("S-14: bitta abzatsda ikki belgi",
+              _docx_text(out) == "BIR va IKKI", "=" + _docx_text(out))
+
+        # ── 5) XML xavfli belgi ──
+        d = _docx_fixture("<w:p><w:r><w:t>{{n}}</w:t></w:r></w:p>")
+        out, _ = render(d, {"n": "Ali & Vali <MCHJ>"})
+        import io as _io
+        import xml.dom.minidom as _md
+        import zipfile as _zf
+
+        xml = _zf.ZipFile(_io.BytesIO(out)).read("word/document.xml")
+        _md.parseString(xml)  # buzilgan bo'lsa xato beradi
+        check("S-14: `&` va `<` qochirildi — XML buzilmadi",
+              b"&amp;" in xml and b"&lt;MCHJ&gt;" in xml, "=" + xml.decode()[-90:])
+
+        # ── 6) To'ldirilmagan belgi TEGILMAYDI va ro'yxatda qaytadi ──
+        d = _docx_fixture("<w:p><w:r><w:t>{{bor}} / {{yoq}}</w:t></w:r></w:p>")
+        out, qolgan = render(d, {"bor": "X"})
+        check("S-14: to'ldirilmagan belgi hujjatda ko'rinib qoldi",
+              "{{yoq}}" in _docx_text(out), "=" + _docx_text(out))
+        check("S-14: to'ldirilmaganlar ro'yxati qaytdi",
+              qolgan == ["yoq"], "=" + str(qolgan))
+
+        # ── 7) Bo'sh joy saqlanadi ──
+        d = _docx_fixture("<w:p><w:r><w:t>Ism: {{n}} lavozim</w:t></w:r></w:p>")
+        out, _ = render(d, {"n": "Ali"})
+        xml = _zf.ZipFile(_io.BytesIO(out)).read("word/document.xml").decode()
+        check("S-14: `xml:space=preserve` qo'shildi (so'zlar yopishmasin)",
+              'xml:space="preserve"' in xml and _docx_text(out) == "Ism: Ali lavozim",
+              "=" + _docx_text(out))
+
+        # ── 8) Kolontitul ham to'ldiriladi ──
+        import io as _io2
+        import zipfile as _zf2
+
+        buf = _io2.BytesIO()
+        with _zf2.ZipFile(buf, "w") as z:
+            z.writestr("[Content_Types].xml", "<Types/>")
+            z.writestr("word/document.xml",
+                       '<?xml version="1.0"?><w:document xmlns:w="x"><w:body>'
+                       "<w:p><w:r><w:t>tana</w:t></w:r></w:p></w:body></w:document>")
+            z.writestr("word/header1.xml",
+                       '<?xml version="1.0"?><w:hdr xmlns:w="x">'
+                       "<w:p><w:r><w:t>Raqam: {{raqam}}</w:t></w:r></w:p></w:hdr>")
+        out, qolgan = render(buf.getvalue(), {"raqam": "77"})
+        hdr = _zf2.ZipFile(_io2.BytesIO(out)).read("word/header1.xml").decode()
+        check("S-14: kolontituldagi belgi ham to'ldirildi",
+              "Raqam: 77" in hdr and not qolgan, "=" + hdr[-70:])
+    except Exception:
+        check("S-14 render tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 9) FON ISHI: so'rov ichida generatsiya YO'Q ──
+    conn = db()
+    cur = conn.cursor()
+    tmpl_id = None
+    try:
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # Shablonni ro'yxatga olish (`file_id` — soxta, yuklab olish patch qilinadi)
+            r = c.post("/document-templates", headers=auth(mgr_t), json={
+                "kind": "offer", "name": "T-Tmpl taklif", "file_id": "T-TMPL-FAKE",
+                "placeholders": ["fish", "lavozim"]})
+            check("S-14: shablon qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            tmpl_id = r.json().get("id") if r.status_code == 201 else None
+
+            r = c.get("/document-templates", headers=auth(mgr_t))
+            check("S-14: shablon ro'yxatda", r.status_code == 200
+                  and any(t["id"] == tmpl_id for t in r.json()),
+                  "kod=" + str(r.status_code))
+
+            # Oddiy xodim ko'ra olmaydi
+            emp = cur.execute(
+                "select id from users where role='employee' and is_active=1 limit 1"
+            ).fetchone()
+            if emp:
+                r = c.get("/document-templates", headers=auth(token_for(emp[0], "employee")))
+                check("S-14: oddiy xodimga -> 403", r.status_code == 403,
+                      "kod=" + str(r.status_code))
+
+            # Generatsiya -> 202 (navbat), so'rov ichida BAJARILMAYDI
+            import time as _t
+
+            boshi = _t.perf_counter()
+            r = c.post("/document-templates/render", headers=auth(mgr_t), json={
+                "template_id": tmpl_id,
+                "values": {"fish": "Ali Valiyev"},
+                "filename": "T-taklif"})
+            ketgan = _t.perf_counter() - boshi
+            check("S-14: generatsiya NAVBATGA qo'yildi -> 202",
+                  r.status_code == 202, "kod=" + str(r.status_code) + " " + r.text[:120])
+            check("S-14: so'rov TEZ qaytdi (ish so'rov ichida emas)",
+                  ketgan < 1.0, f"{ketgan:.3f}s")
+            check("S-14: yetishmayotgan belgi DARHOL aytildi",
+                  r.status_code == 202 and r.json().get("missing") == ["lavozim"],
+                  "=" + r.text[:120])
+            job_id = r.json().get("job_id") if r.status_code == 202 else None
+
+            holat = cur.execute(
+                "select status, kind from background_jobs where id=?", (job_id,)).fetchone()
+            check("S-14: navbatda `document_render` ishi turibdi",
+                  holat == ("queued", "document_render"), "=" + str(holat))
+
+        # ── 10) Cron ishni bajaradi (shablon yuklab olish PATCH qilinadi) ──
+        d = _docx_fixture("<w:p><w:r><w:t>Hurmatli {{</w:t></w:r>"
+                          "<w:r><w:t>fish}}, lavozim: {{lavozim}}</w:t></w:r></w:p>")
+        natija: dict = {}
+
+        async def _tick():
+            import api.telegram_notify as tn
+            from api.services.background_jobs import background_tick
+
+            asl_dl, asl_send = tn.download_file, tn.send_media_file
+
+            async def soxta_dl(file_id):
+                return d
+
+            async def soxta_send(chat_id, content, filename, kind, caption=None):
+                natija["filename"] = filename
+                natija["bytes"] = content
+                natija["caption"] = caption
+                return {"ok": True, "result": {"document": {"file_id": "T-OUT"}}}
+
+            tn.download_file, tn.send_media_file = soxta_dl, soxta_send
+            try:
+                async with async_session() as s2:
+                    return await background_tick(s2)
+            finally:
+                tn.download_file, tn.send_media_file = asl_dl, asl_send
+
+        res = asyncio.run(_tick())
+        check("S-14: cron ishni bajardi", res.get("ok") is True and res.get("ran") ==
+              "document_render", "=" + str(res))
+        check("S-14: fayl nomi `.docx` bilan tugadi",
+              natija.get("filename") == "T-taklif.docx", "=" + str(natija.get("filename")))
+        if natija.get("bytes"):
+            matn = _docx_text(natija["bytes"])
+            check("S-14: fon ishida BO'LINGAN belgi to'ldirildi",
+                  "Hurmatli Ali Valiyev" in matn, "=" + matn)
+            check("S-14: to'ldirilmagani hujjatda ko'rinib qoldi",
+                  "{{lavozim}}" in matn, "=" + matn)
+        check("S-14: izohda to'ldirilmagan belgi ogohlantirildi",
+              "lavozim" in (natija.get("caption") or ""),
+              "=" + str(natija.get("caption")))
+    except Exception:
+        check("S-14 fon ishi", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from background_jobs where kind='document_render'")
+            cur.execute("delete from document_templates where name like 'T-Tmpl%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -9481,6 +9745,11 @@ def main() -> None:
         test_deadlines_cron()
     except Exception:
         print("S-13 muddat croni testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_docx_render()
+    except Exception:
+        print("S-14 docx testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

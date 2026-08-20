@@ -203,3 +203,42 @@ async def _payroll_export(db: AsyncSession, params: dict, user: User | None) -> 
     period = params["period"]
     buffer = await build_payroll_xlsx(db, period, user_ids=params.get("user_ids"))
     return f"oylik_{period}.xlsx", buffer.read(), f"💵 Oylik varaqasi tayyor: {period}"
+
+
+@handler("document_render")
+async def _document_render(db: AsyncSession, params: dict, user: User | None) -> JobResult:
+    """Shablondan `.docx` tayyorlash (yangi TZ 3.3 / S-14).
+
+    NEGA FON ISHI: shablon Telegram'dan yuklab olinadi (tarmoq), keyin
+    ZIP ochilib qayta yig'iladi. Passenger'da konkurentlik = 1, ya'ni bu
+    so'rov ichida bajarilsa butun sayt kutib turardi.
+
+    Natija Telegram orqali SO'RAGAN odamga boradi va serverda
+    saqlanmaydi — `file_id` yoziladi (TZ 1.1)."""
+    from api.services.docx_render import render
+    from api.telegram_notify import download_file
+    from db.models import DocumentTemplate
+
+    tmpl = await db.get(DocumentTemplate, int(params["template_id"]))
+    if tmpl is None or not tmpl.is_active:
+        raise ValueError("Shablon topilmadi yoki o'chirilgan")
+
+    xom = await download_file(tmpl.file_id)
+    if xom is None:
+        #  Bot tokeni yo'q (lokal sinov) yoki Telegram fayli eskirgan.
+        #  Aniq xabar: HR «nega ishlamadi?» deb qidirmasin.
+        raise ValueError(
+            "Shablon faylini Telegram'dan olib bo'lmadi — uni qayta yuklang"
+        )
+
+    natija, qolgan = render(xom, {k: str(v) for k, v in (params.get("values") or {}).items()})
+    nom = params.get("filename") or f"{tmpl.name}.docx"
+    if not nom.endswith(".docx"):
+        nom += ".docx"
+
+    izoh = f"📄 <b>{tmpl.name}</b> tayyor"
+    if qolgan:
+        #  To'ldirilmagan belgi hujjatda `{{...}}` bo'lib qoladi — HR buni
+        #  BILISHI shart, aks holda shundayligicha jo'natib yuborardi.
+        izoh += "\n⚠️ To'ldirilmagan: " + ", ".join(qolgan)
+    return nom, natija, izoh

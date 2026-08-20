@@ -68,6 +68,7 @@ from api.routers import (
     funnel,
     hot_lead,
     deadlines,
+    document_templates,
     employee_documents,
     holidays,
     hourly_plan,
@@ -165,6 +166,7 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(deadlines.router)
+app.include_router(document_templates.router)
 app.include_router(employee_documents.router)
 app.include_router(holidays.router)
 app.include_router(work_schedule.router)

@@ -2451,3 +2451,48 @@ class DeadlineConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class DocumentTemplateKind(str, enum.Enum):
+    """Shablon turlari (yangi TZ 3.3). Keyingi modullar shu ro'yxatga
+    tayanadi: ish taklifi (S-15), buyruq (3.21), ma'lumotnoma (3.9)."""
+
+    offer = "offer"  # ish taklifi
+    order = "order"  # buyruq
+    reference = "reference"  # ma'lumotnoma
+    contract = "contract"  # mehnat shartnomasi
+    act = "act"  # dalolatnoma
+    other = "other"
+
+
+DOCUMENT_TEMPLATE_LABELS: dict[str, str] = {
+    DocumentTemplateKind.offer.value: "Ish taklifi",
+    DocumentTemplateKind.order.value: "Buyruq",
+    DocumentTemplateKind.reference.value: "Ma'lumotnoma",
+    DocumentTemplateKind.contract.value: "Mehnat shartnomasi",
+    DocumentTemplateKind.act.value: "Dalolatnoma",
+    DocumentTemplateKind.other.value: "Boshqa",
+}
+
+
+class DocumentTemplate(Base):
+    """`.docx` shabloni — belgilari bilan (yangi TZ 3.3 / S-14).
+
+    Shablon fayli SERVERDA SAQLANMAYDI — Telegram `file_id`. Generatsiya
+    paytida yuklab olinadi (`telegram_notify.download_file`).
+
+    `placeholders` — shablonda topilgan belgilar ro'yxati (JSON). U
+    YUKLASH paytida faylning O'ZIDAN o'qiladi, qo'lda kiritilmaydi:
+    HR ro'yxatni qo'lda yozsa, u shablon bilan mos kelmay qolardi va
+    xato faqat tayyor hujjatda ko'rinardi."""
+
+    __tablename__ = "document_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    file_id: Mapped[str] = mapped_column(String(512))
+    placeholders: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

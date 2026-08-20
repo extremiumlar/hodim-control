@@ -168,3 +168,42 @@ def inline_url_keyboard(buttons: list[list[tuple[str, str]]]) -> dict:
             [{"text": text, "url": url} for text, url in row] for row in buttons
         ]
     }
+
+
+TELEGRAM_FILE = "https://api.telegram.org/file/bot{token}/{path}"
+
+#  Shablon `.docx` — o'nlab kilobayt. 20 MB Telegram'ning bot orqali
+#  yuklab olish chegarasi; undan kattasi baribir kelmaydi va xotirani
+#  to'ldirib qo'yishiga yo'l qo'ymaymiz (cPanel'da RAM tor).
+MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
+
+
+async def download_file(file_id: str) -> bytes | None:
+    """Telegram'dagi faylni `file_id` bo'yicha YUKLAB OLADI (S-14).
+
+    NEGA KERAK: shablon `.docx` serverda saqlanmaydi (disk kvotasi 1 GB),
+    faqat `file_id` yoziladi. Uni to'ldirish uchun esa baytlar kerak —
+    demak har generatsiyada Telegram'dan olinadi.
+
+    ⚠️ Bu YUBORUVCHI emas, O'QUVCHI funksiya: `notifications_enabled`
+    bilan to'silmaydi. Sinov paytida ham shablonni o'qish xavfsiz —
+    hech kimga hech narsa bormaydi. Token yo'q bo'lsa `None`.
+    """
+    if not settings.bot_token:
+        return None
+    async with httpx.AsyncClient(timeout=60) as client:
+        meta = await client.get(
+            TELEGRAM_API.format(token=settings.bot_token, method="getFile"),
+            params={"file_id": file_id},
+        )
+        if meta.status_code != 200:
+            return None
+        path = (meta.json().get("result") or {}).get("file_path")
+        if not path:
+            return None
+        resp = await client.get(
+            TELEGRAM_FILE.format(token=settings.bot_token, path=path)
+        )
+        if resp.status_code != 200 or len(resp.content) > MAX_DOWNLOAD_BYTES:
+            return None
+        return resp.content
