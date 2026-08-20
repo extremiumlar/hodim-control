@@ -2061,6 +2061,62 @@ class AdvanceSettings(Base):
     )
 
 
+class AdvanceResponseState(str, enum.Enum):
+    """Xodimning avans kuni xabariga munosabati (Avans TZ C bloki)."""
+
+    offered = "offered"            # xabar yuborildi, javob yo'q
+    waiting_input = "waiting_input"  # «Summa kiritish» bosildi, raqam kutilyapti
+    declined = "declined"          # «Kerak emas» bosildi
+    submitted = "submitted"        # summa kiritildi, so'rov yaratildi
+
+
+class AdvanceResponse(Base):
+    """Avans kuni xabariga munosabat — BIR XODIM, BIR DAVR (Avans TZ C-01…C-05).
+
+    NEGA BAZADA, FSM DA EMAS (C-02 talabi): bot holati aiogram FSM da
+    saqlansa, Passenger/cPanel jarayoni qayta ishga tushganda («deploy»,
+    idle timeout, OOM) xodim yozayotgan summa yo'qolardi va u sababini
+    tushunmasdi. Bazadagi holat qayta ishga tushishdan omon qoladi.
+
+    BITTA JADVAL to'rt savolga javob beradi — shuning uchun alohida
+    `advance_pending_input` qurilmadi:
+      · «Summa kutilyaptimi?»  → `state == waiting_input` va muddati o'tmagan
+      · «Javob berdimi?»       → `state != offered` (C-05 eslatmasi uchun)
+      · «Eslatma yuborilganmi?» → `reminded_at`
+      · «Qanday summa ko'rsatilgan edi?» → `offered_limit`
+
+    `offered_limit` — xabar yuborilgan PAYTDAGI chegara. U faqat
+    ma'lumot uchun: summa kiritilganda chegara QAYTA hisoblanadi
+    (C-03), chunki oraliqda boshqa avans tasdiqlangan bo'lishi mumkin.
+    """
+
+    __tablename__ = "advance_responses"
+    __table_args__ = (
+        UniqueConstraint("user_id", "period", name="uq_advance_responses_user_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)  # "YYYY-MM"
+    state: Mapped[str] = mapped_column(
+        String(16), default=AdvanceResponseState.offered.value, server_default="offered"
+    )
+    offered_limit: Mapped[float] = mapped_column(Numeric(14, 2), default=0)
+    # Summa kutish muddati — o'tgach holat bekor bo'ladi va xodim yozgan
+    # matn oddiy xabar sifatida boshqa handlerlarga o'tadi.
+    input_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Takroriy eslatma (C-05) — BIR marta. `NULL` bo'lsa hali yuborilmagan.
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Yaratilgan so'rov (`PayrollAdjustment`) — natija xabari uchun (C-04).
+    adjustment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payroll_adjustments.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
 class OutboxStatus(str, enum.Enum):
     pending = "pending"
     sending = "sending"   # bir jarayon band qildi (B-03 qo'riqchisi)
@@ -2923,3 +2979,68 @@ class PositionAssetSet(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AckObjectType(str, enum.Enum):
+    """Nima bilan tanishtirilyapti (yangi TZ / S-20).
+
+    UCHTA MODUL bitta jadvalga yozadi: lavozim yo'riqnomasi (3.16), ichki
+    e'lon (3.12) va texnika xavfsizligi instruktaji (3.6). Har biriga
+    alohida jadval qilinsa «kim nima bilan tanishmagan?» degan savolga
+    uchta so'rov kerak bo'lardi va yangi tur qo'shilganda to'rtinchisi."""
+
+    instruction = "instruction"  # lavozim yo'riqnomasi
+    announcement = "announcement"  # ichki e'lon
+    briefing = "briefing"  # TX instruktaji
+    policy = "policy"  # ichki qoida / nizom
+
+
+ACK_OBJECT_LABELS: dict[str, str] = {
+    AckObjectType.instruction.value: "Lavozim yo'riqnomasi",
+    AckObjectType.announcement.value: "E'lon",
+    AckObjectType.briefing.value: "Instruktaj",
+    AckObjectType.policy.value: "Ichki qoida",
+}
+
+
+class Acknowledgement(Base):
+    """«Tanishdim» qaydi — UMUMIY mexanizm (yangi TZ / S-20).
+
+    Qator IKKI holatda bo'ladi:
+      • `acknowledged_at IS NULL` — tanishish SO'RALGAN, hali bosilmagan;
+      • to'ldirilgan — tanishgan, vaqti bilan.
+
+    ⚠️ VERSIYA MUHIM. Yo'riqnoma yangilansa eski tanishuv O'TMAYDI:
+    xodim eski matnga rozi bo'lgan, yangisiga emas. Yangi versiya
+    so'ralganda yangi qatorlar yaratiladi, eskilari TARIX bo'lib qoladi
+    — «o'sha paytda nimaga rozi bo'lgan edi?» degan savolga javob shu.
+
+    ⚠️ UNIQUE(user_id, object_type, object_id, version) — bir odam bir
+    versiyani ikki marta tasdiqlay olmaydi (TZ qabul mezoni). Bu BAZA
+    darajasida: takroriy so'rov yuborilsa ikkinchi qator yaratilmaydi.
+
+    `title` — SO'RALGAN PAYTDAGI sarlavha nusxasi. Bu ataylab
+    denormalizatsiya: manba keyin tahrirlansa ham, xodim NIMAGA rozi
+    bo'lgani ko'rinib turishi kerak. Joriy sarlavha manbadan olinadi."""
+
+    __tablename__ = "acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "object_type", "object_id", "version", name="uq_ack_user_object_version"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    object_type: Mapped[str] = mapped_column(String(16), index=True)
+    object_id: Mapped[int] = mapped_column(Integer, index=True)
+    #  Manba moduli boshqaradi. Matn o'zgarsa u versiyani oshiradi.
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    #  Mijoz shu yo'lga o'tadi («E'lonni ochish»).
+    link: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

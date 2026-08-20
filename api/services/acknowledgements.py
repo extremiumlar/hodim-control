@@ -1,0 +1,240 @@
+"""«Tanishdim» qaydi — UMUMIY servis (yangi TZ / S-20).
+
+Uchta modul shuni ishlatadi: lavozim yo'riqnomasi (3.16), ichki e'lon
+(3.12) va TX instruktaji (3.6). Har biriga alohida jadval qilinsa «kim
+nima bilan tanishmagan?» degan savolga uchta so'rov kerak bo'lardi va
+yangi tur qo'shilganda to'rtinchisi.
+
+⚠️ VERSIYA — MODULNING MARKAZIY G'OYASI
+Yo'riqnoma yangilansa eski tanishuv O'TMAYDI: xodim eski matnga rozi
+bo'lgan, yangisiga emas. Bu huquqiy jihatdan muhim — «u bilardi» degan
+da'vo faqat u ko'rgan VERSIYAGA nisbatan o'rinli.
+
+Qatorlar hech qachon o'chirilmaydi: eski versiyalar tarix bo'lib qoladi
+va «o'sha paytda nimaga rozi bo'lgan edi?» degan savolga javob beradi.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models import ACK_OBJECT_LABELS, Acknowledgement, User
+
+
+@dataclass(frozen=True)
+class PendingItem:
+    """Xodim tanishishi kerak bo'lgan bitta band."""
+
+    id: int
+    object_type: str
+    object_type_label: str
+    object_id: int
+    version: int
+    title: str | None
+    link: str | None
+    requested_at: datetime
+
+
+@dataclass(frozen=True)
+class ReaderRow:
+    """Obyekt bo'yicha bitta odamning holati."""
+
+    user_id: int
+    user_name: str
+    version: int
+    acknowledged_at: datetime | None
+
+
+async def request_ack(
+    db: AsyncSession,
+    *,
+    object_type: str,
+    object_id: int,
+    version: int,
+    user_ids: list[int],
+    title: str | None = None,
+    link: str | None = None,
+    requested_by: int | None = None,
+) -> int:
+    """Berilgan xodimlardan tanishishni SO'RAYDI.
+
+    Qaytaradi: yangi yaratilgan qatorlar soni.
+
+    ⚠️ IDEMPOTENT. Bir xil (xodim, obyekt, versiya) uchun ikkinchi qator
+    yaratilmaydi — modul so'rovni takrorlasa (masalan e'lon qayta
+    yuborilsa) xodimda ikkita bir xil band paydo bo'lmaydi. Himoya ikki
+    qatlamli: avval mavjudlari tanlanadi, keyin UNIQUE cheklov.
+
+    ⚠️ Chaqiruvchi COMMIT qiladi — so'rov manba obyektni yaratish bilan
+    BITTA tranzaksiyada bo'lishi kerak, aks holda «e'lon bor, lekin hech
+    kimdan so'ralmagan» holati paydo bo'lardi."""
+    if object_type not in ACK_OBJECT_LABELS:
+        raise ValueError(f"noma'lum obyekt turi: {object_type}")
+    if not user_ids:
+        return 0
+
+    mavjud = {
+        r
+        for r in await db.scalars(
+            select(Acknowledgement.user_id).where(
+                Acknowledgement.object_type == object_type,
+                Acknowledgement.object_id == object_id,
+                Acknowledgement.version == version,
+                Acknowledgement.user_id.in_(user_ids),
+            )
+        )
+    }
+    n = 0
+    for uid in dict.fromkeys(user_ids):  # takrorlarni tashlaydi, tartibni saqlaydi
+        if uid in mavjud:
+            continue
+        db.add(
+            Acknowledgement(
+                user_id=uid,
+                object_type=object_type,
+                object_id=object_id,
+                version=version,
+                title=title,
+                link=link,
+                requested_by=requested_by,
+            )
+        )
+        n += 1
+    if n:
+        try:
+            await db.flush()
+        except IntegrityError:
+            #  Parallel so'rov bizdan oldin yozib ulgurdi. Bu XATO EMAS:
+            #  natija baribir kerakli holat (qator bor).
+            await db.rollback()
+            return 0
+    return n
+
+
+async def mark_ack(
+    db: AsyncSession, *, user_id: int, object_type: str, object_id: int, version: int
+) -> Acknowledgement | None:
+    """Xodim «Tanishdim» bosdi.
+
+    ⚠️ IDEMPOTENT: qayta bosilsa BIRINCHI vaqt saqlanadi. Aks holda
+    xodim tugmani qayta bosib sanani «yangilab» qo'yishi mumkin edi va
+    huquqiy qiymati yo'qolardi.
+
+    So'ralmagan bandni tasdiqlab bo'lmaydi (`None` qaytadi): tanishish
+    ro'yxati manba modulida boshqariladi, xodim o'zini o'zi qo'sha
+    olmaydi."""
+    row = await db.scalar(
+        select(Acknowledgement).where(
+            Acknowledgement.user_id == user_id,
+            Acknowledgement.object_type == object_type,
+            Acknowledgement.object_id == object_id,
+            Acknowledgement.version == version,
+        )
+    )
+    if row is None:
+        return None
+    if row.acknowledged_at is None:
+        row.acknowledged_at = datetime.utcnow()
+        await db.commit()
+    return row
+
+
+async def pending_for(db: AsyncSession, user_id: int) -> list[PendingItem]:
+    """Xodim tanishishi kerak bo'lgan bandlar.
+
+    ⚠️ FAQAT ENG YANGI VERSIYA. Yo'riqnoma ikki marta yangilangan va
+    xodim ikkalasini ham o'tkazib yuborgan bo'lsa, unga IKKITA emas,
+    BITTA band ko'rinadi — eskisini o'qishning ma'nosi yo'q, u
+    almashtirilgan."""
+    rows = list(
+        await db.scalars(
+            select(Acknowledgement).where(
+                Acknowledgement.user_id == user_id,
+                Acknowledgement.acknowledged_at.is_(None),
+            )
+        )
+    )
+    #  Obyekt bo'yicha eng katta versiyani qoldiramiz.
+    eng_yangi: dict[tuple[str, int], Acknowledgement] = {}
+    for r in rows:
+        kalit = (r.object_type, r.object_id)
+        bor = eng_yangi.get(kalit)
+        if bor is None or r.version > bor.version:
+            eng_yangi[kalit] = r
+
+    return sorted(
+        (
+            PendingItem(
+                id=r.id,
+                object_type=r.object_type,
+                object_type_label=ACK_OBJECT_LABELS.get(r.object_type, r.object_type),
+                object_id=r.object_id,
+                version=r.version,
+                title=r.title,
+                link=r.link,
+                requested_at=r.requested_at,
+            )
+            for r in eng_yangi.values()
+        ),
+        key=lambda i: i.requested_at,
+    )
+
+
+async def who_read(
+    db: AsyncSession, *, object_type: str, object_id: int, version: int | None = None
+) -> list[ReaderRow]:
+    """Kim o'qigan, kim o'qimagan (rahbar paneli uchun).
+
+    `version` berilmasa ENG SO'NGGI versiya olinadi — rahbarni odatda
+    «hozirgi matn bilan kim tanishdi?» qiziqtiradi."""
+    if version is None:
+        version = await db.scalar(
+            select(func.max(Acknowledgement.version)).where(
+                Acknowledgement.object_type == object_type,
+                Acknowledgement.object_id == object_id,
+            )
+        )
+        if version is None:
+            return []
+
+    rows = list(
+        await db.scalars(
+            select(Acknowledgement).where(
+                Acknowledgement.object_type == object_type,
+                Acknowledgement.object_id == object_id,
+                Acknowledgement.version == version,
+            )
+        )
+    )
+    ismlar = {u.id: u.full_name for u in await db.scalars(select(User))}
+    return sorted(
+        (
+            ReaderRow(
+                user_id=r.user_id,
+                user_name=ismlar.get(r.user_id, "—"),
+                version=r.version,
+                acknowledged_at=r.acknowledged_at,
+            )
+            for r in rows
+        ),
+        #  O'qimaganlar TEPADA — rahbarga aynan ular kerak.
+        key=lambda r: (r.acknowledged_at is not None, r.user_name),
+    )
+
+
+async def stats(
+    db: AsyncSession, *, object_type: str, object_id: int, version: int | None = None
+) -> dict:
+    """Qisqacha: nechtadan nechtasi tanishgan."""
+    qatorlar = await who_read(db, object_type=object_type, object_id=object_id, version=version)
+    oqigan = sum(1 for r in qatorlar if r.acknowledged_at is not None)
+    return {
+        "total": len(qatorlar),
+        "read": oqigan,
+        "pending": len(qatorlar) - oqigan,
+        "version": qatorlar[0].version if qatorlar else None,
+    }

@@ -10638,6 +10638,208 @@ def test_assets_employee() -> None:
         conn.close()
 
 
+def test_acknowledgements() -> None:
+    """S-20 — «Tanishdim» qaydi: uchta modul uchun umumiy mexanizm.
+
+    Qabul mezonlari (TZ):
+      • uchala obyekt turi BITTA jadvalga yozadi;
+      • VERSIYA o'zgarsa qayta tanishish talab qilinadi;
+      • bir odam bir versiyani IKKI MARTA tasdiqlay olmaydi (unique).
+
+    Versiya — modulning markaziy g'oyasi. Yo'riqnoma yangilansa eski
+    tanishuv o'tmaydi: xodim eski matnga rozi bo'lgan, yangisiga emas.
+    Bu huquqiy jihatdan muhim — «u bilardi» degan da'vo faqat u KO'RGAN
+    versiyaga nisbatan o'rinli.
+    """
+    import asyncio
+    import sqlite3 as _sq
+    import time as _t
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-20: «TANISHDIM» QAYDI (versiya bilan)")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Ack%'")
+        conn.commit()
+        for n, tg in enumerate((999702001, 999702002)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, f"T-Ack Xodim{n}"))
+            ids[f"u{n}"] = cur.lastrowid
+        conn.commit()
+        t0 = token_for(ids["u0"], "employee")
+        t1 = token_for(ids["u1"], "employee")
+
+        async def _sorash(obj_type, obj_id, version, users, title=None):
+            from api.services.acknowledgements import request_ack
+            async with async_session() as s2:
+                n = await request_ack(
+                    s2, object_type=obj_type, object_id=obj_id, version=version,
+                    user_ids=users, title=title, link="/me/acks", requested_by=mgr[0])
+                await s2.commit()
+                return n
+
+        # ── UCHALA TUR BITTA JADVALGA ──
+        n1 = asyncio.run(_sorash("instruction", 9001, 1, [ids["u0"], ids["u1"]],
+                                 "T-Ack Yo'riqnoma"))
+        n2 = asyncio.run(_sorash("announcement", 9002, 1, [ids["u0"]], "T-Ack E'lon"))
+        n3 = asyncio.run(_sorash("briefing", 9003, 1, [ids["u0"]], "T-Ack Instruktaj"))
+        check("S-20: uchala tur uchun so'rov yaratildi",
+              (n1, n2, n3) == (2, 1, 1), f"={n1},{n2},{n3}")
+        jadvallar = cur.execute(
+            "select count(distinct object_type) from acknowledgements"
+            " where object_id in (9001,9002,9003)").fetchone()[0]
+        check("S-20: uchala tur BITTA jadvalda", jadvallar == 3, "=" + str(jadvallar))
+
+        # ── SO'ROV IDEMPOTENT ──
+        takror = asyncio.run(_sorash("instruction", 9001, 1, [ids["u0"], ids["u1"]]))
+        check("S-20: takroriy so'rov yangi qator YARATMADI", takror == 0, "=" + str(takror))
+        soni = cur.execute(
+            "select count(*) from acknowledgements where object_id=9001").fetchone()[0]
+        check("S-20: obyektda hamon 2 qator", soni == 2, "=" + str(soni))
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── XODIM O'Z RO'YXATINI KO'RADI ──
+            r = c.get("/acks/me", headers=auth(t0))
+            bandlar = r.json() if r.status_code == 200 else []
+            check("S-20: xodimda uchta band ko'rindi", len(bandlar) == 3,
+                  "=" + str([b["object_type"] for b in bandlar]))
+            check("S-20: sarlavha va havola saqlangan",
+                  any(b["title"] == "T-Ack E'lon" and b["link"] == "/me/acks"
+                      for b in bandlar), "=" + str(bandlar[:1]))
+            check("S-20: tur nomi tarjima qilingan",
+                  any(b["object_type_label"] == "Instruktaj" for b in bandlar),
+                  "=" + str([b["object_type_label"] for b in bandlar]))
+            r = c.get("/acks/me", headers=auth(t1))
+            check("S-20: ikkinchi xodimda faqat bitta band",
+                  r.status_code == 200 and len(r.json()) == 1, "=" + r.text[:110])
+
+            # ── «TANISHDIM» ──
+            r = c.post("/acks/me/ack", headers=auth(t0),
+                       json={"object_type": "instruction", "object_id": 9001, "version": 1})
+            check("S-20: tanishdi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            birinchi = r.json().get("acknowledged_at") if r.status_code == 200 else None
+            check("S-20: vaqt yozildi", bool(birinchi), "=" + str(birinchi))
+
+            # IDEMPOTENT: qayta bosish vaqtni o'zgartirmaydi
+            _t.sleep(1.1)
+            r = c.post("/acks/me/ack", headers=auth(t0),
+                       json={"object_type": "instruction", "object_id": 9001, "version": 1})
+            check("S-20: qayta bosishda BIRINCHI vaqt saqlandi",
+                  r.status_code == 200 and r.json().get("acknowledged_at") == birinchi,
+                  f"{birinchi} vs {r.json().get('acknowledged_at')}")
+
+            r = c.get("/acks/me", headers=auth(t0))
+            check("S-20: tanishilgan band ro'yxatdan chiqdi",
+                  r.status_code == 200 and len(r.json()) == 2,
+                  "=" + str([b["object_type"] for b in r.json()]))
+
+            # ── SO'RALMAGAN BANDNI TASDIQLAB BO'LMAYDI ──
+            r = c.post("/acks/me/ack", headers=auth(t1),
+                       json={"object_type": "announcement", "object_id": 9002, "version": 1})
+            check("S-20: so'ralmagan bandni tasdiqlash -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+            r = c.post("/acks/me/ack", headers=auth(t0),
+                       json={"object_type": "yolgon", "object_id": 1, "version": 1})
+            check("S-20: noma'lum tur -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ── ⚠️ VERSIYA: yangisi chiqsa eski tanishuv O'TMAYDI ──
+            asyncio.run(_sorash("instruction", 9001, 2, [ids["u0"], ids["u1"]],
+                                "T-Ack Yo'riqnoma v2"))
+            r = c.get("/acks/me", headers=auth(t0))
+            yangi = [b for b in r.json() if b["object_id"] == 9001]
+            check("S-20: v2 chiqqach yo'riqnoma QAYTA so'raldi",
+                  len(yangi) == 1 and yangi[0]["version"] == 2,
+                  "=" + str(yangi))
+            eski = cur.execute(
+                "select version, acknowledged_at is not null from acknowledgements"
+                " where object_id=9001 and user_id=? order by version",
+                (ids["u0"],)).fetchall()
+            check("S-20: v1 tanishuvi TARIXDA qoldi (o'chirilmadi)",
+                  eski == [(1, 1), (2, 0)], "=" + str(eski))
+
+            # ── FAQAT ENG YANGI VERSIYA ko'rinadi ──
+            asyncio.run(_sorash("instruction", 9001, 3, [ids["u1"]], "v3"))
+            r = c.get("/acks/me", headers=auth(t1))
+            yorik = [b for b in r.json() if b["object_id"] == 9001]
+            check("S-20: ikki versiyani o'tkazib yuborgan xodimga BITTA band",
+                  len(yorik) == 1 and yorik[0]["version"] == 3, "=" + str(yorik))
+            baza = cur.execute(
+                "select count(*) from acknowledgements where object_id=9001 and user_id=?",
+                (ids["u1"],)).fetchone()[0]
+            check("S-20: bazada esa uchala versiya turibdi", baza == 3, "=" + str(baza))
+
+            # ── ⚠️ UNIQUE: bir versiyani ikki marta yozib bo'lmaydi ──
+            try:
+                cur.execute(
+                    "insert into acknowledgements (user_id, object_type, object_id,"
+                    " version, requested_at) values (?,'instruction',9001,1,datetime('now'))",
+                    (ids["u0"],))
+                conn.commit()
+                check("S-20: BAZA dublikat tasdiqni to'sdi", False,
+                      "INSERT o'tib ketdi — UNIQUE ishlamayapti!")
+                cur.execute("delete from acknowledgements where id=?", (cur.lastrowid,))
+                conn.commit()
+            except _sq.IntegrityError as e:
+                check("S-20: BAZA dublikat tasdiqni to'sdi", True, str(e)[:70])
+                conn.rollback()
+
+            # ── KIM O'QIGAN (rahbar) ──
+            r = c.get("/acks/object/instruction/9001", headers=auth(mgr_t),
+                      params={"version": 1})
+            oquvchilar = r.json() if r.status_code == 200 else []
+            check("S-20: v1 bo'yicha ikki xodim ko'rinadi", len(oquvchilar) == 2,
+                  "=" + str(len(oquvchilar)))
+            check("S-20: O'QIMAGANLAR TEPADA",
+                  bool(oquvchilar) and oquvchilar[0]["acknowledged_at"] is None,
+                  "=" + str([(x["user_name"], bool(x["acknowledged_at"]))
+                             for x in oquvchilar]))
+
+            r = c.get("/acks/object/instruction/9001/stats", headers=auth(mgr_t),
+                      params={"version": 1})
+            check("S-20: statistika 2 dan 1 tasi o'qigan",
+                  r.status_code == 200 and r.json().get("total") == 2
+                  and r.json().get("read") == 1 and r.json().get("pending") == 1,
+                  "=" + r.text[:120])
+
+            r = c.get("/acks/object/instruction/9001/stats", headers=auth(mgr_t))
+            check("S-20: versiyasiz so'rovda ENG SO'NGGI versiya olinadi",
+                  r.status_code == 200 and r.json().get("version") == 3,
+                  "=" + r.text[:120])
+
+            # ── RUXSAT ──
+            r = c.get("/acks/object/instruction/9001", headers=auth(t0))
+            check("S-20: oddiy xodim o'quvchilar ro'yxatini ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-20 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from acknowledgements where object_id in (9001,9002,9003)")
+            cur.execute("delete from users where full_name like 'T-Ack%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -10805,6 +11007,11 @@ def main() -> None:
         test_assets_employee()
     except Exception:
         print("S-19 mol-mulk xodim testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_acknowledgements()
+    except Exception:
+        print("S-20 tanishtirish testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()
