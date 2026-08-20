@@ -32,6 +32,8 @@ export const qk = {
   assetHistory: (id: number) => ["assets", "history", id] as const,
   myAssets: ["assets", "me"] as const,
   myAnnouncements: ["announcements", "me"] as const,
+  staff: ["staff"] as const,
+  staffSummary: ["staff", "summary"] as const,
   announcements: ["announcements"] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
@@ -278,6 +280,13 @@ export const useAssetChecklist = (userId: number | null) =>
     queryFn: () => api.assetChecklist(userId as number),
     enabled: userId !== null,
   });
+
+// ─── Shtat jadvali (TZ 3.20 / S-23) ───
+export const useStaff = () => useQuery({ queryKey: qk.staff, queryFn: api.staff });
+export const useStaffSummary = () =>
+  useQuery({ queryKey: qk.staffSummary, queryFn: api.staffSummary });
+export const useAddStaff = () => useApiMutation(api.addStaff, [["staff"]]);
+export const useCloseStaff = () => useApiMutation(api.closeStaff, [["staff"]]);
 
 // ─── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ───
 export const useMyAnnouncements = () =>

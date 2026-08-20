@@ -3157,3 +3157,58 @@ class AnnouncementConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class StaffPositionStatus(str, enum.Enum):
+    """Shtat birligining holati (yangi TZ 3.20 / S-23)."""
+
+    open = "open"  # amalda, to'ldirilishi mumkin
+    frozen = "frozen"  # muzlatilgan (byudjet yopiq)
+    closed = "closed"  # yopilgan
+
+
+STAFF_POSITION_STATUS_LABELS: dict[str, str] = {
+    StaffPositionStatus.open.value: "Amalda",
+    StaffPositionStatus.frozen.value: "Muzlatilgan",
+    StaffPositionStatus.closed.value: "Yopilgan",
+}
+
+
+class StaffPosition(Base):
+    """Shtat jadvali birligi (yangi TZ 3.20 / S-23).
+
+    NEGA KERAK: «bizda nechta sotuvchi o'rni bor va nechtasi bo'sh?»
+    degan savolga javob hech qayerda yo'q. Ishga olish qarori shu
+    savolga tayanadi, lekin u har safar boshdan sanaladi.
+
+    ⚠️ «BAND» SONI SAQLANMAYDI — HISOBLANADI (TZ qabul mezoni). Faol
+    xodimlar soni bo'yicha. Qo'lda kiritilsa u darhol eskirardi: xodim
+    ishdan bo'shaydi, shtat jadvalini yangilash esa unutiladi va tizim
+    «hammasi band» deb yolg'on ko'rsatib turaveradi.
+
+    ⚠️ `salary_min`/`salary_max` — INTEGER (`Offer.salary` bilan bir xil
+    sabab): matn bo'lsa «5-7 mln» kabi yozuvlar paydo bo'lib, taqqoslash
+    va byudjet hisobi ishlamasdi.
+
+    `effective_from` — shtat jadvali TARIXIY hujjat: «o'tgan yil nechta
+    o'rin bor edi?» degan savolga javob berishi kerak. Shuning uchun
+    eski qator o'chirilmaydi, yangisi qo'shiladi."""
+
+    __tablename__ = "staff_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #  Bo'lim — ERKIN MATN. `teams` jadvali mavjud, lekin amalda bo'sh
+    #  va hech kim to'ldirmagan; unga bog'lash modulni ishlamas holga
+    #  keltirardi. Matn HR uchun guruhlash belgisi.
+    department: Mapped[str] = mapped_column(String(120), index=True)
+    position_id: Mapped[int] = mapped_column(ForeignKey("positions.id"), index=True)
+    units: Mapped[int] = mapped_column(Integer, default=1)
+    salary_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    salary_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(12), default=StaffPositionStatus.open.value, index=True
+    )
+    effective_from: Mapped[date] = mapped_column(Date, index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

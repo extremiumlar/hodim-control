@@ -11291,6 +11291,196 @@ def test_birthday_anniversary() -> None:
         conn.close()
 
 
+def test_staff_positions() -> None:
+    """S-23 (TZ 3.20) — shtat jadvali.
+
+    Qabul mezonlari (TZ):
+      • BAND soni AVTOMATIK hisoblanadi;
+      • bo'sh o'rin ro'yxatda ko'rinadi;
+      • xodim ko'rmaydi, ROP faqat o'z bo'limini.
+
+    «Band» soni saqlanmaydi: qo'lda kiritilsa u darhol eskirardi —
+    xodim ishdan bo'shaydi, shtat jadvalini yangilash unutiladi va tizim
+    «hammasi band» deb yolg'on ko'rsatib turaveradi. Test buni bevosita
+    tekshiradi: xodim faolsizlanganda son o'zgaradi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-23: SHTAT JADVALI (band avtomatik)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    staff_id = None
+    try:
+        # BAND ustuni bazada YO'Q
+        ustunlar = [r[1] for r in cur.execute("PRAGMA table_info(staff_positions)")]
+        check("S-23: «band» ustuni bazada YO'Q (hisoblanadi)",
+              not any(u in ("occupied", "busy", "band") for u in ustunlar),
+              "=" + str(ustunlar))
+
+        cur.execute("delete from users where full_name like 'T-St%'")
+        cur.execute("delete from staff_positions where department like 'T-St%'")
+        conn.commit()
+
+        # Sinov uchun alohida lavozim — mavjud xodimlar hisobni buzmasin
+        cur.execute("delete from positions where name='T-St Lavozim'")
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-St Lavozim',1,datetime('now'))")
+        pos_id = cur.lastrowid
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-St Boshqa',1,datetime('now'))")
+        pos2_id = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── QO'SHISH ──
+            r = c.post("/staff", headers=auth(mgr_t), json={
+                "department": "T-St Sotuv", "position_id": pos_id, "units": 3,
+                "salary_min": 5000000, "salary_max": 8000000})
+            check("S-23: shtat birligi qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            staff_id = r.json().get("id") if r.status_code == 201 else None
+            check("S-23: yangi birlikda band 0, bo'sh 3",
+                  r.status_code == 201 and r.json().get("occupied") == 0
+                  and r.json().get("vacant") == 3, "=" + r.text[:130])
+
+            r = c.post("/staff", headers=auth(mgr_t), json={
+                "department": "T-St Sotuv", "position_id": pos_id, "units": 1,
+                "salary_min": 9000000, "salary_max": 5000000})
+            check("S-23: teskari vilka rad etildi -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code) + " " + r.text[:110])
+
+            # ── ⚠️ BAND AVTOMATIK HISOBLANADI ──
+            for n in range(2):
+                cur.execute(
+                    "insert into users (telegram_id, full_name, role, bot_started,"
+                    " is_active, position_id, created_at)"
+                    " values (?,?,'employee',0,1,?,datetime('now'))",
+                    (999702300 + n, f"T-St Xodim{n}", pos_id))
+                ids[f"u{n}"] = cur.lastrowid
+            conn.commit()
+
+            r = c.get("/staff", headers=auth(mgr_t))
+            bizniki = [x for x in r.json() if x["id"] == staff_id]
+            check("S-23: ikki xodim qo'shilgach BAND 2 bo'ldi",
+                  bizniki and bizniki[0]["occupied"] == 2 and bizniki[0]["vacant"] == 1,
+                  "=" + str(bizniki))
+
+            # Xodim FAOLSIZLANSA o'rin bo'shaydi
+            cur.execute("update users set is_active=0 where id=?", (ids["u0"],))
+            conn.commit()
+            r = c.get("/staff", headers=auth(mgr_t))
+            bizniki = [x for x in r.json() if x["id"] == staff_id]
+            check("S-23: xodim faolsizlanganda o'rin BO'SHADI (1/3)",
+                  bizniki and bizniki[0]["occupied"] == 1 and bizniki[0]["vacant"] == 2,
+                  "=" + str(bizniki))
+            cur.execute("update users set is_active=1 where id=?", (ids["u0"],))
+            conn.commit()
+
+            # ── BO'SH O'RINLAR RO'YXATI ──
+            r = c.get("/staff/summary", headers=auth(mgr_t))
+            xulosa = r.json() if r.status_code == 200 else {}
+            bizning = [v for v in xulosa.get("vacancies", [])
+                       if v.get("staff_id") == staff_id]
+            check("S-23: bo'sh o'rin ro'yxatda ko'rinadi",
+                  len(bizning) == 1 and bizning[0]["vacant"] == 1,
+                  "=" + str(bizning))
+            check("S-23: bo'sh o'rinda lavozim nomi va vilka bor",
+                  bizning and bizning[0]["position_name"] == "T-St Lavozim"
+                  and bizning[0]["salary_min"] == 5000000, "=" + str(bizning))
+
+            # ── MUZLATILGAN o'rin «bo'sh» sanalmaydi ──
+            r = c.put(f"/staff/{staff_id}", headers=auth(mgr_t), json={
+                "department": "T-St Sotuv", "position_id": pos_id, "units": 3,
+                "salary_min": 5000000, "salary_max": 8000000, "status": "frozen"})
+            check("S-23: holat «muzlatilgan» ga o'zgardi", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            r = c.get("/staff/summary", headers=auth(mgr_t))
+            bizning = [v for v in r.json().get("vacancies", [])
+                       if v.get("staff_id") == staff_id]
+            check("S-23: muzlatilgan o'rin bo'sh ro'yxatidan CHIQDI",
+                  not bizning, "=" + str(bizning))
+            c.put(f"/staff/{staff_id}", headers=auth(mgr_t), json={
+                "department": "T-St Sotuv", "position_id": pos_id, "units": 3,
+                "salary_min": 5000000, "salary_max": 8000000, "status": "open"})
+
+            # ── Banddan kam birlik qo'yib bo'lmaydi ──
+            r = c.put(f"/staff/{staff_id}", headers=auth(mgr_t), json={
+                "department": "T-St Sotuv", "position_id": pos_id, "units": 1,
+                "salary_min": None, "salary_max": None, "status": "open"})
+            check("S-23: banddan kam birlik -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code) + " " + r.text[:130])
+
+            # ── RUXSAT: xodim UMUMAN ko'rmaydi ──
+            r = c.get("/staff", headers=auth(token_for(ids["u0"], "employee")))
+            check("S-23: oddiy xodim shtat jadvalini ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.get("/staff/summary", headers=auth(token_for(ids["u0"], "employee")))
+            check("S-23: xulosa ham xodimga yopiq -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+
+            # ── RUXSAT: ROP faqat o'z qamrovini ko'radi ──
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (999702310,'T-St Rop','rop',0,1,"
+                "datetime('now'))")
+            ids["rop"] = cur.lastrowid
+            #  ROP ning jamoasi — faqat u0 (uning `manager_id` si)
+            cur.execute("update users set manager_id=? where id=?", (ids["rop"], ids["u0"]))
+            # Boshqa lavozimda, ROP jamoasidan TASHQARIDA shtat birligi
+            cur.execute(
+                "insert into staff_positions (department, position_id, units, status,"
+                " effective_from, created_at) values ('T-St Boshqa bolim',?,2,'open',"
+                "date('now'),datetime('now'))", (pos2_id,))
+            begona_id = cur.lastrowid
+            conn.commit()
+
+            rop_t = token_for(ids["rop"], "rop")
+            r = c.get("/staff", headers=auth(rop_t))
+            korgan = {x["id"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-23: ROP o'z jamoasi lavozimini KO'RADI",
+                  staff_id in korgan, "=" + str(sorted(korgan)))
+            check("S-23: ROP begona bo'lim birligini KO'RMAYDI",
+                  begona_id not in korgan, "=" + str(sorted(korgan)))
+
+            r = c.post("/staff", headers=auth(rop_t), json={
+                "department": "T-St Rop qoshdi", "position_id": pos_id, "units": 1,
+                "salary_min": None, "salary_max": None})
+            check("S-23: ROP shtat birligi QO'SHA OLMAYDI -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── YOPISH (o'chirmaydi) ──
+            r = c.delete(f"/staff/{staff_id}", headers=auth(mgr_t))
+            check("S-23: yopish -> 200", r.status_code == 200
+                  and r.json().get("status") == "closed", "=" + r.text[:100])
+            qator = cur.execute(
+                "select status from staff_positions where id=?", (staff_id,)).fetchone()
+            check("S-23: qator O'CHIRILMADI — tarix qoldi (status=closed)",
+                  qator == ("closed",), "=" + str(qator))
+    except Exception:
+        check("S-23 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from staff_positions where department like 'T-St%'")
+            cur.execute("delete from users where full_name like 'T-St%'")
+            cur.execute("delete from positions where name like 'T-St %'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -11473,6 +11663,11 @@ def main() -> None:
         test_birthday_anniversary()
     except Exception:
         print("S-22 tugilgan kun testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_staff_positions()
+    except Exception:
+        print("S-23 shtat testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

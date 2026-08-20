@@ -14,6 +14,8 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  StaffItem,
+  StaffSummary,
   AssetHistoryItem,
   AssetItem,
   CertificateItem,
@@ -177,6 +179,19 @@ export const api = {
   myAssets: () => apiFetch<AssetItem[]>("/assets/me"),
 
   // ── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ──
+  // ── Shtat jadvali (TZ 3.20 / S-23) ──
+  staff: () => apiFetch<StaffItem[]>("/staff"),
+  staffSummary: () => apiFetch<StaffSummary>("/staff/summary"),
+  addStaff: (body: {
+    department: string;
+    position_id: number;
+    units: number;
+    salary_min: number | null;
+    salary_max: number | null;
+  }) => apiFetch<StaffItem>("/staff", { method: "POST", body: JSON.stringify(body) }),
+  closeStaff: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/staff/${id}`, { method: "DELETE" }),
+
   myAnnouncements: () => apiFetch<AnnouncementItem[]>("/announcements/me"),
   announcements: () => apiFetch<AnnouncementItem[]>("/announcements"),
   announcementQuota: () =>

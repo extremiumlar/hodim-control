@@ -1667,3 +1667,36 @@ export type AckReader = {
   version: number;
   acknowledged_at: string | null;
 };
+
+/** Shtat birligi (TZ 3.20 / S-23). `occupied`/`vacant` SERVERDA
+ *  hisoblanadi — bazada bunday ustun yo'q. */
+export type StaffItem = {
+  id: number;
+  department: string;
+  position_id: number;
+  position_name: string;
+  units: number;
+  occupied: number;
+  vacant: number;
+  salary_min: number | null;
+  salary_max: number | null;
+  status: string;
+  status_label: string;
+  effective_from: string;
+  note: string | null;
+};
+
+export type StaffSummary = {
+  total: number;
+  occupied: number;
+  vacant: number;
+  vacancies: {
+    staff_id: number;
+    department: string;
+    position_id: number;
+    position_name: string;
+    vacant: number;
+    salary_min: number | null;
+    salary_max: number | null;
+  }[];
+};

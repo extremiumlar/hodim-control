@@ -76,6 +76,7 @@ from api.routers import (
     employee_documents,
     holidays,
     offers,
+    staff,
     hourly_plan,
     idle_watch,
     knowledge,
@@ -179,6 +180,7 @@ app.include_router(document_templates.router)
 app.include_router(employee_documents.router)
 app.include_router(holidays.router)
 app.include_router(offers.router)
+app.include_router(staff.router)
 app.include_router(work_schedule.router)
 app.include_router(work_log.router)
 app.include_router(appeals.router)

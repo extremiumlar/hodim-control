@@ -160,6 +160,10 @@ _MANAGER: list[Section] = [
     #  `can_view_hr_docs` emas, `is_manager`.
     Section("announcements", "E'lonlar", "/announcements", "Megaphone", 161, "manager",
             "Ma'muriyat", visible=lambda c: c.is_manager),
+    #  Shtat jadvali — ROP ham ko'radi (faqat o'z qamrovi, backend
+    #  filtrlaydi), lekin oddiy xodim UMUMAN ko'rmaydi.
+    Section("staff", "Shtat jadvali", "/staff", "Briefcase", 162, "manager",
+            "Ma'muriyat", visible=lambda c: c.is_manager),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
