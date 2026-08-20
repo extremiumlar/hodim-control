@@ -125,7 +125,7 @@ export const qk = {
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
 /** Sahifaning O'ZI ushlaydigan xato kodlari (avtomatik toast ko'rsatilmaydi). */
-const HANDLED_ERROR_CODES = new Set(["advance_duplicate"]);
+const HANDLED_ERROR_CODES = new Set(["advance_duplicate", "advance_over_limit"]);
 
 function useApiMutation<TData, TVariables>(
   mutationFn: (vars: TVariables) => Promise<TData>,
@@ -650,10 +650,21 @@ export const usePayrollAdjustments = (
     enabled,
   });
 
+/** Avans chegarasi (A-03) — xodim tanlangan zahoti forma ostida ko'rinadi.
+ *  Har o'zgarishda serverdan qayta so'raladi: chegara boshqa HR kiritgan
+ *  avansdan ham o'zgaradi, ya'ni uzoq kesh noto'g'ri raqam ko'rsatardi. */
+export const useAdvanceLimit = (userId: number | null, period?: string) =>
+  useQuery({
+    queryKey: ["payroll", "advance-limit", userId, period] as const,
+    queryFn: () => api.advanceLimit(userId as number, period),
+    enabled: !!userId,
+    staleTime: 0,
+  });
+
 export const useCreateAdvance = () =>
   // `payslips`/`periods` ham yangilanadi: avans tasdiqlangach oylik summasi
   // o'zgaradi va jadval eski raqam bilan qolib ketmasin.
-  useApiMutation(api.createAdvance, [["payroll", "adjustments"]]);
+  useApiMutation(api.createAdvance, [["payroll", "adjustments"], ["payroll", "advance-limit"]]);
 
 export const useDecideAdvance = () =>
   useApiMutation(

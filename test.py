@@ -10483,6 +10483,11 @@ def main() -> None:
         print("Avans chegarasi testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_limit_gate()
+    except Exception:
+        print("Avans chegara-eshigi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -10706,6 +10711,7 @@ def test_advance_duplicate_guard() -> None:
 
     from api.routers import payroll as pay_router
     from api.routers.payroll import _find_duplicate_advance, _duplicate_message
+    from sqlalchemy import select as _sel
     from db.base import async_session
     from db.models import (
         PayrollAdjustment,
@@ -10859,7 +10865,11 @@ def test_advance_duplicate_guard() -> None:
 
     async def _forced_insert():
         """Tasdiqli kiritish. `notify_user` patch qilinadi — jonli Boshliqqa
-        test xabari bormasin (⚠️ test-telegram-xavfi)."""
+        test xabari bormasin (⚠️ test-telegram-xavfi).
+
+        A-03 chegara eshigi ATAYLAB istisno bilan chetlab o'tiladi: sinov
+        xodimida stavka yo'q, ya'ni chegara 0. Bu test dublikat qo'riqchisi
+        haqida — chegara o'z testida (`test_advance_limit_gate`) sinaladi."""
         sent: list = []
 
         async def _fake_notify(_db, _user, _cat, _text, **_kw):
@@ -10870,13 +10880,17 @@ def test_advance_duplicate_guard() -> None:
         try:
             from api.schemas import AdvanceIn
             async with async_session() as s:
-                actor = await s.get(_User, mgr[0])
+                boss = await s.scalar(_sel(_User).where(
+                    _User.role.in_(("boss", "dasturchi")), _User.is_active.is_(True)))
+                if boss is None:
+                    return None, sent
                 payload = AdvanceIn(
                     user_id=emp_uid, period=PERIOD, amount=BASE_AMOUNT,
                     issued_on=BASE_DATE, reason="T-Adv tasdiqlangan takror",
-                    confirm_duplicate=True,
+                    confirm_duplicate=True, override_limit=True,
+                    override_reason="Sinov: chegara testdan tashqarida",
                 )
-                return await pay_router.create_advance(payload, actor, s), sent
+                return await pay_router.create_advance(payload, boss, s), sent
         finally:
             pay_router.notify_user = orig
 
@@ -11129,6 +11143,278 @@ def test_advance_limit() -> None:
         check("qulflangan davr testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
     cleanup_lim()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_limit_gate() -> None:
+    """Chegara kiritish nuqtalarida (Avans TZ A-03).
+
+    MUAMMO: A-02 chegarani hisoblaydi, lekin uni HECH KIM tekshirmasa
+    foydasi yo'q — HR baribir istagan summani kiritardi.
+
+    Tekshiriladi:
+      1. `GET /payroll/advances/limit` chegarani va kelib chiqishini beradi
+      2. Chegara ichidagi summa oddiy o'tadi
+      3. Chegaradan oshiq -> 400 `advance_over_limit` (ruxsat etilgan summa
+         xabarda ko'rinadi — HR raqamni taxmin qilmasin)
+      4. HR `override_limit` bilan yuborsa -> 403 (istisno faqat Boshliq)
+      5. Boshliq sababsiz istisno qilsa -> 400
+      6. Boshliq sabab bilan -> saqlanadi va auditda `advance_over_limit`
+      7. Ariza yo'lida ham shu chegara ishlaydi (chetlab o'tib bo'lmaydi)
+    """
+    print("\n=== AVANS: chegara kiritish nuqtalarida (A-03) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import date as _dt_date, datetime as _dt_datetime
+
+    from api.routers import payroll as pay_router
+    from api.services import advance as adv
+    from db.base import async_session
+    from db.models import (
+        Attendance as _Att,
+        AuditLog as _Audit,
+        PayBasis,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import select as _select
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Gate-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600921,'T-Gate-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    PERIOD = "2020-03"
+    P_START = _dt_date(2020, 3, 1)
+
+    def cleanup_gate():
+        try:
+            c2 = db()
+            pslips = [r[0] for r in c2.execute(
+                "select id from payslips where user_id=?", (emp_uid,)).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id=?", (emp_uid,))
+            c2.execute("delete from audit_logs where target_user_id=?", (emp_uid,))
+            c2.execute("delete from payroll_periods where period=?", (PERIOD,))
+            c2.execute("delete from users where id=?", (emp_uid,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  Chegara-eshik tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    async def _seed():
+        async with async_session() as s:
+            for wd in range(5):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                         start_time="09:00", end_time="18:00"))
+            for wd in (5, 6):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+            s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                             amount=5_000_000, effective_from=P_START, changed_by=emp_uid))
+            for dd in range(1, 16):
+                day = _dt_date(2020, 3, dd)
+                if day.weekday() >= 5:
+                    continue
+                s.add(_Att(user_id=emp_uid, date=day, status="present",
+                           check_in_time=_dt_datetime(2020, 3, dd, 4, 0),
+                           check_out_time=_dt_datetime(2020, 3, dd, 13, 0),
+                           late_minutes=0, worked_minutes=540))
+            await s.commit()
+            emp = await s.get(_User, emp_uid)
+            return await adv.limit_for(s, emp, period=PERIOD)
+
+    try:
+        info = _asyncio.run(_seed())
+    except Exception:
+        check("chegara-eshik testi sozlandi", False, traceback.format_exc(limit=2).strip())
+        cleanup_gate()
+        return
+
+    if info.limit <= 0:
+        check("sinov xodimida chegara musbat chiqdi", False, f"limit={info.limit}, {info.reason}")
+        cleanup_gate()
+        return
+
+    # HR va Boshliq tokenlari — ikkalasi HAM kerak (rol farqi sinaladi)
+    hr_row = conn.execute(
+        "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+    boss_row = conn.execute(
+        "select id, role from users where role in ('boss','dasturchi') and is_active=1 limit 1"
+    ).fetchone()
+    hr_t = token_for(hr_row[0], "hr") if hr_row else None
+    boss_t = token_for(boss_row[0], boss_row[1]) if boss_row else None
+    if not hr_t or not boss_t:
+        check("chegara-eshik testi uchun HR va Boshliq topildi", False,
+              f"hr={bool(hr_t)}, boss={bool(boss_t)}")
+        cleanup_gate()
+        return
+
+    def body(amount, **extra):
+        return {
+            "user_id": emp_uid,
+            "period": PERIOD,
+            "amount": amount,
+            "issued_on": _dt_date(2020, 3, 10).isoformat(),
+            "reason": "T-Gate sinov avansi",
+            **extra,
+        }
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            # 1. Chegara endpointi
+            r = client.get(f"{API_BASE}/payroll/advances/limit?user_id={emp_uid}&period={PERIOD}",
+                           headers=auth(hr_t))
+            check("chegara endpointi 200 qaytaradi", r.status_code == 200, f"kod={r.status_code}")
+            if r.status_code == 200:
+                d = r.json()
+                check("chegara endpointi kelib chiqishini ham beradi",
+                      d["limit"] > 0 and d["scheduled_days"] > 0 and d["worked_days"] > 0,
+                      f"limit={d['limit']}, kun={d['worked_days']}/{d['scheduled_days']}")
+
+            # 2. Chegaradan oshiq -> 400 va kod
+            r = client.post(f"{API_BASE}/payroll/advances",
+                            json=body(info.limit + 1_000_000), headers=auth(hr_t))
+            check("chegaradan oshiq -> 400", r.status_code == 400, f"kod={r.status_code}")
+            det = r.json().get("detail") if r.status_code == 400 else None
+            check("400 tarkibida `advance_over_limit` kodi va ruxsat etilgan summa",
+                  isinstance(det, dict) and det.get("code") == "advance_over_limit"
+                  and det.get("limit") == info.limit,
+                  str(det)[:200])
+
+            # 3. HR istisno qila olmaydi
+            r = client.post(f"{API_BASE}/payroll/advances",
+                            json=body(info.limit + 1_000_000, override_limit=True,
+                                      override_reason="HR o'zi qaror qildi"),
+                            headers=auth(hr_t))
+            check("HR chegaradan oshiq kirita olmaydi -> 403",
+                  r.status_code == 403, f"kod={r.status_code}")
+
+            # 4. Boshliq sababsiz istisno -> 400
+            r = client.post(f"{API_BASE}/payroll/advances",
+                            json=body(info.limit + 1_000_000, override_limit=True),
+                            headers=auth(boss_t))
+            check("Boshliq sababsiz istisno qila olmaydi -> 400",
+                  r.status_code == 400, f"kod={r.status_code}")
+    except Exception:
+        check("chegara-eshik HTTP testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    # 5-6. Chegara ichida va Boshliq istisnosi — xizmat darajasida
+    #      (`notify_user` patch qilingan: jonli Boshliqqa xabar ketmasin)
+    async def _service_cases():
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        try:
+            from api.schemas import AdvanceIn
+            async with async_session() as s:
+                hr = await s.get(_User, hr_row[0])
+                boss = await s.get(_User, boss_row[0])
+                inside = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=100_000,
+                              issued_on=_dt_date(2020, 3, 10), reason="T-Gate chegara ichida"),
+                    hr, s)
+                over = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=info.limit + 1_000_000,
+                              issued_on=_dt_date(2020, 3, 20), reason="T-Gate istisno",
+                              confirm_duplicate=True, override_limit=True,
+                              override_reason="Shoshilinch tibbiy xarajat"),
+                    boss, s)
+                audits = list(await s.scalars(
+                    _select(_Audit).where(_Audit.target_user_id == emp_uid)))
+                return inside, over, audits
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        inside, over, audits = _asyncio.run(_service_cases())
+        check("chegara ichidagi summa oddiy o'tadi", inside.id > 0, f"id={inside.id}")
+        check("Boshliq sabab bilan chegaradan oshiq kirita oladi", over.id > 0, f"id={over.id}")
+        acts = [a.action for a in audits]
+        check("istisno auditda `advance_over_limit` sifatida yozilgan",
+              "advance_over_limit" in acts, f"amallar={acts}")
+        over_audit = next((a for a in audits if a.action == "advance_over_limit"), None)
+        check("auditda istisno sababi va chegara saqlangan",
+              over_audit is not None
+              and over_audit.after.get("override_reason") == "Shoshilinch tibbiy xarajat"
+              and over_audit.after.get("limit") is not None,
+              str(over_audit.after)[:200] if over_audit else "yo'q")
+    except Exception:
+        check("chegara-eshik xizmat testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    # 7. Ariza yo'li — chegarani chetlab o'tib bo'lmaydi.
+    #    `_apply_advance` HAR DOIM joriy oyga yozadi, shuning uchun sinov
+    #    davomati ham joriy oyga qo'yiladi (aks holda chegara 0 bo'lib,
+    #    «oshdi» shoxi umuman sinalmasdi).
+    async def _request_path():
+        from api.routers import requests as req_router
+        from db.models import EmployeeRequest as _Req, RequestKind as _RK, RequestStatus as _RS
+        bugun = _dt_date.today()
+        async with async_session() as s:
+            s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                             amount=5_000_000,
+                             effective_from=bugun.replace(day=1), changed_by=emp_uid))
+            for dd in range(1, min(bugun.day, 15)):
+                day = bugun.replace(day=dd)
+                if day.weekday() >= 5:
+                    continue
+                s.add(_Att(user_id=emp_uid, date=day, status="present",
+                           check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                           check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                           late_minutes=0, worked_minutes=540))
+            await s.commit()
+
+            emp = await s.get(_User, emp_uid)
+            joriy = await adv.limit_for(s, emp)
+            item = _Req(user_id=emp_uid, kind=_RK.advance.value,
+                        amount=99_000_000, reason="T-Gate ariza orqali chetlab o'tish",
+                        status=_RS.approved.value, decided_by=boss_row[0])
+            s.add(item)
+            await s.flush()
+            try:
+                await req_router._apply_advance(s, item, emp)
+                xato = "o'tib ketdi"
+            except Exception as e:
+                xato = getattr(e, "detail", str(e))
+            await s.rollback()
+            return joriy, xato
+
+    try:
+        joriy, res = _asyncio.run(_request_path())
+        check("ariza yo'li ham chegarada to'xtaydi",
+              isinstance(res, str) and res != "o'tib ketdi"
+              and ("chegara" in res.lower() or "avans berib bo'lmaydi" in res.lower()),
+              str(res)[:180])
+        if joriy.limit > 0:
+            check("ariza rad javobida ruxsat etilgan summa ko'rinadi",
+                  "chegarasidan oshdi" in str(res), str(res)[:180])
+    except Exception:
+        check("ariza yo'li testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_gate()
     try:
         conn.close()
     except Exception:

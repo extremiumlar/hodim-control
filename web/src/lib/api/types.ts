@@ -1012,6 +1012,23 @@ export interface OvertimeEntry {
   created_at: string;
 }
 
+/** Avans chegarasi (Avans TZ A-03) — forma kiritishdan OLDIN ko'rsatadi. */
+export interface AdvanceLimit {
+  limit: number;
+  net_salary: number;
+  scheduled_days: number;
+  worked_days: number;
+  taken: number;
+  deductions: number;
+  coefficient: number;
+  cap_percent: number;
+  earned: number;
+  cap_amount: number;
+  /** `limit === 0` bo'lsa — nega (stavka yo'q, davr qulflangan, ...). */
+  reason: string | null;
+  warnings: string[];
+}
+
 export interface PayrollAdjustment {
   id: number;
   user_id: number;

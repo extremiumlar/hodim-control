@@ -44,7 +44,13 @@ import {
 } from "@/components/ui/select";
 import { ApiError, type PayrollAdjustment } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { useCreateAdvance, useDecideAdvance, usePayrollAdjustments, useUsers } from "@/lib/queries";
+import {
+  useAdvanceLimit,
+  useCreateAdvance,
+  useDecideAdvance,
+  usePayrollAdjustments,
+  useUsers,
+} from "@/lib/queries";
 import { fmtMoney } from "@/lib/utils";
 
 export default function AdvanceTab() {
@@ -67,6 +73,14 @@ export default function AdvanceTab() {
   // ochiladi; HR «Baribir kiritish» desa AYNAN o'sha so'rov
   // `confirm_duplicate: true` bilan qayta yuboriladi.
   const [dupWarning, setDupWarning] = useState<string | null>(null);
+  // Chegara (A-03) — xodim tanlangan zahoti ko'rinadi, HR ko'r-ko'rona
+  // kiritib 400 olmasin.
+  const limitQuery = useAdvanceLimit(userId, period);
+  const limit = limitQuery.data ?? null;
+  // Chegaradan oshiq kiritish — faqat Boshliq/Dasturchi va faqat sabab
+  // bilan. HR uchun bu oyna umuman ochilmaydi (backend ham 403 beradi).
+  const [overWarning, setOverWarning] = useState<string | null>(null);
+  const [overReason, setOverReason] = useState("");
 
   const rows = listQuery.data ?? [];
   const pendingTotal = rows
@@ -94,8 +108,11 @@ export default function AdvanceTab() {
     submit(false);
   };
 
-  /** `force=true` — dublikat ogohlantirishidan keyin HR tasdiqlagani. */
-  const submit = (force: boolean) => {
+  /**
+   * `force` — dublikat ogohlantirishidan keyin tasdiqlangani.
+   * `override` — chegaradan oshiq kiritishga Boshliq roziligi (sabab bilan).
+   */
+  const submit = (force: boolean, override = false) => {
     if (!userId) return;
     const n = Number(amount);
     createAdvance.mutate(
@@ -106,6 +123,7 @@ export default function AdvanceTab() {
         issued_on: issuedOn,
         reason: reason.trim(),
         confirm_duplicate: force,
+        ...(override ? { override_limit: true, override_reason: overReason.trim() } : {}),
       },
       {
         onSuccess: () => {
@@ -119,11 +137,21 @@ export default function AdvanceTab() {
           setReason("");
           setUserId(null);
           setDupWarning(null);
+          setOverWarning(null);
+          setOverReason("");
         },
         onError: (err) => {
+          if (!(err instanceof ApiError)) return;
           // 409 — taqiq emas, savol: «shu avans allaqachon kiritilganmi?»
-          if (err instanceof ApiError && err.payload?.code === "advance_duplicate") {
+          if (err.payload?.code === "advance_duplicate") {
             setDupWarning(err.message);
+            return;
+          }
+          // 400 — chegaradan oshdi. HR uchun bu oddiy xato (toast), Boshliq
+          // uchun esa istisno qilish imkoni bo'lgan savol.
+          if (err.payload?.code === "advance_over_limit") {
+            if (canDecide) setOverWarning(err.message);
+            else toast.error(err.message);
           }
           // Qolgan xatolarni `useApiMutation` o'zi toast qiladi.
         },
@@ -287,6 +315,53 @@ export default function AdvanceTab() {
                   required
                 />
               </div>
+              {/* Chegara (A-03) — kiritishdan OLDIN ko'rinadi. Faqat
+                  raqam emas, kelib chiqishi ham: HR «nega shuncha?» degan
+                  savol bilan qolmasin. */}
+              {userId != null && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs">
+                  {limitQuery.isLoading && <span className="text-slate-500">Chegara hisoblanmoqda…</span>}
+                  {limitQuery.error && (
+                    <span className="text-amber-700">
+                      Chegarani hisoblab bo'lmadi — kiritishda server tekshiradi.
+                    </span>
+                  )}
+                  {limit && (
+                    <>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="text-slate-600">Ruxsat etilgan eng katta summa</span>
+                        <b className={limit.limit > 0 ? "text-emerald-700" : "text-rose-600"}>
+                          {fmtMoney(limit.limit)}
+                        </b>
+                      </div>
+                      {limit.limit <= 0 && limit.reason && (
+                        <div className="mt-1 text-rose-600">Sabab: {limit.reason}</div>
+                      )}
+                      <div className="mt-1.5 space-y-0.5 text-slate-500">
+                        <div>
+                          Sof oylik {fmtMoney(limit.net_salary)} · {limit.worked_days}/
+                          {limit.scheduled_days} kun ishlangan
+                        </div>
+                        <div>
+                          Koeffitsient {limit.coefficient} · yuqori chegara {limit.cap_percent}% (
+                          {fmtMoney(limit.cap_amount)})
+                        </div>
+                        {(limit.taken > 0 || limit.deductions > 0) && (
+                          <div>
+                            Shu oyda olingan avans {fmtMoney(limit.taken)}
+                            {limit.deductions > 0 && ` · ushlanma ${fmtMoney(limit.deductions)}`}
+                          </div>
+                        )}
+                        {limit.warnings.map((w) => (
+                          <div key={w} className="text-amber-700">
+                            {w}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <p className="text-xs text-slate-500">
                 Avans <b>{period}</b> oyligidan ayiriladi. Kiritilgach Boshliqqa tasdiq uchun xabar
                 boradi — tasdiqlangunicha oylikka kirmaydi.
@@ -322,6 +397,52 @@ export default function AdvanceTab() {
           />
         </div>
       </div>
+
+      <AlertDialog
+        open={!!overWarning}
+        onOpenChange={(o) => {
+          if (!o) {
+            setOverWarning(null);
+            setOverReason("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Chegaradan oshiq avans</AlertDialogTitle>
+            <AlertDialogDescription>{overWarning}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {/* Istisno bo'lishi mumkin, lekin IZSIZ emas — sabab auditga
+              «advance_over_limit» amali bilan tushadi. */}
+          <div className="space-y-1.5">
+            <Label htmlFor="adv-override">Istisno sababi (majburiy)</Label>
+            <Input
+              id="adv-override"
+              value={overReason}
+              onChange={(e) => setOverReason(e.target.value)}
+              placeholder="Masalan: shoshilinch tibbiy xarajat, Boshliq roziligi"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                // Sabab bo'sh bo'lsa oyna YOPILMASIN — aks holda bosish
+                // bekorga ketib, HR nima bo'lganini tushunmaydi.
+                if (!overReason.trim()) {
+                  e.preventDefault();
+                  toast.error("Istisno sababini yozing");
+                  return;
+                }
+                submit(true, true);
+              }}
+              disabled={createAdvance.isPending}
+            >
+              Chegaradan oshiq kiritish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!dupWarning} onOpenChange={(o) => !o && setDupWarning(null)}>
         <AlertDialogContent>

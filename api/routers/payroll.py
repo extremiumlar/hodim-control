@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import datetime as dt
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
@@ -34,6 +35,7 @@ from api.deps import (
     verify_bot_secret,
 )
 from api.schemas import (
+    AdvanceLimitOut,
     BotLateStatusOut,
     BotPayslipOut,
     FinePolicyIn,
@@ -60,6 +62,7 @@ from api.schemas import (
     SalaryRateOut,
     SalaryRateUpdate,
 )
+from api.services.advance import AdvanceLimit, limit_for as advance_limit_for
 from api.services.attendance import collect_readiness
 from api.services.export import build_payroll_xlsx
 from api.services.payroll import (
@@ -1044,6 +1047,21 @@ def _duplicate_message(dup: PayrollAdjustment) -> str:
     )
 
 
+def _limit_message(info: AdvanceLimit, requested: float) -> str:
+    """Rad javobi HR uchun QARORGA yetarli bo'lsin: qancha so'raldi, qancha
+    mumkin va nega. «Chegaradan oshdi» degan quruq matn HR ni raqamni
+    taxmin qilib qayta-qayta urinishga majbur qilardi."""
+    if info.limit <= 0:
+        sabab = info.reason or "chegara 0"
+        return f"Bu xodimga hozir avans berib bo'lmaydi ({sabab})."
+    return (
+        f"So'ralgan summa chegaradan oshdi. Ruxsat etilgan: {_fmt_money(info.limit)} "
+        f"(so'ralgan: {_fmt_money(requested)}). Hisob: sof oylik {_fmt_money(info.net_salary)}, "
+        f"{info.worked_days}/{info.scheduled_days} kun ishlangan, "
+        f"shu oyda olingan avans {_fmt_money(info.taken)}."
+    )
+
+
 async def _adjustment_out(db: AsyncSession, adj: PayrollAdjustment) -> PayrollAdjustmentOut:
     """Yozuvni ismlar bilan boyitadi — jadval har qator uchun alohida so'rov
     yubormasin (ro'yxat sahifasi aynan shu shaklda ko'rsatadi)."""
@@ -1080,6 +1098,24 @@ async def list_adjustments(
         stmt = stmt.where(PayrollAdjustment.category == category)
     rows = list(await db.scalars(stmt.order_by(PayrollAdjustment.created_at.desc())))
     return [await _adjustment_out(db, a) for a in rows]
+
+
+@router.get("/advances/limit", response_model=AdvanceLimitOut)
+async def advance_limit(
+    user_id: int,
+    period: str | None = None,
+    _actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> AdvanceLimitOut:
+    """Xodimga hozir eng ko'pi bilan qancha avans berish mumkin.
+
+    Forma buni xodim tanlangan zahoti ko'rsatadi — HR kiritgandan KEYIN
+    400 olib, raqamni taxmin qilib qayta urinmasin."""
+    target = await db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    info = await advance_limit_for(db, target, period=period)
+    return AdvanceLimitOut(**asdict(info))
 
 
 @router.post("/advances", response_model=PayrollAdjustmentOut)
@@ -1125,6 +1161,34 @@ async def create_advance(
                 },
             )
 
+    # ── Chegara tekshiruvi (Avans TZ A-03) ──
+    # Chegarasiz avans oy oxirida payslipni MANFIY qilishi mumkin edi va
+    # bunday xato qaytarib olinmaydi: pul allaqachon qo'lda.
+    limit_info = await advance_limit_for(db, target, period=payload.period)
+    over_limit = payload.amount > limit_info.limit
+    if over_limit:
+        if not payload.override_limit:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "advance_over_limit",
+                    "message": _limit_message(limit_info, payload.amount),
+                    "limit": limit_info.limit,
+                    "reason": limit_info.reason,
+                },
+            )
+        # Istisno — faqat Boshliq/Dasturchi va faqat sabab bilan.
+        if actor.role not in PAYROLL_FINAL_APPROVE_ROLES:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Chegaradan oshiq avansni faqat Boshliq yoki Dasturchi kirita oladi.",
+            )
+        if not (payload.override_reason or "").strip():
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Chegaradan oshiq kiritish sababini yozing — u auditga tushadi.",
+            )
+
     adj = PayrollAdjustment(
         user_id=payload.user_id,
         period=payload.period,
@@ -1141,7 +1205,9 @@ async def create_advance(
     db.add(
         AuditLog(
             actor_id=actor.id,
-            action="advance_created",
+            # Istisno alohida amal nomi bilan yoziladi — auditda uni
+            # oddiy kiritishdan ajratib qidirish mumkin bo'lsin.
+            action="advance_over_limit" if over_limit else "advance_created",
             target_user_id=payload.user_id,
             before=None,
             after={
@@ -1149,6 +1215,15 @@ async def create_advance(
                 "amount": payload.amount,
                 "issued_on": payload.issued_on.isoformat(),
                 "reason": payload.reason,
+                **(
+                    {
+                        "limit": limit_info.limit,
+                        "limit_reason": limit_info.reason,
+                        "override_reason": (payload.override_reason or "").strip(),
+                    }
+                    if over_limit
+                    else {}
+                ),
             },
         )
     )

@@ -1,6 +1,7 @@
 import { apiFetch, apiUpload, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
 import type {
   AdminRecord,
+  AdvanceLimit,
   Appeal,
   AppealDecideResult,
   Attendance,
@@ -554,6 +555,10 @@ export const api = {
     ).toString();
     return apiFetch<PayrollAdjustment[]>(`/payroll/adjustments${q ? `?${q}` : ""}`);
   },
+  advanceLimit: (userId: number, period?: string) =>
+    apiFetch<AdvanceLimit>(
+      `/payroll/advances/limit?user_id=${userId}${period ? `&period=${period}` : ""}`
+    ),
   createAdvance: (data: {
     user_id: number;
     period: string;
@@ -564,6 +569,10 @@ export const api = {
     // (Avans TZ A-01). HR ogohlantirishni ko'rib «baribir kiritaman» desa,
     // shu bayroq bilan qayta yuboriladi.
     confirm_duplicate?: boolean;
+    // Chegaradan oshiq kiritish — faqat Boshliq/Dasturchi, sabab bilan
+    // (auditga «advance_over_limit» amali sifatida tushadi).
+    override_limit?: boolean;
+    override_reason?: string;
   }) => apiFetch<PayrollAdjustment>("/payroll/advances", { method: "POST", body: JSON.stringify(data) }),
   decideAdvance: (adjustmentId: number, data: { approve: boolean; note?: string | null }) =>
     apiFetch<PayrollAdjustment>(`/payroll/advances/${adjustmentId}/decide`, {

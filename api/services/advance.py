@@ -153,15 +153,19 @@ async def limit_for(
     on_date: date | None = None,
     coefficient: Decimal | None = None,
     cap_percent: Decimal | None = None,
+    period: str | None = None,
 ) -> AdvanceLimit:
     """Xodimning `on_date` sanasidagi avans chegarasi (default — bugun).
+
+    `period` berilsa u USTUN turadi — HR o'tgan oyga avans kiritayotganda
+    chegara ham o'sha oyning hisobidan olinishi kerak (bugungi oydan emas).
 
     ⚠️ QIMMAT: ichida `build_payslip` chaqiriladi (oyning har kuni bo'yicha
     davomat va jarima hisobi). Bitta xodim uchun bu normal, lekin butun
     ro'yxat uchun sikl ichida chaqirmang — ko'p xodim kerak bo'lsa natijani
     cron'da hisoblab saqlash kerak (C blokdagi bot oqimi shuni talab qiladi)."""
     on_date = on_date or date.today()
-    period = on_date.strftime("%Y-%m")
+    period = period or on_date.strftime("%Y-%m")
 
     warnings: list[str] = []
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))

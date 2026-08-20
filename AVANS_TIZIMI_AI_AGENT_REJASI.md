@@ -183,8 +183,22 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-03 · Chegarani kiritish nuqtalariga ulash (TZ #2)
+### A-03 · Chegarani kiritish nuqtalariga ulash (TZ #2) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-02 · **~5 soat**
+
+> **Bajarilgani:** `POST /payroll/advances` chegaradan oshsa 400
+> `advance_over_limit` (ruxsat etilgan summa va kelib chiqishi xabarda —
+> HR raqamni taxmin qilmasin). Istisno: `override_limit` + majburiy
+> `override_reason`, faqat Boshliq/Dasturchi; auditga alohida
+> `advance_over_limit` amali sifatida tushadi. Ariza yo'li
+> (`requests._apply_advance`) ham AYNAN shu chegarada to'xtaydi.
+> `GET /payroll/advances/limit` — forma xodim tanlangan zahoti chegarani
+> va uning kelib chiqishini ko'rsatadi. Test: `test_advance_limit_gate`
+> (12/12).
+>
+> **Qaror:** ariza tasdig'ida istisno yo'li ATAYLAB qo'yilmadi — u oynada
+> sabab so'raydigan maydon yo'q, izsiz istisno esa qoidani ma'nosiz
+> qiladi. Chindan kerak bo'lsa Boshliq HR sahifasidan sabab bilan kiritadi.
 
 **Ish**
 1. HR qo'lda kiritishida chegara tekshiruvi: oshsa **400** + tushunarli xabar («ruxsat etilgan: 1 240 000»).
@@ -193,10 +207,11 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 4. Formada chegara **oldindan ko'rsatiladi** — HR kiritishdan oldin biladi.
 
 **Qabul mezoni**
-- [ ] Chegaradan oshiq oddiy yo'l bilan kiritib bo'lmaydi
-- [ ] Boshliq istisno qila oladi, sabab bilan va auditda
-- [ ] Xodim tanlanganda chegara darhol ko'rinadi
-- [ ] Test: chegara ichida / chegaradan oshiq / istisno
+- [x] Chegaradan oshiq oddiy yo'l bilan kiritib bo'lmaydi (HR -> 400, ariza -> 400)
+- [x] Boshliq istisno qila oladi, sabab bilan va auditda (HR urinsa 403)
+- [x] Xodim tanlanganda chegara darhol ko'rinadi (kelib chiqishi bilan)
+- [x] Test: chegara ichida / chegaradan oshiq / istisno / sababsiz istisno /
+      HR istisnosi / ariza yo'li
 
 ---
 

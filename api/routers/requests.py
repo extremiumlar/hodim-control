@@ -53,6 +53,7 @@ from api.schemas import (
     RequestRevoke,
     RequestSlaTick,
 )
+from api.services.advance import limit_for as advance_limit_for
 from api.services.attendance import recompute_attendance
 from api.services.push import Category
 from api.services.workdays import (
@@ -382,6 +383,32 @@ async def _apply_advance(db: AsyncSession, item: EmployeeRequest, user: User) ->
             status.HTTP_400_BAD_REQUEST,
             f"{period} davri qulflangan — avans hisobga kirmaydi. "
             "Avval Dasturchi davrni ochishi kerak.",
+        )
+
+    # ── Chegara tekshiruvi (Avans TZ A-03) ──
+    # HR sahifasi bilan AYNAN bir xil qoida — aks holda chegarani ariza
+    # yo'li bilan chetlab o'tish mumkin bo'lardi.
+    #
+    # Bu yerda «istisno» yo'li ATAYLAB yo'q: ariza tasdig'i oynasida sabab
+    # so'raydigan maydon yo'q, izsiz istisno esa qoidani ma'nosiz qiladi.
+    # Chindan ham chegaradan oshiq berish kerak bo'lsa — Boshliq «Ish haqi
+    # → Avans» sahifasidan sabab bilan kiritadi.
+    limit_info = await advance_limit_for(db, user, period=period)
+    if float(item.amount) > limit_info.limit:
+        if limit_info.limit <= 0:
+            sabab = limit_info.reason or "chegara 0"
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Bu xodimga hozir avans berib bo'lmaydi ({sabab}). Ariza tasdiqlanmadi.",
+            )
+        # Raqam ALOHIDA formatlanadi: `.replace(",", " ")` ni butun matnga
+        # qo'llash matndagi vergullarni ham yeb qo'yardi.
+        ruxsat = f"{limit_info.limit:,.0f}".replace(",", " ")
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"So'ralgan summa avans chegarasidan oshdi — ruxsat etilgan: {ruxsat} so'm. "
+            "Chegaradan oshiq berish kerak bo'lsa, Boshliq «Ish haqi → Avans» "
+            "sahifasidan sabab bilan kiritadi.",
         )
 
     db.add(

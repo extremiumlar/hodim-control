@@ -1335,6 +1335,29 @@ class AdvanceIn(BaseModel):
     # kiritaman» desa — `confirm_duplicate=true` bilan qayta yuboradi.
     # NEGA taqiq emas: haqiqiy holat bor — bir oyda ikki marta avans.
     confirm_duplicate: bool = False
+    # Chegaradan oshiq kiritish (A-03). FAQAT Boshliq/Dasturchi va FAQAT
+    # sabab bilan — istisno bo'lishi mumkin, lekin izsiz emas (auditga
+    # yoziladi). HR bu bayroqni yuborsa 403 oladi.
+    override_limit: bool = False
+    override_reason: str | None = Field(default=None, max_length=500)
+
+
+class AdvanceLimitOut(BaseModel):
+    """Chegara va uning KELIB CHIQISHI — forma HR ga kiritishdan OLDIN
+    ko'rsatadi, aks holda HR ko'r-ko'rona kiritib 400 oladi."""
+
+    limit: float
+    net_salary: float
+    scheduled_days: int
+    worked_days: int
+    taken: float
+    deductions: float
+    coefficient: float
+    cap_percent: float
+    earned: float
+    cap_amount: float
+    reason: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AdvanceDecision(BaseModel):
