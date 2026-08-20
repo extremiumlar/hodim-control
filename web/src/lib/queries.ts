@@ -226,6 +226,9 @@ export const useOffers = (q = "") =>
 
 export const useAddOffer = () => useApiMutation(api.addOffer, [["offers"]]);
 export const useSetOfferStatus = () => useApiMutation(api.setOfferStatus, [["offers"]]);
+/** Xodim yaratiladi — `users` ro'yxati ham yangilanishi kerak (S-16). */
+export const useHireFromOffer = () =>
+  useApiMutation(api.hireFromOffer, [["offers"], ["users"]]);
 /** Hujjat NAVBATGA qo'yiladi — ro'yxat o'zgarmaydi, invalidate kerak emas. */
 export const useGenerateOfferDoc = () => useApiMutation(api.generateOfferDoc);
 

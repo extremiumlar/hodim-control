@@ -9813,6 +9813,167 @@ def test_offers() -> None:
         conn.close()
 
 
+def test_offer_hire() -> None:
+    """S-16 (TZ 3.3) — taklifdan xodim va oylik stavkasi.
+
+    Qabul mezonlari (TZ):
+      • bitta bosishda xodim + stavka yaratiladi;
+      • `offers.user_id` bog'lanadi;
+      • IKKI MARTA bosilsa ikkita xodim yaratilmaydi (idempotent).
+
+    NEGA MUHIM: F.I.Sh., lavozim va ish haqi allaqachon taklifda bor.
+    Ularni qo'lda qayta terish xatoning eng keng tarqalgan manbai —
+    kelishilgan oylik bilan bazaga kiritilgani boshqacha bo'lib chiqadi
+    va bu faqat birinchi oylik hisoblanganda bilinadi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-16: TAKLIFDAN XODIM (idempotent)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    yaratilgan: list[int] = []
+    try:
+        cur.execute("delete from offers where candidate_name like 'T-Hire%'")
+        cur.execute("delete from users where full_name like 'T-Hire%'")
+        conn.commit()
+
+        pos = cur.execute("select id, name from positions limit 1").fetchone()
+        if not pos:
+            check("lavozim topildi", False, "positions bo'sh")
+            return
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Hire Nomzod", "phone": "+998900000001",
+                "position_id": pos[0], "salary": 9500000,
+                "probation_months": 3, "start_date": "2026-09-15",
+                "manager_id": mgr[0]})
+            offer_id = r.json().get("id") if r.status_code == 201 else None
+            check("S-16: taklif yaratildi", offer_id is not None, "kod=" + str(r.status_code))
+
+            # ── BITTA BOSISH: xodim + stavka ──
+            r = c.post(f"/offers/{offer_id}/hire", headers=auth(mgr_t))
+            check("S-16: ishga olish -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            uid = r.json().get("user_id") if r.status_code == 200 else None
+            if uid:
+                yaratilgan.append(uid)
+            check("S-16: yangi xodim yaratildi (`created=True`)",
+                  r.status_code == 200 and r.json().get("created") is True,
+                  "=" + r.text[:120])
+
+            xodim = cur.execute(
+                "select full_name, role, position_id, manager_id, hire_date, is_active,"
+                " telegram_id from users where id=?", (uid,)).fetchone()
+            check("S-16: F.I.Sh. taklifdan olindi (qayta terilmadi)",
+                  xodim and xodim[0] == "T-Hire Nomzod", "=" + str(xodim))
+            check("S-16: lavozim va rahbar ham ko'chdi",
+                  xodim and xodim[2] == pos[0] and xodim[3] == mgr[0], "=" + str(xodim))
+            check("S-16: `hire_date` = ishga chiqish sanasi",
+                  xodim and xodim[4] == "2026-09-15", "=" + str(xodim[4] if xodim else None))
+            check("S-16: roli `employee`, faol", xodim and xodim[1] == "employee"
+                  and xodim[5] == 1, "=" + str(xodim))
+            check("S-16: `telegram_id` BO'SH (nomzodning boti bizda yo'q)",
+                  xodim and xodim[6] is None, "=" + str(xodim[6] if xodim else "-"))
+
+            stavka = cur.execute(
+                "select amount, effective_from, pay_basis from salary_rates"
+                " where user_id=? and deleted_at is null", (uid,)).fetchall()
+            check("S-16: BITTA oylik stavkasi yaratildi", len(stavka) == 1,
+                  "=" + str(stavka))
+            check("S-16: stavka summasi taklifdagidek (9 500 000)",
+                  stavka and float(stavka[0][0]) == 9500000.0, "=" + str(stavka))
+            check("S-16: `effective_from` = ishga chiqish sanasi (TZ)",
+                  stavka and stavka[0][1] == "2026-09-15", "=" + str(stavka))
+
+            # ── `offers.user_id` BOG'LANDI ──
+            bogl = cur.execute("select user_id, status from offers where id=?",
+                               (offer_id,)).fetchone()
+            check("S-16: `offers.user_id` bog'landi",
+                  bool(bogl) and bogl[0] is not None and bogl[0] == uid,
+                  "=" + str(bogl))
+            check("S-16: holat avtomatik `accepted` bo'ldi",
+                  bogl and bogl[1] == "accepted", "=" + str(bogl))
+
+            # ── IDEMPOTENT: ikkinchi bosish ──
+            r2 = c.post(f"/offers/{offer_id}/hire", headers=auth(mgr_t))
+            check("S-16: ikkinchi bosish -> 200 (xato emas)", r2.status_code == 200,
+                  "kod=" + str(r2.status_code))
+            check("S-16: ikkinchi bosishda `created=False`",
+                  r2.status_code == 200 and r2.json().get("created") is False,
+                  "=" + r2.text[:120])
+            check("S-16: bir xil xodim qaytdi",
+                  r2.status_code == 200 and r2.json().get("user_id") == uid,
+                  "=" + r2.text[:120])
+            soni = cur.execute(
+                "select count(*) from users where full_name='T-Hire Nomzod'").fetchone()[0]
+            check("S-16: IKKINCHI XODIM YARATILMADI", soni == 1, "=" + str(soni))
+            st_soni = cur.execute(
+                "select count(*) from salary_rates where user_id=?", (uid,)).fetchone()[0]
+            check("S-16: ikkinchi stavka ham yaratilmadi", st_soni == 1, "=" + str(st_soni))
+
+            # ── Holat orqali ham ishlaydi (`accepted` qo'yilsa) ──
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Hire Ikkinchi", "position_id": pos[0],
+                "salary": 7000000})
+            o2 = r.json().get("id") if r.status_code == 201 else None
+            r = c.put(f"/offers/{o2}/status", headers=auth(mgr_t),
+                      json={"status": "accepted"})
+            check("S-16: «accepted» holati ham xodim yaratdi",
+                  r.status_code == 200 and r.json().get("user_id") is not None,
+                  "=" + r.text[:140])
+            uid2 = r.json().get("user_id") if r.status_code == 200 else None
+            if uid2:
+                yaratilgan.append(uid2)
+                bugun = cur.execute(
+                    "select effective_from from salary_rates where user_id=?",
+                    (uid2,)).fetchone()
+                check("S-16: sanasiz taklifda stavka BUGUNDAN boshlanadi",
+                      bugun and bugun[0] == date.today().isoformat(), "=" + str(bugun))
+
+            # ── Rad etilgan taklifdan xodim yaratilmaydi ──
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Hire Rad", "position_id": pos[0], "salary": 5000000})
+            o3 = r.json().get("id") if r.status_code == 201 else None
+            c.put(f"/offers/{o3}/status", headers=auth(mgr_t), json={"status": "declined"})
+            r = c.post(f"/offers/{o3}/hire", headers=auth(mgr_t))
+            check("S-16: rad etilgan taklifdan xodim yaratilmaydi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:100])
+
+            # ── Ruxsat ──
+            emp = cur.execute(
+                "select id from users where role='employee' and is_active=1"
+                " and full_name not like 'T-Hire%' limit 1").fetchone()
+            if emp:
+                r = c.post(f"/offers/{offer_id}/hire",
+                           headers=auth(token_for(emp[0], "employee")))
+                check("S-16: oddiy xodim ishga ololmaydi -> 403",
+                      r.status_code == 403, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-16 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if yaratilgan:
+                belgi = ",".join("?" * len(yaratilgan))
+                cur.execute(f"delete from salary_rates where user_id in ({belgi})",
+                            tuple(yaratilgan))
+            cur.execute("delete from offers where candidate_name like 'T-Hire%'")
+            cur.execute("delete from users where full_name like 'T-Hire%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -9960,6 +10121,11 @@ def main() -> None:
         test_offers()
     except Exception:
         print("S-15 takliflar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_offer_hire()
+    except Exception:
+        print("S-16 ishga olish testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

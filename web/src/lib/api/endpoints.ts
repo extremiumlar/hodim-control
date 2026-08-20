@@ -149,6 +149,14 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ status: body.status }),
     }),
+  hireFromOffer: (id: number) =>
+    apiFetch<{
+      user_id: number;
+      full_name: string;
+      created: boolean;
+      salary_rate_from: string;
+      onboarding_ready: boolean;
+    }>(`/offers/${id}/hire`, { method: "POST" }),
   generateOfferDoc: (body: { id: number; template_id: number }) =>
     apiFetch<{ job_id: number; missing: string[] }>(`/offers/${body.id}/generate`, {
       method: "POST",

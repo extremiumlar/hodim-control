@@ -183,23 +183,127 @@ async def add_offer(
     return _out(o, positions, users)
 
 
+async def _hire_from_offer(db: AsyncSession, o: Offer, actor: User) -> tuple[User, bool]:
+    """Taklifdan XODIM yaratadi (yangi TZ 3.3 / S-16).
+
+    NEGA: F.I.Sh., lavozim va ish haqi allaqachon taklifda bor. Ularni
+    qo'lda qayta terish — xatoning eng keng tarqalgan manbai: kelishilgan
+    oylik bilan bazaga kiritilgani boshqacha bo'lib chiqadi va bu faqat
+    birinchi oylik hisoblanganda bilinadi.
+
+    ⚠️ IDEMPOTENT (TZ qabul mezoni). «Qabul qilindi» ikki marta bosilsa
+    IKKITA xodim yaratilmasligi kerak — `offers.user_id` qo'riqchi
+    vazifasini bajaradi.
+
+    ⚠️ `telegram_id` BO'SH qoladi: nomzodning Telegram'i bizda yo'q va
+    bo'lmasligi ham kerak edi. Xodim taklif qilingandan keyin oddiy
+    taklifnoma havolasi orqali botga ulanadi.
+
+    Qaytaradi: (xodim, YANGI yaratildimi)."""
+    from api.timeutil import today_local
+    from db.models import PayBasis, SalaryRate
+
+    if o.user_id:
+        mavjud = await db.get(User, o.user_id)
+        if mavjud is not None:
+            return mavjud, False
+
+    sana = o.start_date or today_local()
+    xodim = User(
+        full_name=o.candidate_name,
+        role=Role.employee.value,
+        position_id=o.position_id,
+        manager_id=o.manager_id,
+        hire_date=sana,
+        is_active=True,
+    )
+    db.add(xodim)
+    await db.flush()
+
+    #  Stavka `effective_from` = ishga chiqish sanasi (TZ). Tarixiy jadval:
+    #  keyin oylik oshsa yangi qator qo'shiladi, bu tegilmaydi.
+    db.add(
+        SalaryRate(
+            user_id=xodim.id,
+            amount=o.salary,
+            pay_basis=PayBasis.monthly.value,
+            effective_from=sana,
+            changed_by=actor.id,
+            note=f"Ish taklifi #{o.id} asosida",
+        )
+    )
+    o.user_id = xodim.id
+    await db.commit()
+    await db.refresh(xodim)
+    return xodim, True
+
+
 @router.put("/{offer_id}/status", response_model=OfferOut)
 async def set_status(
     offer_id: int,
     payload: StatusIn,
-    _actor: User = Depends(require_roles(*_HR)),
+    actor: User = Depends(require_roles(*_HR)),
     db: AsyncSession = Depends(get_db),
 ) -> OfferOut:
+    """Holatni o'zgartiradi. `accepted` — xodimni ham YARATADI (S-16)."""
     if payload.status not in OFFER_STATUS_LABELS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Noma'lum holat")
     o = await db.get(Offer, offer_id)
     if o is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topilmadi")
+
     o.status = payload.status
     await db.commit()
+    if payload.status == OfferStatus.accepted.value:
+        #  Xodim yaratish ALOHIDA commit'da: yaratishda xato bo'lsa ham
+        #  holat o'zgarishi saqlanib qolsin (HR qayta urina oladi).
+        await _hire_from_offer(db, o, actor)
     await db.refresh(o)
     positions, users = await _lookups(db)
     return _out(o, positions, users)
+
+
+class HireOut(BaseModel):
+    user_id: int
+    full_name: str
+    created: bool
+    salary_rate_from: date
+    #  3.2 (onboarding) hali qurilmagan. Bayroq: modul tayyor bo'lgach
+    #  shu nuqtadan reja ochiladi. Panel foydalanuvchiga «keyin
+    #  ulanadi» deb ko'rsatishi uchun javobda turadi (TZ 4-band).
+    onboarding_ready: bool = False
+
+
+@router.post("/{offer_id}/hire", response_model=HireOut)
+async def hire(
+    offer_id: int,
+    actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> HireOut:
+    """Taklifdan xodim yaratadi — holatni ham `accepted` qiladi.
+
+    IDEMPOTENT: ikkinchi marta chaqirilsa mavjud xodim qaytadi
+    (`created=False`), yangisi yaratilmaydi."""
+    o = await db.get(Offer, offer_id)
+    if o is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Taklif topilmadi")
+    if o.status in (OfferStatus.declined.value, OfferStatus.cancelled.value):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"«{OFFER_STATUS_LABELS[o.status]}» taklifdan xodim yaratilmaydi",
+        )
+    xodim, yangi = await _hire_from_offer(db, o, actor)
+    if o.status != OfferStatus.accepted.value:
+        o.status = OfferStatus.accepted.value
+        await db.commit()
+    from api.timeutil import today_local
+
+    return HireOut(
+        user_id=xodim.id,
+        full_name=xodim.full_name,
+        created=yangi,
+        salary_rate_from=o.start_date or today_local(),
+    )
 
 
 @router.post("/{offer_id}/generate", status_code=status.HTTP_202_ACCEPTED)

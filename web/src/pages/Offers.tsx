@@ -9,7 +9,7 @@
  * navbatga qo'yiladi va tayyor bo'lgach Telegram orqali keladi.
  */
 import { useState } from "react";
-import { FileDown, Search, UserPlus } from "lucide-react";
+import { CheckCircle2, FileDown, Search, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 
 import PageHeader from "@/components/PageHeader";
@@ -28,6 +28,7 @@ import {
   useAddOffer,
   useDocumentTemplates,
   useGenerateOfferDoc,
+  useHireFromOffer,
   useOffers,
   usePositions,
   useSetOfferStatus,
@@ -63,6 +64,7 @@ export default function Offers() {
   const add = useAddOffer();
   const setStatus = useSetOfferStatus();
   const generate = useGenerateOfferDoc();
+  const hire = useHireFromOffer();
 
   const [fish, setFish] = useState("");
   const [tel, setTel] = useState("");
@@ -260,6 +262,33 @@ export default function Offers() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {/* S-16: bitta bosishda xodim + stavka. Idempotent —
+                      ikki marta bosilsa ikkinchi xodim yaratilmaydi. */}
+                  {o.user_id ? (
+                    <span className="flex shrink-0 items-center gap-1 text-xs text-emerald-700">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Xodim yaratilgan
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      disabled={hire.isPending}
+                      title="Taklifdan xodim va oylik stavkasi yaratiladi"
+                      onClick={async () => {
+                        const r = await hire.mutateAsync(o.id);
+                        toast.success(
+                          r.created
+                            ? `${r.full_name} xodim sifatida yaratildi (stavka ${r.salary_rate_from} dan)`
+                            : "Bu taklif uchun xodim allaqachon bor"
+                        );
+                      }}
+                    >
+                      <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                      Ishga olish
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
