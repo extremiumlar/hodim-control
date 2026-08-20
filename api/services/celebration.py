@@ -448,3 +448,164 @@ async def send_test(db: AsyncSession, kind: str, actor: User) -> dict:
         caption=f"🧪 <i>SINOV — guruhga yuborilmadi</i>\n\n{caption}",
     )
     return {"ok": resp is not None, "kind": kind}
+
+
+# ─────────────────────────────────────────────────────────────
+# ODAM HODISALARI — tug'ilgan kun va ish yubileyi (TZ 3.14 / S-22)
+#
+# ⚠️ YANGI MEXANIZM QURILMAYDI (TZ talabi). Xuddi shu jadval, xuddi shu
+# video va xuddi shu «👏 Tabriklash» tugmasi. Farqi: manba CRM voqeasi
+# emas, kundalik cron — shuning uchun takrorlanishdan `dedupe_key`
+# qo'riqlaydi (`lead_event_id` odam hodisasida bo'sh).
+# ─────────────────────────────────────────────────────────────
+
+_PEOPLE_TITLES = {
+    CelebrationKind.birthday.value: "🎂 <b>TUG'ILGAN KUN!</b>",
+    CelebrationKind.anniversary.value: "🏆 <b>ISH YUBILEYI!</b>",
+}
+
+
+def _people_dedupe_key(kind: str, user_id: int, year: int) -> str:
+    """`birthday:7:2026` — yiliga bir marta."""
+    return f"{kind}:{user_id}:{year}"
+
+
+def _anniversary_years(hire: date, today: date) -> int | None:
+    """Bugun nechanchi yubiley. Yubiley bo'lmasa `None`.
+
+    29-fevralda ishga kirganlar: oddiy yillarda 28-fevral hisoblanadi —
+    aks holda ularning yubileyi to'rt yilda bir marta nishonlanardi."""
+    if hire.month == 2 and hire.day == 29:
+        nishon = (2, 28) if today.year % 4 or (today.year % 100 == 0 and today.year % 400) else (2, 29)
+    else:
+        nishon = (hire.month, hire.day)
+    if (today.month, today.day) != nishon:
+        return None
+    yillar = today.year - hire.year
+    return yillar if yillar >= 1 else None
+
+
+async def people_events(db: AsyncSession, today: date) -> list[tuple[User, str, int]]:
+    """Bugungi tug'ilgan kun va yubileylar: `(xodim, kind, yosh_yoki_yil)`.
+
+    ⚠️ Sanasi kiritilmagan xodim uchun tizim JIM turadi (TZ qabul
+    mezoni) — bilmagan narsani tabriklab bo'lmaydi."""
+    rows = list(await db.scalars(select(User).where(User.is_active.is_(True))))
+    out: list[tuple[User, str, int]] = []
+    for u in rows:
+        bd = getattr(u, "birth_date", None)
+        if bd and (bd.month, bd.day) == (today.month, today.day):
+            out.append((u, CelebrationKind.birthday.value, today.year - bd.year))
+        if u.hire_date:
+            yillar = _anniversary_years(u.hire_date, today)
+            if yillar:
+                out.append((u, CelebrationKind.anniversary.value, yillar))
+    return out
+
+
+def build_people_caption(kind: str, who: str, n: int, extra: str | None) -> str:
+    lines = [_PEOPLE_TITLES.get(kind, "🎉"), f"🙍 <b>{who}</b>"]
+    if kind == CelebrationKind.birthday.value:
+        #  Yosh faqat mantiqiy bo'lsa yoziladi: noto'g'ri kiritilgan
+        #  sana tufayli «120 yosh» chiqib, tabrik masxaraga aylanmasin.
+        if 14 <= n <= 90:
+            lines.append(f"🎈 {n} yosh")
+    else:
+        lines.append(f"🏢 Kompaniyada {n} yil")
+    if extra:
+        lines += ["", extra]
+    return "\n".join(lines)
+
+
+async def announce_people(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Bugungi tug'ilgan kun va yubileylarni guruhga chiqaradi.
+
+    ⚠️ BIR MARTA (TZ qabul mezoni). `dedupe_key` UNIQUE: cron kuniga
+    necha marta ishlasa ham ikkinchi post yaratilmaydi. Qator AVVAL
+    yoziladi, keyin yuboriladi — parallel jarayon ham to'siladi."""
+    from api.timeutil import today_local
+
+    bugun = today_local()
+    hodisalar = await people_events(db, bugun)
+    if not hodisalar:
+        return {"ok": True, "sent": 0, "found": 0}
+
+    chat_id = await _main_group_chat_id(db)
+    if chat_id is None:
+        #  Guruh biriktirilmagan — bu XATO emas, sozlanmagan holat.
+        return {"ok": True, "sent": 0, "found": len(hodisalar), "no_group": True}
+
+    #  ⚠️ QIYMATLARNI OLDINDAN OLAMIZ. Pastda `IntegrityError` bo'lsa
+    #  `rollback()` chaqiriladi va u sessiyadagi BARCHA obyektni bekor
+    #  qiladi (`expire_on_commit=False` ga BOG'LIQ EMAS). Keyingi
+    #  aylanishda `user.full_name` ga murojaat qilish async kontekstda
+    #  `MissingGreenlet` bilan yiqilardi — ya'ni cron ikkinchi marta
+    #  ishlagan zahoti (takroriy qo'riqchi ishga tushganda) butun tick
+    #  o'lardi. Bu loyihada avval ham uchragan tuzoq
+    #  (`background_jobs.py` dagi `tg_id` izohiga qarang).
+    tayyor = [(u.id, u.full_name.strip(), k, n) for u, k, n in hodisalar]
+
+    sent = 0
+    skipped_no_media = 0
+    for user_id, full_name, kind, n in tayyor:
+        media = await active_media(db, kind)
+        if media is None:
+            #  Video yuklanmagan bo'lsa MATN bilan yuboriladi: tug'ilgan
+            #  kun HR ning sozlamasi tufayli o'tkazib yuborilmasin
+            #  (tashrif/shartnomadan farqi shu — u yerda jim turiladi,
+            #  chunki u kunda o'nlab marta takrorlanadi).
+            skipped_no_media += 1
+        caption = build_people_caption(kind, full_name, n,
+                                       media.caption if media else None)
+        if dry_run:
+            sent += 1
+            continue
+
+        post = CelebrationPost(
+            kind=kind,
+            lead_event_id=None,
+            crm_lead_id=None,
+            dedupe_key=_people_dedupe_key(kind, user_id, bugun.year),
+            user_id=user_id,
+            chat_id=chat_id,
+        )
+        db.add(post)
+        try:
+            await db.commit()
+        except IntegrityError:
+            #  Bugun allaqachon yuborilgan.
+            await db.rollback()
+            continue
+        await db.refresh(post)
+
+        resp = None
+        if media is not None:
+            resp = await send_file_id(
+                chat_id, media.file_id, media.file_type,
+                caption=caption, reply_markup=clap_keyboard(post.id, 0),
+            )
+        if resp is None:
+            resp = await send_message(chat_id, caption,
+                                      reply_markup=clap_keyboard(post.id, 0))
+        msg_id = ((resp or {}).get("result") or {}).get("message_id")
+        if msg_id:
+            post.message_id = msg_id
+            await db.commit()
+        sent += 1
+
+    return {
+        "ok": True,
+        "sent": sent,
+        "found": len(hodisalar),
+        "skipped_no_media": skipped_no_media,
+        "dry_run": dry_run,
+    }
+
+
+async def people_tomorrow(db: AsyncSession) -> list[tuple[User, str, int]]:
+    """Ertangi tug'ilgan kun va yubileylar — HR ga eslatma uchun."""
+    from datetime import timedelta as _td
+
+    from api.timeutil import today_local
+
+    return await people_events(db, today_local() + _td(days=1))

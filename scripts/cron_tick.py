@@ -629,6 +629,16 @@ async def main() -> None:
     # (daqiqa aniq mos kelgani uchun takrorlanmaydi).
     if now.day == 3 and now.hour == 10 and now.minute == 0:
         await _run_misc_inprocess(now, "reklama xarajati eslatmasi", "ad_spend_reminder_tick")
+    # Tug'ilgan kun / yubiley (S-22) — ertalab 9:05 da guruhga tabrik.
+    # Muddat eslatmalaridan 5 daqiqa keyin: ikkalasi bir vaqtda ishlab
+    # bitta jarayonni cho'zib yubormasin.
+    if now.hour == 9 and now.minute == 5:
+        await _run_misc_inprocess(now, "tabrik (tug'ilgan kun)", "celebration_people_tick")
+    # Ertangi tug'ilgan kun haqida HR ga eslatma — kechqurun 17:00.
+    if now.hour == 17 and now.minute == 0:
+        await _run_misc_inprocess(
+            now, "ertangi tabrik eslatmasi", "celebration_people_reminder_tick"
+        )
     # Muddat eslatmalari (S-13) — HAR KUNI ertalab soat 9:00.
     # Kuniga bir marta: `reminded_at` takrorlanishni o'zi to'sadi, ya'ni
     # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.

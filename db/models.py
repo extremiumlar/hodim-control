@@ -350,6 +350,10 @@ class User(Base):
     # "ish boshlangan kun" sifatida ishlatadi (`compute_base` prorata,
     # api/services/payroll.py). Stavkasi yo'qlarda NULL qoladi.
     hire_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #  Tug'ilgan kun (yangi TZ 3.14 / S-22). Bo'sh bo'lsa tizim JIM
+    #  turadi — tug'ilgan kunni bilmasdan tabriklab bo'lmaydi va
+    #  «kim tug'ilgan kunini kiritmagan» degan ro'yxat HR ishi.
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
@@ -2318,6 +2322,11 @@ class CelebrationKind(str, enum.Enum):
 
     visit = "visit"        # lid «Tashrif» bosqichiga o'tdi
     contract = "contract"  # lid «Shartnoma qilindi» bosqichiga o'tdi
+    #  ODAM hodisalari (yangi TZ 3.14 / S-22). Ular CRM voqeasidan emas,
+    #  kundalik crondan keladi — shuning uchun `lead_event_id` bo'sh
+    #  bo'ladi va takrorlanishdan `dedupe_key` qo'riqlaydi.
+    birthday = "birthday"        # tug'ilgan kun
+    anniversary = "anniversary"  # ish yubileyi (hire_date dan)
 
 
 class CelebrationMedia(Base):
@@ -2360,8 +2369,19 @@ class CelebrationPost(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), index=True)
-    lead_event_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    crm_lead_id: Mapped[int] = mapped_column(Integer, index=True)
+    #  CRM voqeasidan kelgan tabrikda to'ladi. ODAM hodisalarida
+    #  (tug'ilgan kun, yubiley) bo'sh — S-22 dan beri nullable.
+    lead_event_id: Mapped[int | None] = mapped_column(
+        Integer, unique=True, index=True, nullable=True
+    )
+    crm_lead_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    #  ⚠️ ODAM hodisalari uchun TAKRORLANISH QO'RIQCHISI:
+    #  `birthday:7:2026`. `lead_event_id` ularda bo'sh, shuning uchun
+    #  eski qo'riqchi ishlamaydi — cron kuniga bir necha marta ishlasa
+    #  guruhga bir xil tabrik qayta-qayta ketardi.
+    dedupe_key: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
     # Tizimdagi xodim (CRM mas'uli bog'lanmagan bo'lsa — NULL)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

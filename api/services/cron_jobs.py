@@ -282,6 +282,67 @@ def _deadline_text(bandlar: list) -> str:
     return "\n".join(qatorlar)
 
 
+async def celebration_people_tick(db: AsyncSession) -> dict:
+    """Bugungi tug'ilgan kun va ish yubileylarini guruhga chiqaradi
+    (yangi TZ 3.14 / S-22).
+
+    ⚠️ YANGI MEXANIZM YO'Q — mavjud `celebration` ishlatiladi: o'sha
+    jadval, o'sha video, o'sha «👏 Tabriklash» tugmasi.
+
+    Takrorlanishdan `dedupe_key` (UNIQUE) qo'riqlaydi, ya'ni cron kuniga
+    necha marta ishlasa ham guruhga bitta tabrik ketadi."""
+    from api.services.celebration import announce_people
+
+    return await announce_people(db)
+
+
+async def celebration_people_reminder_tick(db: AsyncSession) -> dict:
+    """ERTANGI tug'ilgan kun va yubiley haqida HR ga eslatma.
+
+    NEGA BIR KUN OLDIN: tort, sovg'a yoki oddiy e'tibor uchun vaqt
+    kerak. Tabrikning o'zi ertaga avtomatik chiqadi, bu esa ODAM
+    tayyorgarligi uchun.
+
+    Xabar SHAXSIY: kimningdir tug'ilgan kunini guruhga bir kun oldin
+    e'lon qilish syurprizni buzadi."""
+    from sqlalchemy import select
+
+    from api.notify import notify_user
+    from api.services.celebration import people_tomorrow
+    from api.services.push import Category
+    from db.models import CelebrationKind, Role, User
+
+    hodisalar = await people_tomorrow(db)
+    if not hodisalar:
+        return {"ok": True, "found": 0}
+
+    qatorlar = []
+    for user, kind, n in hodisalar:
+        if kind == CelebrationKind.birthday.value:
+            qatorlar.append(f"🎂 {user.full_name} — tug'ilgan kun")
+        else:
+            qatorlar.append(f"🏆 {user.full_name} — {n} yillik ish yubileyi")
+
+    text = (
+        "📅 <b>Ertaga:</b>\n"
+        + "\n".join(qatorlar)
+        + "\n\nTabrik guruhga ertaga avtomatik chiqadi — bu eslatma "
+        "tayyorgarlik uchun."
+    )
+    targets = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_((Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+    for u in targets:
+        await notify_user(db, u, Category.APPROVALS, text, data={"path": "/users"})
+    return {"ok": True, "found": len(hodisalar), "notified": len(targets)}
+
+
 async def lead_source_tick(db: AsyncSession) -> dict:
     """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
 

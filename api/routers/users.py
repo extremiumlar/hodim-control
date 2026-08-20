@@ -36,6 +36,7 @@ from api.schemas import (
     UserCreate,
     UserCreateOut,
     UserCrmIdUpdate,
+    UserBirthDateUpdate,
     UserHireDateUpdate,
     UserOut,
     UserPositionUpdate,
@@ -595,6 +596,49 @@ async def update_hire_date(
             target_user_id=user.id,
             before={"hire_date": before.isoformat() if before else None},
             after={"hire_date": user.hire_date.isoformat() if user.hire_date else None},
+        )
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}/birth-date", response_model=UserOut)
+async def update_birth_date(
+    user_id: int,
+    payload: UserBirthDateUpdate,
+    actor: User = Depends(require_roles(Role.hr.value, Role.boss.value, Role.dasturchi.value)),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Tug'ilgan kunni kiritish (TZ 3.14 / S-22).
+
+    Sanasi kiritilmagan xodim uchun tizim JIM turadi — bilmagan narsani
+    tabriklab bo'lmaydi. Shuning uchun kiritish yo'li bo'lishi SHART.
+
+    ⚠️ YIL ham saqlanadi (yosh uchun), lekin tabrikda yosh faqat
+    mantiqiy oraliqda ko'rsatiladi: noto'g'ri kiritilgan sana tufayli
+    guruhga «120 yosh» chiqib, tabrik masxaraga aylanmasin.
+
+    ROP ataylab chetda: bu shaxsiy ma'lumot, jamoa boshqaruvi emas."""
+    from api.timeutil import today_local
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    if payload.birth_date and payload.birth_date >= today_local():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Tug'ilgan kun kelajakda bo'lishi mumkin emas"
+        )
+
+    before = user.birth_date
+    user.birth_date = payload.birth_date
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="user_birth_date_changed",
+            target_user_id=user.id,
+            before={"birth_date": before.isoformat() if before else None},
+            after={"birth_date": user.birth_date.isoformat() if user.birth_date else None},
         )
     )
     await db.commit()

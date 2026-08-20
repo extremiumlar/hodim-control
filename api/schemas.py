@@ -119,6 +119,8 @@ class UserOut(BaseModel):
     # Ishga kirgan sana — `created_at` (tizimga qo'shilgan payt) bilan
     # ADASHTIRMANG. Ta'til staji/balansi shundan hisoblanadi.
     hire_date: dt.date | None = None
+    # Tug'ilgan kun (TZ 3.14 / S-22). Bo'sh bo'lsa tizim JIM turadi.
+    birth_date: dt.date | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -166,6 +168,15 @@ class UserHireDateUpdate(BaseModel):
     to'ldirilgan bo'lsa)."""
 
     hire_date: dt.date | None = None
+
+
+class UserBirthDateUpdate(BaseModel):
+    """Tug'ilgan kunni kiritish/tozalash (TZ 3.14 / S-22).
+
+    `None` — tozalash: noto'g'ri kiritilgan sana tufayli guruhga xato
+    tabrik chiqishidan ko'ra, umuman chiqmagani yaxshiroq."""
+
+    birth_date: dt.date | None = None
 
 
 class UserCreateOut(BaseModel):

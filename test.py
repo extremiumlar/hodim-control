@@ -11063,6 +11063,234 @@ def test_announcements() -> None:
         conn.close()
 
 
+def test_birthday_anniversary() -> None:
+    """S-22 (TZ 3.14) — tug'ilgan kun va ish yubileyi.
+
+    Qabul mezonlari (TZ):
+      • YANGI JADVAL yaratilmagan;
+      • tabrik guruhga BIR MARTA ketadi (takroriy qo'riqchi);
+      • tug'ilgan kun kiritilmagan xodim uchun JIM;
+      • sana kiritish HR panelida bor.
+
+    Mavjud `celebration` mexanizmi ishlatiladi: o'sha jadval, o'sha
+    video, o'sha «👏 Tabriklash» tugmasi. Farqi — manba CRM voqeasi
+    emas, kundalik cron; shuning uchun `lead_event_id` o'rniga
+    `dedupe_key` qo'riqlaydi.
+    """
+    import asyncio
+    from datetime import date as _date
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-22: TUG'ILGAN KUN VA YUBILEY")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+    bugun = _date.today()
+
+    # ── YANGI JADVAL YARATILMAGAN ──
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        jadvallar = {r[0] for r in cur.execute(
+            "select name from sqlite_master where type='table'")}
+        yomon = [t for t in jadvallar
+                 if any(k in t for k in ("birthday", "anniversary", "tugilgan"))]
+        check("S-22: YANGI JADVAL yaratilmagan", not yomon, "=" + str(yomon))
+        check("S-22: mavjud `celebration_posts` kengaytirilgan",
+              "dedupe_key" in [r[1] for r in cur.execute(
+                  "PRAGMA table_info(celebration_posts)")], "dedupe_key yo'q")
+
+        cur.execute("delete from users where full_name like 'T-Bd%'")
+        cur.execute("delete from celebration_posts where dedupe_key like '%:99%'")
+        conn.commit()
+
+        # Bugun tug'ilgan kuni bo'lgan xodim (30 yosh)
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " birth_date, created_at) values (999702201,'T-Bd Tugilgan','employee',0,1,"
+            "?,datetime('now'))", (bugun.replace(year=bugun.year - 30).isoformat(),))
+        ids["bd"] = cur.lastrowid
+        # Bugun 3 yillik yubiley
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999702202,'T-Bd Yubiley','employee',0,1,"
+            "?,datetime('now'))", (bugun.replace(year=bugun.year - 3).isoformat(),))
+        ids["yub"] = cur.lastrowid
+        # Sanasi YO'Q xodim — tizim jim turishi kerak
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999702203,'T-Bd Sanasiz','employee',0,1,datetime('now'))")
+        ids["yoq"] = cur.lastrowid
+        # BUGUN ishga kirgan — 0 yil, yubiley EMAS
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999702204,'T-Bd Yangi','employee',0,1,"
+            "?,datetime('now'))", (bugun.isoformat(),))
+        ids["yangi"] = cur.lastrowid
+        conn.commit()
+
+        async def _hodisalar():
+            from api.services.celebration import people_events
+            async with async_session() as s2:
+                hs = await people_events(s2, bugun)
+                return [(u.full_name, k, n) for u, k, n in hs
+                        if u.full_name.startswith("T-Bd")]
+
+        hodisalar = asyncio.run(_hodisalar())
+        nomlar = {h[0] for h in hodisalar}
+        check("S-22: tug'ilgan kun topildi",
+              ("T-Bd Tugilgan", "birthday", 30) in hodisalar, "=" + str(hodisalar))
+        check("S-22: 3 yillik yubiley topildi",
+              ("T-Bd Yubiley", "anniversary", 3) in hodisalar, "=" + str(hodisalar))
+        check("S-22: sanasi YO'Q xodim uchun tizim JIM",
+              "T-Bd Sanasiz" not in nomlar, "=" + str(nomlar))
+        check("S-22: BUGUN ishga kirgan xodimda yubiley YO'Q (0 yil)",
+              "T-Bd Yangi" not in nomlar, "=" + str(nomlar))
+
+        # ── GURUHGA BIR MARTA ──
+        # Guruh biriktirilgan bo'lishi kerak; bo'lmasa bu qism o'tkaziladi.
+        guruh = cur.execute(
+            "select chat_id from monitored_groups where purpose='main'"
+            " and is_active=1 limit 1").fetchone()
+        if not guruh:
+            cur.execute(
+                "insert into monitored_groups (chat_id, title, purpose, is_active,"
+                " created_at) values (-100999702299,'T-Bd Guruh','main',1,datetime('now'))")
+            conn.commit()
+
+        yuborilgan: list = []
+
+        async def _tick():
+            import api.telegram_notify as tn
+            from api.services.celebration import announce_people
+
+            asl_msg, asl_file = tn.send_message, tn.send_file_id
+
+            async def soxta_msg(chat_id, text, reply_markup=None):
+                yuborilgan.append((chat_id, text))
+                return {"ok": True, "result": {"message_id": 111}}
+
+            async def soxta_file(chat_id, file_id, file_type, caption=None,
+                                 reply_markup=None):
+                yuborilgan.append((chat_id, caption))
+                return {"ok": True, "result": {"message_id": 112}}
+
+            tn.send_message, tn.send_file_id = soxta_msg, soxta_file
+            #  `celebration` modul o'zining import qilgan nusxasini
+            #  ishlatadi — uni ham almashtiramiz.
+            import api.services.celebration as cel
+
+            cel_msg, cel_file = cel.send_message, cel.send_file_id
+            cel.send_message, cel.send_file_id = soxta_msg, soxta_file
+            try:
+                async with async_session() as s2:
+                    return await announce_people(s2)
+            finally:
+                tn.send_message, tn.send_file_id = asl_msg, asl_file
+                cel.send_message, cel.send_file_id = cel_msg, cel_file
+
+        res1 = asyncio.run(_tick())
+        bizniki = [t for (_c, t) in yuborilgan
+                   if t and ("T-Bd Tugilgan" in t or "T-Bd Yubiley" in t)]
+        check("S-22: guruhga tabrik yuborildi", len(bizniki) == 2,
+              f"={len(bizniki)}, natija={res1}")
+        check("S-22: tug'ilgan kun matnida yosh bor",
+              any("30 yosh" in t for t in bizniki), "=" + str(bizniki))
+        check("S-22: yubiley matnida yil bor",
+              any("3 yil" in t for t in bizniki), "=" + str(bizniki))
+
+        # ── ⚠️ TAKRORIY QO'RIQCHI ──
+        yuborilgan.clear()
+        res2 = asyncio.run(_tick())
+        qayta = [t for (_c, t) in yuborilgan
+                 if t and ("T-Bd Tugilgan" in t or "T-Bd Yubiley" in t)]
+        check("S-22: ikkinchi tick QAYTA yubormadi", not qayta,
+              f"={len(qayta)}, natija={res2}")
+        postlar = cur.execute(
+            "select count(*) from celebration_posts where user_id in (?,?)",
+            (ids["bd"], ids["yub"])).fetchone()[0]
+        check("S-22: bazada ham ikkita post (dublikat yo'q)", postlar == 2,
+              "=" + str(postlar))
+
+        # ── SANA KIRITISH HR PANELIDA ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.patch(f"/users/{ids['yoq']}/birth-date", headers=auth(mgr_t),
+                        json={"birth_date": "1995-05-15"})
+            check("S-22: HR tug'ilgan kunni kiritdi -> 200", r.status_code == 200
+                  and r.json().get("birth_date") == "1995-05-15",
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+
+            r = c.patch(f"/users/{ids['yoq']}/birth-date", headers=auth(mgr_t),
+                        json={"birth_date": (bugun.replace(year=bugun.year + 1)).isoformat()})
+            check("S-22: kelajakdagi sana rad etildi -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code) + " " + r.text[:110])
+
+            r = c.patch(f"/users/{ids['yoq']}/birth-date", headers=auth(mgr_t),
+                        json={"birth_date": None})
+            check("S-22: sanani tozalash ishlaydi", r.status_code == 200
+                  and r.json().get("birth_date") is None, "=" + r.text[:110])
+
+            r = c.patch(f"/users/{ids['yoq']}/birth-date",
+                        headers=auth(token_for(ids["bd"], "employee")),
+                        json={"birth_date": "1990-01-01"})
+            check("S-22: oddiy xodim boshqaning sanasini kirita olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+        # ── ERTANGI ESLATMA ──
+        cur.execute("update users set birth_date=? where id=?",
+                    ((bugun.replace(year=bugun.year - 25) +
+                      __import__("datetime").timedelta(days=1)).isoformat(), ids["yoq"]))
+        conn.commit()
+
+        eslatma: list = []
+
+        async def _reminder():
+            import api.notify as notify_mod
+            import api.services.cron_jobs as cj
+
+            asl = notify_mod.notify_user
+
+            async def soxta(db_, user, category, text, **kw):
+                eslatma.append(text)
+                return True
+
+            notify_mod.notify_user = soxta
+            try:
+                async with async_session() as s2:
+                    return await cj.celebration_people_reminder_tick(s2)
+            finally:
+                notify_mod.notify_user = asl
+
+        asyncio.run(_reminder())
+        check("S-22: ertangi tug'ilgan kun haqida HR ga eslatma ketdi",
+              any("T-Bd Sanasiz" in t for t in eslatma),
+              "=" + str(eslatma[:1])[:200])
+    except Exception:
+        check("S-22 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(
+                    f"delete from celebration_posts where user_id in ({belgi})",
+                    tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            cur.execute("delete from monitored_groups where title='T-Bd Guruh'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -11240,6 +11468,11 @@ def main() -> None:
         test_announcements()
     except Exception:
         print("S-21 elonlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_birthday_anniversary()
+    except Exception:
+        print("S-22 tugilgan kun testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()
