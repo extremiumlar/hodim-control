@@ -80,6 +80,7 @@ from db.models import (
     PayrollAdjustment,
     PayrollAdjustmentCategory,
     PayrollAdjustmentKind,
+    PayrollAdjustmentSource,
     PayrollAdjustmentStatus,
     PayrollPeriod,
     RequestKind,
@@ -395,6 +396,9 @@ async def _apply_advance(db: AsyncSession, item: EmployeeRequest, user: User) ->
             issued_on=today_local(),
             created_by=item.decided_by or user.id,
             source_request_id=item.id,
+            # HR ro'yxatida «ariza orqali» ko'rinsin — o'sha avansni qo'lda
+            # takror kiritmasin (Avans TZ A-01).
+            source=PayrollAdjustmentSource.request.value,
         )
     )
     await db.flush()

@@ -10473,6 +10473,11 @@ def main() -> None:
         print("Tashrif hisoblash testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_duplicate_guard()
+    except Exception:
+        print("Avans dublikat testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -10666,6 +10671,238 @@ def test_visit_counting() -> None:
     except Exception:
         check("statistika builder testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
+
+
+def test_advance_duplicate_guard() -> None:
+    """Avans dublikat qo'riqchisi va manba ustuni (Avans TZ A-01).
+
+    MUAMMO: avansning ikki kirish yo'li bor (xodim arizasi va HR ning
+    «Ish haqi → Avans» sahifasi) va ikkalasi ham BITTA jadvalga yozadi.
+    Manba ko'rinmagani uchun HR ariza orqali kelgan avansni qo'lda takror
+    kiritishi mumkin edi — pul ikki marta ayirilardi.
+
+    Tekshiriladi:
+      1. Yaqin summa + yaqin sana → dublikat topiladi
+      2. Uzoq summa / uzoq sana → topilmaydi (yolg'on ogohlantirish yo'q)
+      3. Rad etilgan avans dublikat sanalmaydi (u oylikka kirmaydi)
+      4. Boshqa xodim / boshqa davr aralashmaydi
+      5. HTTP: takror kiritishda 409 + `advance_duplicate` kodi
+      6. `confirm_duplicate=true` → saqlanadi va `source='hr_manual'`
+      7. Ariza yo'lidan kelgan qator `source='request'` bilan ko'rinadi
+
+    JONLI XABAR YUBORILMAYDI: 409 javob bildirishnomadan OLDIN qaytadi;
+    tasdiqli kiritish esa `notify_user` patch qilingan holda xizmat
+    darajasida sinaladi.
+    """
+    print("\n=== AVANS: dublikat qo'riqchisi va manba (A-01) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import date as _date, timedelta as _td
+
+    from api.routers import payroll as pay_router
+    from api.routers.payroll import _find_duplicate_advance, _duplicate_message
+    from db.base import async_session
+    from db.models import (
+        PayrollAdjustment,
+        PayrollAdjustmentCategory,
+        PayrollAdjustmentKind,
+        PayrollAdjustmentSource,
+        PayrollAdjustmentStatus,
+        User as _User,
+    )
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Adv-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from payroll_adjustments where user_id in ({qm})", stale)
+        cur.execute(
+            f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})",
+            stale + stale,
+        )
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600901,'T-Adv-Emp','employee',1,1,datetime('now'))"
+    )
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600902,'T-Adv-Other','employee',1,1,datetime('now'))"
+    )
+    other_uid = cur.lastrowid
+    conn.commit()
+
+    PERIOD = "2020-05"        # jonli davrlarga tegmaydigan, ataylab eski oy
+    OTHER_PERIOD = "2020-06"
+    BASE_DATE = _date(2020, 5, 10)
+    BASE_AMOUNT = 2_000_000.0
+
+    def cleanup_adv():
+        try:
+            c2 = db()
+            uids = [emp_uid, other_uid]
+            qm = ",".join("?" * len(uids))
+            c2.execute(f"delete from payroll_adjustments where user_id in ({qm})", uids)
+            c2.execute(
+                f"delete from audit_logs where target_user_id in ({qm}) or actor_id in ({qm})",
+                uids + uids,
+            )
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  Avans tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    async def _seed_and_check():
+        async with async_session() as s:
+            # Ariza yo'lidan kelgan avans (mavjud yozuv)
+            s.add(PayrollAdjustment(
+                user_id=emp_uid, period=PERIOD,
+                kind=PayrollAdjustmentKind.minus.value,
+                category=PayrollAdjustmentCategory.advance.value,
+                status=PayrollAdjustmentStatus.pending.value,
+                amount=BASE_AMOUNT, reason="T-Adv ariza avansi",
+                issued_on=BASE_DATE, created_by=emp_uid,
+                source=PayrollAdjustmentSource.request.value,
+            ))
+            # Rad etilgan avans — dublikat SANALMASLIGI kerak
+            s.add(PayrollAdjustment(
+                user_id=emp_uid, period=PERIOD,
+                kind=PayrollAdjustmentKind.minus.value,
+                category=PayrollAdjustmentCategory.advance.value,
+                status=PayrollAdjustmentStatus.rejected.value,
+                amount=500_000.0, reason="T-Adv rad etilgan",
+                issued_on=_date(2020, 5, 25), created_by=emp_uid,
+                source=PayrollAdjustmentSource.hr_manual.value,
+            ))
+            # Boshqa xodimning avansi — aralashmasligi kerak
+            s.add(PayrollAdjustment(
+                user_id=other_uid, period=PERIOD,
+                kind=PayrollAdjustmentKind.minus.value,
+                category=PayrollAdjustmentCategory.advance.value,
+                status=PayrollAdjustmentStatus.pending.value,
+                amount=BASE_AMOUNT, reason="T-Adv boshqa xodim",
+                issued_on=BASE_DATE, created_by=other_uid,
+                source=PayrollAdjustmentSource.hr_manual.value,
+            ))
+            await s.commit()
+
+            return {
+                "exact": await _find_duplicate_advance(s, emp_uid, PERIOD, BASE_AMOUNT, BASE_DATE),
+                "near": await _find_duplicate_advance(
+                    s, emp_uid, PERIOD, BASE_AMOUNT * 1.05, BASE_DATE + _td(days=3)),
+                "far_amount": await _find_duplicate_advance(
+                    s, emp_uid, PERIOD, BASE_AMOUNT * 2, BASE_DATE),
+                "far_date": await _find_duplicate_advance(
+                    s, emp_uid, PERIOD, BASE_AMOUNT, BASE_DATE + _td(days=20)),
+                "rejected": await _find_duplicate_advance(
+                    s, emp_uid, PERIOD, 500_000.0, _date(2020, 5, 25)),
+                "other_period": await _find_duplicate_advance(
+                    s, emp_uid, OTHER_PERIOD, BASE_AMOUNT, BASE_DATE),
+            }
+
+    try:
+        res = _asyncio.run(_seed_and_check())
+        check("aynan bir xil avans -> dublikat topildi", res["exact"] is not None)
+        check("yaqin summa/sana (+5%, +3 kun) -> dublikat topildi", res["near"] is not None)
+        check("uzoq summa (2x) -> dublikat YO'Q", res["far_amount"] is None)
+        check("uzoq sana (+20 kun) -> dublikat YO'Q", res["far_date"] is None)
+        check("rad etilgan avans dublikat sanalmaydi", res["rejected"] is None)
+        check("boshqa davr aralashmaydi", res["other_period"] is None)
+        if res["exact"] is not None:
+            msg = _duplicate_message(res["exact"])
+            check("ogohlantirish manbani ko'rsatadi (ariza)", "ariza" in msg.lower(), msg)
+            check("ogohlantirish summa va sanani ko'rsatadi",
+                  "2 000 000" in msg and "10.05.2020" in msg, msg)
+    except Exception:
+        check("dublikat qo'riqchisi testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+        cleanup_adv()
+        return
+
+    mgr = find_manager_id()
+    mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+    if not mgr_t:
+        check("avans HTTP testi uchun rahbar topildi", False)
+        cleanup_adv()
+        return
+
+    body = {
+        "user_id": emp_uid,
+        "period": PERIOD,
+        "amount": BASE_AMOUNT,
+        "issued_on": BASE_DATE.isoformat(),
+        "reason": "T-Adv qo'lda takror",
+    }
+    try:
+        with httpx.Client(timeout=15) as client:
+            # 409 bildirishnomadan OLDIN qaytadi -> jonli xabar ketmaydi
+            r = client.post(f"{API_BASE}/payroll/advances", json=body, headers=auth(mgr_t))
+            check("takror avans -> 409", r.status_code == 409, f"kod={r.status_code}")
+            if r.status_code == 409:
+                det = r.json().get("detail")
+                check("409 tarkibida `advance_duplicate` kodi bor",
+                      isinstance(det, dict) and det.get("code") == "advance_duplicate",
+                      str(det)[:200])
+                check("409 tarkibida mavjud yozuv id'si bor",
+                      isinstance(det, dict) and det.get("existing_id") == res["exact"].id,
+                      str(det)[:200])
+    except Exception:
+        check("avans HTTP dublikat testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    async def _forced_insert():
+        """Tasdiqli kiritish. `notify_user` patch qilinadi — jonli Boshliqqa
+        test xabari bormasin (⚠️ test-telegram-xavfi)."""
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        try:
+            from api.schemas import AdvanceIn
+            async with async_session() as s:
+                actor = await s.get(_User, mgr[0])
+                payload = AdvanceIn(
+                    user_id=emp_uid, period=PERIOD, amount=BASE_AMOUNT,
+                    issued_on=BASE_DATE, reason="T-Adv tasdiqlangan takror",
+                    confirm_duplicate=True,
+                )
+                return await pay_router.create_advance(payload, actor, s), sent
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        out, sent = _asyncio.run(_forced_insert())
+        check("`confirm_duplicate=true` -> avans saqlandi", out is not None and out.id > 0)
+        check("qo'lda kiritilgan avans `source='hr_manual'`",
+              out.source == "hr_manual", f"source={out.source}")
+        check("tasdiq so'rovi patch qilingan yuboruvchiga bordi (jonli emas)",
+              isinstance(sent, list), f"xabarlar={len(sent)}")
+    except Exception:
+        check("tasdiqli avans testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    try:
+        with httpx.Client(timeout=15) as client:
+            r = client.get(
+                f"{API_BASE}/payroll/adjustments?period={PERIOD}&user_id={emp_uid}&category=advance",
+                headers=auth(mgr_t),
+            )
+            rows = r.json() if r.status_code == 200 else []
+            srcs = {row.get("source") for row in rows}
+            check("ro'yxat `source` maydonini qaytaradi",
+                  "request" in srcs and "hr_manual" in srcs, f"manbalar={srcs}")
+    except Exception:
+        check("avans ro'yxati testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_adv()
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()

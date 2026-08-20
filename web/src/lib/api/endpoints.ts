@@ -560,6 +560,10 @@ export const api = {
     amount: number;
     issued_on: string;
     reason: string;
+    // Yaqin summa/sana bilan avans allaqachon bo'lsa server 409 qaytaradi
+    // (Avans TZ A-01). HR ogohlantirishni ko'rib «baribir kiritaman» desa,
+    // shu bayroq bilan qayta yuboriladi.
+    confirm_duplicate?: boolean;
   }) => apiFetch<PayrollAdjustment>("/payroll/advances", { method: "POST", body: JSON.stringify(data) }),
   decideAdvance: (adjustmentId: number, data: { approve: boolean; note?: string | null }) =>
     apiFetch<PayrollAdjustment>(`/payroll/advances/${adjustmentId}/decide`, {

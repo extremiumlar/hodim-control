@@ -18,6 +18,16 @@ import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 
 import DataTable from "@/components/DataTable";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import PageHeader from "@/components/PageHeader";
 import { MonthPicker, currentMonthKey } from "@/components/PeriodPicker";
 import StatusBadge from "@/components/StatusBadge";
@@ -32,7 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { type PayrollAdjustment } from "@/lib/api";
+import { ApiError, type PayrollAdjustment } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useCreateAdvance, useDecideAdvance, usePayrollAdjustments, useUsers } from "@/lib/queries";
 import { fmtMoney } from "@/lib/utils";
@@ -53,6 +63,10 @@ export default function AdvanceTab() {
   const [amount, setAmount] = useState("");
   const [issuedOn, setIssuedOn] = useState(format(new Date(), "yyyy-MM-dd"));
   const [reason, setReason] = useState("");
+  // Dublikat ogohlantirishi (Avans TZ A-01). Server 409 qaytarsa oyna
+  // ochiladi; HR «Baribir kiritish» desa AYNAN o'sha so'rov
+  // `confirm_duplicate: true` bilan qayta yuboriladi.
+  const [dupWarning, setDupWarning] = useState<string | null>(null);
 
   const rows = listQuery.data ?? [];
   const pendingTotal = rows
@@ -77,8 +91,22 @@ export default function AdvanceTab() {
       toast.error("Sababni yozing (kamida 3 harf)");
       return;
     }
+    submit(false);
+  };
+
+  /** `force=true` — dublikat ogohlantirishidan keyin HR tasdiqlagani. */
+  const submit = (force: boolean) => {
+    if (!userId) return;
+    const n = Number(amount);
     createAdvance.mutate(
-      { user_id: userId, period, amount: n, issued_on: issuedOn, reason: reason.trim() },
+      {
+        user_id: userId,
+        period,
+        amount: n,
+        issued_on: issuedOn,
+        reason: reason.trim(),
+        confirm_duplicate: force,
+      },
       {
         onSuccess: () => {
           const nomi = (usersQuery.data ?? []).find((u) => u.id === userId)?.full_name ?? "";
@@ -90,6 +118,14 @@ export default function AdvanceTab() {
           setAmount("");
           setReason("");
           setUserId(null);
+          setDupWarning(null);
+        },
+        onError: (err) => {
+          // 409 — taqiq emas, savol: «shu avans allaqachon kiritilganmi?»
+          if (err instanceof ApiError && err.payload?.code === "advance_duplicate") {
+            setDupWarning(err.message);
+          }
+          // Qolgan xatolarni `useApiMutation` o'zi toast qiladi.
         },
       }
     );
@@ -99,7 +135,23 @@ export default function AdvanceTab() {
     {
       accessorKey: "full_name",
       header: "Xodim",
-      cell: ({ row }) => <b>{row.original.full_name ?? `#${row.original.user_id}`}</b>,
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <b>{row.original.full_name ?? `#${row.original.user_id}`}</b>
+          {/* Manba ko'rinmasa HR ariza orqali kelgan avansni qo'lda takror
+              kiritishi mumkin edi — pul ikki marta ayirilardi (A-01). */}
+          {row.original.source === "request" && (
+            <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-700">
+              ariza orqali
+            </span>
+          )}
+          {row.original.source === "bot" && (
+            <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+              bot orqali
+            </span>
+          )}
+        </div>
+      ),
     },
     {
       accessorKey: "amount",
@@ -270,6 +322,21 @@ export default function AdvanceTab() {
           />
         </div>
       </div>
+
+      <AlertDialog open={!!dupWarning} onOpenChange={(o) => !o && setDupWarning(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Takroriy avansga o'xshaydi</AlertDialogTitle>
+            <AlertDialogDescription>{dupWarning}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction onClick={() => submit(true)} disabled={createAdvance.isPending}>
+              Baribir kiritish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -102,8 +102,18 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-01 · Dublikat avans qo'riqchisi (TZ #1)
+### A-01 · Dublikat avans qo'riqchisi (TZ #1) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** — · **~5 soat** · 🔴 **PUL XAVFI**
+
+> **Bajarilgani:** `PayrollAdjustmentSource` enum + `payroll_adjustments.source`
+> ustuni (migratsiya `av01a1b2c3d4`), `_find_duplicate_advance()` (summa ±10%,
+> sana ±7 kun, rad etilganlar hisobga olinmaydi), `POST /payroll/advances`
+> → 409 `advance_duplicate` + `confirm_duplicate` bayrog'i, HR ro'yxatida
+> «ariza orqali» yorlig'i va tasdiq oynasi. Test: `test_advance_duplicate_guard`
+> (15/15). **Tasdiqlandi (1-qadam):** `requests.py:_apply_advance` va
+> `payroll.py:create_advance` ikkalasi ham AYNAN bitta jadvalga
+> (`PayrollAdjustment(category='advance')`) yozadi — keyingi agent qayta
+> tekshirmasin.
 
 **Ish**
 1. Avval **tasdiqlang**: `requests.py` va `payroll.py` ikkalasi ham `PayrollAdjustment(category='advance')` yozadi (1.1-bo'limga qarang). Yozib qo'ying — keyingi agent qayta tekshirmasin.
@@ -112,11 +122,16 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 4. Ariza orqali kelgan avans HR sahifasida **«ariza orqali»** deb belgilanadi — HR uni qo'lda takrorlamasin.
 
 **Qabul mezoni**
-- [ ] `source` har uch qiymat bilan to'g'ri yoziladi
-- [ ] Eski qatorlar migratsiyada to'g'ri belgilangan
-- [ ] Dublikat ogohlantirishi ishlaydi (test: bir oyda ikki marta)
-- [ ] Ariza orqali kelgani ro'yxatda ajralib turadi
-- [ ] O'tgan oylar payslip'i **o'zgarmagan**
+- [x] `source` yoziladi: `hr_manual` (HR sahifasi) va `request` (ariza).
+      `bot` qiymati enum va UI'da tayyor, lekin uni YOZADIGAN yo'l C blokda
+      quriladi — hozircha hech qayerdan yozilmaydi.
+- [x] Eski qatorlar migratsiyada to'g'ri belgilangan
+      (`source_request_id` bor bo'lsa `request`, aks holda `hr_manual`;
+      avans bo'lmagan qatorlar tegilmaydi — ular uchun manba tushunchasi yo'q)
+- [x] Dublikat ogohlantirishi ishlaydi (test: bir oyda ikki marta)
+- [x] Ariza orqali kelgani ro'yxatda ajralib turadi
+- [x] O'tgan oylar payslip'i **o'zgarmagan** — faqat ustun qo'shildi,
+      summa/hisoblash mantiqiga tegilmadi (payroll testlari 86/86)
 
 **Tuzoq:** `source` ni `NOT NULL` qilmang — migratsiya paytida eski qatorlar bor. Default bilan to'ldiring.
 

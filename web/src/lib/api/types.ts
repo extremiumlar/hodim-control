@@ -1029,6 +1029,11 @@ export interface PayrollAdjustment {
   decided_by: number | null;
   decided_at: string | null;
   decided_note: string | null;
+  // Avans qaysi yo'ldan kiritildi (Avans TZ A-01). Eski qatorlarda `null`
+  // bo'lishi mumkin emas — migratsiya to'ldirgan, lekin avans bo'lmagan
+  // qatorlarda `null` (ular uchun manba tushunchasi yo'q).
+  source: "hr_manual" | "request" | "bot" | null;
+  source_request_id: number | null;
   full_name: string | null;
   created_by_name: string | null;
   decided_by_name: string | null;

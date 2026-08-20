@@ -194,6 +194,26 @@ class PayrollAdjustmentCategory(str, enum.Enum):
     advance = "advance"
 
 
+class PayrollAdjustmentSource(str, enum.Enum):
+    """Avans QAYERDAN kiritildi (Avans TZ, A-01).
+
+    NEGA KERAK: avansning bir nechta kirish yo'li bor va ular BITTA jadvalga
+    yozadi (tekshirilgan: `requests.py` va `payroll.py` ikkalasi ham
+    `PayrollAdjustment(category='advance')` yaratadi). Jadval bitta bo'lgani
+    YAXSHI — payslip uni bir marta yig'adi. Lekin manba ko'rinmasa HAQIQIY
+    xavf qoladi: xodim ariza beradi (yozuv-1), HR o'sha avansni «Ish haqi →
+    Avans» sahifasidan qo'lda HAM kiritadi (yozuv-2) — ikkita mustaqil qator
+    va pul ikki marta ayiriladi.
+
+    Manba yozib borilsa: (a) ro'yxatda «ariza orqali» ko'rinadi va HR
+    takrorlamaydi, (b) dublikat qo'riqchisi ishlaydi, (c) bot qo'shilganda
+    uchinchi yo'l ham ajratiladi."""
+
+    hr_manual = "hr_manual"   # «Ish haqi → Avans» sahifasidan HR kiritdi
+    request = "request"       # Xodim ariza berdi, tasdiqlangach yozildi
+    bot = "bot"               # Bot orqali avans kuni so'rovi (C blok)
+
+
 class Team(Base):
     __tablename__ = "teams"
 
@@ -1938,6 +1958,10 @@ class PayrollAdjustment(Base):
     source_request_id: Mapped[int | None] = mapped_column(
         ForeignKey("employee_requests.id"), nullable=True, index=True
     )
+    # Qaysi yo'ldan kiritildi (`PayrollAdjustmentSource`). Eski qatorlarni
+    # migratsiya to'ldiradi: `source_request_id` bor bo'lsa «request»,
+    # aks holda «hr_manual».
+    source: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
 
 
 class PushToken(Base):

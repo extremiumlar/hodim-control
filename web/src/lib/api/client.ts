@@ -3,9 +3,35 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localho
 export const UNAUTHORIZED_EVENT = "auth:unauthorized";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string,
+    /**
+     * Serverning `detail` maydoni OBYEKT bo'lsa — o'zgarmagan holda.
+     *
+     * NEGA: ba'zi xatolar shunchaki matn emas, qaror talab qiladi —
+     * masalan avans dublikati (409) `existing_id` bilan keladi va oyna
+     * «baribir kiritaman» tugmasini ko'rsatishi kerak. Ilgari obyekt
+     * `String()` ga tushib «[object Object]» bo'lib qolardi.
+     */
+    public payload: Record<string, unknown> | null = null
+  ) {
     super(message);
   }
+}
+
+/** `detail` matnmi yoki obyektmi — ikkalasini ham bir xil qaytaradi. */
+function parseDetail(
+  detail: unknown,
+  fallback: string
+): { message: string; payload: Record<string, unknown> | null } {
+  if (typeof detail === "string" && detail) return { message: detail, payload: null };
+  if (detail && typeof detail === "object") {
+    const obj = detail as Record<string, unknown>;
+    const msg = typeof obj.message === "string" ? obj.message : fallback;
+    return { message: msg, payload: obj };
+  }
+  return { message: fallback, payload: null };
 }
 
 export function getToken(): string | null {
@@ -32,17 +58,18 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   }
 
   if (!resp.ok) {
-    let detail = resp.statusText;
+    let raw: unknown = null;
     try {
       const body = await resp.json();
-      detail = body.detail || detail;
+      raw = body.detail;
     } catch {
       // ignore
     }
+    const { message, payload } = parseDetail(raw, resp.statusText);
     if (resp.status === 401) {
       window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
-    throw new ApiError(resp.status, detail);
+    throw new ApiError(resp.status, message, payload);
   }
 
   if (resp.status === 204) {
@@ -70,15 +97,16 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   }
 
   if (!resp.ok) {
-    let detail = resp.statusText;
+    let raw: unknown = null;
     try {
       const body = await resp.json();
-      detail = body.detail || detail;
+      raw = body.detail;
     } catch {
       // ignore
     }
+    const { message, payload } = parseDetail(raw, resp.statusText);
     if (resp.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    throw new ApiError(resp.status, detail);
+    throw new ApiError(resp.status, message, payload);
   }
   return (await resp.json()) as T;
 }

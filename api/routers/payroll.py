@@ -16,6 +16,7 @@ Ruxsat ikki daraja (9-bo'lim, savol 8, QAROR):
 from __future__ import annotations
 
 from datetime import date, datetime
+import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
@@ -87,6 +88,7 @@ from db.models import (
     PayrollAdjustment,
     PayrollAdjustmentCategory,
     PayrollAdjustmentKind,
+    PayrollAdjustmentSource,
     PayrollAdjustmentStatus,
     PayrollPeriod,
     PayrollPeriodStatus,
@@ -993,6 +995,55 @@ def _fmt_money(amount: float) -> str:
     return f"{int(round(amount)):,}".replace(",", " ") + " so'm"
 
 
+# Dublikat mezoni (Avans TZ A-01). Aniq tenglik yaramaydi: HR «2 000 000»
+# o'rniga «2 000 500» yozishi yoki sanani bir kun surishi mumkin — bu baribir
+# o'sha avans. Shu sababli oraliq bilan solishtiramiz.
+_DUP_AMOUNT_RATIO = 0.10   # summa 10% ichida bo'lsa — «yaqin»
+_DUP_DAYS = 7              # sana 7 kun ichida bo'lsa — «yaqin»
+
+
+async def _find_duplicate_advance(
+    db: AsyncSession,
+    user_id: int,
+    period: str,
+    amount: float,
+    issued_on: dt.date,
+) -> PayrollAdjustment | None:
+    """Shu xodimga shu davrda yaqin summa va yaqin sana bilan avans bormi?
+
+    Rad etilganlar hisobga OLINMAYDI — ular oylikka kirmaydi, ya'ni takror
+    kiritish xavfi yo'q (aksincha, rad etilgandan keyin qayta kiritish
+    odatiy holat)."""
+    rows = await db.scalars(
+        select(PayrollAdjustment).where(
+            PayrollAdjustment.user_id == user_id,
+            PayrollAdjustment.period == period,
+            PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+            PayrollAdjustment.status != PayrollAdjustmentStatus.rejected.value,
+        )
+    )
+    tolerance = max(amount, 1.0) * _DUP_AMOUNT_RATIO
+    for row in rows:
+        if abs(float(row.amount) - amount) > tolerance:
+            continue
+        if row.issued_on is None or abs((row.issued_on - issued_on).days) > _DUP_DAYS:
+            continue
+        return row
+    return None
+
+
+def _duplicate_message(dup: PayrollAdjustment) -> str:
+    """Ogohlantirish matni — HR qaror qabul qilishi uchun YETARLI ma'lumot
+    bo'lsin: qachon, qancha, qaysi yo'ldan kelgan."""
+    where = "xodim arizasi orqali" if dup.source == PayrollAdjustmentSource.request.value else "qo'lda"
+    when = dup.issued_on.strftime("%d.%m.%Y") if dup.issued_on else "sana ko'rsatilmagan"
+    return (
+        f"Bu xodimga shu davrda yaqin avans allaqachon kiritilgan: "
+        f"{_fmt_money(float(dup.amount))}, {when} ({where}). "
+        f"Ikki marta ayirilib ketmasin — takror kiritmoqchi bo'lsangiz tasdiqlang."
+    )
+
+
 async def _adjustment_out(db: AsyncSession, adj: PayrollAdjustment) -> PayrollAdjustmentOut:
     """Yozuvni ismlar bilan boyitadi — jadval har qator uchun alohida so'rov
     yubormasin (ro'yxat sahifasi aynan shu shaklda ko'rsatadi)."""
@@ -1053,6 +1104,27 @@ async def create_advance(
             "Bu davr qulflangan — avans hisobga kirmaydi. Avval Dasturchi davrni ochishi kerak.",
         )
 
+    # ── Dublikat qo'riqchisi (Avans TZ A-01) ──
+    # Xodim ariza bergan avans ham, HR qo'lda kiritgani ham AYNAN shu
+    # jadvalga tushadi. Manba ko'rinmagani uchun HR ariza orqali allaqachon
+    # yozilgan avansni takror kiritishi mumkin edi — pul ikki marta
+    # ayirilardi. Taqiq emas, ogohlantirish: bir oyda ikki marta avans
+    # olish haqiqiy holat, shuning uchun HR `confirm_duplicate` bilan
+    # bosib o'tadi.
+    if not payload.confirm_duplicate:
+        dup = await _find_duplicate_advance(
+            db, payload.user_id, payload.period, payload.amount, payload.issued_on
+        )
+        if dup is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "advance_duplicate",
+                    "message": _duplicate_message(dup),
+                    "existing_id": dup.id,
+                },
+            )
+
     adj = PayrollAdjustment(
         user_id=payload.user_id,
         period=payload.period,
@@ -1063,6 +1135,7 @@ async def create_advance(
         category=PayrollAdjustmentCategory.advance.value,
         status=PayrollAdjustmentStatus.pending.value,
         issued_on=payload.issued_on,
+        source=PayrollAdjustmentSource.hr_manual.value,
     )
     db.add(adj)
     db.add(

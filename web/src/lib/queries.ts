@@ -11,6 +11,7 @@ import {
   type UseMutationOptions,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { ApiError } from "./api/client";
 import { api } from "./api/endpoints";
 import type { Office, Position, WorkDayEntry } from "./api/types";
 
@@ -123,6 +124,9 @@ export const qk = {
 };
 
 // Mutation uchun umumiy wrapper: xatoda toast, muvaffaqiyatda kalitlarni invalidate.
+/** Sahifaning O'ZI ushlaydigan xato kodlari (avtomatik toast ko'rsatilmaydi). */
+const HANDLED_ERROR_CODES = new Set(["advance_duplicate"]);
+
 function useApiMutation<TData, TVariables>(
   mutationFn: (vars: TVariables) => Promise<TData>,
   invalidate: readonly (readonly unknown[])[] = [],
@@ -139,7 +143,16 @@ function useApiMutation<TData, TVariables>(
       options?.onSuccess?.(...args);
     },
     onError: (...args) => {
-      toast.error(args[0].message || "Xatolik yuz berdi");
+      // Struktura bilan kelgan va oyna KUTAYOTGAN xatolar avtomatik toast
+      // ko'rsatmaydi — ular savol, xato emas (masalan avans dublikati HR dan
+      // «baribir kiritamanmi?» deb so'raydi). Ro'yxat ataylab yopiq: yangi
+      // kod qo'shish — ongli qaror, chunki hech kim ushlamasa xato jim qoladi.
+      const err = args[0];
+      const code =
+        err instanceof ApiError && typeof err.payload?.code === "string" ? err.payload.code : null;
+      if (!code || !HANDLED_ERROR_CODES.has(code)) {
+        toast.error(err.message || "Xatolik yuz berdi");
+      }
       options?.onError?.(...args);
     },
   });

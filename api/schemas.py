@@ -1307,6 +1307,11 @@ class PayrollAdjustmentOut(BaseModel):
     decided_by: int | None
     decided_at: datetime | None
     decided_note: str | None
+    # Avans qaysi yo'ldan kiritildi: `hr_manual` · `request` · `bot`
+    # (Avans TZ A-01). Ro'yxatda «ariza orqali» yorlig'i shu maydondan
+    # chiqadi — HR o'sha avansni qo'lda ikkinchi marta kiritmasin.
+    source: str | None = None
+    source_request_id: int | None = None
     # Ro'yxatda ism ko'rsatish uchun (jadval har qator uchun alohida so'rov
     # yubormasin) — router to'ldiradi, modelda yo'q.
     full_name: str | None = None
@@ -1325,6 +1330,11 @@ class AdvanceIn(BaseModel):
     amount: float = Field(gt=0)
     issued_on: dt.date
     reason: str = Field(min_length=3, max_length=500)
+    # Dublikat qo'riqchisi (A-01): yaqin summa va yaqin sana bilan shu
+    # xodimga allaqachon avans bo'lsa, server 409 qaytaradi. HR «baribir
+    # kiritaman» desa — `confirm_duplicate=true` bilan qayta yuboradi.
+    # NEGA taqiq emas: haqiqiy holat bor — bir oyda ikki marta avans.
+    confirm_duplicate: bool = False
 
 
 class AdvanceDecision(BaseModel):
