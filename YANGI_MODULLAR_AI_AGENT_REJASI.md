@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 10/22 (2026-08-20)
+## Holat: 11/22 (2026-08-20)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -367,9 +367,10 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-17 ma'lumotnoma generatsiyasi | ✅ | `eb5baa5` |
 | S-18 mol-mulk — model va HR paneli | ✅ | `71cea51` |
 | S-19 mol-mulk — xodim tomoni va dalolatnoma | ✅ | `a1a1bce` |
-| S-20…S-31 | ⬜ | — |
+| S-20 `acknowledgements` — umumiy qayd | ✅ | `33d07da` |
+| S-21…S-31 | ⬜ | — |
 
-**Keyingisi: S-20** (`acknowledgements` — umumiy tanishtirish qaydi).
+**Keyingisi: S-21** (ichki e'lonlar, 3.12).
 
 ⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
 `test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
