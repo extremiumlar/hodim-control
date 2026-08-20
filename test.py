@@ -8977,6 +8977,225 @@ def test_documents_bot() -> None:
         conn.close()
 
 
+def test_deadlines_core() -> None:
+    """S-12 (TZ 3.5) — muddat eslatmalari yadrosi.
+
+    Qabul mezonlari (TZ):
+      • muddat qo'lda ham, hisoblanib ham chiqadi;
+      • `reminded_at` — bir muddat bo'yicha takroriy xabar yo'q;
+      • test: `>=` semantikasi (cron bir kun kechiksa ham xabar tushadi).
+
+    ENG MUHIM TEKSHIRUV — «IKKITA MANBA BO'LMASIN». Hisoblanadigan
+    muddatning sanasi jadvalga YOZILMASLIGI shart: manba (hujjatning
+    `expires_at` yoki `hire_date`) o'zgarsa, ro'yxat DARHOL yangi sanani
+    ko'rsatishi kerak. Nusxa saqlansa tizim ikki xil muddat ko'rsatardi
+    va qaysi biri to'g'ri ekani bilinmasdi.
+    """
+    import asyncio
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-12: MUDDAT ESLATMALARI (yadro)")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    uid = None
+    bugun = _date.today()
+    try:
+        cur.execute("delete from users where full_name like 'T-Dl%'")
+        conn.commit()
+        # hire_date shunday tanlanadiki, sinov muddati (90 kun) 10 kundan keyin tugasin
+        hire = (bugun - _td(days=80)).isoformat()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999701201,'T-DlEmp','employee',0,1,?,"
+            "datetime('now'))", (hire,))
+        uid = cur.lastrowid
+        conn.commit()
+
+        async def _royxat(days=None):
+            from api.services.deadlines import upcoming
+            async with async_session() as s2:
+                return [i for i in await upcoming(s2, days) if i.user_id == uid]
+
+        # Sozlama standart holatga (boshqa test o'zgartirgan bo'lishi mumkin)
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            c.put("/deadlines/config", headers=auth(mgr_t),
+                  json={"probation_days": 90, "remind_days": 30})
+
+            # ── 1) HISOBLANADIGAN: sinov muddati ──
+            items = asyncio.run(_royxat())
+            sinov = [i for i in items if i.kind == "probation"]
+            check("S-12: sinov muddati HISOBLANIB chiqdi (jadvalga yozilmagan)",
+                  len(sinov) == 1 and sinov[0].days_left == 10,
+                  "=" + str([(i.kind, i.days_left) for i in items]))
+            check("S-12: hisoblangan bandda jadval qatori YO'Q",
+                  bool(sinov) and sinov[0].row_id is None,
+                  "=" + str(sinov[0].row_id if sinov else "-"))
+            qatorlar = cur.execute(
+                "select count(*) from deadlines where user_id=?", (uid,)).fetchone()[0]
+            check("S-12: hisoblangan muddat uchun jadval BO'SH qoldi",
+                  qatorlar == 0, "=" + str(qatorlar))
+
+            # ── 2) YAGONA MANBA: hire_date o'zgarsa muddat ham o'zgaradi ──
+            cur.execute("update users set hire_date=? where id=?",
+                        ((bugun - _td(days=85)).isoformat(), uid))
+            conn.commit()
+            sinov2 = [i for i in asyncio.run(_royxat()) if i.kind == "probation"]
+            check("S-12: manba o'zgardi -> muddat DARHOL yangilandi (nusxa yo'q)",
+                  len(sinov2) == 1 and sinov2[0].days_left == 5,
+                  "=" + str(sinov2[0].days_left if sinov2 else "-"))
+
+            # ── 3) HISOBLANADIGAN: hujjat muddati ──
+            r = c.post("/employee-documents", headers=auth(mgr_t), json={
+                "user_id": uid, "doc_type": "contract", "name": "T-Dl shartnoma",
+                "file_id": "T-DL-1", "expires_at": (bugun + _td(days=20)).isoformat()})
+            doc_id = r.json().get("id") if r.status_code == 201 else None
+            hujjat = [i for i in asyncio.run(_royxat()) if i.source_kind == "document"]
+            check("S-12: hujjat muddati ham ro'yxatga tushdi",
+                  len(hujjat) == 1 and hujjat[0].days_left == 20,
+                  "=" + str([(i.kind, i.days_left) for i in hujjat]))
+            check("S-12: shartnoma alohida tur sifatida ko'rinadi",
+                  bool(hujjat) and hujjat[0].kind == "contract",
+                  "=" + str(hujjat[0].kind if hujjat else "-"))
+
+            # ── 4) QO'LDA kiritish ──
+            r = c.post("/deadlines", headers=auth(mgr_t), json={
+                "user_id": uid, "kind": "medical_exam",
+                "due_date": (bugun + _td(days=3)).isoformat(),
+                "note": "T-Dl tibbiy"})
+            check("S-12: qo'lda muddat kiritildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            manual_id = r.json().get("id") if r.status_code == 201 else None
+
+            # Hisoblanadigan turni QO'LDA kiritib bo'lmaydi (ikkita manba xavfi)
+            r = c.post("/deadlines", headers=auth(mgr_t), json={
+                "user_id": uid, "kind": "probation",
+                "due_date": (bugun + _td(days=3)).isoformat()})
+            check("S-12: hisoblanadigan turni qo'lda kiritish -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+            check("S-12: xato xabari NIMA QILISHNI aytadi",
+                  r.status_code == 400 and "hisoblanadi" in r.text, r.text[:140])
+
+            # ── 5) IKKALASI BITTA RO'YXATDA, sana bo'yicha tartibda ──
+            items = asyncio.run(_royxat())
+            check("S-12: qo'lda + hisoblangan BITTA ro'yxatda (3 ta)",
+                  len(items) == 3, "=" + str([(i.kind, i.days_left) for i in items]))
+            check("S-12: eng yaqin muddat birinchi",
+                  [i.days_left for i in items] == sorted(i.days_left for i in items),
+                  "=" + str([i.days_left for i in items]))
+
+            # ── 6) `>=` SEMANTIKASI: o'tib ketgan muddat ro'yxatDAN CHIQMAYDI ──
+            cur.execute("update deadlines set due_date=? where id=?",
+                        ((bugun - _td(days=2)).isoformat(), manual_id))
+            conn.commit()
+            items = asyncio.run(_royxat())
+            otgan = [i for i in items if i.kind == "medical_exam"]
+            check("S-12: cron 2 kun kechikdi — muddat baribir ro'yxatda",
+                  len(otgan) == 1 and otgan[0].days_left == -2,
+                  "=" + str([(i.kind, i.days_left) for i in items]))
+            check("S-12: o'tib ketgani `is_overdue` bilan belgilangan",
+                  bool(otgan) and otgan[0].is_overdue is True,
+                  "=" + str(otgan[0].is_overdue if otgan else "-"))
+
+            # ── 7) UFQ: `days` dan uzoq muddat ko'rinmaydi ──
+            yaqin = asyncio.run(_royxat(days=7))
+            check("S-12: `days=7` — uzoq muddatlar chiqarib tashlandi",
+                  {i.kind for i in yaqin} == {"medical_exam", "probation"},
+                  "=" + str([(i.kind, i.days_left) for i in yaqin]))
+
+            # ── 8) `reminded_at`: takroriy xabar yo'q ──
+            async def _belgila():
+                from api.services.deadlines import mark_reminded, upcoming
+                async with async_session() as s2:
+                    hammasi = [i for i in await upcoming(s2) if i.user_id == uid]
+                    return await mark_reminded(s2, hammasi, bugun)
+
+            n = asyncio.run(_belgila())
+            check("S-12: 3 ta band «eslatildi» deb belgilandi", n == 3, "=" + str(n))
+            items = asyncio.run(_royxat())
+            check("S-12: hammasida `reminded_at` bugungi sana",
+                  all(i.reminded_at == bugun for i in items),
+                  "=" + str([(i.kind, i.reminded_at) for i in items]))
+            izlar = cur.execute(
+                "select count(*) from deadlines where user_id=? and source_kind is not null",
+                (uid,)).fetchone()[0]
+            check("S-12: hisoblangan bandlar uchun iz qatori endi yaratildi (2 ta)",
+                  izlar == 2, "=" + str(izlar))
+            sanalar = cur.execute(
+                "select due_date from deadlines where user_id=? and source_kind is not null",
+                (uid,)).fetchall()
+            check("S-12: iz qatorida sana YO'Q (manba yagona bo'lib qoldi)",
+                  all(x[0] is None for x in sanalar), "=" + str(sanalar))
+
+            # Ikkinchi marta belgilash yangi qator YARATMASIN
+            asyncio.run(_belgila())
+            izlar2 = cur.execute(
+                "select count(*) from deadlines where user_id=? and source_kind is not null",
+                (uid,)).fetchone()[0]
+            check("S-12: qayta eslatish DUBLIKAT qator yaratmadi",
+                  izlar2 == 2, "=" + str(izlar2))
+
+            # ── 9) Iz qatori borligida ham sana MANBADAN olinadi ──
+            if doc_id:
+                cur.execute("update employee_documents set expires_at=? where id=?",
+                            ((bugun + _td(days=25)).isoformat(), doc_id))
+                conn.commit()
+                h2 = [i for i in asyncio.run(_royxat()) if i.source_kind == "document"]
+                check("S-12: iz qatori bo'lsa ham sana MANBADAN keladi",
+                      len(h2) == 1 and h2[0].days_left == 25,
+                      "=" + str(h2[0].days_left if h2 else "-"))
+
+            # ── 10) YOPISH ──
+            r = c.post("/deadlines/close", headers=auth(mgr_t),
+                       json={"key": f"document:{doc_id}"})
+            check("S-12: hisoblangan band kalit bo'yicha yopildi",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+            qolgan = {i.kind for i in asyncio.run(_royxat())}
+            check("S-12: yopilgan band ro'yxatga QAYTMADI",
+                  "contract" not in qolgan, "=" + str(qolgan))
+            if manual_id:
+                r = c.post(f"/deadlines/{manual_id}/close", headers=auth(mgr_t))
+                check("S-12: qo'lda kiritilgani yopildi", r.status_code == 200,
+                      "kod=" + str(r.status_code))
+                r = c.post(f"/deadlines/{manual_id}/close", headers=auth(mgr_t))
+                check("S-12: ikkinchi marta yopish -> 404", r.status_code == 404,
+                      "kod=" + str(r.status_code))
+
+            # ── 11) RUXSAT ──
+            emp_t = token_for(uid, "employee")
+            r = c.get("/deadlines", headers=auth(emp_t))
+            check("S-12: oddiy xodim muddatlarni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.get("/deadlines", headers=auth(mgr_t))
+            check("S-12: rahbar ko'radi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+    except Exception:
+        check("S-12 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if uid:
+                cur.execute("delete from deadlines where user_id=?", (uid,))
+                cur.execute("delete from employee_documents where user_id=?", (uid,))
+                cur.execute("delete from users where id=?", (uid,))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -9104,6 +9323,11 @@ def main() -> None:
         test_documents_bot()
     except Exception:
         print("S-11 hujjatlar boti testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_deadlines_core()
+    except Exception:
+        print("S-12 muddatlar testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

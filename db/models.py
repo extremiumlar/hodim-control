@@ -2355,3 +2355,99 @@ class EmployeeDocument(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DeadlineKind(str, enum.Enum):
+    """Muddat turlari (yangi TZ 3.5).
+
+    Bir qismi HISOBLANADI (manbasidan), bir qismi QO'LDA kiritiladi —
+    farqi `DEADLINE_COMPUTED` to'plamida."""
+
+    probation = "probation"  # sinov muddati (hisoblanadi: hire_date + N kun)
+    contract = "contract"  # shartnoma muddati (hisoblanadi: hujjat expires_at)
+    document = "document"  # boshqa hujjat muddati (hisoblanadi)
+    safety_briefing = "safety_briefing"  # TX takroriy instruktaj
+    medical_exam = "medical_exam"  # tibbiy ko'rik
+    permit = "permit"  # pasport / ruxsatnoma
+    course = "course"  # majburiy kurs
+
+
+DEADLINE_KIND_LABELS: dict[str, str] = {
+    DeadlineKind.probation.value: "Sinov muddati",
+    DeadlineKind.contract.value: "Shartnoma muddati",
+    DeadlineKind.document.value: "Hujjat muddati",
+    DeadlineKind.safety_briefing.value: "TX takroriy instruktaj",
+    DeadlineKind.medical_exam.value: "Tibbiy ko'rik",
+    DeadlineKind.permit.value: "Pasport / ruxsatnoma",
+    DeadlineKind.course.value: "Majburiy kurs",
+}
+
+#  Bu turlar jadvalga YOZILMAYDI — sanasi manbasidan hisoblanadi.
+#  Jadvalda ular uchun faqat «eslatma yuborildi» izi turadi (TZ 3.5:
+#  «ikkita manba bo'lmasin»).
+DEADLINE_COMPUTED: frozenset[str] = frozenset(
+    {DeadlineKind.probation.value, DeadlineKind.contract.value, DeadlineKind.document.value}
+)
+
+
+class DeadlineStatus(str, enum.Enum):
+    open = "open"
+    done = "done"  # bajarildi (yangilandi, o'tildi)
+    cancelled = "cancelled"
+
+
+class Deadline(Base):
+    """Muddat — qo'lda kiritilgani yoki hisoblangani uchun eslatma izi
+    (yangi TZ 3.5 / S-12).
+
+    IKKI XIL QATOR, BITTA JADVAL:
+
+    1. QO'LDA kiritilgan muddat (`source_kind IS NULL`) — `due_date`
+       to'ldirilgan, u yagona manba.
+
+    2. HISOBLANADIGAN muddat (`source_kind` bor, `due_date` NULL) —
+       sana HECH QACHON bu yerda saqlanmaydi, har safar manbasidan
+       o'qiladi (`users.hire_date`, `employee_documents.expires_at`).
+       Qator faqat `reminded_at` uchun yaratiladi va faqat birinchi
+       eslatma yuborilganda.
+
+    NEGA SHUNDAY: shartnoma sanasi hujjatda o'zgarsa, nusxasi jadvalda
+    eskirib qolardi va tizim ikki xil muddat ko'rsatardi. TZ buni aniq
+    taqiqlaydi — «ikkita manba bo'lmasin»."""
+
+    __tablename__ = "deadlines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    #  QO'LDA kiritilganda majburiy; hisoblanadiganda NULL (yuqoriga qarang).
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    #  Kimga eslatiladi. Bo'sh bo'lsa HR ga (S-13 default).
+    responsible_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #  `None` — qo'lda kiritilgan. Aks holda "document" yoki "probation".
+    source_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #  Oxirgi eslatma sanasi — kuniga bir marta yuborish uchun (S-13).
+    reminded_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(12), default=DeadlineStatus.open.value, index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DeadlineConfig(Base):
+    """Muddat modulining sozlamalari — bitta qator (`id=1`).
+
+    `attendance_digest_config` bilan bir xil naqsh: modulga xos bir
+    nechta son uchun alohida jadval."""
+
+    __tablename__ = "deadline_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    #  Sinov muddati necha kun (O'zbekistonda odatda 3 oy).
+    probation_days: Mapped[int] = mapped_column(Integer, default=90)
+    #  Necha kun oldin eslatilsin.
+    remind_days: Mapped[int] = mapped_column(Integer, default=30)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
