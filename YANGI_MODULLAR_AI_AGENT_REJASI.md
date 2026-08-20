@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 9/22 (2026-08-20)
+## Holat: 10/22 (2026-08-20)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -366,9 +366,15 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-16 offer → xodim → onboarding | ✅ | `8016b0e` |
 | S-17 ma'lumotnoma generatsiyasi | ✅ | `eb5baa5` |
 | S-18 mol-mulk — model va HR paneli | ✅ | `71cea51` |
-| S-19…S-31 | ⬜ | — |
+| S-19 mol-mulk — xodim tomoni va dalolatnoma | ✅ | `a1a1bce` |
+| S-20…S-31 | ⬜ | — |
 
-**Keyingisi: S-19** (mol-mulk — xodim tomoni va dalolatnoma, 3.11).
+**Keyingisi: S-20** (`acknowledgements` — umumiy tanishtirish qaydi).
+
+⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
+`test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
+faqat aniq yo'llar. Migratsiya id tanlashda mavjudlarini tekshiring va
+tarmoqlanish bo'lsa merge migratsiyasi yozing.
 
 ⚠️ S-16 ning 3-4 bandlari (shtat o'rni «band», onboarding rejasi) 3.20 va
 3.2 modullariga bog'liq — ular hali qurilmagan. Javobda `onboarding_ready`
