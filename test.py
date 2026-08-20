@@ -10478,6 +10478,11 @@ def main() -> None:
         print("Avans dublikat testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_limit()
+    except Exception:
+        print("Avans chegarasi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -10899,6 +10904,231 @@ def test_advance_duplicate_guard() -> None:
         check("avans ro'yxati testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
     cleanup_adv()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_limit() -> None:
+    """Avans chegarasi formulasi (Avans TZ A-02).
+
+    MUAMMO: avansga hech qanday chegara yo'q edi — HR xohlagan summani
+    kirita olardi va oy oxirida payslip manfiy chiqishi mumkin edi
+    (xodim oyligidan ko'p pul olib bo'lgan, qaytarib olinmaydi).
+
+    Formula: (sof oylik ÷ oydagi ish kuni) × ishlangan kun × koeffitsient,
+    keyin `min(..., sof oylik × cap%)`, keyin olingan avans va ushlanmalar
+    ayiriladi.
+
+    Toza formula DB'siz sinaladi (11 ssenariy), so'ng haqiqiy xodimda
+    `limit_for()` — stavkasiz, qulflangan davr va oddiy holat.
+    """
+    print("\n=== AVANS: chegara formulasi (A-02) ===")
+    import asyncio as _asyncio
+    from datetime import date as _dt_date, datetime as _dt_datetime
+    from decimal import Decimal as D
+
+    from api.services import advance as adv
+    from db.base import async_session
+    from db.models import (
+        PayBasis,
+        PayrollAdjustment,
+        PayrollAdjustmentCategory,
+        PayrollAdjustmentKind,
+        PayrollAdjustmentStatus,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+
+    NET = D("5000000")
+
+    # ── 1. Yarim oy ishlagan ──
+    lim, earned, cap, why = adv.compute_limit(NET, 26, 13, D("0"), D("0"))
+    check("yarim oy ishlagan -> netto/26 x 13 x 0.5",
+          lim == D("1250000") and why is None, f"limit={lim}, sabab={why}")
+
+    # ── 2. Oyning 5-kunida ishga kirgan (kam kun ishlagan) ──
+    lim_late, *_ = adv.compute_limit(NET, 26, 4, D("0"), D("0"))
+    check("kech kirgan xodimda chegara kichik",
+          lim_late < lim and lim_late > 0, f"limit={lim_late} < {lim}")
+
+    # ── 3. Cap koeffitsientdan qat'i nazar oshmaydi ──
+    lim_cap, earned_cap, cap_amt, _ = adv.compute_limit(
+        NET, 26, 26, D("0"), D("0"), coefficient=D("2.0"), cap_percent=D("50"))
+    check("koeffitsient 2.0 bo'lsa ham cap (50%) dan oshmaydi",
+          lim_cap == D("2500000") and earned_cap > cap_amt,
+          f"limit={lim_cap}, earned={earned_cap}, cap={cap_amt}")
+
+    # ── 4. Kutilayotgan avans ham ayiriladi ──
+    lim_taken, *_ = adv.compute_limit(NET, 26, 26, D("1000000"), D("0"))
+    check("olingan avans ayiriladi (2 500 000 - 1 000 000)",
+          lim_taken == D("1500000"), f"limit={lim_taken}")
+
+    # ── 5. Ushlanmalar ham ayiriladi ──
+    lim_ded, *_ = adv.compute_limit(NET, 26, 26, D("0"), D("500000"))
+    check("boshqa ushlanmalar ayiriladi", lim_ded == D("2000000"), f"limit={lim_ded}")
+
+    # ── 6. To'liq ishlatilgan -> 0 va SABAB ──
+    lim_zero, _, _, why_zero = adv.compute_limit(NET, 26, 26, D("3000000"), D("0"))
+    check("chegara tugagan -> 0 va sabab bor",
+          lim_zero == 0 and why_zero == adv.REASON_EXHAUSTED, f"limit={lim_zero}, sabab={why_zero}")
+
+    # ── 7. Ishlangan kun yo'q ──
+    _, _, _, why_nw = adv.compute_limit(NET, 26, 0, D("0"), D("0"))
+    check("ishlangan kun 0 -> sabab aniq",
+          why_nw == adv.REASON_NO_WORKED_DAYS, f"sabab={why_nw}")
+
+    # ── 8. Reja bo'yicha ish kuni yo'q ──
+    _, _, _, why_ns = adv.compute_limit(NET, 0, 0, D("0"), D("0"))
+    check("oyda ish kuni yo'q -> sabab aniq",
+          why_ns == adv.REASON_NO_SCHEDULE, f"sabab={why_ns}")
+
+    # ── 9. Oylik 0 ──
+    _, _, _, why_zs = adv.compute_limit(D("0"), 26, 13, D("0"), D("0"))
+    check("oylik 0 -> sabab aniq", why_zs == adv.REASON_ZERO_SALARY, f"sabab={why_zs}")
+
+    # ── 10. Ishlangan kun rejadan ko'p bo'lsa cheklanadi ──
+    lim_over, *_ = adv.compute_limit(NET, 26, 40, D("0"), D("0"))
+    check("ishlangan kun rejadan ko'p bo'lsa oylikdan oshmaydi",
+          lim_over == D("2500000"), f"limit={lim_over}")
+
+    # ── 11. Manfiy natija 0 ga tushadi (manfiy chegara qaytarilmaydi) ──
+    lim_neg, *_ = adv.compute_limit(NET, 26, 13, D("9000000"), D("0"))
+    check("manfiy natija 0 ga tushadi", lim_neg == 0, f"limit={lim_neg}")
+
+    # ── DB darajasi ──
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Lim-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override", "payslips"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600911,'T-Lim-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600912,'T-Lim-NoRate','employee',1,1,datetime('now'))")
+    norate_uid = cur.lastrowid
+    conn.commit()
+
+    PERIOD = "2020-04"       # ataylab o'tgan oy: butun oy «future» bo'lib qolmasin
+    P_START = _dt_date(2020, 4, 1)
+
+    def cleanup_lim():
+        try:
+            c2 = db()
+            uids = [emp_uid, norate_uid]
+            qm = ",".join("?" * len(uids))
+            pslips = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", uids).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", uids)
+            c2.execute("delete from payroll_periods where period=?", (PERIOD,))
+            c2.execute(f"delete from users where id in ({qm})", uids)
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  Chegara testi tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    async def _db_cases():
+        async with async_session() as s:
+            emp = await s.get(_User, emp_uid)
+            norate = await s.get(_User, norate_uid)
+
+            # Du-Ju ish kuni, 5 mln oylik stavka
+            for wd in range(5):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                         start_time="09:00", end_time="18:00"))
+            for wd in (5, 6):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+            s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                             amount=5_000_000, effective_from=P_START,
+                             changed_by=emp_uid))
+            # Davomat: 1-14 aprel oralig'idagi ish kunlarida kelgan.
+            # Bo'lmasa `collect_attendance` o'tgan kunlarni «absent» deb
+            # belgilaydi va ishlangan kun 0 chiqadi (chegara ham 0).
+            from db.models import Attendance as _Att
+            for dd in range(1, 15):
+                day = _dt_date(2020, 4, dd)
+                if day.weekday() >= 5:
+                    continue
+                s.add(_Att(user_id=emp_uid, date=day, status="present",
+                           check_in_time=_dt_datetime(2020, 4, dd, 4, 0),
+                           check_out_time=_dt_datetime(2020, 4, dd, 13, 0),
+                           late_minutes=0, worked_minutes=540))
+            await s.commit()
+
+            plain = await adv.limit_for(s, emp, on_date=_dt_date(2020, 4, 15))
+            no_rate = await adv.limit_for(s, norate, on_date=_dt_date(2020, 4, 15))
+
+            # Kutilayotgan avans qo'shib, chegara kamayishini tekshiramiz
+            s.add(PayrollAdjustment(
+                user_id=emp_uid, period=PERIOD,
+                kind=PayrollAdjustmentKind.minus.value,
+                category=PayrollAdjustmentCategory.advance.value,
+                status=PayrollAdjustmentStatus.pending.value,
+                amount=300_000, reason="T-Lim kutilayotgan avans",
+                issued_on=_dt_date(2020, 4, 10), created_by=emp_uid,
+            ))
+            await s.commit()
+            after_pending = await adv.limit_for(s, emp, on_date=_dt_date(2020, 4, 15))
+            return plain, no_rate, after_pending
+
+    try:
+        plain, no_rate, after_pending = _asyncio.run(_db_cases())
+        check("haqiqiy xodimda chegara musbat va oylikdan kichik",
+              0 < plain.limit < plain.net_salary,
+              f"limit={plain.limit}, netto={plain.net_salary}")
+        check("chegara cap dan oshmaydi", plain.limit <= plain.cap_amount + 1,
+              f"limit={plain.limit}, cap={plain.cap_amount}")
+        check("oradagi qiymatlar qaytariladi (ish kuni va ishlangan kun)",
+              plain.scheduled_days > 0 and plain.worked_days >= 0,
+              f"reja={plain.scheduled_days}, ishlangan={plain.worked_days}")
+        check("stavkasiz xodim -> 0 va `stavka belgilanmagan`",
+              no_rate.limit == 0 and no_rate.reason == adv.REASON_NO_RATE,
+              f"limit={no_rate.limit}, sabab={no_rate.reason}")
+        check("kutilayotgan avans chegarani kamaytiradi",
+              after_pending.taken == 300000.0 and after_pending.limit < plain.limit,
+              f"olingan={after_pending.taken}, {after_pending.limit} < {plain.limit}")
+    except Exception:
+        check("chegara DB testi ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_lim()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    # ── Qulflangan davr ──
+    async def _locked_case():
+        from db.models import PayrollPeriod as _PP
+        async with async_session() as s:
+            s.add(_PP(period=PERIOD, status="approved", locked=True))
+            await s.commit()
+            emp = await s.get(_User, emp_uid)
+            return await adv.limit_for(s, emp, on_date=_dt_date(2020, 4, 15))
+
+    try:
+        locked = _asyncio.run(_locked_case())
+        check("qulflangan davrda chegara 0 va sabab aniq",
+              locked.limit == 0 and locked.reason == adv.REASON_PERIOD_LOCKED,
+              f"limit={locked.limit}, sabab={locked.reason}")
+    except Exception:
+        check("qulflangan davr testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_lim()
     try:
         conn.close()
     except Exception:

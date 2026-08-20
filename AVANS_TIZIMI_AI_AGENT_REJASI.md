@@ -137,8 +137,24 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-02 · Chegara formulasi — yadro (TZ #2)
+### A-02 · Chegara formulasi — yadro (TZ #2) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-01 · **~6 soat** · 🔴 **PUL XAVFI**
+
+> **Bajarilgani:** `api/services/advance.py` — `compute_limit()` (toza,
+> DB'siz formula) + `limit_for()` (`AdvanceLimit` dataklassi: limit va
+> BARCHA oraliq qiymatlar). Sof oylik, oydagi ish kuni va ishlangan kun
+> `payroll.build_payslip` dan olinadi — ikkinchi hisob yo'li YO'Q.
+> «Sof oylik» = `net + adjustments_minus` (ushlanmalardan oldingi netto),
+> aks holda avans/ushlanma ikki marta ayirilardi. `coefficient` (0.5) va
+> `cap_percent` (50) hozircha modul defaultlari va `limit_for()` ga
+> parametr — B-01 `advance_settings` ni ulaganda bir qator o'zgaradi.
+> Test: `test_advance_limit` (17/17).
+>
+> **Bajarilmagani:** «Tuzoq»dagi cron'da oldindan hisoblab saqlash
+> qilinmadi. `limit_for()` bitta xodim uchun chaqiriladi (A-03 kirish
+> nuqtalari aynan shunday ishlatadi) va bu narx normal. Ko'p xodim
+> birdaniga kerak bo'ladigan joy — C blokdagi bot taqsimoti; kesh
+> o'sha yerda, haqiqiy ehtiyoj ko'ringanda qurilsin.
 
 **Ish**
 1. `api/services/advance.py` — yangi modul:
@@ -154,12 +170,14 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 4. `limit_for(user, on_date)` → `{limit, sof_oylik, ish_kuni, ishlangan_kun, olingan, ushlanma, sabab_agar_0}`.
 
 **Qabul mezoni**
-- [ ] Formula TZ dagidek, birma-bir test bilan
-- [ ] Oyning 5-kunida ishga kirgan xodimda chegara kichik chiqadi
-- [ ] Cap koeffitsientdan qat'i nazar oshmaydi
-- [ ] Kutilayotgan avans ham ayiriladi (faqat tasdiqlangan emas)
-- [ ] Chegara 0 bo'lsa **sababi** qaytariladi («ta'tilda», «to'liq ishlatilgan», …)
-- [ ] Test: 8+ ssenariy
+- [x] Formula TZ dagidek, birma-bir test bilan
+- [x] Oyning 5-kunida ishga kirgan xodimda chegara kichik chiqadi
+- [x] Cap koeffitsientdan qat'i nazar oshmaydi (koef 2.0 da ham 50% da to'xtaydi)
+- [x] Kutilayotgan avans ham ayiriladi (faqat tasdiqlangan emas)
+- [x] Chegara 0 bo'lsa **sababi** qaytariladi — 6 ta sabab:
+      stavka belgilanmagan · davr qulflangan · ishlangan kun yo'q ·
+      ish kuni rejalashtirilmagan · oylik 0 · chegara to'liq ishlatilgan
+- [x] Test: 17 ta tekshiruv (11 toza formula + 6 DB)
 
 **Tuzoq:** Sof oylik hisoblash og'ir — chegara **cron ichida** hisoblanadi va saqlanadi; foydalanuvchi so'rovi uni tayyor holda oladi.
 
