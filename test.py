@@ -11481,6 +11481,201 @@ def test_staff_positions() -> None:
         conn.close()
 
 
+def test_probation_list() -> None:
+    """S-24 (TZ 3.24) — sinov muddatidagi xodimlar.
+
+    Qabul mezonlari (TZ):
+      • ro'yxat DOIM ko'rinadi (eslatma o'tib ketsa ham);
+      • muddati o'tganlar AJRATIB ko'rsatiladi;
+      • sinov muddati sozlamasi qayerdan olinishi hujjatlashtirilgan.
+
+    ⚠️ YANGI JADVAL YO'Q — ro'yxat `hire_date` + sinov muddatidan
+    hisoblanadi. Saqlansa `hire_date` tuzatilganda nusxa eskirardi.
+    """
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-24: SINOV MUDDATI (hisoblanadi)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+    bugun = _date.today()
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        jadvallar = {r[0] for r in cur.execute(
+            "select name from sqlite_master where type='table'")}
+        check("S-24: YANGI JADVAL yaratilmagan",
+              not [t for t in jadvallar if "probation" in t], "=" + str(
+                  [t for t in jadvallar if "probation" in t]))
+
+        cur.execute("delete from users where full_name like 'T-Pr%'")
+        cur.execute("delete from offers where candidate_name like 'T-Pr%'")
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            c.put("/deadlines/config", headers=auth(mgr_t),
+                  json={"probation_days": 90, "remind_days": 30})
+
+            # Sinovda: 80 kun oldin kelgan -> 10 kun qoldi
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, hire_date, created_at)"
+                " values (999702401,'T-Pr Sinovda','employee',0,1,?,datetime('now'))",
+                ((bugun - _td(days=80)).isoformat(),))
+            ids["sinov"] = cur.lastrowid
+            # Muddati O'TGAN: 100 kun oldin -> -10 kun
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, hire_date, created_at)"
+                " values (999702402,'T-Pr Otgan','employee',0,1,?,datetime('now'))",
+                ((bugun - _td(days=100)).isoformat(),))
+            ids["otgan"] = cur.lastrowid
+            # Ancha oldin kelgan — ro'yxatda BO'LMASLIGI kerak
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, hire_date, created_at)"
+                " values (999702403,'T-Pr Eski','employee',0,1,?,datetime('now'))",
+                ((bugun - _td(days=400)).isoformat(),))
+            ids["eski"] = cur.lastrowid
+            # `hire_date` YO'Q — ro'yxatga tushmaydi
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at)"
+                " values (999702404,'T-Pr Sanasiz','employee',0,1,datetime('now'))")
+            ids["sanasiz"] = cur.lastrowid
+            conn.commit()
+
+            r = c.get("/probation", headers=auth(mgr_t))
+            check("S-24: ro'yxat -> 200", r.status_code == 200, "kod=" + str(r.status_code))
+            qatorlar = {x["full_name"]: x for x in r.json()} if r.status_code == 200 else {}
+
+            check("S-24: sinovdagi xodim ro'yxatda (10 kun qoldi)",
+                  "T-Pr Sinovda" in qatorlar
+                  and qatorlar["T-Pr Sinovda"]["days_left"] == 10,
+                  "=" + str(qatorlar.get("T-Pr Sinovda", {}).get("days_left")))
+            check("S-24: muddati o'tgan xodim ham RO'YXATDA (eslatma o'tib ketsa ham)",
+                  "T-Pr Otgan" in qatorlar, "=" + str(sorted(qatorlar)))
+            check("S-24: o'tgani AJRATIB ko'rsatilgan (`is_overdue`)",
+                  qatorlar.get("T-Pr Otgan", {}).get("is_overdue") is True
+                  and qatorlar["T-Pr Otgan"]["days_left"] == -10,
+                  "=" + str(qatorlar.get("T-Pr Otgan", {})))
+            check("S-24: ancha oldin kelgan xodim ro'yxatda YO'Q",
+                  "T-Pr Eski" not in qatorlar, "=" + str(sorted(qatorlar)))
+            check("S-24: `hire_date` yo'q xodim ro'yxatda YO'Q",
+                  "T-Pr Sanasiz" not in qatorlar, "=" + str(sorted(qatorlar)))
+
+            # ── Muddati o'tganlar TEPADA ──
+            tartib = [x["full_name"] for x in r.json()
+                      if x["full_name"].startswith("T-Pr")]
+            check("S-24: muddati o'tganlar TEPADA",
+                  tartib and tartib[0] == "T-Pr Otgan", "=" + str(tartib))
+
+            # ── MANBA hujjatlashtirilgan ──
+            check("S-24: har qatorda muddat MANBAI ko'rsatilgan",
+                  all(x.get("source") for x in r.json()),
+                  "=" + str([x.get("source") for x in r.json()][:3]))
+            check("S-24: sozlamadan kelgani «umumiy sozlama» deb belgilangan",
+                  qatorlar.get("T-Pr Sinovda", {}).get("source") == "umumiy sozlama",
+                  "=" + str(qatorlar.get("T-Pr Sinovda", {}).get("source")))
+
+            # ── TAKLIFDAN kelgan muddat ustun turadi ──
+            #  20 kun oldin kelgan xodim: umumiy sozlama bo'yicha 70 kun
+            #  qolardi, taklifdagi 1 oy (30 kun) bo'yicha esa 10 kun.
+            #  Farq aniq ko'rinadi — qaysi manba ishlaganini isbotlaydi.
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, hire_date, created_at)"
+                " values (999702405,'T-Pr Taklifli','employee',0,1,?,datetime('now'))",
+                ((bugun - _td(days=20)).isoformat(),))
+            ids["taklifli"] = cur.lastrowid
+            conn.commit()
+
+            r = c.get("/probation", headers=auth(mgr_t))
+            oldin = {x["full_name"]: x for x in r.json()}.get("T-Pr Taklifli", {})
+            check("S-24: taklifsiz xodimda umumiy sozlama (70 kun)",
+                  oldin.get("days_left") == 70, "=" + str(oldin.get("days_left")))
+
+            pos = cur.execute("select id from positions limit 1").fetchone()
+            r2 = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Pr Taklifdan", "position_id": pos[0],
+                "salary": 6000000, "probation_months": 1})
+            offer_id = r2.json().get("id") if r2.status_code == 201 else None
+            cur.execute("update offers set user_id=? where id=?",
+                        (ids["taklifli"], offer_id))
+            conn.commit()
+
+            r = c.get("/probation", headers=auth(mgr_t))
+            qatorlar = {x["full_name"]: x for x in r.json()}
+            taklifli = qatorlar.get("T-Pr Taklifli", {})
+            check("S-24: taklifdagi muddat (1 oy) sozlamadan USTUN turdi (70 -> 10)",
+                  taklifli.get("days_left") == 10, "=" + str(taklifli.get("days_left")))
+            check("S-24: manba «ish taklifi» deb ko'rsatildi",
+                  "ish taklifi" in (taklifli.get("source") or ""),
+                  "=" + str(taklifli.get("source")))
+
+            #  Muddati ANCHA oldin tugagan xodim ro'yxatdan chiqadi:
+            #  qaror kechikkanini ko'rsatish uchun 30 kun yetadi, undan
+            #  keyin ro'yxat eski xodimlar bilan to'lib ketardi.
+            cur.execute("update users set hire_date=? where id=?",
+                        ((bugun - _td(days=80)).isoformat(), ids["taklifli"]))
+            conn.commit()
+            r = c.get("/probation", headers=auth(mgr_t))
+            check("S-24: 30 kundan ko'p o'tgan sinov ro'yxatdan chiqdi",
+                  "T-Pr Taklifli" not in {x["full_name"] for x in r.json()},
+                  "=" + str(sorted(x["full_name"] for x in r.json())))
+
+            # ── ONBOARDING belgilarini mavjud modullardan ──
+            check("S-24: shartnoma yo'qligi ko'rsatilgan",
+                  qatorlar.get("T-Pr Otgan", {}).get("has_contract") is False,
+                  "=" + str(qatorlar.get("T-Pr Otgan", {}).get("has_contract")))
+            c.post("/employee-documents", headers=auth(mgr_t), json={
+                "user_id": ids["otgan"], "doc_type": "contract",
+                "name": "T-Pr shartnoma", "file_id": "T-PR-1"})
+            r = c.get("/probation", headers=auth(mgr_t))
+            qatorlar = {x["full_name"]: x for x in r.json()}
+            check("S-24: shartnoma qo'shilgach belgi o'zgardi",
+                  qatorlar.get("T-Pr Otgan", {}).get("has_contract") is True,
+                  "=" + str(qatorlar.get("T-Pr Otgan", {}).get("has_contract")))
+
+            # ── XULOSA ──
+            r = c.get("/probation/summary", headers=auth(mgr_t))
+            x = r.json() if r.status_code == 200 else {}
+            check("S-24: xulosada jami/o'tgan/yaqin bor",
+                  {"total", "overdue", "ending_soon", "default_days"} <= set(x),
+                  "=" + str(x))
+            check("S-24: xulosada sozlama qiymati ham bor (90 kun)",
+                  x.get("default_days") == 90, "=" + str(x.get("default_days")))
+
+            # ── RUXSAT ──
+            r = c.get("/probation", headers=auth(token_for(ids["sinov"], "employee")))
+            check("S-24: oddiy xodim ko'rmaydi -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+    except Exception:
+        check("S-24 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from employee_documents where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            cur.execute("delete from offers where candidate_name like 'T-Pr%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -11668,6 +11863,11 @@ def main() -> None:
         test_staff_positions()
     except Exception:
         print("S-23 shtat testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_probation_list()
+    except Exception:
+        print("S-24 sinov muddati testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

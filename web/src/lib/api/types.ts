@@ -1700,3 +1700,20 @@ export type StaffSummary = {
     salary_max: number | null;
   }[];
 };
+
+/** Sinov muddatidagi xodim (TZ 3.24 / S-24). Butunlay HISOBLANADI —
+ *  bunday jadval yo'q. `source` — muddat qayerdan olingani. */
+export type ProbationItem = {
+  user_id: number;
+  full_name: string;
+  position_name: string | null;
+  hire_date: string;
+  ends_at: string;
+  days_left: number;
+  is_overdue: boolean;
+  source: string;
+  has_contract: boolean;
+  assets_missing: number;
+  acks_pending: number;
+  review: string | null;
+};

@@ -33,6 +33,8 @@ export const qk = {
   myAssets: ["assets", "me"] as const,
   myAnnouncements: ["announcements", "me"] as const,
   staff: ["staff"] as const,
+  probation: ["probation"] as const,
+  probationSummary: ["probation", "summary"] as const,
   staffSummary: ["staff", "summary"] as const,
   announcements: ["announcements"] as const,
   announcementQuota: ["announcements", "quota"] as const,
@@ -280,6 +282,12 @@ export const useAssetChecklist = (userId: number | null) =>
     queryFn: () => api.assetChecklist(userId as number),
     enabled: userId !== null,
   });
+
+// ─── Sinov muddati (TZ 3.24 / S-24) ───
+export const useProbation = () =>
+  useQuery({ queryKey: qk.probation, queryFn: api.probation });
+export const useProbationSummary = () =>
+  useQuery({ queryKey: qk.probationSummary, queryFn: api.probationSummary });
 
 // ─── Shtat jadvali (TZ 3.20 / S-23) ───
 export const useStaff = () => useQuery({ queryKey: qk.staff, queryFn: api.staff });

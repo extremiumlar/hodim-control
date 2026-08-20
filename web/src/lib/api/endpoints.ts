@@ -14,6 +14,7 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  ProbationItem,
   StaffItem,
   StaffSummary,
   AssetHistoryItem,
@@ -180,6 +181,16 @@ export const api = {
 
   // ── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ──
   // ── Shtat jadvali (TZ 3.20 / S-23) ──
+  // ── Sinov muddati (TZ 3.24 / S-24) ──
+  probation: () => apiFetch<ProbationItem[]>("/probation"),
+  probationSummary: () =>
+    apiFetch<{
+      total: number;
+      overdue: number;
+      ending_soon: number;
+      default_days: number;
+    }>("/probation/summary"),
+
   staff: () => apiFetch<StaffItem[]>("/staff"),
   staffSummary: () => apiFetch<StaffSummary>("/staff/summary"),
   addStaff: (body: {
