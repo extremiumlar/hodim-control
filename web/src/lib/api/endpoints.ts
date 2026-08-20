@@ -5,6 +5,8 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  DeadlineItem,
+  DeadlineKind,
   EmployeeDocument,
   Holiday,
   LeaveBalance,
@@ -109,6 +111,22 @@ export const api = {
     apiFetch<EmployeeDocument[]>(`/employee-documents/user/${userId}`),
   deleteDocument: (id: number) =>
     apiFetch<{ ok: boolean }>(`/employee-documents/${id}`, { method: "DELETE" }),
+
+  // ── Muddatlar (TZ 3.5 / S-12) ──
+  deadlines: (days?: number) =>
+    apiFetch<DeadlineItem[]>(`/deadlines${days ? `?days=${days}` : ""}`),
+  deadlineKinds: () => apiFetch<DeadlineKind[]>("/deadlines/kinds"),
+  addDeadline: (body: {
+    user_id: number;
+    kind: string;
+    due_date: string;
+    note?: string | null;
+  }) => apiFetch<{ id: number }>("/deadlines", { method: "POST", body: JSON.stringify(body) }),
+  closeDeadline: (body: { key: string }) =>
+    apiFetch<{ ok: boolean }>("/deadlines/close", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
   myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>

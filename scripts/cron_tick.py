@@ -609,6 +609,11 @@ async def main() -> None:
     # (daqiqa aniq mos kelgani uchun takrorlanmaydi).
     if now.day == 3 and now.hour == 10 and now.minute == 0:
         await _run_misc_inprocess(now, "reklama xarajati eslatmasi", "ad_spend_reminder_tick")
+    # Muddat eslatmalari (S-13) — HAR KUNI ertalab soat 9:00.
+    # Kuniga bir marta: `reminded_at` takrorlanishni o'zi to'sadi, ya'ni
+    # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.
+    if now.hour == 9 and now.minute == 0:
+        await _run_misc_inprocess(now, "muddat eslatmalari", "deadline_tick")
     # Keyingi yil bayramlari (S-09) — dekabrning 1 va 15-kuni ertalab.
     # Ikki marta: birinchisi o'tkazib yuborilsa yangi yilgacha yana imkon
     # qolsin. Ro'yxat kiritilgan bo'lsa tick jim qaytadi.

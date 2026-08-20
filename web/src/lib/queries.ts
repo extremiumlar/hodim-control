@@ -21,6 +21,8 @@ export const qk = {
   setupStatus: ["me", "setup-status"] as const,
   holidays: (year?: number) => ["holidays", year ?? "all"] as const,
   myDocuments: ["documents", "me"] as const,
+  deadlines: (days: number) => ["deadlines", days] as const,
+  deadlineKinds: ["deadlines", "kinds"] as const,
   userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
@@ -194,6 +196,20 @@ export const useUserDocuments = (userId: number | null) =>
 
 export const useDeleteDocument = () =>
   useApiMutation(api.deleteDocument, [["documents"]]);
+
+// ─── Muddatlar (TZ 3.5 / S-13) ───
+export const useDeadlines = (days: number) =>
+  useQuery({ queryKey: qk.deadlines(days), queryFn: () => api.deadlines(days) });
+
+export const useDeadlineKinds = () =>
+  useQuery({
+    queryKey: qk.deadlineKinds,
+    queryFn: api.deadlineKinds,
+    staleTime: 60 * 60 * 1000,
+  });
+
+export const useAddDeadline = () => useApiMutation(api.addDeadline, [["deadlines"]]);
+export const useCloseDeadline = () => useApiMutation(api.closeDeadline, [["deadlines"]]);
 
 // ─── Davomat ───
 export const useMyAttendanceToday = () =>

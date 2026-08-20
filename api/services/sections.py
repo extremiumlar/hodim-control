@@ -147,6 +147,9 @@ _MANAGER: list[Section] = [
     Section("employee-documents", "Kadr hujjatlari", "/employee-documents", "FolderArchive",
             155, "manager", "Ma'muriyat", bot_button="📎 Hujjat yuklash",
             visible=lambda c: c.can_view_hr_docs),
+    #  Muddatlar ham kadr ma'lumoti — bir xil qamrov (TZ 3.5).
+    Section("deadlines", "Muddatlar", "/deadlines", "CalendarClock", 157, "manager",
+            "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",

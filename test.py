@@ -9196,6 +9196,154 @@ def test_deadlines_core() -> None:
         conn.close()
 
 
+def test_deadlines_cron() -> None:
+    """S-13 (TZ 3.5) — muddat eslatmalari croni va xabari.
+
+    Qabul mezonlari (TZ):
+      • kuniga bir marta, takrorlanmaydi;
+      • bir necha muddat bir kunga tushsa — BITTA xabarga birlashadi;
+      • test: xabar yuboruvchi patch qilingan holda.
+
+    ⚠️ XABAR YUBORUVCHI PATCH QILINADI. Loyihada jonli tuzoq bor: lokal
+    test haqiqiy xodimlarga Telegram xabari yuborib yuborgan. Bu yerda
+    `api.notify.notify_user` almashtiriladi va tarmoqqa umuman
+    chiqilmaydi — `NOTIFICATIONS_ENABLED=false` qo'riqchisiga qo'shimcha
+    ikkinchi qatlam.
+    """
+    import asyncio
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    print("\n" + "=" * 60)
+    print("S-13: MUDDAT ESLATMALARI (cron va xabar)")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    bugun = _date.today()
+    try:
+        cur.execute("delete from users where full_name like 'T-Dc%'")
+        conn.commit()
+
+        def _yarat(nom, rol, tg, hire=None):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " hire_date, created_at) values (?,?,?,1,1,?,datetime('now'))",
+                (tg, nom, rol, hire))
+            conn.commit()
+            return cur.lastrowid
+
+        # Uchta xodim, uchtasi ham sinov muddati 5 kundan keyin tugaydi —
+        # ya'ni BITTA kunga uchta band tushadi.
+        hire = (bugun - _td(days=85)).isoformat()
+        for n in range(3):
+            ids[f"emp{n}"] = _yarat(f"T-DcEmp{n}", "employee", 999701300 + n, hire)
+
+        # ── Yuboruvchini PATCH qilamiz ──
+        yuborilgan: list = []
+
+        async def _tick():
+            import api.services.cron_jobs as cj
+            from api.notify import notify_user as asl
+
+            import api.notify as notify_mod
+
+            async def soxta(db_, user, category, text, **kw):
+                yuborilgan.append((user.id, user.role, text))
+                return True
+
+            notify_mod.notify_user = soxta
+            try:
+                async with async_session() as s2:
+                    return await cj.deadline_tick(s2)
+            finally:
+                notify_mod.notify_user = asl
+
+        natija = asyncio.run(_tick())
+        check("S-13: tick ishladi", natija.get("ok") is True, "=" + str(natija))
+        check("S-13: uchala band ham qamrab olindi",
+              natija.get("items", 0) >= 3, "=" + str(natija.get("items")))
+
+        # ── BITTA xabar: uchta band bitta matnga birlashdi ──
+        bizniki = [t for (_uid, _rol, t) in yuborilgan
+                   if "T-DcEmp0" in t or "T-DcEmp1" in t or "T-DcEmp2" in t]
+        check("S-13: uchta muddat BITTA xabarga birlashdi",
+              all(("T-DcEmp0" in t and "T-DcEmp1" in t and "T-DcEmp2" in t)
+                  for t in bizniki) and len(bizniki) >= 1,
+              f"xabarlar={len(bizniki)}")
+        check("S-13: har mas'ulga bittadan xabar (odam soniga teng)",
+              len(yuborilgan) == len({u for (u, _r, _t) in yuborilgan}),
+              "=" + str(len(yuborilgan)))
+        rollar = {r for (_u, r, _t) in yuborilgan}
+        check("S-13: xabar HR/Boshliq/Dasturchiga ketdi (guruhga emas)",
+              rollar <= {"hr", "boss", "dasturchi"}, "=" + str(rollar))
+        if bizniki:
+            check("S-13: xabarda sana va qolgan kun ko'rsatilgan",
+                  "5 kun" in bizniki[0] and str(bugun.year) in bizniki[0],
+                  "=" + bizniki[0][:160])
+            check("S-13: xabarda nima qilish kerakligi aytilgan",
+                  "Muddatlar" in bizniki[0], "=" + bizniki[0][-80:])
+
+        # ── TAKRORLANMAYDI ──
+        yuborilgan.clear()
+        natija2 = asyncio.run(_tick())
+        qayta = [t for (_u, _r, t) in yuborilgan if "T-DcEmp0" in t]
+        check("S-13: ikkinchi tick bizning bandlarni QAYTA yubormadi",
+              not qayta, "=" + str(len(qayta)))
+        check("S-13: ikkinchi tickda bizning bandlar hisobga olinmadi",
+              natija2.get("items", 0) == 0 or not qayta,
+              "=" + str(natija2))
+
+        # ── ERTAGA yana yuboriladi (bir kunlik oyna) ──
+        cur.execute(
+            "update deadlines set reminded_at=? where user_id in (?,?,?)",
+            ((bugun - _td(days=1)).isoformat(), ids["emp0"], ids["emp1"], ids["emp2"]))
+        conn.commit()
+        yuborilgan.clear()
+        asyncio.run(_tick())
+        ertaga = [t for (_u, _r, t) in yuborilgan if "T-DcEmp0" in t]
+        check("S-13: kechagi eslatmadan keyin BUGUN yana yuborildi",
+              len(ertaga) >= 1, "=" + str(len(ertaga)))
+
+        # ── O'TIB KETGAN band alohida bo'limda ──
+        cur.execute("update users set hire_date=? where id=?",
+                    ((bugun - _td(days=95)).isoformat(), ids["emp0"]))
+        cur.execute("update deadlines set reminded_at=null where user_id=?", (ids["emp0"],))
+        conn.commit()
+        yuborilgan.clear()
+        asyncio.run(_tick())
+        otgan = [t for (_u, _r, t) in yuborilgan if "T-DcEmp0" in t]
+        check("S-13: o'tib ketgan muddat alohida «Muddati o'tgan» bo'limida",
+              bool(otgan) and "Muddati o'tgan" in otgan[0],
+              "=" + (otgan[0][:200] if otgan else "xabar yo'q"))
+
+        # ── YOPILGAN band eslatilmaydi ──
+        cur.execute("update deadlines set status='done', reminded_at=null "
+                    "where user_id=?", (ids["emp0"],))
+        conn.commit()
+        yuborilgan.clear()
+        asyncio.run(_tick())
+        yopiq = [t for (_u, _r, t) in yuborilgan if "T-DcEmp0" in t]
+        check("S-13: yopilgan band bo'yicha eslatma KELMADI",
+              not yopiq, "=" + str(len(yopiq)))
+    except Exception:
+        check("S-13 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from deadlines where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -9328,6 +9476,11 @@ def main() -> None:
         test_deadlines_core()
     except Exception:
         print("S-12 muddatlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_deadlines_cron()
+    except Exception:
+        print("S-13 muddat croni testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

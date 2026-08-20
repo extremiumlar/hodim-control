@@ -1416,3 +1416,22 @@ export type EmployeeDocument = {
   is_expired: boolean;
   days_left: number | null;
 };
+
+/** Muddat bandi (TZ 3.5 / S-12). `computed=true` — sanasi manbasidan
+ *  hisoblanadi va bu yerdan tahrirlanmaydi (ikkita manba bo'lmasin). */
+export type DeadlineItem = {
+  key: string;
+  user_id: number;
+  user_name: string;
+  kind: string;
+  kind_label: string;
+  due_date: string;
+  days_left: number;
+  is_overdue: boolean;
+  responsible_role: string | null;
+  note: string | null;
+  row_id: number | null;
+  computed: boolean;
+};
+
+export type DeadlineKind = { value: string; label: string; computed: boolean };

@@ -177,6 +177,111 @@ async def holidays_reminder_tick(db: AsyncSession) -> dict:
     return {"ok": True, "year": keyingi, "missing": True, "notified": len(targets)}
 
 
+async def deadline_tick(db: AsyncSession) -> dict:
+    """Yaqinlashayotgan muddatlar bo'yicha eslatma (yangi TZ 3.5 / S-13).
+
+    KUNIGA BIR MARTA. Takrorlanmaslik `reminded_at` orqali: bugun
+    eslatilgan band ikkinchi marta olinmaydi. Cron bir necha marta
+    ishlasa ham (qayta ishga tushirish, ikki jarayon) xabar bitta ketadi.
+
+    ⚠️ XABAR SHAXSIY, GURUHGA EMAS. Sinov muddati, tibbiy ko'rik — bular
+    xodim haqidagi kadr ma'lumoti; guruhga chiqarish uni oshkor qilardi.
+
+    ⚠️ BIR NECHA MUDDAT — BITTA XABAR. Kuniga o'nta band to'g'ri kelsa
+    HR ga o'nta bildirishnoma ketardi va u ularni o'qimay qo'yardi.
+    Har mas'ulga BITTA yig'ma xabar boradi."""
+    from api.notify import notify_user
+    from api.services import deadlines as svc
+    from api.services.push import Category
+    from api.timeutil import today_local
+    from db.models import Role, User
+
+    bugun = today_local()
+    bandlar = [i for i in await svc.upcoming(db) if i.reminded_at != bugun]
+    if not bandlar:
+        return {"ok": True, "items": 0}
+
+    # ── Mas'ul bo'yicha guruhlash ──
+    # `responsible_role` bo'sh bo'lsa HR ga: muddatlar kadr ishi va
+    # egasiz qolgan band hech kimga ko'rinmay yo'qolmasin.
+    default_role = Role.hr.value
+    rollar = {i.responsible_role or default_role for i in bandlar}
+
+    oluvchilar = {
+        r: list(
+            await db.scalars(
+                select(User).where(
+                    User.role == r,
+                    User.is_active.is_(True),
+                    User.telegram_id.isnot(None),
+                )
+            )
+        )
+        for r in rollar
+    }
+    # Rol bo'yicha hech kim topilmasa (masalan HR ishdan bo'shagan) —
+    # Boshliq/Dasturchi zaxira: xabar yo'qolmasin.
+    zaxira = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_((Role.boss.value, Role.dasturchi.value)),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    )
+
+    yuborildi = 0
+    belgilanadi: list = []
+    for rol, guruh in _group_by_role(bandlar, default_role).items():
+        kimga = oluvchilar.get(rol) or zaxira
+        if not kimga:
+            continue
+        matn = _deadline_text(guruh)
+        for user in kimga:
+            await notify_user(db, user, Category.APPROVALS, matn,
+                              data={"path": "/deadlines"})
+            yuborildi += 1
+        belgilanadi.extend(guruh)
+
+    await svc.mark_reminded(db, belgilanadi, bugun)
+    return {"ok": True, "items": len(belgilanadi), "messages": yuborildi}
+
+
+def _group_by_role(bandlar: list, default_role: str) -> dict:
+    out: dict[str, list] = {}
+    for i in bandlar:
+        out.setdefault(i.responsible_role or default_role, []).append(i)
+    return out
+
+
+def _deadline_text(bandlar: list) -> str:
+    """Bitta yig'ma xabar. O'tib ketganlar alohida ajratiladi — ular
+    «yaqinlashayotgan» emas, allaqachon muammo."""
+    otgan = [i for i in bandlar if i.days_left < 0]
+    yaqin = [i for i in bandlar if i.days_left >= 0]
+
+    qatorlar = ["⏳ <b>Muddatlar</b>", ""]
+    if otgan:
+        qatorlar.append("⛔ <b>Muddati o'tgan:</b>")
+        for i in otgan:
+            qatorlar.append(
+                f"• {i.user_name} — {i.kind_label} "
+                f"({i.due_date.isoformat()}, {abs(i.days_left)} kun oldin)"
+            )
+        qatorlar.append("")
+    if yaqin:
+        qatorlar.append("⚠️ <b>Yaqinlashmoqda:</b>")
+        for i in yaqin:
+            kun = "bugun" if i.days_left == 0 else f"{i.days_left} kun"
+            qatorlar.append(
+                f"• {i.user_name} — {i.kind_label} ({i.due_date.isoformat()}, {kun})"
+            )
+        qatorlar.append("")
+    qatorlar.append("Sayt → <b>Muddatlar</b> bo'limida yopish mumkin.")
+    return "\n".join(qatorlar)
+
+
 async def lead_source_tick(db: AsyncSession) -> dict:
     """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
 
