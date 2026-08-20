@@ -20,6 +20,8 @@ export const qk = {
   mySections: ["me", "sections"] as const,
   setupStatus: ["me", "setup-status"] as const,
   holidays: (year?: number) => ["holidays", year ?? "all"] as const,
+  myDocuments: ["documents", "me"] as const,
+  userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
   attendanceDashboard: ["attendance", "dashboard"] as const,
@@ -177,6 +179,21 @@ export const useAddHolidaysBulk = () =>
 
 export const useDeleteHoliday = () =>
   useApiMutation(api.deleteHoliday, [["holidays"], qk.setupStatus]);
+
+// ─── Kadr hujjatlari (TZ 3.4 / S-11) ───
+export const useMyDocuments = () =>
+  useQuery({ queryKey: qk.myDocuments, queryFn: api.myDocuments });
+
+/** `userId` null bo'lsa so'rov YUBORILMAYDI — HR hali xodim tanlamagan. */
+export const useUserDocuments = (userId: number | null) =>
+  useQuery({
+    queryKey: qk.userDocuments(userId ?? 0),
+    queryFn: () => api.userDocuments(userId as number),
+    enabled: userId !== null,
+  });
+
+export const useDeleteDocument = () =>
+  useApiMutation(api.deleteDocument, [["documents"]]);
 
 // ─── Davomat ───
 export const useMyAttendanceToday = () =>

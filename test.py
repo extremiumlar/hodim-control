@@ -7828,13 +7828,19 @@ def test_bot_menu_from_server() -> None:
     # ── (a) OLTIN NAMUNA: oddiy xodim, lavozimsiz ──
     # Qo'lda yozilgan — `bot_menu_rows` dan MUSTAQIL, aks holda test
     # o'zini o'zi tasdiqlagan bo'lardi.
+    #
+    # ⚠️ NAMUNA O'ZGARSA — ATAYLABMI? Bu ro'yxat menyuning TASDIQLANGAN
+    # ko'rinishi. U faqat yangi bo'lim ataylab qo'shilganda yangilanadi va
+    # o'zgarish commit izohida ko'rsatiladi. Tasodifiy o'zgarish (masalan
+    # `visible` shartini buzib qo'yish) shu yerda ushlanadi.
+    # Tarix: S-11 da «📁 Hujjatlarim» qo'shildi (TZ 3.4).
     kutilgan = [
         ["✅ Keldim / Ketdim"],
         ["📋 Vazifalarim"],
         ["📝 Ish kundaligi"],
         ["📊 Bugungi normam", "💰 Oylik KPI'm"],
         ["📈 Statistikam", "🙋 Sababli kun so'rash"],
-        ["📮 Murojaatlarim"],
+        ["📮 Murojaatlarim", "📁 Hujjatlarim"],
         ["🗓 Ish jadvali"],
         ["💵 Mening oyligim"],
         ["📋 Bugungi rejam"],
@@ -8763,6 +8769,214 @@ def test_employee_documents() -> None:
         conn.close()
 
 
+def test_documents_bot() -> None:
+    """S-11 (TZ 3.4) — hujjatlar boti, kabinet va tugma matnlari.
+
+    Qabul mezonlari (TZ):
+      • HR botdan hujjat yuklay oladi, fayl Telegramda qoladi;
+      • xodim o'z hujjatini botdan qayta olishi mumkin;
+      • muddati o'tayotgan hujjat ro'yxatda ajratib ko'rsatiladi;
+      • test: yuklash -> o'qish -> soft delete zanjiri.
+
+    ALOHIDA QO'RIQCHI: tugma matnlari `bot/keyboards.py` va
+    `api/services/sections.py` da IKKI MARTA yozilgan (birinchisi handler
+    mosligi, ikkinchisi menyu qurish uchun). Ular bir-biridan uzoqlashsa
+    server tugmani chizadi, handler esa uni tanimaydi — tugma JIMGINA
+    ishlamay qoladi. S-05 aynan shu sinf xatoni yopish uchun qilingan
+    edi, shuning uchun bu yerda tekshiriladi.
+    """
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-11: HUJJATLAR BOTI + KABINET")
+    print("=" * 60)
+
+    # ── Tugma matnlari ikkala faylda AYNAN bir xilmi ──
+    try:
+        import importlib
+
+        kb = importlib.import_module("bot.keyboards")
+        sec = importlib.import_module("api.services.sections")
+        kb_btn = {k: v for k, v in vars(kb).items() if k.startswith("BTN_")}
+        sec_btn = {k: v for k, v in vars(sec).items() if k.startswith("BTN_")}
+        umumiy = set(kb_btn) & set(sec_btn)
+        farq = {k: (kb_btn[k], sec_btn[k]) for k in umumiy if kb_btn[k] != sec_btn[k]}
+        check("S-11: tugma matnlari ikkala faylda bir xil", not farq, "=" + str(farq))
+        # `sections.py` chizadigan HAR BIR tugma handlerda bo'lishi shart
+        yetishmaydi = {k: v for k, v in sec_btn.items() if k not in kb_btn}
+        check("S-11: sections'dagi har tugma keyboards'da ham bor",
+              not yetishmaydi, "=" + str(yetishmaydi))
+    except Exception:
+        check("S-11 tugma qo'riqchisi", False, traceback.format_exc(limit=2).strip())
+
+    # ── Izohdan nom va sana ajratish (bot mantiqi) ──
+    try:
+        from bot.handlers.documents import _muddat_belgisi, _parse_caption  # noqa: SLF001
+
+        check("S-11: izoh oxiridagi sana ajratildi",
+              _parse_caption("Mehnat shartnomasi 2027-12-31", "F") == (
+                  "Mehnat shartnomasi", "2027-12-31"),
+              "=" + str(_parse_caption("Mehnat shartnomasi 2027-12-31", "F")))
+        check("S-11: sana OLDIDA bo'lsa ham ajratiladi",
+              _parse_caption("2027-12-31 Diplom", "F") == ("Diplom", "2027-12-31"),
+              "=" + str(_parse_caption("2027-12-31 Diplom", "F")))
+        check("S-11: sanasiz izoh — nom, muddat yo'q",
+              _parse_caption("Diplom", "F") == ("Diplom", None),
+              "=" + str(_parse_caption("Diplom", "F")))
+        check("S-11: izoh bo'sh — fayl nomi ishlatiladi",
+              _parse_caption("", "shartnoma.pdf") == ("shartnoma.pdf", None),
+              "=" + str(_parse_caption("", "shartnoma.pdf")))
+        check("S-11: muddati o'tgan hujjat botda AJRATIB ko'rsatiladi",
+              "⛔" in _muddat_belgisi({"days_left": -3, "is_expired": True}),
+              "=" + _muddat_belgisi({"days_left": -3, "is_expired": True}))
+        check("S-11: muddati yaqinlashgan — ogohlantirish",
+              "⚠️" in _muddat_belgisi({"days_left": 7, "is_expired": False}),
+              "=" + _muddat_belgisi({"days_left": 7, "is_expired": False}))
+        check("S-11: muddatsiz hujjatda belgi yo'q",
+              _muddat_belgisi({"days_left": None, "is_expired": False}) == "",
+              "=" + repr(_muddat_belgisi({"days_left": None, "is_expired": False})))
+    except Exception:
+        check("S-11 izoh tahlili", False, traceback.format_exc(limit=2).strip())
+
+    # ── Menyuda tugmalar to'g'ri rollarga chiqadimi ──
+    try:
+        from types import SimpleNamespace
+
+        from api.services.sections import bot_menu_rows
+
+        def _tugmalar(rol: str) -> set:
+            u = SimpleNamespace(role=rol, position=None, can_edit_fine_policy=False,
+                                can_edit_attendance=False)
+            return {b for r in bot_menu_rows(u) for b in r}
+
+        check("S-11: «Hujjatlarim» HAR BIR rolda bor",
+              all("📁 Hujjatlarim" in _tugmalar(r)
+                  for r in ("employee", "hr", "rop", "boss", "dasturchi")),
+              "=" + str({r: "📁 Hujjatlarim" in _tugmalar(r)
+                         for r in ("employee", "hr", "rop", "boss", "dasturchi")}))
+        check("S-11: «Hujjat yuklash» faqat HR/Boshliq/Dasturchida",
+              {r for r in ("employee", "hr", "rop", "boss", "dasturchi")
+               if "📎 Hujjat yuklash" in _tugmalar(r)} == {"hr", "boss", "dasturchi"},
+              "=" + str({r for r in ("employee", "hr", "rop", "boss", "dasturchi")
+                         if "📎 Hujjat yuklash" in _tugmalar(r)}))
+    except Exception:
+        check("S-11 menyu tekshiruvi", False, traceback.format_exc(limit=2).strip())
+
+    # ── Bot endpointlari: yuklash -> o'qish -> yuborish -> soft delete ──
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-BDoc%'")
+        conn.commit()
+
+        def _yarat(nom: str, rol: str, tg: int, manager: int | None = None) -> int:
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " manager_id, created_at) values (?,?,?,1,1,?,datetime('now'))",
+                (tg, nom, rol, manager))
+            conn.commit()
+            return cur.lastrowid
+
+        ids["hr"] = _yarat("T-BDocHR", "hr", 999701101)
+        ids["rop"] = _yarat("T-BDocRop", "rop", 999701102)
+        ids["emp"] = _yarat("T-BDocEmp", "employee", 999701103, ids["rop"])
+        tg = {"hr": 999701101, "rop": 999701102, "emp": 999701103}
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # Tur ro'yxati botga ham ochiq (bot o'z nusxasini yuritmasin)
+            r = c.get("/employee-documents/bot/types", params={"telegram_id": tg["emp"]})
+            check("S-11: bot /types -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+
+            # Xodim ro'yxati — faqat HR
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["emp"]})
+            check("S-11: bot xodim ro'yxati oddiy xodimga -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["rop"]})
+            check("S-11: bot xodim ro'yxati ROP ga -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["hr"]})
+            check("S-11: bot xodim ro'yxati HR ga -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+
+            # ── YUKLASH ──
+            muddat = (_date.today() + _td(days=15)).isoformat()
+            yuk = {"telegram_id": tg["hr"], "user_id": ids["emp"], "doc_type": "diploma",
+                   "name": "T-BDoc diplom", "file_id": "T-BOT-FILE-1",
+                   "file_type": "document", "expires_at": muddat}
+            r = c.post("/employee-documents/bot/upload",
+                       json={**yuk, "telegram_id": tg["emp"]})
+            check("S-11: botdan oddiy xodim yuklay olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.post("/employee-documents/bot/upload", json=yuk)
+            check("S-11: HR botdan yukladi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            doc_id = r.json().get("id") if r.status_code == 201 else None
+
+            # ── O'QISH: xodim o'zinikini botdan ko'radi ──
+            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]})
+            check("S-11: xodim botdan o'z hujjatini ko'radi",
+                  r.status_code == 200 and len(r.json()) == 1
+                  and r.json()[0]["name"] == "T-BDoc diplom",
+                  f"kod={r.status_code} {r.text[:120]}")
+            check("S-11: muddat serverdan keladi (15 kun)",
+                  r.status_code == 200 and r.json()[0]["days_left"] == 15,
+                  "=" + str(r.json()[0].get("days_left") if r.status_code == 200 else None))
+
+            # HR ning o'z ro'yxati BO'SH — yuklagan bo'lsa ham egasi u emas
+            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["hr"]})
+            check("S-11: yuklagan HR ning o'z ro'yxatiga tushmadi",
+                  r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+
+            # ── YUBORISH: ruxsat SHU YERDA ham tekshiriladi ──
+            if doc_id:
+                r = c.post("/employee-documents/bot/send",
+                           json={"telegram_id": tg["rop"], "doc_id": doc_id})
+                check("S-11: ROP begona hujjatni o'ziga yuborib ololmaydi -> 404",
+                      r.status_code == 404, "kod=" + str(r.status_code))
+                r = c.post("/employee-documents/bot/send",
+                           json={"telegram_id": tg["emp"], "doc_id": doc_id})
+                check("S-11: egasi o'z hujjatini qayta oladi -> 200",
+                      r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:100])
+                # ⚠️ Testda bildirishnomalar O'CHIQ — `delivered` False bo'lishi
+                # KUTILGAN holat. Agar True chiqsa, demak haqiqiy xodimga fayl
+                # ketgan (test.py ning `require_notifications_off` qo'riqchisi
+                # buni oldini oladi, lekin ikkinchi qatlam zarar qilmaydi).
+                check("S-11: test rejimida haqiqiy fayl YUBORILMADI",
+                      r.status_code == 200 and r.json().get("delivered") is False,
+                      "=" + r.text[:100])
+
+                # ── SOFT DELETE zanjiri ──
+                hr_t = token_for(ids["hr"], "hr")
+                r = c.delete(f"/employee-documents/{doc_id}", headers=auth(hr_t))
+                check("S-11: o'chirildi -> 200", r.status_code == 200,
+                      "kod=" + str(r.status_code))
+                r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]})
+                check("S-11: o'chirilgach botdagi ro'yxat bo'shadi",
+                      r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+                r = c.post("/employee-documents/bot/send",
+                           json={"telegram_id": tg["emp"], "doc_id": doc_id})
+                check("S-11: o'chirilgan hujjatni yuborib bo'lmaydi -> 404",
+                      r.status_code == 404, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-11 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                cur.execute(
+                    "delete from employee_documents where user_id in (%s)"
+                    % ",".join("?" * len(ids)), tuple(ids.values()))
+            cur.execute("delete from users where full_name like 'T-BDoc%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -8885,6 +9099,11 @@ def main() -> None:
         test_employee_documents()
     except Exception:
         print("S-10 hujjatlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_documents_bot()
+    except Exception:
+        print("S-11 hujjatlar boti testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

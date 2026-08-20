@@ -53,6 +53,10 @@ class SectionCtx:
     can_manage_positions: bool
     can_manage_payroll: bool
     can_edit_fine_policy: bool
+    #  Kadr hujjatlari (TZ 3.4) — MAXFIY modul. `can_manage_payroll` dan
+    #  ATAYLAB alohida: u shaxsiy bayroq bilan kengayadi, bu esa
+    #  QAT'IY rol ro'yxati — backend `_HR` bilan bir xil bo'lishi shart.
+    can_view_hr_docs: bool
     can_edit_attendance: bool
     flags: dict
     metrics: list[str]
@@ -84,6 +88,7 @@ def build_ctx(user: User) -> SectionCtx:
         # `can_manage_payroll` dan ATAYLAB alohida: bayroq faqat ushlanma
         # qoidasini ochadi, «Qo'shimcha ish» ni OCHMAYDI (backend 403 beradi).
         can_edit_fine_policy=payroll_manager or bool(user.can_edit_fine_policy),
+        can_view_hr_docs=user.role in ("hr", "boss", "dasturchi"),
         can_edit_attendance=bool(user.can_edit_attendance),
         flags=flags,
         metrics=list(metrics),
@@ -137,6 +142,11 @@ _MANAGER: list[Section] = [
             "Ish haqi", visible=lambda c: c.can_edit_fine_policy),
 
     Section("users", "Foydalanuvchilar", "/users", "Users", 150, "manager", "Ma'muriyat"),
+    #  Kadr hujjatlari MAXFIY: ROP ataylab ko'rmaydi (TZ 3.4).
+    #  `can_edit_fine_policy` = HR/Boshliq/Dasturchi — aynan shu qamrov.
+    Section("employee-documents", "Kadr hujjatlari", "/employee-documents", "FolderArchive",
+            155, "manager", "Ma'muriyat", bot_button="📎 Hujjat yuklash",
+            visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
@@ -181,6 +191,8 @@ _EMPLOYEE: list[Section] = [
             visible=lambda c: bool(c.flags.get("excused"))),
     Section("work-log", "Ish kundaligi", "/me/work-log", "NotebookPen", 120, "employee",
             visible=lambda c: c.role != "boss"),
+    Section("documents", "Hujjatlarim", "/me/documents", "FolderOpen", 125, "employee",
+            bot_button="📁 Hujjatlarim"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
@@ -240,6 +252,8 @@ BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_AI_CENTER = "🧠 Sotuv AI markazi"
 BTN_CELEBRATION = "🎬 Tabrik videolari"
+BTN_MY_DOCS = "📁 Hujjatlarim"
+BTN_DOC_UPLOAD = "📎 Hujjat yuklash"
 BTN_SET_BUSY = "⏸ Band qilish"
 BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 BTN_SALES_AI = "🤖 Sotuv AI"
@@ -277,7 +291,9 @@ def bot_menu_rows(user: User) -> list[list[str]]:
     rows.append(stats_row)
 
     if c.role != "boss":
-        rows.append([BTN_REQUESTS])
+        rows.append([BTN_REQUESTS, BTN_MY_DOCS])
+    else:
+        rows.append([BTN_MY_DOCS])
     rows.append([BTN_SCHEDULE])
     if c.flags.get("payroll") and c.role != "boss":
         rows.append([BTN_PAYROLL])
@@ -298,6 +314,7 @@ def bot_menu_rows(user: User) -> list[list[str]]:
         rows.append([BTN_ATTENDANCE_STATS])
         if c.role in {"hr", "boss", "dasturchi"}:
             rows.append([BTN_MARK_EXCUSED])
+            rows.append([BTN_DOC_UPLOAD])
         if c.role in {"rop", "boss", "dasturchi"}:
             rows.append([BTN_SALES_AI])
         if c.role in {"boss", "dasturchi"}:

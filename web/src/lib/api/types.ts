@@ -1397,3 +1397,22 @@ export type Holiday = {
   name: string;
   kind: "state" | "company";
 };
+
+/** Kadr hujjati (TZ 3.4 / S-10). `is_expired`/`days_left` SERVERDA
+ *  hisoblanadi — bot, sayt va kabinet bir xil javob bersin. */
+export type EmployeeDocument = {
+  id: number;
+  user_id: number;
+  doc_type: string;
+  doc_type_label: string;
+  name: string;
+  file_id: string;
+  file_type: string;
+  issued_at: string | null;
+  expires_at: string | null;
+  note: string | null;
+  uploaded_by: number | null;
+  created_at: string;
+  is_expired: boolean;
+  days_left: number | null;
+};

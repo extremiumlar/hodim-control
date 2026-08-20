@@ -199,3 +199,115 @@ async def delete_document(
     doc.deleted_at = datetime.utcnow()
     await db.commit()
     return {"ok": True, "id": doc_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# BOT (S-11) — autentifikatsiya `telegram_id` orqali
+# (`api/routers/celebration.py` bilan bir xil naqsh: bot JWT
+#  yuritmaydi, foydalanuvchini Telegram ID si bilan tanidiradi)
+# ─────────────────────────────────────────────────────────────
+
+
+class BotUploadIn(BaseModel):
+    telegram_id: int
+    user_id: int
+    doc_type: str
+    name: str = Field(min_length=1, max_length=200)
+    file_id: str = Field(min_length=1, max_length=512)
+    file_type: str = "document"
+    expires_at: date | None = None
+
+
+class BotSendIn(BaseModel):
+    telegram_id: int
+    doc_id: int
+
+
+async def _bot_actor(db: AsyncSession, telegram_id: int) -> User:
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return user
+
+
+@router.get("/bot/my", response_model=list[DocumentOut])
+async def bot_my_documents(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> list[DocumentOut]:
+    """Botdagi «Hujjatlarim» — xodim o'z hujjatlarini ko'radi."""
+    actor = await _bot_actor(db, telegram_id)
+    return await _list_for(db, actor.id)
+
+
+@router.get("/bot/types")
+async def bot_document_types(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """Tur ro'yxati bot uchun. Bot o'z nusxasini yuritmaydi — yangi tur
+    qo'shilganda bot eskisini ko'rsatib turmasin."""
+    await _bot_actor(db, telegram_id)
+    return [
+        {"value": t.value, "label": DOCUMENT_TYPE_LABELS[t.value]} for t in DocumentType
+    ]
+
+
+@router.get("/bot/employees")
+async def bot_employees(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """HR hujjat yuklashda xodim tanlaydi. Faqat HR/Boshliq/Dasturchi."""
+    actor = await _bot_actor(db, telegram_id)
+    if actor.role not in _HR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
+    rows = await db.scalars(
+        select(User).where(User.is_active.is_(True)).order_by(User.full_name)
+    )
+    return [{"id": u.id, "full_name": u.full_name} for u in rows]
+
+
+@router.post("/bot/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
+async def bot_upload(
+    payload: BotUploadIn, db: AsyncSession = Depends(get_db)
+) -> DocumentOut:
+    """Botdan hujjat yuklash. Fayl Telegram'da qoladi — `file_id` keladi."""
+    actor = await _bot_actor(db, payload.telegram_id)
+    if actor.role not in _HR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Ruxsat yo'q")
+    return await add_document(
+        DocumentIn(
+            user_id=payload.user_id,
+            doc_type=payload.doc_type,
+            name=payload.name,
+            file_id=payload.file_id,
+            file_type=payload.file_type,
+            expires_at=payload.expires_at,
+        ),
+        actor,
+        db,
+    )
+
+
+@router.post("/bot/send")
+async def bot_send_document(
+    payload: BotSendIn, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Hujjatni EGASIGA Telegram orqali qaytarish.
+
+    Fayl serverda yo'q — `file_id` bo'yicha qayta yuboriladi
+    (`telegram_notify.send_file_id`), ya'ni so'rov oddiy JSON.
+
+    ⚠️ Ruxsat SHU YERDA ham tekshiriladi: `doc_id` ni taxmin qilib
+    boshqaning hujjatini o'ziga yuborib olish mumkin bo'lmasin."""
+    from api.telegram_notify import send_file_id
+
+    actor = await _bot_actor(db, payload.telegram_id)
+    doc = await db.get(EmployeeDocument, payload.doc_id)
+    if doc is None or doc.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topilmadi")
+    await assert_can_view(actor, doc.user_id, db, rop_sees_team=False)
+
+    izoh = f"📄 <b>{doc.name}</b>\n{DOCUMENT_TYPE_LABELS.get(doc.doc_type, doc.doc_type)}"
+    if doc.expires_at:
+        izoh += f"\nAmal qiladi: {doc.expires_at.isoformat()} gacha"
+    resp = await send_file_id(actor.telegram_id, doc.file_id, doc.file_type, caption=izoh)
+    #  `resp is None` — bildirishnomalar o'chiq (test rejimi) yoki token yo'q.
+    #  Bu XATO emas: chaqiruvchi «yuborildi» deb ko'rsatmasligi uchun bayroq.
+    return {"ok": True, "delivered": resp is not None}

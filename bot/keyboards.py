@@ -33,6 +33,8 @@ BTN_REPORT = "📥 Hisobot (Excel)"
 BTN_AUDIT = "🧾 Audit jurnali"
 BTN_AI_CENTER = "🧠 Sotuv AI markazi"
 BTN_CELEBRATION = "🎬 Tabrik videolari"
+BTN_MY_DOCS = "📁 Hujjatlarim"
+BTN_DOC_UPLOAD = "📎 Hujjat yuklash"
 BTN_SET_BUSY = "⏸ Band qilish"
 BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 # Eski alohida tugmalar — endi asosiy menyuda ko'rinmaydi (BTN_AI_CENTER

@@ -5,6 +5,7 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  EmployeeDocument,
   Holiday,
   LeaveBalance,
   RequestCalc,
@@ -101,6 +102,13 @@ export const api = {
     }),
   deleteHoliday: (id: number) =>
     apiFetch<{ ok: boolean }>(`/holidays/${id}`, { method: "DELETE" }),
+
+  // ── Kadr hujjatlari (TZ 3.4 / S-10) ──
+  myDocuments: () => apiFetch<EmployeeDocument[]>("/employee-documents/me"),
+  userDocuments: (userId: number) =>
+    apiFetch<EmployeeDocument[]>(`/employee-documents/user/${userId}`),
+  deleteDocument: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/employee-documents/${id}`, { method: "DELETE" }),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),
   myCheckIn: (data: { latitude: number; longitude: number; face_descriptor: number[]; liveness: number; accuracy?: number | null }) =>

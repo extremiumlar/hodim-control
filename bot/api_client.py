@@ -1261,3 +1261,70 @@ async def celebration_clap(post_id: int, telegram_id: int) -> dict:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ── Kadr hujjatlari (yangi TZ 3.4 / S-11) ──
+
+
+async def my_documents(telegram_id: int) -> list[dict]:
+    resp = await _get_client().get(
+        "/employee-documents/bot/my", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def send_my_document(telegram_id: int, doc_id: int) -> dict:
+    resp = await _get_client().post(
+        "/employee-documents/bot/send",
+        json={"telegram_id": telegram_id, "doc_id": doc_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def document_employees(telegram_id: int) -> list[dict]:
+    resp = await _get_client().get(
+        "/employee-documents/bot/employees", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code in (403, 404):
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def document_types(telegram_id: int) -> list[dict]:
+    """Tur ro'yxati serverdan — bot o'z nusxasini yuritmaydi (aks holda
+    yangi tur qo'shilganda bot eskisini ko'rsatib turardi)."""
+    resp = await _get_client().get(
+        "/employee-documents/bot/types", params={"telegram_id": telegram_id}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def upload_document(
+    telegram_id: int,
+    user_id: int,
+    doc_type: str,
+    name: str,
+    file_id: str,
+    file_type: str,
+    expires_at: str | None = None,
+) -> dict:
+    resp = await _get_client().post(
+        "/employee-documents/bot/upload",
+        json={
+            "telegram_id": telegram_id,
+            "user_id": user_id,
+            "doc_type": doc_type,
+            "name": name,
+            "file_id": file_id,
+            "file_type": file_type,
+            "expires_at": expires_at,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
