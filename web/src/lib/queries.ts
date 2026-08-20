@@ -31,6 +31,12 @@ export const qk = {
   assetKinds: ["assets", "kinds"] as const,
   assetHistory: (id: number) => ["assets", "history", id] as const,
   myAssets: ["assets", "me"] as const,
+  myAnnouncements: ["announcements", "me"] as const,
+  announcements: ["announcements"] as const,
+  announcementQuota: ["announcements", "quota"] as const,
+  myAcks: ["acks", "me"] as const,
+  ackReaders: (t: string, id: number, v?: number) =>
+    ["acks", "readers", t, id, v ?? "latest"] as const,
   assetStandardSet: (id: number) => ["assets", "standard-set", id] as const,
   assetChecklist: (id: number) => ["assets", "checklist", id] as const,
   offers: (q: string) => ["offers", q] as const,
@@ -272,6 +278,39 @@ export const useAssetChecklist = (userId: number | null) =>
     queryFn: () => api.assetChecklist(userId as number),
     enabled: userId !== null,
   });
+
+// ─── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ───
+export const useMyAnnouncements = () =>
+  useQuery({ queryKey: qk.myAnnouncements, queryFn: api.myAnnouncements });
+
+export const useAnnouncements = () =>
+  useQuery({ queryKey: qk.announcements, queryFn: api.announcements });
+
+export const useAnnouncementQuota = () =>
+  useQuery({ queryKey: qk.announcementQuota, queryFn: api.announcementQuota });
+
+export const useMyAcks = () => useQuery({ queryKey: qk.myAcks, queryFn: api.myAcks });
+
+/** `objectType` null bo'lsa so'rov yuborilmaydi — panel yopiq. */
+export const useAckReaders = (
+  objectType: string | null,
+  objectId: number | null,
+  version?: number
+) =>
+  useQuery({
+    queryKey: qk.ackReaders(objectType ?? "", objectId ?? 0, version),
+    queryFn: () => api.ackReaders(objectType as string, objectId as number, version),
+    enabled: objectType !== null && objectId !== null,
+  });
+
+/** E'lon qo'shilsa kvota ham o'zgaradi. */
+export const useAddAnnouncement = () =>
+  useApiMutation(api.addAnnouncement, [["announcements"], ["acks"]]);
+export const useDeleteAnnouncement = () =>
+  useApiMutation(api.deleteAnnouncement, [["announcements"]]);
+/** Tanishuv e'lon ro'yxatidagi belgini ham o'zgartiradi. */
+export const useAcknowledge = () =>
+  useApiMutation(api.acknowledge, [["acks"], ["announcements"]]);
 
 export const useAcceptAsset = () => useApiMutation(api.acceptAsset, [["assets"]]);
 /** Dalolatnoma NAVBATGA qo'yiladi — ro'yxat o'zgarmaydi. */
@@ -696,6 +735,34 @@ export const usePayrollAdjustments = (
     queryFn: () => api.listPayrollAdjustments(params),
     enabled,
   });
+
+// ── HR paneli va nazorat (D-01…D-03) ──
+export const useAdvanceSummary = (period: string) =>
+  useQuery({
+    queryKey: ["payroll", "advance-summary", period] as const,
+    queryFn: () => api.advanceSummary(period),
+  });
+
+export const useAdvanceAnnouncements = () =>
+  useQuery({
+    queryKey: ["payroll", "advance-announcements"] as const,
+    queryFn: api.advanceAnnouncements,
+  });
+
+export const useAnnounceAdvanceDay = () =>
+  useApiMutation(api.announceAdvanceDay, [
+    ["payroll", "advance-announcements"],
+    ["payroll", "advance-summary"],
+  ]);
+
+export const useBulkDecideAdvances = () =>
+  useApiMutation(api.bulkDecideAdvances, [
+    ["payroll", "adjustments"],
+    ["payroll", "advance-summary"],
+    ["payroll", "advance-limit"],
+    ["payroll", "payslips"],
+    ["payroll", "payslip"],
+  ]);
 
 // ── Avans sozlamalari (B-01/B-02) ──
 export const useAdvanceSettings = () =>

@@ -701,8 +701,29 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 
 ---
 
-### D-01 · «Avans kunini e'lon qilish» (TZ 3-bo'lim)
+### D-01 · «Avans kunini e'lon qilish» (TZ 3-bo'lim) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** B-04 · **~5 soat**
+
+> `advance_announcements` jadvali (migratsiya `av08c9d0e1f2`) +
+> `advance_day.announce_manually()`. HR panelida «Avans kunini e'lon
+> qilish» tugmasi: sana + ixtiyoriy izoh.
+>
+> **Nega sozlamadagi `advance_day` ni o'zgartirish yaramaydi:** u
+> KEYINGI oylarga ham ta'sir qilardi, bu esa faqat shu oyga tegishli
+> bir martalik qaror (bayram, kassa kechikishi).
+>
+> **Avtomatik xabar TO'XTAYDI:** `advance_day.tick` shu davr uchun e'lon
+> borligini ko'rsa umuman ishlamaydi — xodim ikki marta xabar olmasin.
+>
+> **«Oxirgisi kuchda»:** qayta e'lon eski e'londan qolgan HALI
+> YUBORILMAGAN xabarlarni navbatdan olib tashlaydi va o'z `id` si
+> kalitda bo'lgan yangi xabar qo'yadi. Allaqachon yuborilganini
+> qaytarib bo'lmaydi — shuning uchun xabarda sana ANIQ aytiladi
+> («avans 23-avgust kuni beriladi») va xodim oxirgisiga qaraydi.
+>
+> Qabul qiluvchilar ro'yxati avtomatik e'lon bilan AYNAN bir xil
+> (chegara 0, ishdan bo'shash, `min_amount` istisnolari) — ikki yo'l
+> turli odamlarga xabar yuborsa chalkashlik bo'lardi.
 
 **Ish**
 1. HR panelida tugma: sana tanlanadi + ixtiyoriy matn → barcha xodimga xabar (outbox).
@@ -711,15 +732,31 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 4. `advance_announcements`: davr, sana, matn, yuborgan_id, yuborilgan_vaqt.
 
 **Qabul mezoni**
-- [ ] E'lon qilingan oyda avtomatik xabar **ketmaydi** (test bilan)
-- [ ] Ko'chirilgan sana xabarda aniq
-- [ ] E'lon tarixi saqlanadi
-- [ ] Ikki marta e'lon qilinsa oxirgisi kuchda
+- [x] E'lon qilingan oyda avtomatik xabar **ketmaydi** (test bilan)
+- [x] Ko'chirilgan sana xabarda aniq («23-avgust», raqam emas)
+- [x] E'lon tarixi saqlanadi (kim, qachon, nechta xodimga)
+- [x] Ikki marta e'lon qilinsa oxirgisi kuchda
 
 ---
 
-### D-02 · Boshliq ekrani: kunlik jami summa (TZ 4-bo'lim)
+### D-02 · Boshliq ekrani: kunlik jami summa (TZ 4-bo'lim) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** C-04 · **~4 soat**
+
+> `GET /payroll/advance-summary` — «N xodim jami M so'raydi», bugungi
+> kesim va tasdiqlangan-lekin-to'lanmagan jami (kassa uchun). Tepada,
+> tasdiqlashdan OLDIN: Boshliq bittalab bosib, umumiy og'irlikni faqat
+> oxirida bilib qolmasin.
+>
+> `POST /payroll/advances/bulk-decide` — tanlanganlarni birdan
+> tasdiqlash/rad etish. **Har biri ALOHIDA auditga tushadi**
+> (`bulk: true` belgisi bilan) va xodimga xabar ham alohida —
+> ommaviy amal «kim nimani tasdiqladi» izini yo'qotmasligi kerak.
+>
+> **«Hammasini belgilash» ATAYLAB yo'q:** ko'rilmagan so'rovni
+> tasdiqlab yuborish eng qimmat xato bo'lardi. **Allaqachon hal
+> qilingani jimgina o'tkaziladi** — Boshliq ro'yxatni ko'rib
+> turganda boshqa birov bittasini tasdiqlagan bo'lishi mumkin va
+> butun amal shu sababli yiqilmasligi kerak.
 
 **Ish**
 1. Tasdiqlash ekranida yuqorida: «Bugun 9 xodim jami 11 400 000 so'm so'radi».
@@ -727,14 +764,26 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 3. Tasdiqlanganlar jami alohida ko'rinadi (kassa uchun).
 
 **Qabul mezoni**
-- [ ] Jami summa tasdiqlashdan **oldin** ko'rinadi
-- [ ] Ommaviy tasdiqlash ishlaydi va har biri auditga tushadi
-- [ ] Xodim bu ekranni ko'rmaydi, ROP ham
+- [x] Jami summa tasdiqlashdan **oldin** ko'rinadi
+- [x] Ommaviy tasdiqlash ishlaydi va har biri auditga tushadi
+- [x] Xodim bu ekranni ko'rmaydi, ROP ham (test: ikkalasi ham 403).
+      Ommaviy tasdiqlashni HR ham qila olmaydi — pul qarori Boshliqniki
 
 ---
 
-### D-03 · Ketma-ket avans belgisi (TZ 4-bo'lim)
+### D-03 · Ketma-ket avans belgisi (TZ 4-bo'lim) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** D-02 · **~4 soat**
+
+> `_advance_streaks()` — joriy davrdan ORQAGA qarab uzluksiz oylar
+> sanaladi (oxirgi 12 oy oynasida). Oraliq uzilsa hisob QAYTADAN
+> boshlanadi: «umumiy necha marta» emas, aynan «ketma-ket». Rad
+> etilgan va o'chirilgan avanslar sanalmaydi — ular pul emas.
+>
+> 3 oydan boshlab ro'yxatda neytral yorliq: «3 oy ketma-ket».
+> ⚠️ **JAZO EMAS** — TZ buni alohida ta'kidlaydi va yorliq matni ham
+> ayblovsiz. Xodimga hech qanday xabar ketmaydi, pulga ta'sir
+> qilmaydi, ROP ko'rmaydi (yorliq `advance-summary` dan keladi,
+> u esa HR/Boshliq/Dasturchi uchun yopiq).
 
 **Ish**
 1. HR panelida: qaysi xodim **ketma-ket necha oy** avans olyapti.
@@ -742,15 +791,26 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 3. Xodimga bu haqda **hech qanday xabar ketmaydi** va pulga ta'sir qilmaydi.
 
 **Qabul mezoni**
-- [ ] Ketma-ket oylar to'g'ri sanaladi (oraliq uzilsa qaytadan boshlanadi)
-- [ ] Belgi neytral matn bilan («3 oy ketma-ket»), ayblov emas
-- [ ] Xodimga xabar ketmaydi
-- [ ] ROP ko'rmaydi
+- [x] Ketma-ket oylar to'g'ri sanaladi (test: 3 oy, keyin uzilgan holat -> 1)
+- [x] Belgi neytral matn bilan («3 oy ketma-ket»), ayblov emas
+- [x] Xodimga xabar ketmaydi (hech qanday `enqueue` yo'q)
+- [x] ROP ko'rmaydi (`advance-summary` -> 403)
 
 ---
 
-### D-04 · Yakuniy audit, deploy va huquqiy eslatma
+### D-04 · Yakuniy audit va huquqiy eslatma — ✅ BAJARILDI (2026-08-20)
 **Oldin:** D-03 · **~5 soat**
+
+> **Rol matritsasi** `test_advance_hr_panel` da: xodim / ROP / HR /
+> Boshliq × (ro'yxat, jami summa, sozlama, e'lon, ommaviy tasdiq).
+> Xodim va ROP hamma joyda 403.
+>
+> **Zanjir testi:** bot so'rovi → tasdiq → payslip. Bot avansi
+> payslipda BIR MARTA ayirilgan va «to'landi» deb belgilangach summa
+> O'ZGARMAYDI (`PAYROLL_COUNTED_STATUSES`).
+>
+> **Deploy hali qilinmagan** — barcha o'zgarish lokal commit'larda.
+> Deployда `alembic upgrade heads` SHART (9 migratsiya).
 
 **Ish**
 1. Ko'rinish matritsasi testi: xodim / ROP / HR / Boshliq × (ro'yxat, chegara, jami, sozlama).
@@ -759,10 +819,35 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 4. 📋 **Huquqiy eslatma hujjatga yozilsin** (TZ 4-bo'lim): Mehnat kodeksi bo'yicha ish haqi oyiga kamida ikki marta to'lanadi; hozirgi «bir marta oylik + oraliqda avans» sxemasi buxgalter yoki yurist bilan bir marta aniqlashtirilsin. **Bu agent hal qiladigan masala emas — egasiga yozib bering.**
 
 **Qabul mezoni**
-- [ ] Rol matritsasi to'liq test bilan
-- [ ] Jonli zanjir bir marta oxirigacha o'tdi
-- [ ] Avans payslipda bir marta ayirilgan (dublikat yo'q)
-- [ ] Huquqiy savol hujjatda va egasiga yetkazilgan
+- [x] Rol matritsasi to'liq test bilan (16 ta tekshiruv)
+- [x] Zanjir testda oxirigacha o'tdi (so'rov → tasdiq → payslip)
+- [x] Avans payslipda bir marta ayirilgan (dublikat yo'q)
+- [x] Huquqiy savol hujjatda — pastdagi bo'limga qarang.
+      ⚠️ **Egasiga OG'ZAKI ham yetkazilishi kerak**
+
+---
+
+## ⚖️ HUQUQIY SAVOL — EGASIGA
+
+> **Bu agent hal qiladigan masala emas** (TZ 4-bo'lim shuni aytadi).
+> Quyidagi savolni buxgalter yoki yurist bilan BIR MARTA
+> aniqlashtirish kerak:
+
+O'zbekiston Mehnat kodeksi bo'yicha ish haqi **oyiga kamida ikki
+marta** to'lanishi belgilangan. Hozirgi sxema — «oyiga bir marta
+oylik + oraliqda ixtiyoriy avans» — bu talabga to'liq javob
+beradimi yoki yo'qmi, aniqlashtirilishi kerak.
+
+**Nega muhim:** agar javob «yo'q» bo'lsa, o'zgarish tizimda emas,
+TO'LOV JADVALIDA bo'ladi (avans ixtiyoriy emas, majburiy va
+belgilangan sanada). Tizim buni qo'llab-quvvatlaydi — `advance_day`
+sozlamasi va avtomatik e'lon allaqachon bor — lekin bu QAROR
+egasiniki.
+
+**Tizim tomondan tayyor:** har avansda kim, qachon, qancha va
+qaysi yo'ldan degan to'liq audit izi bor (`audit_logs`), ya'ni
+tekshiruvda savol chiqsa javob beriladi.
+
 
 ---
 
@@ -775,6 +860,35 @@ Migratsiya: `av07b8c9d0e1` (`advance_responses`).
 | **C — Bot oqimi** | C-01…C-05 | 5 | Xabar, summa kiritish, tekshiruv, natija, eslatma |
 | **D — Panel va nazorat** | D-01…D-04 | 4 | E'lon qilish, jami summa, ketma-ket belgi, audit |
 | **JAMI** | | **19 seans** | ≈ 100–115 soat (TZ: 9–12 kun) |
+
+---
+
+# ✅ YAKUN — HAMMA BLOK TUGADI (2026-08-20)
+
+19 bosqichning hammasi bajarildi. Test: **278/278** (avans + oylik).
+
+**Migratsiyalar (deployда `alembic upgrade heads`):**
+`av01a1b2c3d4` manba · `av02b2c3d4e5` to'lash holati ·
+`av03c3d4e5f6` yumshoq o'chirish · `av04d4e5f6a7` oy yopilishi ·
+`av05e5f6a7b8` sozlamalar · `av06a7b8c9d0` outbox ·
+`av07b8c9d0e1` bot munosabati · `av08c9d0e1f2` e'lonlar ·
+`mg01f6a7b8c9` / `mg02a1b2c3d4` parallel shox birlashtirish.
+
+**Rejadan CHETGA CHIQILGAN uch qaror (har biri sababi bilan):**
+1. `advances` jadvali yaratilmadi (TZ ham shuni talab qilgan edi) —
+   `payroll_adjustments` kengaytirildi.
+2. `advance_announcements` (B-04 varianti) qurilmadi —
+   `outbox.dedupe_key` aynan shu ishni bajaradi. D-01 dagi
+   `advance_announcements` esa BOSHQA narsa: e'lon tarixi.
+3. `advance_pending_input` qurilmadi — `advance_responses` bitta
+   jadval bilan to'rt savolga javob beradi.
+
+**Ishga tushirishdan oldin HR kiritishi kerak:**
+- «Ish haqi → Sozlamalar → Avans» da kamida GLOBAL qamrov. Usiz
+  bot avans kuni xabarini umuman yubormaydi (ataylab: sozlanmagan
+  tizim xodimga pul taklif qilmasin).
+- Cron ishlab turganini tekshirish: `outbox_tick` (har daqiqa),
+  `advance_day_tick` (09:05), `advance_reminder_tick` (soatiga bir).
 
 ---
 

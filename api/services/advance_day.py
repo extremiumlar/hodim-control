@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import delete as _delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.services.advance import limit_for, resolve_advance_settings
@@ -44,6 +44,10 @@ from api.services.outbox import enqueue
 from api.timeutil import today_local
 from db.models import (
     REQUEST_OPEN_STATUSES,
+    AdvanceAnnouncement,
+    AuditLog,
+    Outbox,
+    OutboxStatus,
     AdvanceResponse,
     AdvanceResponseState,
     EmployeeRequest,
@@ -112,6 +116,20 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
     )
     if not users:
         return {"date": on_date.isoformat(), "queued": 0, "reason": "mos xodim yo'q"}
+
+    # ⚠️ D-01: shu davr uchun HR QO'LDA e'lon qilgan bo'lsa, avtomatik
+    # xabar UMUMAN yuborilmaydi — aks holda xodim ikki marta xabar
+    # olardi (qo'lda + avtomatik).
+    qolda = await db.scalar(
+        select(AdvanceAnnouncement.id).where(AdvanceAnnouncement.period == period)
+    )
+    if qolda is not None:
+        return {
+            "date": on_date.isoformat(),
+            "period": period,
+            "queued": 0,
+            "reason": "bu oy uchun qo'lda e'lon qilingan",
+        }
 
     resigning = await _resigning_user_ids(db)
     queued = 0
@@ -187,3 +205,138 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
         "queued": queued,
         "skipped": {k: v for k, v in skipped.items() if v},
     }
+
+
+async def announce_manually(
+    db: AsyncSession,
+    actor: User,
+    advance_date: date,
+    note: str | None = None,
+) -> dict:
+    """HR qo'lda avans kunini e'lon qiladi (D-01).
+
+    Sozlamadagi `advance_day` ga tegilmaydi — u KEYINGI oylarga ham
+    ta'sir qilardi, bu esa faqat shu oyga tegishli bir martalik qaror.
+
+    «IKKI MARTA E'LON QILINSA OXIRGISI KUCHDA»: yangi e'lon eski
+    e'londan qolgan HALI YUBORILMAGAN xabarlarni navbatdan olib
+    tashlaydi. Allaqachon yuborilganini qaytarib bo'lmaydi — shuning
+    uchun yangi xabarda sana aniq aytiladi va xodim oxirgisiga
+    qaraydi.
+
+    Qabul qiluvchilar ro'yxati avtomatik e'lon bilan AYNAN bir xil
+    (chegara 0, ishdan bo'shash, `min_amount` istisnolari) — ikki yo'l
+    turli odamlarga xabar yuborsa chalkashlik bo'lardi."""
+    period = advance_date.strftime("%Y-%m")
+
+    # Eski e'londan qolgan yuborilmagan xabarlarni tozalaymiz.
+    await db.execute(
+        _delete(Outbox).where(
+            Outbox.kind == KIND,
+            Outbox.status == OutboxStatus.pending.value,
+            Outbox.dedupe_key.like(f"{KIND}:{period}:%"),
+        )
+    )
+    await db.flush()
+
+    ann = AdvanceAnnouncement(
+        period=period, advance_date=advance_date, note=(note or "").strip() or None,
+        sent_by=actor.id,
+    )
+    db.add(ann)
+    await db.flush()
+
+    users = list(
+        await db.scalars(
+            select(User).where(
+                User.role.in_(TRACKED_ROLES),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+                User.bot_started.is_(True),
+            )
+        )
+    )
+    resigning = await _resigning_user_ids(db)
+    queued = 0
+    for user in users:
+        settings = await resolve_advance_settings(db, user)
+        if settings is None or user.id in resigning:
+            continue
+        info = await limit_for(db, user, on_date=advance_date, period=period)
+        if info.limit <= 0:
+            continue
+        if settings.min_amount is not None and info.limit < float(settings.min_amount):
+            continue
+
+        row = await enqueue(
+            db,
+            chat_id=user.telegram_id,
+            kind=KIND,
+            text=_manual_text(user.full_name, info.limit, period, advance_date, ann.note),
+            reply_markup=advance_keyboard(period),
+            # E'lon `id` si kalitda: qayta e'lon qilinsa YANGI xabar
+            # ketadi (eskisi yuqorida navbatdan olib tashlangan).
+            dedupe_key=f"{KIND}:{period}:{user.id}:a{ann.id}",
+        )
+        if row is None:
+            continue
+        row.payload = {**row.payload, "limit": info.limit, "period": period,
+                       "user_id": user.id}
+
+        resp = await db.scalar(
+            select(AdvanceResponse).where(
+                AdvanceResponse.user_id == user.id, AdvanceResponse.period == period
+            )
+        )
+        if resp is None:
+            db.add(
+                AdvanceResponse(
+                    user_id=user.id, period=period,
+                    state=AdvanceResponseState.offered.value,
+                    offered_limit=info.limit,
+                )
+            )
+        else:
+            # Qayta e'lon — javob bergan xodim ham yangi sanani ko'rsin,
+            # lekin uning javobi (`declined`/`submitted`) SAQLANADI.
+            resp.offered_limit = info.limit
+            if resp.state == AdvanceResponseState.waiting_input.value:
+                resp.state = AdvanceResponseState.offered.value
+            resp.reminded_at = None
+        queued += 1
+
+    ann.recipients = queued
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_announced",
+            target_user_id=None,
+            before=None,
+            after={"period": period, "advance_date": advance_date.isoformat(),
+                   "note": ann.note, "recipients": queued},
+        )
+    )
+    await db.commit()
+    return {"period": period, "advance_date": advance_date.isoformat(),
+            "recipients": queued, "announcement_id": ann.id}
+
+
+def _manual_text(
+    full_name: str, limit: float, period: str, advance_date: date, note: str | None
+) -> str:
+    """Qo'lda e'lon matni. Sana ANIQ aytiladi (TZ D-01.3): «Avans kuni
+    23-avgustga ko'chirildi» — xodim qachonligini taxmin qilmasin."""
+    summa = f"{int(round(limit)):,}".replace(",", " ")
+    oylar = ("yanvar", "fevral", "mart", "aprel", "may", "iyun",
+             "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr")
+    sana = f"{advance_date.day}-{oylar[advance_date.month - 1]}"
+    qatorlar = [
+        "💵 <b>Avans kuni e'lon qilindi</b>",
+        "",
+        f"{full_name}, avans <b>{sana}</b> kuni beriladi.",
+        f"Sizga <b>{summa} so'm</b>gacha avans olish mumkin.",
+    ]
+    if note:
+        qatorlar += ["", note]
+    qatorlar += ["", f"Bu summa {period} oyligingizdan ayiriladi. Majburiy emas."]
+    return "\n".join(qatorlar)

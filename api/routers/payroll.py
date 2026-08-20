@@ -35,7 +35,12 @@ from api.deps import (
     verify_bot_secret,
 )
 from api.schemas import (
+    AdvanceAnnounceIn,
+    AdvanceAnnouncementOut,
     AdvanceBotCallback,
+    AdvanceBulkDecide,
+    AdvanceDaySummary,
+    AdvanceStreakRow,
     AdvanceBotOut,
     AdvanceBotText,
     AdvanceIssueIn,
@@ -70,6 +75,7 @@ from api.schemas import (
     SalaryRateOut,
     SalaryRateUpdate,
 )
+from api.services.advance_bot import notify_decision as _advance_bot_notify
 from api.services.advance import (
     DEFAULT_PENDING_ON_CLOSE,
     AdvanceLimit,
@@ -96,6 +102,7 @@ from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
 from db.models import (
     PAYROLL_COUNTED_STATUSES,
+    AdvanceAnnouncement,
     AdvanceSettings,
     AuditLog,
     FinePolicy,
@@ -1342,6 +1349,212 @@ async def list_adjustments(
         stmt = stmt.where(PayrollAdjustment.category == category)
     rows = list(await db.scalars(stmt.order_by(PayrollAdjustment.created_at.desc())))
     return [await _adjustment_out(db, a) for a in rows]
+
+
+# ── HR paneli va nazorat (Avans TZ D-01…D-03) ──
+
+# Ketma-ket necha oydan keyin belgi qo'yiladi. ⚠️ JAZO EMAS — TZ buni
+# alohida ta'kidlaydi: bu suhbat uchun signal. Xodimga xabar ketmaydi
+# va pulga ta'sir qilmaydi.
+ADVANCE_STREAK_THRESHOLD = 3
+
+
+@router.post("/advance-announce", response_model=AdvanceAnnouncementOut)
+async def announce_advance_day(
+    payload: AdvanceAnnounceIn,
+    actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> AdvanceAnnouncementOut:
+    """HR qo'lda avans kunini e'lon qiladi (D-01).
+
+    Shu davr uchun e'lon bo'lgach avtomatik xabar UMUMAN yuborilmaydi —
+    xodim ikki marta xabar olmasin."""
+    from api.services.advance_day import announce_manually
+
+    res = await announce_manually(db, actor, payload.advance_date, payload.note)
+    row = await db.get(AdvanceAnnouncement, res["announcement_id"])
+    out = AdvanceAnnouncementOut.model_validate(row)
+    out.sent_by_name = actor.full_name
+    return out
+
+
+@router.get("/advance-announcements", response_model=list[AdvanceAnnouncementOut])
+async def list_advance_announcements(
+    _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> list[AdvanceAnnouncementOut]:
+    """E'lon tarixi — «kim, qachon, qaysi sanaga e'lon qildi»."""
+    rows = list(
+        await db.scalars(
+            select(AdvanceAnnouncement).order_by(AdvanceAnnouncement.sent_at.desc()).limit(50)
+        )
+    )
+    out: list[AdvanceAnnouncementOut] = []
+    for r in rows:
+        item = AdvanceAnnouncementOut.model_validate(r)
+        if r.sent_by:
+            u = await db.get(User, r.sent_by)
+            item.sent_by_name = u.full_name if u else None
+        out.append(item)
+    return out
+
+
+async def _advance_streaks(db: AsyncSession, period: str) -> list[AdvanceStreakRow]:
+    """Ketma-ket avans olayotgan xodimlar (D-03).
+
+    KETMA-KETLIK QOIDASI: joriy davrdan ORQAGA qarab uzluksiz oylar
+    sanaladi. Oraliq uzilsa (bir oy avans olinmagan) hisob QAYTADAN
+    boshlanadi — «umumiy necha marta» emas, aynan «ketma-ket».
+
+    Rad etilgan va o'chirilgan avanslar sanalmaydi: ular pul emas."""
+    # Oxirgi 12 oyni ko'ramiz — undan uzoq ketma-ketlik amalda
+    # uchramaydi va so'rovni og'irlashtiradi.
+    davrlar: list[str] = []
+    y, m = (int(x) for x in period.split("-"))
+    for _ in range(12):
+        davrlar.append(f"{y}-{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+
+    rows = list(
+        await db.scalars(
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.period.in_(davrlar),
+                PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+                PayrollAdjustment.status.in_(PAYROLL_COUNTED_STATUSES),
+                PayrollAdjustment.deleted_at.is_(None),
+            )
+        )
+    )
+    by_user: dict[int, dict[str, float]] = {}
+    for r in rows:
+        by_user.setdefault(r.user_id, {}).setdefault(r.period, 0.0)
+        by_user[r.user_id][r.period] += float(r.amount)
+
+    out: list[AdvanceStreakRow] = []
+    for uid, per_period in by_user.items():
+        streak, total, last = 0, 0.0, ""
+        for p in davrlar:            # joriy davrdan orqaga
+            if p not in per_period:
+                break                # uzildi — sanash to'xtaydi
+            if not last:
+                last = p
+            streak += 1
+            total += per_period[p]
+        if streak == 0:
+            continue
+        u = await db.get(User, uid)
+        out.append(
+            AdvanceStreakRow(
+                user_id=uid,
+                full_name=u.full_name if u else f"#{uid}",
+                months=streak,
+                last_period=last,
+                total=total,
+                flagged=streak >= ADVANCE_STREAK_THRESHOLD,
+            )
+        )
+    out.sort(key=lambda r: (-r.months, -r.total))
+    return out
+
+
+@router.get("/advance-summary", response_model=AdvanceDaySummary)
+async def advance_summary(
+    period: str | None = None,
+    _actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> AdvanceDaySummary:
+    """Boshliq ekranining tepasidagi yig'indi (D-02) + ketma-ket belgi (D-03).
+
+    ROP va xodim bu yerga KIRA OLMAYDI (`_require_manage` — HR/Boshliq/
+    Dasturchi): jami summa boshqaruv ma'lumoti."""
+    period = period or today_local().strftime("%Y-%m")
+    bugun = today_local()
+
+    rows = list(
+        await db.scalars(
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.period == period,
+                PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+                PayrollAdjustment.deleted_at.is_(None),
+            )
+        )
+    )
+    pending = [r for r in rows if r.status == PayrollAdjustmentStatus.pending.value]
+    today_rows = [r for r in pending if r.created_at and r.created_at.date() == bugun]
+
+    return AdvanceDaySummary(
+        period=period,
+        pending_count=len(pending),
+        pending_total=sum(float(r.amount) for r in pending),
+        pending_employees=len({r.user_id for r in pending}),
+        today_count=len(today_rows),
+        today_total=sum(float(r.amount) for r in today_rows),
+        approved_total=sum(
+            float(r.amount)
+            for r in rows
+            if r.status == PayrollAdjustmentStatus.approved.value
+        ),
+        issued_total=sum(
+            float(r.amount) for r in rows if r.status == PayrollAdjustmentStatus.issued.value
+        ),
+        streak_threshold=ADVANCE_STREAK_THRESHOLD,
+        streaks=await _advance_streaks(db, period),
+    )
+
+
+@router.post("/advances/bulk-decide")
+async def bulk_decide_advances(
+    payload: AdvanceBulkDecide,
+    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Bir nechta avansni birdan tasdiqlash/rad etish (D-02).
+
+    HAR BIRI ALOHIDA auditga tushadi — ommaviy amal «kim nimani
+    tasdiqladi» izini yo'qotmasligi kerak. Xodimga xabar ham har biri
+    uchun alohida (outbox orqali).
+
+    Allaqachon qaror qilinganlar JIMGINA o'tkazib yuboriladi va
+    natijada sanaladi: Boshliq ro'yxatni ko'rib turganda boshqa birov
+    bittasini tasdiqlagan bo'lishi mumkin va butun amal shu sababli
+    yiqilmasligi kerak."""
+    decided, skipped = 0, 0
+    for adj_id in payload.ids:
+        adj = await db.get(PayrollAdjustment, adj_id)
+        if adj is None or adj.deleted_at is not None:
+            skipped += 1
+            continue
+        if adj.category != PayrollAdjustmentCategory.advance.value:
+            skipped += 1
+            continue
+        if adj.status != PayrollAdjustmentStatus.pending.value:
+            skipped += 1
+            continue
+
+        before = row_to_dict(adj, exclude=("created_at",))
+        adj.status = (
+            PayrollAdjustmentStatus.approved.value
+            if payload.approve
+            else PayrollAdjustmentStatus.rejected.value
+        )
+        adj.decided_by = actor.id
+        adj.decided_at = datetime.utcnow()
+        adj.decided_note = payload.note
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="advance_approved" if payload.approve else "advance_rejected",
+                target_user_id=adj.user_id,
+                before=before,
+                after={**row_to_dict(adj, exclude=("created_at",)), "bulk": True},
+            )
+        )
+        await _advance_bot_notify(db, adj)
+        decided += 1
+
+    await db.commit()
+    return {"decided": decided, "skipped": skipped, "approved": payload.approve}
 
 
 @router.get("/advances/limit", response_model=AdvanceLimitOut)

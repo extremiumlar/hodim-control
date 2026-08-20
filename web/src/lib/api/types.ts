@@ -1030,6 +1030,43 @@ export interface AdvanceLimit {
   warnings: string[];
 }
 
+/** HR qo'lda e'lon qilgan avans kuni (Avans TZ D-01). */
+export interface AdvanceAnnouncement {
+  id: number;
+  period: string;
+  advance_date: string;
+  note: string | null;
+  sent_by: number | null;
+  sent_by_name: string | null;
+  sent_at: string;
+  recipients: number;
+}
+
+/** Ketma-ket avans belgisi (D-03). ⚠️ JAZO EMAS — suhbat uchun signal. */
+export interface AdvanceStreakRow {
+  user_id: number;
+  full_name: string;
+  months: number;
+  last_period: string;
+  total: number;
+  flagged: boolean;
+}
+
+/** Boshliq ekranining tepasidagi yig'indi (D-02). */
+export interface AdvanceDaySummary {
+  period: string;
+  pending_count: number;
+  pending_total: number;
+  pending_employees: number;
+  today_count: number;
+  today_total: number;
+  /** Tasdiqlangan, hali to'lanmagan — kassa uchun. */
+  approved_total: number;
+  issued_total: number;
+  streak_threshold: number;
+  streaks: AdvanceStreakRow[];
+}
+
 /** Avans sozlamasi — uch darajali qamrov (Avans TZ B-01). */
 export interface AdvanceSettings {
   id: number;
@@ -1572,4 +1609,41 @@ export type AssetHistoryItem = {
   condition_in: string | null;
   accepted_at: string | null;
   note: string | null;
+};
+
+/** Ichki e'lon (TZ 3.12 / S-21). `acknowledged` faqat xodim ko'rinishida
+ *  va faqat muhim e'londa to'ladi. */
+export type AnnouncementItem = {
+  id: number;
+  title: string;
+  body: string;
+  audience: string;
+  scope_ids: (string | number)[] | null;
+  important: boolean;
+  file_id: string | null;
+  file_type: string | null;
+  version: number;
+  author_id: number | null;
+  author_name: string | null;
+  created_at: string;
+  acknowledged: boolean | null;
+};
+
+/** «Tanishdim» band (TZ / S-20). */
+export type AckPending = {
+  id: number;
+  object_type: string;
+  object_type_label: string;
+  object_id: number;
+  version: number;
+  title: string | null;
+  link: string | null;
+  requested_at: string;
+};
+
+export type AckReader = {
+  user_id: number;
+  user_name: string;
+  version: number;
+  acknowledged_at: string | null;
 };

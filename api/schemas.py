@@ -1355,6 +1355,67 @@ class AdvanceIn(BaseModel):
     override_reason: str | None = Field(default=None, max_length=500)
 
 
+class AdvanceAnnounceIn(BaseModel):
+    """HR qo'lda avans kunini e'lon qiladi (D-01)."""
+
+    advance_date: dt.date
+    note: str | None = Field(default=None, max_length=500)
+
+
+class AdvanceAnnouncementOut(BaseModel):
+    id: int
+    period: str
+    advance_date: dt.date
+    note: str | None
+    sent_by: int | None
+    sent_by_name: str | None = None
+    sent_at: datetime
+    recipients: int
+
+    model_config = {"from_attributes": True}
+
+
+class AdvanceBulkDecide(BaseModel):
+    """Bir nechta avansni birdan tasdiqlash/rad etish (D-02).
+
+    `ids` — aynan tanlanganlari. «Hammasi» degan bayroq ATAYLAB yo'q:
+    ko'rilmagan so'rovni tasdiqlab yuborish eng qimmat xato bo'lardi."""
+
+    ids: list[int] = Field(min_length=1, max_length=200)
+    approve: bool
+    note: str | None = Field(default=None, max_length=500)
+
+
+class AdvanceStreakRow(BaseModel):
+    """Ketma-ket avans belgisi (D-03) — ⚠️ JAZO EMAS, suhbat uchun signal."""
+
+    user_id: int
+    full_name: str
+    months: int          # ketma-ket necha oy
+    last_period: str
+    total: float         # shu ketma-ketlikdagi jami summa
+    flagged: bool        # chegaradan oshdimi (default 3 oy)
+
+
+class AdvanceDaySummary(BaseModel):
+    """Boshliq ekranining tepasidagi yig'indi (D-02).
+
+    «Bugun 9 xodim jami 11 400 000 so'm so'radi» — tasdiqlashdan OLDIN
+    ko'rinadi, aks holda Boshliq bittalab bosib, umumiy og'irlikni
+    faqat oxirida bilardi."""
+
+    period: str
+    pending_count: int
+    pending_total: float
+    pending_employees: int
+    today_count: int
+    today_total: float
+    approved_total: float     # tasdiqlangan, hali to'lanmagan (kassa uchun)
+    issued_total: float
+    streak_threshold: int
+    streaks: list[AdvanceStreakRow] = []
+
+
 class AdvanceBotCallback(BaseModel):
     """Bot: tugma bosildi. Shaxs `telegram_id` dan SERVERDA yechiladi —
     mijoz `user_id` yubora olmaydi (boshqa birov nomidan so'ramasin)."""

@@ -10840,6 +10840,229 @@ def test_acknowledgements() -> None:
         conn.close()
 
 
+def test_announcements() -> None:
+    """S-21 (TZ 3.12) — ichki e'lonlar.
+
+    Qabul mezonlari (TZ):
+      • rahbar panelida kim o'qigani/o'qimagani ko'rinadi;
+      • KUNLIK LIMIT ishlaydi;
+      • qamrovga kirmagan xodimga e'lon UMUMAN ko'rinmaydi.
+
+    Qamrov — ko'rinishni bezash emas, FILTR: sotuv bo'limiga aytilgan gap
+    prorabga ko'rinmasligi kerak. Shuning uchun tekshiruv serverda va
+    bitta funksiyada (`visible_to`).
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-21: ICHKI E'LONLAR (qamrov + kunlik limit)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    yaratilgan: list[int] = []
+    try:
+        cur.execute("delete from users where full_name like 'T-Ann%'")
+        cur.execute("delete from announcements where title like 'T-Ann%'")
+        conn.commit()
+
+        pos = cur.execute("select id, name from positions limit 1").fetchone()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999702101,'T-Ann Sotuvchi','employee',"
+            "0,1,?,datetime('now'))", (pos[0] if pos else None,))
+        ids["sotuvchi"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999702102,'T-Ann Boshqa','employee',0,1,datetime('now'))")
+        ids["boshqa"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999702103,'T-Ann Rop','rop',0,1,datetime('now'))")
+        ids["rop"] = cur.lastrowid
+        conn.commit()
+        t_sot = token_for(ids["sotuvchi"], "employee")
+        t_bos = token_for(ids["boshqa"], "employee")
+        t_rop = token_for(ids["rop"], "rop")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # Chegara testga yetarli bo'lsin
+            c.put("/announcements/config", headers=auth(mgr_t), json={"daily_limit": 4})
+
+            # ── QAMROV: LAVOZIM bo'yicha ──
+            if pos:
+                r = c.post("/announcements", headers=auth(mgr_t), json={
+                    "title": "T-Ann Lavozimga", "body": "Faqat shu lavozimga",
+                    "audience": "positions", "scope_ids": [pos[0]], "important": False})
+                check("S-21: lavozim qamrovi bilan e'lon -> 201",
+                      r.status_code == 201, "kod=" + str(r.status_code) + " " + r.text[:120])
+                if r.status_code == 201:
+                    yaratilgan.append(r.json()["id"])
+
+                r = c.get("/announcements/me", headers=auth(t_sot))
+                check("S-21: qamrovdagi xodim e'lonni KO'RADI",
+                      r.status_code == 200
+                      and any(a["title"] == "T-Ann Lavozimga" for a in r.json()),
+                      "=" + str([a["title"] for a in r.json()]))
+                r = c.get("/announcements/me", headers=auth(t_bos))
+                check("S-21: qamrovdan TASHQARIDAGI xodimga UMUMAN ko'rinmaydi",
+                      r.status_code == 200
+                      and not any(a["title"] == "T-Ann Lavozimga" for a in r.json()),
+                      "=" + str([a["title"] for a in r.json()]))
+
+            # ── QAMROV: ROL bo'yicha ──
+            r = c.post("/announcements", headers=auth(mgr_t), json={
+                "title": "T-Ann Roplarga", "body": "Faqat ROP larga",
+                "audience": "roles", "scope_ids": ["rop"], "important": False})
+            if r.status_code == 201:
+                yaratilgan.append(r.json()["id"])
+            r = c.get("/announcements/me", headers=auth(t_rop))
+            check("S-21: rol qamrovi ishladi (ROP ko'radi)",
+                  r.status_code == 200
+                  and any(a["title"] == "T-Ann Roplarga" for a in r.json()),
+                  "=" + str([a["title"] for a in r.json()]))
+            r = c.get("/announcements/me", headers=auth(t_sot))
+            check("S-21: boshqa roldagi xodimga ko'rinmaydi",
+                  r.status_code == 200
+                  and not any(a["title"] == "T-Ann Roplarga" for a in r.json()),
+                  "=" + str([a["title"] for a in r.json()]))
+
+            # ── BO'SH QAMROV rad etiladi ──
+            r = c.post("/announcements", headers=auth(mgr_t), json={
+                "title": "T-Ann Bosh", "body": "Hech kimga", "audience": "roles",
+                "scope_ids": [], "important": False})
+            check("S-21: bo'sh qamrov ro'yxati -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            r = c.post("/announcements", headers=auth(mgr_t), json={
+                "title": "T-Ann Yolgon", "body": "matn", "audience": "roles",
+                "scope_ids": ["yolgonrol"], "important": False})
+            check("S-21: noma'lum rol -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ── MUHIM e'lon -> «Tanishdim» so'raladi ──
+            r = c.post("/announcements", headers=auth(mgr_t), json={
+                "title": "T-Ann Muhim", "body": "Bu muhim e'lon",
+                "audience": "all", "scope_ids": None, "important": True})
+            check("S-21: muhim e'lon yuborildi va tanishuv so'raldi",
+                  r.status_code == 201 and r.json().get("ack_requested") is True
+                  and r.json().get("audience_size", 0) > 0,
+                  "kod=" + str(r.status_code) + " " + r.text[:130])
+            muhim_id = r.json().get("id") if r.status_code == 201 else None
+            if muhim_id:
+                yaratilgan.append(muhim_id)
+
+            r = c.get("/announcements/me", headers=auth(t_sot))
+            muhim = [a for a in r.json() if a["id"] == muhim_id]
+            check("S-21: xodimda «tanishmagan» belgisi turibdi",
+                  len(muhim) == 1 and muhim[0]["acknowledged"] is False,
+                  "=" + str(muhim))
+
+            r = c.post("/acks/me/ack", headers=auth(t_sot), json={
+                "object_type": "announcement", "object_id": muhim_id, "version": 1})
+            check("S-21: xodim tanishdi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            r = c.get("/announcements/me", headers=auth(t_sot))
+            muhim = [a for a in r.json() if a["id"] == muhim_id]
+            check("S-21: belgi «tanishgan» ga o'zgardi",
+                  muhim and muhim[0]["acknowledged"] is True, "=" + str(muhim))
+
+            # ── KIM O'QIGAN (rahbar) ──
+            r = c.get(f"/acks/object/announcement/{muhim_id}", headers=auth(mgr_t))
+            oquvchilar = r.json() if r.status_code == 200 else []
+            oqigan = [x for x in oquvchilar if x["acknowledged_at"]]
+            check("S-21: rahbar kim o'qiganini ko'radi",
+                  len(oquvchilar) > 1 and len(oqigan) == 1,
+                  f"jami={len(oquvchilar)}, o'qigan={len(oqigan)}")
+            check("S-21: O'QIMAGANLAR TEPADA",
+                  bool(oquvchilar) and oquvchilar[0]["acknowledged_at"] is None,
+                  "=" + str([bool(x["acknowledged_at"]) for x in oquvchilar[:3]]))
+
+            # ── ⚠️ KUNLIK LIMIT ──
+            r = c.get("/announcements/quota", headers=auth(mgr_t))
+            qolgan = r.json().get("left", 0) if r.status_code == 200 else 0
+            check("S-21: kvota hisoblanmoqda", r.status_code == 200
+                  and r.json().get("daily_limit") == 4, "=" + r.text[:100])
+
+            for n in range(qolgan):
+                rr = c.post("/announcements", headers=auth(mgr_t), json={
+                    "title": f"T-Ann To'ldirish{n}", "body": "to'ldirish matni",
+                    "audience": "all", "scope_ids": None, "important": False})
+                if rr.status_code == 201:
+                    yaratilgan.append(rr.json()["id"])
+            r = c.post("/announcements", headers=auth(mgr_t), json={
+                "title": "T-Ann Ortiqcha", "body": "ortiqcha matn", "audience": "all",
+                "scope_ids": None, "important": False})
+            check("S-21: chegara to'lgach -> 429", r.status_code == 429,
+                  "kod=" + str(r.status_code) + " " + r.text[:130])
+            check("S-21: xato xabari NIMA QILISHNI aytadi",
+                  r.status_code == 429 and "Ertaga" in r.text, r.text[:150])
+            yaratildimi = cur.execute(
+                "select count(*) from announcements where title='T-Ann Ortiqcha'"
+            ).fetchone()[0]
+            check("S-21: chegaradan oshgan e'lon YARATILMADI", yaratildimi == 0,
+                  "=" + str(yaratildimi))
+
+            # ── O'CHIRILGAN e'lon ham limitga kiradi (chetlab o'tishga qarshi) ──
+            #  ⚠️ MUHIM e'lonni o'chirmaymiz — u keyingi (versiya) tekshiruvida
+            #  kerak. O'chirish uchun to'ldirish e'lonlaridan birini olamiz.
+            ochiriladigan = cur.execute(
+                "select id from announcements where title like 'T-Ann To%' limit 1"
+            ).fetchone()
+            if ochiriladigan:
+                c.delete(f"/announcements/{ochiriladigan[0]}", headers=auth(mgr_t))
+                r = c.post("/announcements", headers=auth(mgr_t), json={
+                    "title": "T-Ann Chetlab", "body": "chetlab matn", "audience": "all",
+                    "scope_ids": None, "important": False})
+                check("S-21: o'chirib limitni chetlab bo'lmaydi -> 429",
+                      r.status_code == 429, "kod=" + str(r.status_code))
+
+            # ── VERSIYA: matn tahrirlansa qayta tanishish ──
+            if muhim_id:
+                r = c.put(f"/announcements/{muhim_id}", headers=auth(mgr_t), json={
+                    "title": "T-Ann Muhim", "body": "MATN O'ZGARDI",
+                    "audience": "all", "scope_ids": None, "important": True})
+                check("S-21: tahrirlangach versiya oshdi va qayta so'raldi",
+                      r.status_code == 200 and r.json().get("version") == 2
+                      and r.json().get("reacked") is True, "=" + r.text[:120])
+                r = c.get("/announcements/me", headers=auth(t_sot))
+                muhim = [a for a in r.json() if a["id"] == muhim_id]
+                check("S-21: eski tanishuv O'TMADI — qayta so'ralyapti",
+                      muhim and muhim[0]["acknowledged"] is False
+                      and muhim[0]["version"] == 2, "=" + str(muhim))
+
+            # ── RUXSAT ──
+            r = c.post("/announcements", headers=auth(t_sot), json={
+                "title": "T-Ann Xodim", "body": "xodim matni", "audience": "all",
+                "scope_ids": None, "important": False})
+            check("S-21: oddiy xodim e'lon yoza olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.put("/announcements/config", headers=auth(t_rop),
+                      json={"daily_limit": 50})
+            check("S-21: ROP chegarani o'zgartira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-21 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from acknowledgements where object_type='announcement'"
+                        " and object_id in (select id from announcements"
+                        " where title like 'T-Ann%')")
+            cur.execute("delete from announcements where title like 'T-Ann%'")
+            cur.execute("delete from users where full_name like 'T-Ann%'")
+            cur.execute("update announcement_config set daily_limit=3 where id=1")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -11014,6 +11237,11 @@ def main() -> None:
         print("S-20 tanishtirish testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_announcements()
+    except Exception:
+        print("S-21 elonlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         test_payroll_api()
     except Exception:
         print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
@@ -11182,6 +11410,11 @@ def main() -> None:
         test_advance_bot_flow()
     except Exception:
         print("Avans bot oqimi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_advance_hr_panel()
+    except Exception:
+        print("Avans HR paneli testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         cleanup_orphans()
@@ -14035,6 +14268,393 @@ def test_advance_bot_flow() -> None:
         check("muddat testi", False, traceback.format_exc(limit=2).strip())
 
     cleanup_bot()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_hr_panel() -> None:
+    """HR paneli, nazorat va yakuniy audit (Avans TZ D-01…D-04).
+
+    D-01  1. Qo'lda e'lon: xabar ketadi, sana ANIQ ko'rsatiladi
+          2. ⭐ E'lon qilingan oyda AVTOMATIK xabar KETMAYDI
+          3. Ikki marta e'lon qilinsa oxirgisi kuchda (eski navbatdan olinadi)
+          4. E'lon tarixi saqlanadi (kim, qachon, nechta)
+    D-02  5. Jami summa tasdiqlashdan OLDIN ko'rinadi
+          6. Ommaviy tasdiqlash ishlaydi, HAR BIRI auditga tushadi
+          7. Allaqachon hal qilingani jimgina o'tkaziladi (butun amal yiqilmaydi)
+    D-03  8. Ketma-ket oylar to'g'ri sanaladi
+          9. ⭐ Oraliq uzilsa hisob QAYTADAN boshlanadi
+         10. Belgi neytral (3 oydan boshlab `flagged`)
+    D-04 11. ⭐ ROL MATRITSASI: xodim va ROP ko'ra olmaydi
+         12. ⭐ PAYSLIP: bot avansi BIR MARTA ayirilgan (dublikat yo'q)
+    """
+    print("\n=== AVANS: HR paneli va nazorat (D-01…D-04) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import date as _dt_date, datetime as _dt_datetime
+
+    from api.routers import payroll as pay_router
+    from api.services import advance_bot as ab
+    from api.services import advance_day as ad
+    from api.services.payroll import build_payslip
+    from db.base import async_session
+    from db.models import (
+        AdvanceAnnouncement as _Ann,
+        AdvanceResponse as _Resp,
+        AdvanceSettings as _AdvSet,
+        Attendance as _Att,
+        AuditLog as _Audit,
+        Outbox as _Ob,
+        PayBasis,
+        PayrollAdjustment as _Adj,
+        PayrollAdjustmentSource as _Src,
+        PayrollAdjustmentStatus as _AStatus,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import delete as _del, select as _sel, update as _upd
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Hr-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "advance_responses"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from outbox where kind like 'advance%'")
+    cur.execute("delete from advance_announcements")
+    TG = 999609301
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (?, 'T-Hr-Emp','employee',1,1,datetime('now'))", (TG,))
+    emp_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999609302, 'T-Hr-Rop','rop',1,1,datetime('now'))")
+    rop_uid = cur.lastrowid
+    conn.commit()
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+    UIDS = [emp_uid, rop_uid]
+    had_global = conn.execute(
+        "select count(*) from advance_settings where scope='global'").fetchone()[0]
+
+    def cleanup_hr():
+        try:
+            c2 = db()
+            qm = ",".join("?" * len(UIDS))
+            # Tartib MUHIM: `advance_responses` `payroll_adjustments` ga
+            # FK bilan bog'langan, shuning uchun u BIRINCHI o'chiriladi.
+            for tbl in ("advance_responses", "payroll_adjustments", "salary_rates",
+                        "attendance", "work_schedule_weekly"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", UIDS)
+            pslips = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", UIDS).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            c2.execute(f"delete from payslips where user_id in ({qm})", UIDS)
+            c2.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", UIDS)
+            if not had_global:
+                c2.execute("delete from advance_settings where scope='global'")
+            c2.execute("delete from outbox where kind like 'advance%'")
+            c2.execute("delete from advance_announcements")
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm})", UIDS)
+            c2.execute("delete from audit_logs where action='advance_announced'")
+            c2.execute(f"delete from users where id in ({qm})", UIDS)
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  D blok tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    boss_row = conn.execute(
+        "select id, role from users where role in ('boss','dasturchi') and is_active=1 limit 1"
+    ).fetchone()
+    hr_row = conn.execute(
+        "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+    if not boss_row or not hr_row:
+        check("D blok testi uchun HR va Boshliq topildi", False)
+        cleanup_hr()
+        return
+    boss_t = token_for(boss_row[0], boss_row[1])
+    hr_t = token_for(hr_row[0], "hr")
+    emp_t = token_for(emp_uid, "employee")
+    rop_t = token_for(rop_uid, "rop")
+
+    async def _seed():
+        async with async_session() as s:
+            existing = await s.scalar(_sel(_AdvSet).where(_AdvSet.scope == "global"))
+            if existing is None:
+                s.add(_AdvSet(scope="global", scope_id=None, advance_day=1,
+                              coefficient=0.5, cap_percent=50, is_active=True))
+            else:
+                existing.advance_day = 1
+                existing.min_amount = None
+            for uid in UIDS:
+                for wd in range(5):
+                    s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=True,
+                                             start_time="09:00", end_time="18:00"))
+                for wd in (5, 6):
+                    s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=False))
+                s.add(SalaryRate(user_id=uid, pay_basis=PayBasis.monthly.value,
+                                 amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                                 changed_by=uid))
+                for dd in range(1, max(BUGUN.day, 2)):
+                    day = BUGUN.replace(day=dd)
+                    if day.weekday() >= 5:
+                        continue
+                    s.add(_Att(user_id=uid, date=day, status="present",
+                               check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                               check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                               late_minutes=0, worked_minutes=540))
+            await s.commit()
+
+    try:
+        _asyncio.run(_seed())
+    except Exception:
+        check("D blok sozlash", False, traceback.format_exc(limit=3).strip())
+        cleanup_hr()
+        return
+
+    # ── D-01 ──
+    async def _announce(sana, izoh=None):
+        async with async_session() as s:
+            hr = await s.get(_User, hr_row[0])
+            res = await ad.announce_manually(s, hr, sana, izoh)
+            msgs = list(await s.scalars(
+                _sel(_Ob).where(_Ob.kind == ad.KIND, _Ob.chat_id == TG)))
+            return res, msgs
+
+    try:
+        sana1 = BUGUN.replace(day=min(BUGUN.day, 20))
+        res, msgs = _asyncio.run(_announce(sana1, "Bayram sababli ko'chirildi"))
+        check("qo'lda e'lon xabari navbatga tushdi",
+              res["recipients"] >= 1 and len(msgs) == 1, f"{res}, xabarlar={len(msgs)}")
+        if msgs:
+            matn = msgs[0].payload.get("text", "")
+            oylar = ("yanvar", "fevral", "mart", "aprel", "may", "iyun",
+                     "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr")
+            kutilgan = f"{sana1.day}-{oylar[sana1.month - 1]}"
+            check("xabarda avans SANASI aniq ko'rsatiladi",
+                  kutilgan in matn, f"«{kutilgan}» kutilgan edi: {matn[:160]}")
+            check("HR izohi xabarga qo'shildi",
+                  "Bayram sababli" in matn, matn[:200])
+    except Exception:
+        check("D-01 e'lon testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── D-01: avtomatik xabar TO'XTAYDI ──
+    async def _auto():
+        async with async_session() as s:
+            return await ad.tick(s, on_date=BUGUN)
+
+    try:
+        r = _asyncio.run(_auto())
+        check("⭐ e'lon qilingan oyda AVTOMATIK xabar ketmaydi",
+              r["queued"] == 0 and "qo'lda e'lon" in str(r.get("reason", "")), str(r))
+    except Exception:
+        check("avtomatik to'xtatish testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── D-01: qayta e'lon ──
+    try:
+        sana2 = BUGUN.replace(day=min(BUGUN.day + 3, 28)) if BUGUN.day + 3 <= 28 else sana1
+        res2, msgs2 = _asyncio.run(_announce(sana2, None))
+        check("qayta e'lon: eski YUBORILMAGAN xabar navbatdan olindi",
+              len(msgs2) == 1, f"navbatda {len(msgs2)} xabar (1 bo'lishi kerak)")
+    except Exception:
+        check("qayta e'lon testi", False, traceback.format_exc(limit=2).strip())
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.get(f"{API_BASE}/payroll/advance-announcements", headers=auth(hr_t))
+            check("e'lon tarixi saqlanadi", r.status_code == 200 and len(r.json()) == 2,
+                  f"kod={r.status_code}, ={len(r.json()) if r.status_code == 200 else '?'}")
+            if r.status_code == 200 and r.json():
+                check("tarixda kim e'lon qilgani ko'rinadi",
+                      bool(r.json()[0].get("sent_by_name")), str(r.json()[0])[:160])
+    except Exception:
+        check("e'lon tarixi testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── D-04: ROL MATRITSASI ──
+    try:
+        with httpx.Client(timeout=20) as client:
+            for nom, tok, kutilgan in (
+                ("xodim", emp_t, 403), ("ROP", rop_t, 403),
+                ("HR", hr_t, 200), ("Boshliq", boss_t, 200),
+            ):
+                r = client.get(f"{API_BASE}/payroll/advance-summary?period={PERIOD}",
+                               headers=auth(tok))
+                check(f"⭐ jami summa: {nom} -> {kutilgan}",
+                      r.status_code == kutilgan, f"kod={r.status_code}")
+            for nom, tok, kutilgan in (
+                ("xodim", emp_t, 403), ("ROP", rop_t, 403), ("HR", hr_t, 200),
+            ):
+                r = client.get(f"{API_BASE}/payroll/adjustments?category=advance",
+                               headers=auth(tok))
+                check(f"avans ro'yxati: {nom} -> {kutilgan}",
+                      r.status_code == kutilgan, f"kod={r.status_code}")
+            for nom, tok, kutilgan in (
+                ("xodim", emp_t, 403), ("ROP", rop_t, 403), ("HR", hr_t, 200),
+            ):
+                r = client.get(f"{API_BASE}/payroll/advance-settings", headers=auth(tok))
+                check(f"sozlamalar: {nom} -> {kutilgan}",
+                      r.status_code == kutilgan, f"kod={r.status_code}")
+            # E'lon qilish — HR ha, ROP yo'q
+            r = client.post(f"{API_BASE}/payroll/advance-announce", headers=auth(rop_t),
+                            json={"advance_date": BUGUN.isoformat()})
+            check("e'lon qilish: ROP -> 403", r.status_code == 403, f"kod={r.status_code}")
+            # Ommaviy tasdiqlash — HR ham qila olmaydi (pul qarori Boshliqniki)
+            r = client.post(f"{API_BASE}/payroll/advances/bulk-decide", headers=auth(hr_t),
+                            json={"ids": [1], "approve": True})
+            check("ommaviy tasdiqlash: HR -> 403 (pul qarori Boshliqniki)",
+                  r.status_code == 403, f"kod={r.status_code}")
+    except Exception:
+        check("D-04 rol matritsasi testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── D-02: yig'indi va ommaviy tasdiqlash ──
+    async def _make_requests():
+        async with async_session() as s:
+            emp = await s.get(_User, emp_uid)
+            rop = await s.get(_User, rop_uid)
+            ids = []
+            for u, summa in ((emp, 200_000), (rop, 300_000)):
+                r = await ab.submit(s, u, PERIOD, summa)
+                adj = await s.scalar(
+                    _sel(_Adj).where(_Adj.user_id == u.id, _Adj.source == _Src.bot.value))
+                ids.append(adj.id)
+            return ids
+
+    try:
+        ids = _asyncio.run(_make_requests())
+        with httpx.Client(timeout=20) as client:
+            r = client.get(f"{API_BASE}/payroll/advance-summary?period={PERIOD}",
+                           headers=auth(boss_t))
+            d = r.json()
+            check("jami summa tasdiqlashdan OLDIN ko'rinadi",
+                  d["pending_count"] == 2 and abs(d["pending_total"] - 500_000) < 1
+                  and d["pending_employees"] == 2, str(d)[:200])
+            check("bugungi so'rovlar alohida sanaladi",
+                  d["today_count"] == 2 and abs(d["today_total"] - 500_000) < 1, str(d)[:200])
+    except Exception:
+        check("D-02 yig'indi testi", False, traceback.format_exc(limit=3).strip())
+        cleanup_hr()
+        return
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            # Biri allaqachon hal qilingan bo'lsin
+            r0 = client.post(f"{API_BASE}/payroll/advances/{ids[0]}/decide",
+                             headers=auth(boss_t), json={"approve": True})
+            r = client.post(f"{API_BASE}/payroll/advances/bulk-decide", headers=auth(boss_t),
+                            json={"ids": ids, "approve": True, "note": "Ommaviy tasdiq"})
+            d = r.json()
+            check("ommaviy tasdiqlash ishlaydi",
+                  r.status_code == 200 and d["decided"] == 1, f"kod={r.status_code}, {d}")
+            check("allaqachon hal qilingani JIMGINA o'tkaziladi (amal yiqilmaydi)",
+                  d["skipped"] == 1, str(d))
+    except Exception:
+        check("D-02 ommaviy tasdiq testi", False, traceback.format_exc(limit=3).strip())
+
+    async def _audits():
+        async with async_session() as s:
+            rows = list(await s.scalars(
+                _sel(_Audit).where(_Audit.target_user_id.in_(UIDS))))
+            return [(a.action, (a.after or {}).get("bulk")) for a in rows]
+
+    try:
+        acts = _asyncio.run(_audits())
+        check("ommaviy tasdiqdagi HAR BIRI auditga tushdi",
+              sum(1 for a, b in acts if a == "advance_approved") == 2
+              and any(b for _, b in acts), str(acts)[:200])
+    except Exception:
+        check("audit testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── D-03: ketma-ket ──
+    async def _streaks(davrlar):
+        """Berilgan davrlarga avans qo'yib, ketma-ketlikni hisoblaydi."""
+        async with async_session() as s:
+            # `advance_responses.adjustment_id` FK bo'lgani uchun avval
+            # bog'lanishni uzamiz — aks holda o'chirish FK xatosi beradi.
+            await s.execute(
+                _upd(_Resp).where(_Resp.user_id == emp_uid).values(adjustment_id=None))
+            await s.execute(_del(_Adj).where(_Adj.user_id == emp_uid))
+            for p in davrlar:
+                s.add(_Adj(user_id=emp_uid, period=p, kind="minus", category="advance",
+                           status=_AStatus.approved.value, amount=100_000,
+                           reason="T-Hr ketma-ket", created_by=emp_uid,
+                           source=_Src.hr_manual.value))
+            await s.commit()
+            rows = await pay_router._advance_streaks(s, PERIOD)
+            return [r for r in rows if r.user_id == emp_uid]
+
+    def _oldingi(period, n):
+        y, m = (int(x) for x in period.split("-"))
+        for _ in range(n):
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+        return f"{y}-{m:02d}"
+
+    try:
+        uch = [PERIOD, _oldingi(PERIOD, 1), _oldingi(PERIOD, 2)]
+        rows = _asyncio.run(_streaks(uch))
+        check("ketma-ket 3 oy to'g'ri sanaladi",
+              rows and rows[0].months == 3, str([(r.months, r.total) for r in rows]))
+        check("3 oydan boshlab belgi qo'yiladi", rows and rows[0].flagged is True,
+              str(rows[0].flagged) if rows else "yo'q")
+
+        # Oraliq uzilgan: joriy, [bo'shliq], 3 oy oldin
+        uzilgan = [PERIOD, _oldingi(PERIOD, 2), _oldingi(PERIOD, 3)]
+        rows2 = _asyncio.run(_streaks(uzilgan))
+        check("⭐ oraliq uzilsa hisob QAYTADAN boshlanadi (1 oy)",
+              rows2 and rows2[0].months == 1, str([(r.months,) for r in rows2]))
+        check("bir oylik ketma-ketlikka belgi QO'YILMAYDI",
+              rows2 and rows2[0].flagged is False, str(rows2[0].flagged) if rows2 else "yo'q")
+    except Exception:
+        check("D-03 ketma-ket testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── D-04: payslipda BIR MARTA ──
+    async def _payslip_once():
+        async with async_session() as s:
+            await s.execute(
+                _upd(_Resp).where(_Resp.user_id == emp_uid).values(adjustment_id=None))
+            await s.execute(_del(_Adj).where(_Adj.user_id == emp_uid))
+            await s.commit()
+            emp = await s.get(_User, emp_uid)
+            await ab.submit(s, emp, PERIOD, 250_000)
+            adj = await s.scalar(
+                _sel(_Adj).where(_Adj.user_id == emp_uid, _Adj.source == _Src.bot.value))
+            adj.status = _AStatus.approved.value
+            await s.commit()
+            f1 = (await build_payslip(s, emp, PERIOD))["fields"]
+            # To'langan deb belgilaymiz — summa O'ZGARMASLIGI kerak
+            adj.status = _AStatus.issued.value
+            await s.commit()
+            f2 = (await build_payslip(s, emp, PERIOD))["fields"]
+            n = await s.scalar(
+                _sel(func.count()).select_from(_Adj).where(
+                    _Adj.user_id == emp_uid, _Adj.source == _Src.bot.value))
+            return f1, f2, n
+
+    from sqlalchemy import func
+
+    try:
+        f1, f2, n = _asyncio.run(_payslip_once())
+        check("bot avansi bazada BITTA qator (dublikat yo'q)", n == 1, f"={n}")
+        check("⭐ payslipda bot avansi BIR MARTA ayirilgan (250 000)",
+              abs(f1["adjustments_minus"] - 250_000) < 1, f"={f1['adjustments_minus']}")
+        check("to'langan deb belgilangach summa O'ZGARMAYDI",
+              abs(f2["adjustments_minus"] - 250_000) < 1, f"={f2['adjustments_minus']}")
+    except Exception:
+        check("D-04 payslip testi", False, traceback.format_exc(limit=3).strip())
+
+    cleanup_hr()
     try:
         conn.close()
     except Exception:

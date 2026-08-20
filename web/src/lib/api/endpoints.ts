@@ -1,6 +1,8 @@
 import { apiFetch, apiUpload, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVENT } from "./client";
 import type {
   AdminRecord,
+  AdvanceAnnouncement,
+  AdvanceDaySummary,
   AdvanceLimit,
   AdvanceSettings,
   AdvanceSettingsInput,
@@ -8,6 +10,9 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  AckPending,
+  AckReader,
+  AnnouncementItem,
   AssetHistoryItem,
   AssetItem,
   CertificateItem,
@@ -169,6 +174,39 @@ export const api = {
   assetHistory: (id: number) =>
     apiFetch<AssetHistoryItem[]>(`/assets/${id}/history`),
   myAssets: () => apiFetch<AssetItem[]>("/assets/me"),
+
+  // ── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ──
+  myAnnouncements: () => apiFetch<AnnouncementItem[]>("/announcements/me"),
+  announcements: () => apiFetch<AnnouncementItem[]>("/announcements"),
+  announcementQuota: () =>
+    apiFetch<{ daily_limit: number; sent_today: number; left: number }>(
+      "/announcements/quota"
+    ),
+  addAnnouncement: (body: {
+    title: string;
+    body: string;
+    audience: string;
+    scope_ids: (string | number)[] | null;
+    important: boolean;
+  }) =>
+    apiFetch<{
+      id: number;
+      audience_size: number;
+      ack_requested: boolean;
+      left_today: number;
+    }>("/announcements", { method: "POST", body: JSON.stringify(body) }),
+  deleteAnnouncement: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/announcements/${id}`, { method: "DELETE" }),
+  myAcks: () => apiFetch<AckPending[]>("/acks/me"),
+  acknowledge: (body: { object_type: string; object_id: number; version: number }) =>
+    apiFetch<{ ok: boolean; acknowledged_at: string }>("/acks/me/ack", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  ackReaders: (objectType: string, objectId: number, version?: number) =>
+    apiFetch<AckReader[]>(
+      `/acks/object/${objectType}/${objectId}${version ? `?version=${version}` : ""}`
+    ),
   acceptAsset: (id: number) =>
     apiFetch<{ ok: boolean; accepted_at: string }>(`/assets/${id}/accept`, {
       method: "POST",
@@ -618,6 +656,24 @@ export const api = {
     ).toString();
     return apiFetch<PayrollAdjustment[]>(`/payroll/adjustments${q ? `?${q}` : ""}`);
   },
+  // ── HR paneli va nazorat (D-01…D-03) ──
+  advanceSummary: (period?: string) =>
+    apiFetch<AdvanceDaySummary>(
+      `/payroll/advance-summary${period ? `?period=${period}` : ""}`
+    ),
+  announceAdvanceDay: (body: { advance_date: string; note?: string | null }) =>
+    apiFetch<AdvanceAnnouncement>("/payroll/advance-announce", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  advanceAnnouncements: () =>
+    apiFetch<AdvanceAnnouncement[]>("/payroll/advance-announcements"),
+  bulkDecideAdvances: (body: { ids: number[]; approve: boolean; note?: string | null }) =>
+    apiFetch<{ decided: number; skipped: number; approved: boolean }>(
+      "/payroll/advances/bulk-decide",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+
   // ── Avans sozlamalari (B-01/B-02) ──
   advanceSettings: () => apiFetch<AdvanceSettings[]>("/payroll/advance-settings"),
   upsertAdvanceSettings: (body: AdvanceSettingsInput) =>

@@ -13,7 +13,7 @@
  */
 import { useState, type FormEvent } from "react";
 import { format } from "date-fns";
-import { Banknote, Check, Trash2, X } from "lucide-react";
+import { Banknote, Check, Megaphone, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 
@@ -46,6 +46,9 @@ import { ApiError, type PayrollAdjustment } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import {
   useAdvanceLimit,
+  useAdvanceSummary,
+  useAnnounceAdvanceDay,
+  useBulkDecideAdvances,
   useCreateAdvance,
   useDecideAdvance,
   useDeletePayrollAdjustment,
@@ -60,6 +63,9 @@ export default function AdvanceTab() {
   // Tasdiqlash — FAQAT Boshliq/Dasturchi (backend ham 403 beradi). HR bu
   // tugmalarni umuman ko'rmaydi: ko'rinib turib bosilmaydigan tugma yomon UX.
   const canDecide = !!user && ["boss", "dasturchi"].includes(user.role);
+  // Avans kunini e'lon qilish (D-01) — HR ham qila oladi: bu pul
+  // qarori emas, xabar. Backend ham `_require_manage` bilan yopiq.
+  const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
 
   const [period, setPeriod] = useState(currentMonthKey());
   const usersQuery = useUsers();
@@ -70,6 +76,19 @@ export default function AdvanceTab() {
   const issue = useIssueAdvance();
   // A-05: YUMSHOQ o'chirish — qator bazada qoladi, sabab auditga yoziladi.
   const removeAdj = useDeletePayrollAdjustment();
+  // D-02/D-03: yig'indi va ketma-ket belgi. FAQAT boshqaruv rollari
+  // ko'radi (backend ham `_require_manage` bilan yopiq).
+  const summaryQuery = useAdvanceSummary(period);
+  const summary = summaryQuery.data ?? null;
+  const bulkDecide = useBulkDecideAdvances();
+  const announce = useAnnounceAdvanceDay();
+  // D-02: tanlab tasdiqlash. «Hammasini belgilash» ataylab yo'q —
+  // ko'rilmagan so'rovni tasdiqlab yuborish eng qimmat xato bo'lardi.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  // D-01: qo'lda e'lon qilish oynasi.
+  const [announceOpen, setAnnounceOpen] = useState(false);
+  const [announceDate, setAnnounceDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [announceNote, setAnnounceNote] = useState("");
 
   const [userId, setUserId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
@@ -91,6 +110,12 @@ export default function AdvanceTab() {
   const [deleteReason, setDeleteReason] = useState("");
 
   const rows = listQuery.data ?? [];
+  // Ketma-ket belgi (D-03) — xodim bo'yicha tez qidirish uchun.
+  const streakByUser = new Map(
+    (summary?.streaks ?? []).filter((s) => s.flagged).map((s) => [s.user_id, s])
+  );
+  const selectedRows = rows.filter((r) => selected.has(r.id) && r.status === "pending");
+  const selectedTotal = selectedRows.reduce((sum, r) => sum + r.amount, 0);
   const pendingTotal = rows
     .filter((a) => a.status === "pending")
     .reduce((s, a) => s + a.amount, 0);
@@ -190,6 +215,32 @@ export default function AdvanceTab() {
   };
 
   const columns: ColumnDef<PayrollAdjustment>[] = [
+    // D-02: tanlash. Faqat qaror kutayotgan qatorlarda va faqat
+    // qaror qila oladigan rolda ko'rinadi.
+    ...(canDecide
+      ? [
+          {
+            id: "select",
+            header: "",
+            cell: ({ row }: { row: { original: PayrollAdjustment } }) =>
+              row.original.status === "pending" ? (
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={selected.has(row.original.id)}
+                  onChange={(e) => {
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(row.original.id);
+                      else next.delete(row.original.id);
+                      return next;
+                    });
+                  }}
+                />
+              ) : null,
+          } as ColumnDef<PayrollAdjustment>,
+        ]
+      : []),
     {
       accessorKey: "full_name",
       header: "Xodim",
@@ -206,6 +257,17 @@ export default function AdvanceTab() {
           {row.original.source === "bot" && (
             <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
               bot orqali
+            </span>
+          )}
+          {/* D-03: ketma-ket avans. ⚠️ JAZO EMAS — suhbat uchun signal.
+              Xodimga bu haqda hech qanday xabar ketmaydi va pulga
+              ta'sir qilmaydi. Matn neytral: ayblov emas, faqat fakt. */}
+          {streakByUser.has(row.original.user_id) && (
+            <span
+              className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-800"
+              title="Suhbat uchun signal — jazo emas, pulga ta'sir qilmaydi"
+            >
+              {streakByUser.get(row.original.user_id)!.months} oy ketma-ket
             </span>
           )}
         </div>
@@ -336,7 +398,15 @@ export default function AdvanceTab() {
         title="Avans"
         description="Oy o'rtasida berilgan pul. Boshliq tasdiqlagach oy oxirida oylikdan avtomatik ayiriladi."
       >
-        <MonthPicker value={period} onChange={setPeriod} />
+        <div className="flex items-center gap-2">
+          {canManage && (
+            <Button variant="outline" size="sm" onClick={() => setAnnounceOpen(true)}>
+              <Megaphone className="mr-1 h-4 w-4" />
+              Avans kunini e'lon qilish
+            </Button>
+          )}
+          <MonthPicker value={period} onChange={setPeriod} />
+        </div>
       </PageHeader>
 
       <div className="grid gap-6 md:grid-cols-3">
@@ -446,6 +516,27 @@ export default function AdvanceTab() {
         </Card>
 
         <div className="space-y-3 md:col-span-2">
+          {/* D-02: yig'indi TASDIQLASHDAN OLDIN. Boshliq bittalab bosib,
+              umumiy og'irlikni faqat oxirida bilib qolmasin. */}
+          {summary && summary.pending_count > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <b>{summary.pending_employees}</b> xodim jami{" "}
+              <b>{fmtMoney(summary.pending_total)}</b> so'raydi
+              {summary.today_count > 0 && (
+                <>
+                  {" "}
+                  · bugun: {summary.today_count} ta,{" "}
+                  <b>{fmtMoney(summary.today_total)}</b>
+                </>
+              )}
+              {summary.approved_total > 0 && (
+                <div className="mt-1 text-xs">
+                  Tasdiqlangan, to'lash kutilmoqda (kassa uchun):{" "}
+                  <b>{fmtMoney(summary.approved_total)}</b>
+                </div>
+              )}
+            </div>
+          )}
           {rows.length > 0 && (
             <div className="flex flex-wrap gap-3 text-sm">
               {pendingTotal > 0 && (
@@ -480,6 +571,59 @@ export default function AdvanceTab() {
               </div>
             </div>
           )}
+          {canDecide && selectedRows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+              <div className="text-sm text-sky-900">
+                Tanlandi: <b>{selectedRows.length}</b> ta ·{" "}
+                <b>{fmtMoney(selectedTotal)}</b>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                  Bekor qilish
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={bulkDecide.isPending}
+                  onClick={() =>
+                    bulkDecide.mutate(
+                      { ids: selectedRows.map((r) => r.id), approve: false },
+                      {
+                        onSuccess: (res) => {
+                          toast.success(`${res.decided} ta avans rad etildi`);
+                          setSelected(new Set());
+                        },
+                      }
+                    )
+                  }
+                >
+                  Rad etish
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={bulkDecide.isPending}
+                  onClick={() =>
+                    bulkDecide.mutate(
+                      { ids: selectedRows.map((r) => r.id), approve: true },
+                      {
+                        onSuccess: (res) => {
+                          toast.success(
+                            res.skipped
+                              ? `${res.decided} ta tasdiqlandi, ${res.skipped} tasi allaqachon hal qilingan edi`
+                              : `${res.decided} ta avans tasdiqlandi`
+                          );
+                          setSelected(new Set());
+                        },
+                      }
+                    )
+                  }
+                >
+                  <Check className="mr-1 h-4 w-4" />
+                  Tanlanganlarni tasdiqlash
+                </Button>
+              </div>
+            </div>
+          )}
           <DataTable
             columns={columns}
             data={listQuery.data}
@@ -491,6 +635,61 @@ export default function AdvanceTab() {
           />
         </div>
       </div>
+
+      <AlertDialog open={announceOpen} onOpenChange={setAnnounceOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Avans kunini e'lon qilish</AlertDialogTitle>
+            <AlertDialogDescription>
+              Barcha mos xodimga xabar boradi: avans qaysi kuni berilishi va unga
+              qancha mumkinligi. <b>Shu oyda avtomatik xabar endi yuborilmaydi</b> —
+              xodim ikki marta xabar olmasin. Qayta e'lon qilinsa oxirgisi kuchda
+              bo'ladi.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="ann-date">Avans beriladigan sana</Label>
+              <Input
+                id="ann-date"
+                type="date"
+                value={announceDate}
+                onChange={(e) => setAnnounceDate(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="ann-note">Qo'shimcha izoh (ixtiyoriy)</Label>
+              <Input
+                id="ann-note"
+                value={announceNote}
+                onChange={(e) => setAnnounceNote(e.target.value)}
+                placeholder="Masalan: bayram sababli sana ko'chirildi"
+              />
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={announce.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                announce.mutate(
+                  { advance_date: announceDate, note: announceNote.trim() || null },
+                  {
+                    onSuccess: (res) => {
+                      toast.success(`${res.recipients} xodimga xabar navbatga qo'yildi`);
+                      setAnnounceOpen(false);
+                      setAnnounceNote("");
+                    },
+                  }
+                );
+              }}
+            >
+              E'lon qilish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={!!toDelete}

@@ -2117,6 +2117,37 @@ class AdvanceResponse(Base):
     )
 
 
+class AdvanceAnnouncement(Base):
+    """HR qo'lda e'lon qilgan avans kuni (Avans TZ D-01).
+
+    NEGA KERAK: avans kuni ko'chishi mumkin (bayram, kassa kechikishi).
+    Sozlamadagi `advance_day` ni har safar o'zgartirish noqulay va u
+    KEYINGI oylarga ham ta'sir qilardi — bu esa faqat SHU oyga tegishli
+    bir martalik qaror.
+
+    ⚠️ AVTOMATIK XABARNI TO'XTATADI: shu davr uchun e'lon bo'lsa,
+    `advance_day.tick` o'sha oyda umuman ishlamaydi. Aks holda xodim
+    ikki marta xabar olardi (qo'lda + avtomatik).
+
+    «Ikki marta e'lon qilinsa oxirgisi kuchda»: yangi e'lon eski
+    e'londan qolgan YUBORILMAGAN xabarlarni navbatdan olib tashlaydi
+    va o'z `id` si bilan yangi xabar qo'yadi.
+    """
+
+    __tablename__ = "advance_announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period: Mapped[str] = mapped_column(String(7), index=True)  # "YYYY-MM"
+    # Avans qaysi kuni beriladi (xabarda aynan shu sana ko'rsatiladi).
+    advance_date: Mapped[date] = mapped_column(Date)
+    # HR qo'shimcha izohi — bo'sh bo'lsa standart matn ishlatiladi.
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    sent_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Nechta xodimga ketgani — tarixda ko'rinsin.
+    recipients: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
 class OutboxStatus(str, enum.Enum):
     pending = "pending"
     sending = "sending"   # bir jarayon band qildi (B-03 qo'riqchisi)
@@ -3044,3 +3075,65 @@ class Acknowledgement(Base):
     )
     requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+class AnnouncementAudience(str, enum.Enum):
+    """E'lon kimga boradi (yangi TZ 3.12 / S-21)."""
+
+    all = "all"  # hamma faol xodim
+    roles = "roles"  # tanlangan rollar
+    positions = "positions"  # tanlangan lavozimlar
+    users = "users"  # aniq xodimlar
+
+
+class Announcement(Base):
+    """Ichki e'lon (yangi TZ 3.12 / S-21).
+
+    NEGA KERAK: e'lonlar hozir umumiy Telegram guruhida yo'qoladi —
+    yangi xabarlar ostida qolib ketadi va «men ko'rmadim» degan javob
+    tekshirib bo'lmaydi. Muhim e'londa «Tanishdim» talab qilinadi va
+    kim o'qiganini ko'rish mumkin (`acknowledgements`, S-20).
+
+    ⚠️ QAMROVGA KIRMAGAN XODIMGA E'LON UMUMAN KO'RINMAYDI (TZ qabul
+    mezoni). Ya'ni qamrov — ko'rinishni bezash emas, FILTR: sotuv
+    bo'limiga aytilgan gap prorabga ko'rinmasligi kerak.
+
+    `scope_ids` — `audience` ga qarab rol nomlari, lavozim id lari yoki
+    xodim id lari. Bo'sh ro'yxat `audience="all"` bilan bir xil EMAS:
+    bo'sh ro'yxat hech kimni qamramaydi va e'lon jimgina yo'qolardi,
+    shuning uchun API uni rad etadi."""
+
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(Text)
+    audience: Mapped[str] = mapped_column(String(12), default=AnnouncementAudience.all.value)
+    scope_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #  Muhim e'lon: «Tanishdim» talab qilinadi va u `acknowledgements`
+    #  ga yoziladi. Oddiy e'lon shunchaki ko'rinadi.
+    important: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #  Matn tahrirlansa versiya oshadi va tanishuv QAYTA so'raladi (S-20).
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    #  Yumshoq o'chirish: e'lon tarixi va tanishuv qaydi saqlanishi kerak.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class AnnouncementConfig(Base):
+    """E'lonlar modulining sozlamasi — bitta qator (`id=1`).
+
+    ⚠️ KUNLIK LIMIT (TZ talabi). Cheklovsiz tizim e'lon spamiga
+    aylanadi: kuniga o'nta xabar kelsa xodim ularni o'qimay yopib
+    qo'yadi va MUHIM e'lon ham shu taqdirni ko'radi."""
+
+    __tablename__ = "announcement_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    daily_limit: Mapped[int] = mapped_column(Integer, default=3)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
