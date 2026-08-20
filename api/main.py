@@ -68,6 +68,7 @@ from api.routers import (
     funnel,
     hot_lead,
     acknowledgements,
+    announcements,
     assets,
     certificates,
     deadlines,
@@ -170,6 +171,7 @@ app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
 app.include_router(acknowledgements.router)
+app.include_router(announcements.router)
 app.include_router(assets.router)
 app.include_router(certificates.router)
 app.include_router(deadlines.router)

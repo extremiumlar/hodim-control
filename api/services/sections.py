@@ -156,6 +156,10 @@ _MANAGER: list[Section] = [
             "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("assets", "Mol-mulk", "/assets", "Package", 160, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  E'lonni ROP ham yozadi (o'z jamoasiga xabar) — shuning uchun
+    #  `can_view_hr_docs` emas, `is_manager`.
+    Section("announcements", "E'lonlar", "/announcements", "Megaphone", 161, "manager",
+            "Ma'muriyat", visible=lambda c: c.is_manager),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
@@ -203,6 +207,8 @@ _EMPLOYEE: list[Section] = [
     Section("documents", "Hujjatlarim", "/me/documents", "FolderOpen", 125, "employee",
             bot_button="📁 Hujjatlarim"),
     Section("my-assets", "Menga biriktirilgan", "/me/assets", "Package", 127, "employee"),
+    Section("my-announcements", "E'lonlar", "/me/announcements", "Megaphone", 128,
+            "employee"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
