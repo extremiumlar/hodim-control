@@ -996,6 +996,9 @@ class FinePolicyIn(BaseModel):
     # hot_lead_rules) — lavozim/xodim darajasida hozircha ishlatilmaydi.
     hot_lead_cool_minutes: int | None = Field(default=None, ge=1, le=240)
     hot_lead_fine: float | None = Field(default=None, ge=0)
+    # Avans sababi majburiymi (A-05 / Avans TZ #8). DEFAULT `False` —
+    # bot oqimida xodim tugma bosib avans so'raydi va matn yozmaydi.
+    advance_reason_required: bool = False
     is_active: bool = True
 
     @field_validator("scope")
@@ -1069,6 +1072,7 @@ class FinePolicyOut(BaseModel):
     fine_remainder_mode: str = "drop"
     hot_lead_cool_minutes: int | None = None
     hot_lead_fine: float | None = None
+    advance_reason_required: bool = False
     is_active: bool
     updated_at: datetime
 

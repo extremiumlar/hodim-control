@@ -1025,6 +1025,8 @@ async def _find_duplicate_advance(
             PayrollAdjustment.period == period,
             PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
             PayrollAdjustment.status != PayrollAdjustmentStatus.rejected.value,
+            # O'chirilgan avans dublikat sifatida ogohlantirmasin (A-05).
+            PayrollAdjustment.deleted_at.is_(None),
         )
     )
     tolerance = max(amount, 1.0) * _DUP_AMOUNT_RATIO
@@ -1066,6 +1068,31 @@ def _duplicate_message(dup: PayrollAdjustment) -> str:
         f"{_fmt_money(float(dup.amount))}, {when} ({where}). "
         f"Ikki marta ayirilib ketmasin — takror kiritmoqchi bo'lsangiz tasdiqlang."
     )
+
+
+# Sabab majburiy bo'lganda O'TMAYDIGAN matnlar (A-05 / TZ #8). Bo'sh
+# maydonni majburiy qilishning ma'nosi yo'q, agar «avans» deb yozib
+# o'tib ketish mumkin bo'lsa — qoida faqat bezak bo'lib qolardi.
+_MEANINGLESS_REASONS = {"avans", "avans kerak", "kerak", "pul", "pul kerak", "-", "...", "sabab"}
+_MIN_REASON_LEN = 5
+
+
+async def _check_reason(db: AsyncSession, target: User, reason: str) -> None:
+    """Sabab qoidasi HR panelidan yoqilgan bo'lsa tekshiradi.
+
+    DEFAULT O'CHIQ: C blokdagi bot oqimida xodim tugma bosib avans
+    so'raydi va matn yozmaydi — majburiy qilsak o'sha oqim buzilardi."""
+    policy = await resolve_policy(db, target)
+    if policy is None or not policy.advance_reason_required:
+        return
+    text = (reason or "").strip()
+    if len(text) < _MIN_REASON_LEN or text.lower() in _MEANINGLESS_REASONS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Sabab kamida {_MIN_REASON_LEN} belgidan iborat va MA'NOLI bo'lishi kerak "
+            "(«avans», «kerak» kabi matnlar qabul qilinmaydi). "
+            "Qoidani HR «Ish haqi → Sozlamalar» dan o'zgartirishi mumkin.",
+        )
 
 
 def _limit_message(info: AdvanceLimit, requested: float) -> str:
@@ -1113,7 +1140,10 @@ async def list_adjustments(
     Ilgari bu endpoint umuman YO'Q edi — yozuvni yaratish va o'chirish
     mumkin bo'lgani holda, ro'yxatini ko'rish imkoni bo'lmagan (ya'ni web
     panelda avans oynasini qurib bo'lmasdi)."""
-    stmt = select(PayrollAdjustment)
+    # A-05: o'chirilganlar ro'yxatda ko'rinmaydi. Ular BAZADA qoladi
+    # (audit va «qayerga ketdi?» savoli uchun), lekin kundalik ishda
+    # ko'rinib turishi HR ni chalg'itardi.
+    stmt = select(PayrollAdjustment).where(PayrollAdjustment.deleted_at.is_(None))
     if period:
         stmt = stmt.where(PayrollAdjustment.period == period)
     if user_id:
@@ -1163,6 +1193,8 @@ async def create_advance(
             status.HTTP_400_BAD_REQUEST,
             "Bu davr qulflangan — avans hisobga kirmaydi. Avval Dasturchi davrni ochishi kerak.",
         )
+
+    await _check_reason(db, target, payload.reason)
 
     # A-04: pul berilgan sana KIRITISHDA yozilmaydi. Dublikat qo'riqchisi
     # va chegara uchun mos yozuv sanasi — bugun.
@@ -1411,23 +1443,49 @@ async def issue_advance(
 
 @router.delete("/adjustments/{adjustment_id}")
 async def delete_adjustment(
-    adjustment_id: int, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+    adjustment_id: int,
+    reason: str | None = None,
+    actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """YUMSHOQ o'chirish (A-05) — qator bazada qoladi, `deleted_at` qo'yiladi.
+
+    NEGA butunlay o'chirilmaydi: pul yozuvini yo'qotish «bu avans qayerga
+    ketdi?» degan savolga javobsiz qoldiradi. Qator qolsa, audit va
+    tekshiruv har doim mumkin; barcha o'qish `deleted_at IS NULL` bilan
+    filtrlanadi, ya'ni oylikka ham, ro'yxatga ham kirmaydi.
+
+    HUQUQ: HR faqat HALI QAROR QILINMAGAN (`pending`) avansni o'chira
+    oladi. Tasdiqlangan yoki to'langan pulni bekor qilish — Boshliq/
+    Dasturchi ishi: u yerda pul allaqachon harakatlangan bo'lishi mumkin."""
     adj = await db.get(PayrollAdjustment, adjustment_id)
     if adj is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Yozuv topilmadi")
+    if adj.deleted_at is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu yozuv allaqachon o'chirilgan")
+
+    is_final = adj.status in PAYROLL_COUNTED_STATUSES
+    if is_final and actor.role not in PAYROLL_FINAL_APPROVE_ROLES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Tasdiqlangan yoki to'langan yozuvni faqat Boshliq/Dasturchi o'chira oladi.",
+        )
+
+    before = row_to_dict(adj, exclude=("created_at",))
+    adj.deleted_at = datetime.utcnow()
+    adj.deleted_by = actor.id
+    adj.deleted_reason = (reason or "").strip() or None
     db.add(
         AuditLog(
             actor_id=actor.id,
             action="payroll_adjustment_deleted",
             target_user_id=adj.user_id,
-            before={"period": adj.period, "kind": adj.kind, "amount": float(adj.amount), "reason": adj.reason},
-            after=None,
+            before=before,
+            after=row_to_dict(adj, exclude=("created_at",)),
         )
     )
-    await db.delete(adj)
     await db.commit()
-    return {"deleted": True}
+    return {"deleted": True, "soft": True}
 
 
 # ─────────────────────────────────────────────
@@ -2084,6 +2142,7 @@ async def _latest_payslip_for_user(db: AsyncSession, user: User) -> BotPayslipOu
             # «adjustments_minus - advance» ayirmasi ishlamay, xodim bitta
             # summani ikki marta ko'rardi.
             PayrollAdjustment.status.in_(PAYROLL_COUNTED_STATUSES),
+            PayrollAdjustment.deleted_at.is_(None),
         )
     )
     advance = float(advance_total or 0)

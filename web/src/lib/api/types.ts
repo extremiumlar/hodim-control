@@ -907,6 +907,8 @@ export interface FinePolicy {
   /** Issiq lid: necha daqiqada sovuydi (bo'sh = 10) va sovutgani uchun jarima. */
   hot_lead_cool_minutes: number | null;
   hot_lead_fine: number | null;
+  /** Avans sababi majburiymi (A-05). Default `false`. */
+  advance_reason_required: boolean;
   is_active: boolean;
   updated_at: string;
 }
@@ -928,6 +930,7 @@ export interface FinePolicyInput {
   fine_remainder_mode?: "drop" | "carry_next_month" | "from_salary";
   hot_lead_cool_minutes?: number | null;
   hot_lead_fine?: number | null;
+  advance_reason_required?: boolean;
   is_active?: boolean;
 }
 
@@ -1056,6 +1059,11 @@ export interface PayrollAdjustment {
   issued_by: number | null;
   issued_at: string | null;
   issued_by_name: string | null;
+  /** A-05: yumshoq o'chirish. Ro'yxatda o'chirilganlar KO'RINMAYDI
+   *  (server filtrlaydi) — maydon audit/kelajakdagi ko'rinish uchun. */
+  deleted_at: string | null;
+  deleted_by: number | null;
+  deleted_reason: string | null;
   full_name: string | null;
   created_by_name: string | null;
   decided_by_name: string | null;

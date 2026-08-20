@@ -615,8 +615,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  deletePayrollAdjustment: (adjustmentId: number) =>
-    apiFetch<{ deleted: boolean }>(`/payroll/adjustments/${adjustmentId}`, { method: "DELETE" }),
+  /** YUMSHOQ o'chirish (A-05): qator bazada qoladi, sabab auditga yoziladi. */
+  deletePayrollAdjustment: (adjustmentId: number, reason?: string) =>
+    apiFetch<{ deleted: boolean; soft: boolean }>(
+      `/payroll/adjustments/${adjustmentId}${reason ? `?reason=${encodeURIComponent(reason)}` : ""}`,
+      { method: "DELETE" }
+    ),
   listPayrollPeriods: () => apiFetch<PayrollPeriodSummary[]>("/payroll/periods"),
   payrollPreflight: (period: string) => apiFetch<PayrollPreflight>(`/payroll/${period}/preflight`),
   // Hisoblash NAVBATGA qo'yiladi (§4.3) — javob darhol keladi, natija emas.

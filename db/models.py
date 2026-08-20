@@ -1803,6 +1803,15 @@ class FinePolicy(Base):
     # (HR o'z panelidan o'zgartiradi — 0 bo'lsa xabarga summa yozilmaydi).
     hot_lead_cool_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hot_lead_fine: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # ── Avans sababi majburiymi (Avans TZ A-05 / TZ #8) ──
+    # DEFAULT `False` (so'ralmaydi). Sabab: C blokdagi bot oqimida xodim
+    # tugma bosib avans so'raydi va matn yozmaydi — sababni majburiy
+    # qilsak o'sha oqim buziladi. HR chindan kerak deb hisoblasa
+    # panelidan yoqadi; yoqilganda «avans» kabi ma'nosiz matn ham
+    # o'tmaydi (`_MEANINGLESS_REASONS`).
+    advance_reason_required: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1988,6 +1997,14 @@ class PayrollAdjustment(Base):
     # mumkin, va «qachon berildi» savoliga aynan `issued_on` javob beradi.
     issued_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # YUMSHOQ O'CHIRISH (A-05). Pul yozuvini butunlay yo'qotish — «bu avans
+    # qayerga ketdi?» degan savolga javobsiz qolish. Shuning uchun qator
+    # qoladi, lekin BARCHA o'qish `deleted_at IS NULL` bilan filtrlanishi
+    # SHART — ayniqsa `build_payslip`, aks holda o'chirilgan avans oylikdan
+    # ayirilaverardi.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class PushToken(Base):

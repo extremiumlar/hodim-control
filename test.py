@@ -10697,6 +10697,11 @@ def main() -> None:
         print("Avans to'lash zanjiri testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_soft_delete()
+    except Exception:
+        print("Avans o'chirish testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -11873,6 +11878,264 @@ def test_advance_issue_flow() -> None:
           isinstance(sent, list), f"xabarlar={len(sent)}")
 
     cleanup_iss()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_soft_delete() -> None:
+    """Yumshoq o'chirish, audit va sabab qoidasi (Avans TZ A-05).
+
+    MUAMMO: pul yozuvini butunlay o'chirish «bu avans qayerga ketdi?»
+    degan savolga javobsiz qoldiradi. Endi qator bazada QOLADI, lekin
+    barcha o'qish `deleted_at IS NULL` bilan filtrlanadi.
+
+    Tekshiriladi:
+      1. ⭐ O'chirilgan avans PAYSLIPGA kirmaydi (aks holda o'chirish
+         ko'zga ko'rinadigan, lekin pulga ta'sir qilmaydigan soxta amal)
+      2. Qator bazadan yo'qolmaydi — `deleted_at`/`deleted_by`/sabab bilan
+      3. Ro'yxatda ko'rinmaydi
+      4. Chegarani bo'shatadi (o'chirilgan avans «olingan» sanalmaydi)
+      5. Dublikat qo'riqchisi uni ogohlantirmaydi
+      6. HR tasdiqlangan/to'langan yozuvni o'chira olmaydi -> 403
+      7. Boshliq o'chira oladi, sabab bilan va auditda
+      8. Ikkinchi marta o'chirish -> 400
+      9. Sabab qoidasi: o'chiq bo'lsa ixtiyoriy, yoqilsa ma'nosiz matn 400
+    """
+    print("\n=== AVANS: yumshoq o'chirish va sabab qoidasi (A-05) ===")
+    import asyncio as _asyncio
+    from datetime import date as _dt_date, datetime as _dt_datetime
+
+    from api.routers import payroll as pay_router
+    from api.schemas import AdvanceIn, AdvanceDecision
+    from api.services.advance import limit_for, taken_and_deductions
+    from api.services.payroll import build_payslip
+    from db.base import async_session
+    from db.models import (
+        Attendance as _Att,
+        AuditLog as _Audit,
+        FinePolicy as _Policy,
+        PayBasis,
+        PayrollAdjustment as _Adj,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import select as _sel
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Del-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600941,'T-Del-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+
+    def cleanup_del():
+        try:
+            c2 = db()
+            pslips = [r[0] for r in c2.execute(
+                "select id from payslips where user_id=?", (emp_uid,)).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id=?", (emp_uid,))
+            c2.execute("delete from audit_logs where target_user_id=?", (emp_uid,))
+            c2.execute("delete from users where id=?", (emp_uid,))
+            # Sinov FAQAT xodim darajasidagi qoida yaratadi — global
+            # sozlamaga tegilmaydi. Qolib ketgan bo'lsa o'chiramiz.
+            c2.execute("delete from fine_policies where scope='user' and scope_id=?", (emp_uid,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  A-05 tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    boss_row = conn.execute(
+        "select id from users where role in ('boss','dasturchi') and is_active=1 limit 1").fetchone()
+    hr_row = conn.execute(
+        "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+    if not boss_row or not hr_row:
+        check("A-05 testi uchun HR va Boshliq topildi", False)
+        cleanup_del()
+        return
+
+    async def _flow():
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        out = {}
+        try:
+            async with async_session() as s:
+                for wd in range(5):
+                    s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                             start_time="09:00", end_time="18:00"))
+                for wd in (5, 6):
+                    s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+                s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                                 amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                                 changed_by=emp_uid))
+                for dd in range(1, max(BUGUN.day, 2)):
+                    day = BUGUN.replace(day=dd)
+                    if day.weekday() >= 5:
+                        continue
+                    s.add(_Att(user_id=emp_uid, date=day, status="present",
+                               check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                               check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                               late_minutes=0, worked_minutes=540))
+                await s.commit()
+
+                hr = await s.get(_User, hr_row[0])
+                boss = await s.get(_User, boss_row[0])
+                emp = await s.get(_User, emp_uid)
+
+                # Ikkita avans: biri tasdiqlanadi (o'chiriladi), biri pending
+                a1 = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=300_000,
+                              reason="T-Del tasdiqlanadigan"), hr, s)
+                await pay_router.decide_advance(a1.id, AdvanceDecision(approve=True), boss, s)
+                a2 = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=120_000,
+                              reason="T-Del kutilayotgan", confirm_duplicate=True), hr, s)
+
+                out["before_payslip"] = (await build_payslip(s, emp, PERIOD))["fields"]
+                out["before_limit"] = await limit_for(s, emp, period=PERIOD)
+
+                # 6. HR tasdiqlanganini o'chira olmaydi
+                try:
+                    await pay_router.delete_adjustment(a1.id, "HR urinishi", hr, s)
+                    out["hr_delete"] = "o'tib ketdi"
+                except Exception as e:
+                    out["hr_delete"] = f"{getattr(e, 'status_code', '?')}: {getattr(e, 'detail', e)}"
+
+                # HR pending'ni o'chira OLADI
+                await pay_router.delete_adjustment(a2.id, "T-Del xato kiritilgan", hr, s)
+                # 7. Boshliq tasdiqlanganini o'chira oladi
+                await pay_router.delete_adjustment(a1.id, "T-Del boshliq bekor qildi", boss, s)
+
+                # 8. Ikkinchi marta
+                try:
+                    await pay_router.delete_adjustment(a1.id, "takror", boss, s)
+                    out["twice"] = "o'tib ketdi"
+                except Exception as e:
+                    out["twice"] = getattr(e, "detail", str(e))
+
+                out["after_payslip"] = (await build_payslip(s, emp, PERIOD))["fields"]
+                out["after_limit"] = await limit_for(s, emp, period=PERIOD)
+                out["taken"] = (await taken_and_deductions(s, emp_uid, PERIOD))[0]
+                out["rows_in_db"] = list(await s.scalars(
+                    _sel(_Adj).where(_Adj.user_id == emp_uid)))
+                out["listed"] = await pay_router.list_adjustments(
+                    period=PERIOD, user_id=emp_uid, category="advance", _actor=hr, db=s)
+                out["dup"] = await pay_router._find_duplicate_advance(
+                    s, emp_uid, PERIOD, 300_000, BUGUN)
+                out["audits"] = list(await s.scalars(
+                    _sel(_Audit).where(_Audit.target_user_id == emp_uid)))
+
+                # 9. Sabab qoidasi. GLOBAL qoidaga TEGILMAYDI — sinov
+                #    xodimining O'ZIGA qoida yaratamiz (resolve_policy
+                #    tartibi: xodim > lavozim > global), oxirida o'chiramiz.
+                policy = _Policy(scope="user", scope_id=emp_uid,
+                                 free_late_minutes_per_month=0,
+                                 advance_reason_required=True, is_active=True)
+                s.add(policy)
+                await s.commit()
+                if policy is not None:
+                    try:
+                        await pay_router.create_advance(
+                            AdvanceIn(user_id=emp_uid, period=PERIOD, amount=50_000,
+                                      reason="avans", confirm_duplicate=True), hr, s)
+                        out["meaningless"] = "o'tib ketdi"
+                    except Exception as e:
+                        out["meaningless"] = getattr(e, "detail", str(e))
+                    try:
+                        ok = await pay_router.create_advance(
+                            AdvanceIn(user_id=emp_uid, period=PERIOD, amount=50_000,
+                                      reason="Oilaviy shoshilinch xarajat",
+                                      confirm_duplicate=True), hr, s)
+                        out["meaningful"] = ok.id
+                    except Exception as e:
+                        out["meaningful"] = getattr(e, "detail", str(e))
+                    await s.delete(policy)
+                    await s.commit()
+                return out, sent
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        out, sent = _asyncio.run(_flow())
+    except Exception:
+        check("A-05 zanjiri ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_del()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    before, after = out["before_payslip"], out["after_payslip"]
+    check("o'chirishdan OLDIN payslipda tasdiqlangan avans bor (300 000)",
+          abs(before["adjustments_minus"] - 300_000) < 1,
+          f"minus={before['adjustments_minus']}")
+    check("⭐ o'chirilgan avans PAYSLIPGA kirmaydi (0)",
+          abs(after["adjustments_minus"]) < 1, f"minus={after['adjustments_minus']}")
+
+    rows = out["rows_in_db"]
+    check("qator bazadan YO'QOLMADI (2 ta o'chirilgan qator bor)",
+          len(rows) >= 2 and all(r.deleted_at is not None for r in rows),
+          f"qatorlar={[(r.id, r.deleted_at is not None) for r in rows]}")
+    check("kim o'chirgani va sabab saqlangan",
+          all(r.deleted_by is not None and r.deleted_reason for r in rows),
+          f"={[(r.deleted_by, r.deleted_reason) for r in rows]}")
+    check("ro'yxatda o'chirilganlar KO'RINMAYDI", len(out["listed"]) == 0,
+          f"ro'yxat={len(out['listed'])}")
+    check("chegara bo'shadi (olingan avans 0)", float(out["taken"]) == 0.0,
+          f"taken={out['taken']}")
+    check("o'chirilgandan keyin chegara oshdi",
+          out["after_limit"].limit > out["before_limit"].limit,
+          f"{out['before_limit'].limit} -> {out['after_limit'].limit}")
+    check("dublikat qo'riqchisi o'chirilganini ko'rmaydi", out["dup"] is None)
+
+    check("HR tasdiqlangan avansni o'chira olmaydi -> 403",
+          "403" in str(out["hr_delete"]), str(out["hr_delete"])[:140])
+    check("ikkinchi marta o'chirib bo'lmaydi",
+          out["twice"] != "o'tib ketdi" and "allaqachon" in str(out["twice"]).lower(),
+          str(out["twice"])[:140])
+
+    dels = [a for a in out["audits"] if a.action == "payroll_adjustment_deleted"]
+    check("har o'chirish auditda (2 ta)", len(dels) == 2, f"={len(dels)}")
+    check("auditda summa va sabab bor",
+          all(d.before and d.before.get("amount") for d in dels)
+          and any("boshliq bekor qildi" in str(d.after.get("deleted_reason", "")) for d in dels),
+          str([d.after.get("deleted_reason") for d in dels])[:160])
+
+    check("sabab qoidasi yoqilganda «avans» matni O'TMAYDI",
+          out["meaningless"] != "o'tib ketdi" and "ma'noli" in str(out["meaningless"]).lower(),
+          str(out["meaningless"])[:140])
+    check("sabab qoidasi yoqilganda ma'noli matn o'tadi",
+          isinstance(out["meaningful"], int), str(out["meaningful"])[:140])
+    check("xabarlar patch qilingan yuboruvchiga bordi (jonli emas)",
+          isinstance(sent, list), f"xabarlar={len(sent)}")
+
+    cleanup_del()
     try:
         conn.close()
     except Exception:

@@ -466,7 +466,11 @@ async def _revert(db: AsyncSession, item: EmployeeRequest, user: User) -> dict:
 
     adjustments = list(
         await db.scalars(
-            select(PayrollAdjustment).where(PayrollAdjustment.source_request_id == item.id)
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.source_request_id == item.id,
+                # Allaqachon o'chirilganini qayta hisoblamaymiz (A-05).
+                PayrollAdjustment.deleted_at.is_(None),
+            )
         )
     )
     removed, kept = 0, 0

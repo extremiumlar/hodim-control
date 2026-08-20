@@ -13,7 +13,7 @@
  */
 import { useState, type FormEvent } from "react";
 import { format } from "date-fns";
-import { Banknote, Check, X } from "lucide-react";
+import { Banknote, Check, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 
@@ -48,6 +48,7 @@ import {
   useAdvanceLimit,
   useCreateAdvance,
   useDecideAdvance,
+  useDeletePayrollAdjustment,
   useIssueAdvance,
   usePayrollAdjustments,
   useUsers,
@@ -67,6 +68,8 @@ export default function AdvanceTab() {
   const decide = useDecideAdvance();
   // A-04: «To'lab berildi» — tasdiqdan KEYINGI alohida amal (kassa).
   const issue = useIssueAdvance();
+  // A-05: YUMSHOQ o'chirish — qator bazada qoladi, sabab auditga yoziladi.
+  const removeAdj = useDeletePayrollAdjustment();
 
   const [userId, setUserId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
@@ -83,6 +86,9 @@ export default function AdvanceTab() {
   // bilan. HR uchun bu oyna umuman ochilmaydi (backend ham 403 beradi).
   const [overWarning, setOverWarning] = useState<string | null>(null);
   const [overReason, setOverReason] = useState("");
+  // O'chirish tasdig'i: qaysi yozuv va nima sabab bilan.
+  const [toDelete, setToDelete] = useState<PayrollAdjustment | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
   const rows = listQuery.data ?? [];
   const pendingTotal = rows
@@ -243,10 +249,32 @@ export default function AdvanceTab() {
       id: "actions",
       header: "",
       cell: ({ row }) => {
+        // Tasdiqlangan/to'langan pulni bekor qilish — Boshliq/Dasturchi
+        // ishi (server ham 403 beradi). HR faqat hali qaror qilinmaganini
+        // o'chira oladi.
+        const isFinal = ["approved", "issued"].includes(row.original.status);
+        const canDelete = canDecide || !isFinal;
+        const del = canDelete && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-slate-400 hover:text-rose-600"
+            title="O'chirish"
+            disabled={removeAdj.isPending}
+            onClick={() => {
+              setToDelete(row.original);
+              setDeleteReason("");
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        );
+
         // Tasdiqlangan, lekin to'lanmagan — kassa amali. Uni HR ham
         // bosa oladi (pulni odatda HR/kassa beradi, Boshliq emas).
         if (row.original.status === "approved") {
           return (
+            <div className="flex items-center gap-1">
             <Button
               size="sm"
               variant="outline"
@@ -261,9 +289,11 @@ export default function AdvanceTab() {
               <Banknote className="mr-1 h-4 w-4" />
               To'lab berildi
             </Button>
+              {del}
+            </div>
           );
         }
-        if (!canDecide || row.original.status !== "pending") return null;
+        if (!canDecide || row.original.status !== "pending") return del || null;
         return (
           <div className="flex gap-1">
             <Button
@@ -293,6 +323,7 @@ export default function AdvanceTab() {
             >
               <X className="h-4 w-4" />
             </Button>
+            {del}
           </div>
         );
       },
@@ -460,6 +491,65 @@ export default function AdvanceTab() {
           />
         </div>
       </div>
+
+      <AlertDialog
+        open={!!toDelete}
+        onOpenChange={(o) => {
+          if (!o) {
+            setToDelete(null);
+            setDeleteReason("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Avansni o'chirish</AlertDialogTitle>
+            <AlertDialogDescription>
+              {toDelete && (
+                <>
+                  {toDelete.full_name ?? `#${toDelete.user_id}`} — {fmtMoney(toDelete.amount)}.
+                  {["approved", "issued"].includes(toDelete.status) && (
+                    <b> Bu avans allaqachon tasdiqlangan/to'langan — pul harakatlangan bo'lishi mumkin.</b>
+                  )}{" "}
+                  Yozuv bazadan yo'qolmaydi: u o'chirilgan deb belgilanadi va oylikdan
+                  ayirilmaydi. Kim, qachon va nega o'chirgani auditda qoladi.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="adv-del-reason">O'chirish sababi</Label>
+            <Input
+              id="adv-del-reason"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              placeholder="Masalan: xato kiritilgan, xodim voz kechdi"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Bekor qilish</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-rose-600 hover:bg-rose-700"
+              disabled={removeAdj.isPending}
+              onClick={() => {
+                if (!toDelete) return;
+                removeAdj.mutate(
+                  { adjustmentId: toDelete.id, reason: deleteReason.trim() || undefined },
+                  {
+                    onSuccess: () => {
+                      toast.success("Avans o'chirildi");
+                      setToDelete(null);
+                      setDeleteReason("");
+                    },
+                  }
+                );
+              }}
+            >
+              O'chirish
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={!!overWarning}

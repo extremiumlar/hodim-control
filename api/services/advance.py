@@ -100,6 +100,8 @@ async def taken_and_deductions(
                 PayrollAdjustment.period == period,
                 PayrollAdjustment.kind == PayrollAdjustmentKind.minus.value,
                 PayrollAdjustment.status != PayrollAdjustmentStatus.rejected.value,
+                # O'chirilgan avans chegarani band qilib turmasin (A-05).
+                PayrollAdjustment.deleted_at.is_(None),
             )
         )
     )

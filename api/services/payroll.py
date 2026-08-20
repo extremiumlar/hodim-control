@@ -891,6 +891,10 @@ async def build_payslip(
                 PayrollAdjustment.user_id == user.id,
                 PayrollAdjustment.period == period,
                 PayrollAdjustment.status.in_(PAYROLL_COUNTED_STATUSES),
+                # A-05: yumshoq o'chirilgan avans oylikka KIRMAYDI. Bu
+                # qatorsiz o'chirish ko'zga ko'rinadigan, lekin puliga
+                # ta'sir qilmaydigan «soxta o'chirish» bo'lib qolardi.
+                PayrollAdjustment.deleted_at.is_(None),
             )
         )
     )

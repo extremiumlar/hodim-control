@@ -68,6 +68,7 @@ const emptyPolicyDraft = (): FinePolicyInput => ({
   // Issiq lid (2026-08-06, egasining talabi): boshlang'ich 10 daqiqa / 0 so'm
   hot_lead_cool_minutes: 10,
   hot_lead_fine: 0,
+  advance_reason_required: false,
   is_active: true,
 });
 
@@ -104,6 +105,7 @@ function FinePolicyDialog({
         fine_remainder_mode: initial.fine_remainder_mode ?? "drop",
         hot_lead_cool_minutes: initial.hot_lead_cool_minutes ?? 10,
         hot_lead_fine: initial.hot_lead_fine ?? 0,
+        advance_reason_required: initial.advance_reason_required ?? false,
         is_active: initial.is_active,
       });
     } else {
@@ -345,6 +347,32 @@ function FinePolicyDialog({
               </p>
             </div>
           )}
+
+          {/* Avans sababi (A-05 / Avans TZ #8). Default O'CHIQ — botda
+              xodim tugma bosib avans so'raydi va matn yozmaydi; majburiy
+              qilinsa o'sha oqim buziladi. */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <label className="flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4"
+                checked={!!draft.advance_reason_required}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, advance_reason_required: e.target.checked }))
+                }
+              />
+              <span>
+                <span className="text-sm font-medium text-slate-800">
+                  Avans sababi majburiy bo'lsin
+                </span>
+                <span className="mt-0.5 block text-xs text-slate-600">
+                  Yoqilsa: sabab kamida 5 belgi va ma'noli bo'lishi kerak — «avans»,
+                  «kerak», «pul» kabi matnlar qabul qilinmaydi. O'chiq bo'lsa sabab
+                  ixtiyoriy (botdagi tugmali oqim uchun shu qulay).
+                </span>
+              </span>
+            </label>
+          </div>
 
           <div>
             <Label className="mb-1.5 block">

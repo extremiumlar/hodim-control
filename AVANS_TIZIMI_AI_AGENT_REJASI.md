@@ -258,8 +258,30 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-05 · Yumshoq o'chirish, audit va sabab maydoni (TZ #7, #8)
+### A-05 · Yumshoq o'chirish, audit va sabab maydoni (TZ #7, #8) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-01 · **~4 soat**
+
+> **Bajarilgani:** `payroll_adjustments.deleted_at/deleted_by/deleted_reason`
+> (migratsiya `av03c3d4e5f6`, `SalaryRate` naqshi bilan bir xil). `DELETE`
+> endi yumshoq: qator bazada qoladi, `deleted_at` qo'yiladi. Huquq: HR
+> faqat `pending` ni, tasdiqlangan/to'langanni Boshliq/Dasturchi (HR urinsa
+> 403). Har o'chirish auditda `before`/`after` bilan. Web: o'chirish
+> tugmasi + sabab oynasi (tasdiqlangan yozuvda alohida ogohlantirish).
+> Sabab qoidasi — `fine_policies.advance_reason_required` (HR paneli,
+> DEFAULT O'CHIQ); yoqilganda kamida 5 belgi VA `_MEANINGLESS_REASONS`
+> ro'yxatidagi matnlar («avans», «kerak», «pul», …) o'tmaydi.
+> Test: `test_advance_soft_delete` (15/15).
+>
+> **⭐ `deleted_at IS NULL` OLTI joyda:** `build_payslip` (eng muhim),
+> `advance.taken_and_deductions` (chegara bo'shasin), dublikat qidiruvi,
+> `list_adjustments`, botdagi payslip, ariza qaytarish. Bittasi
+> unutilsa o'chirish «ko'zga ko'rinadigan, lekin pulga ta'sir qilmaydigan»
+> soxta amal bo'lib qolardi — test payslip summasini aniq tekshiradi.
+>
+> **Bajarilmagani:** sabab qoidasi ARIZA yo'lida tekshirilmaydi. Sabab:
+> ariza matnini xodim yozadi, tekshiruv esa TASDIQLASH paytida ishga
+> tushardi — ya'ni xodimning xatosi uchun rahbar bloklanardi. To'g'ri
+> joy — ariza YARATISH oqimi (C blok, bot).
 
 **Ish**
 1. `payroll_adjustments.deleted_at` qo'shiladi. **Barcha o'qish** `deleted_at IS NULL` bilan filtrlanadi — ayniqsa `build_payslip`.
@@ -267,10 +289,12 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 3. TZ #8 «sabab»: bo'sh yoki «avans» kabi ma'nosiz matn qabul qilinmasin. Ikki variant — **sozlamada tanlanadi**: (a) sabab majburiy va kamida N belgi, (b) umuman so'ralmaydi. Default: **(b) so'ralmaydi** (bot oqimida xodim sabab yozmaydi, majburiy qilsak oqim buziladi).
 
 **Qabul mezoni**
-- [ ] O'chirilgan avans payslipga **kirmaydi** (test bilan)
-- [ ] Har o'chirish auditda: kim, qachon, qaysi summa
-- [ ] Sabab qoidasi panelda sozlanadi
-- [ ] Xodim o'chira olmaydi
+- [x] O'chirilgan avans payslipga **kirmaydi** — test summani aniq
+      tekshiradi (300 000 → 0)
+- [x] Har o'chirish auditda: kim, qachon, qaysi summa, qaysi sabab
+- [x] Sabab qoidasi panelda sozlanadi (HR «Ish haqi → Sozlamalar»)
+- [x] Xodim o'chira olmaydi — endpoint `_require_manage`
+      (HR/Boshliq/Dasturchi) ostida, xodimda bu sahifa umuman yo'q
 
 ---
 

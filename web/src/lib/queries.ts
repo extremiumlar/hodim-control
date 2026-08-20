@@ -766,8 +766,16 @@ export const useCreatePayrollAdjustment = () =>
 
 export const useDeletePayrollAdjustment = () =>
   useApiMutation(
-    (adjustmentId: number) => api.deletePayrollAdjustment(adjustmentId),
-    [["payroll", "payslips"], ["payroll", "payslip"]]
+    (vars: { adjustmentId: number; reason?: string }) =>
+      api.deletePayrollAdjustment(vars.adjustmentId, vars.reason),
+    // `adjustments` ham, `advance-limit` ham yangilanadi: o'chirilgan avans
+    // chegarani bo'shatadi.
+    [
+      ["payroll", "adjustments"],
+      ["payroll", "advance-limit"],
+      ["payroll", "payslips"],
+      ["payroll", "payslip"],
+    ]
   );
 
 export const usePayrollPeriods = () =>
