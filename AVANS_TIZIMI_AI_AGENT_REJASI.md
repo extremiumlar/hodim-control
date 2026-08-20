@@ -466,8 +466,29 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 
 ---
 
-### B-04 · Avans kuni cron'i va takroriylik qo'riqchisi
+### B-04 · Avans kuni cron'i va takroriylik qo'riqchisi — ✅ BAJARILDI (2026-08-20)
 **Oldin:** B-03, A-02 · **~5 soat**
+
+> **Bajarilgani:** `api/services/advance_day.py` — `tick(db, on_date)`.
+> `cron_jobs.advance_day_tick` + `scripts/cron_tick.py` (har kuni 09:05)
+> + `POST /payroll/advance-day-tick` (sinov uchun `target_date` bilan).
+> Test: `test_advance_day_tick` (10/10).
+>
+> **`>=` semantikasi va u nega SHART.** Cron o'tkazib yuborilishi mumkin
+> (deploy, server o'chishi). `==` bo'lsa xabar o'sha oy UMUMAN ketmasdi
+> va buni hech kim sezmasdi. Ammo `>=` xabarni oyning qolgan HAR KUNI
+> qayta yuborishga urinadi — shuning uchun takroriylik qo'riqchisi
+> ajralmas juftlik.
+>
+> **Alohida jadval QURILMADI.** Reja `advance_announcements` taklif
+> qilgan edi, lekin B-03 dagi `outbox.dedupe_key` (UNIQUE) aynan shu
+> ishni bajaradi: `advance_day:2026-08:42`. Ikkinchi jadval bir xil
+> haqiqatni ikki joyda saqlab, ular bir-biriga mos kelmay qolish
+> xavfini tug'dirardi.
+>
+> **Chegara xabar bilan birga saqlanadi** (`payload.limit`) — C blokda
+> tugma bosilganda qayta hisoblashsiz ishlatiladi va «xodim qanday summa
+> ko'rgan edi?» savoliga javob qoladi.
 
 **Ish**
 1. `cron_jobs.advance_day_tick`: bugun avans kunimi (`>=` semantikasi — TZ talabi, `==` emas).
@@ -476,10 +497,34 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 4. **Kimga yuborilmaydi** (TZ ro'yxati): ishdan bo'shash arizasi bergan · ta'tilda (chegara 0) · chegarasi `min_amount` dan past · shu oyda chegarani to'liq ishlatgan.
 
 **Qabul mezoni**
-- [ ] Cron kechiksa ham xabar tushadi (`>=`)
-- [ ] Bir oyda ikki marta yuborilmaydi
-- [ ] To'rt istisno ham ishlaydi (har biriga test)
-- [ ] Chegara xabar bilan birga saqlanadi (keyin tekshirishda ishlatiladi)
+- [x] Cron kechiksa ham xabar tushadi (`>=`) — test kun+2 bilan tekshiradi
+- [x] Bir oyda ikki marta yuborilmaydi (`outbox.dedupe_key`)
+- [x] To'rt istisno ham ishlaydi (har biriga test): ishdan bo'shash
+      arizasi · chegara 0 · `min_amount` dan past · sozlama yo'q
+- [x] Chegara xabar bilan birga saqlanadi (`payload.limit`)
+
+---
+
+**✅ B BLOK YAKUNI (2026-08-20 — TUGADI):** B-01…B-04 bajarildi.
+Sozlama poydevori, xabar navbati va avans kuni cron'i tayyor — endi
+C blokdagi bot oqimini qurish mumkin.
+
+Test: 3 ta yangi test funksiyasi (`test_advance_settings`, `test_outbox`,
+`test_advance_day_tick`), avans+oylik jami **211/211**.
+Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
+`mg01f6a7b8c9` (parallel shox bilan birlashtirish).
+
+**C blok agenti uchun eng muhim uch narsa:**
+1. **Xabarni to'g'ridan-to'g'ri yubormang** — `outbox.enqueue()` orqali.
+   So'rov ichida `send_message` chaqirish cPanel'da butun saytni qotiradi
+   (konkurentlik = 1).
+2. **Avans kuni xabari allaqachon navbatga tushadi** (B-04). C-01 da
+   qilinadigan ish — o'sha xabarga TUGMA qo'shish
+   (`outbox.enqueue(..., reply_markup=...)`) va callback'ni ushlash.
+   Chegara `payload.limit` da tayyor turadi.
+3. **Sozlamasiz jim turing.** `resolve_advance_settings()` `None`
+   qaytarsa bot hech narsa taklif qilmasligi kerak — bu qoida B-01 da
+   qo'yilgan va C blokda ham amal qiladi.
 
 ---
 

@@ -10967,6 +10967,11 @@ def main() -> None:
         print("Xabar navbati testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_day_tick()
+    except Exception:
+        print("Avans kuni cron testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -13173,6 +13178,249 @@ def test_outbox() -> None:
           str(out["stale"]))
 
     cleanup_ob()
+
+
+def test_advance_day_tick() -> None:
+    """Avans kuni cron'i va takroriylik qo'riqchisi (Avans TZ B-04).
+
+    Tekshiriladi:
+      1. Avans kunidan OLDIN xabar yo'q
+      2. Avans kunida xabar navbatga tushadi, chegara payload'da saqlanadi
+      3. ⭐ `>=` semantikasi: cron kechiksa (kun+3) ham xabar tushadi
+      4. ⭐ Oyiga BIR marta — takror tick yangi xabar qo'shmaydi
+      5. Istisno: ishdan bo'shash arizasi bergan xodimga yuborilmaydi
+      6. Istisno: chegarasi 0 bo'lganga yuborilmaydi (stavkasiz/ta'tilda)
+      7. Istisno: chegarasi `min_amount` dan past bo'lganga yuborilmaydi
+      8. Istisno: sozlamasi yo'q xodimga yuborilmaydi (tizim jim turadi)
+      9. Xabar matnida ANIQ summa bor (foiz emas)
+    """
+    print("\n=== AVANS KUNI CRON'I (B-04) ===")
+    import asyncio as _asyncio
+    from datetime import date as _dt_date, datetime as _dt_datetime
+
+    from api.services import advance_day as ad
+    from db.base import async_session
+    from db.models import (
+        AdvanceSettings as _AdvSet,
+        Attendance as _Att,
+        EmployeeRequest as _Req,
+        Outbox as _Ob,
+        PayBasis,
+        Position as _Pos,
+        RequestKind as _RK,
+        RequestStatus as _RS,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import delete as _del, select as _sel
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Day-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override", "employee_requests"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from outbox where kind='advance_day'")
+
+    # Sinov xodimlari (hammasi bot ishga tushirgan, telegram_id bilan)
+    UIDS = {}
+    for nom, tg in (("Normal", 999609101), ("Resign", 999609102),
+                    ("NoRate", 999609103), ("Small", 999609104), ("NoSet", 999609105)):
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+            " values (?,?,'employee',1,1,datetime('now'))", (tg, f"T-Day-{nom}"))
+        UIDS[nom] = cur.lastrowid
+    conn.commit()
+    ALL = list(UIDS.values())
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+    # Avans kuni — bugundan 2 kun oldin (ya'ni kun ALLAQACHON kelgan).
+    # Oyning boshida bo'lsak 1-kunni olamiz.
+    AV_KUN = max(1, min(BUGUN.day - 2, 28))
+    # «Kun hali kelmagan» ssenariysi uchun sana
+    OLDIN = BUGUN.replace(day=1) if AV_KUN > 1 else BUGUN
+
+    # Jonli global sozlama bormi — holatni qaytarish uchun
+    had_global = conn.execute(
+        "select count(*) from advance_settings where scope='global'").fetchone()[0]
+
+    def cleanup_day():
+        try:
+            c2 = db()
+            qm = ",".join("?" * len(ALL))
+            for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override",
+                        "employee_requests"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", ALL)
+            pslips = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", ALL).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            c2.execute(f"delete from payslips where user_id in ({qm})", ALL)
+            c2.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", ALL)
+            if not had_global:
+                c2.execute("delete from advance_settings where scope='global'")
+            c2.execute("delete from outbox where kind='advance_day'")
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm})", ALL)
+            c2.execute(f"delete from users where id in ({qm})", ALL)
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  B-04 tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    async def _seed():
+        async with async_session() as s:
+            # Global sozlama: avans kuni AV_KUN, eng kam summa yo'q
+            existing = await s.scalar(_sel(_AdvSet).where(_AdvSet.scope == "global"))
+            if existing is None:
+                s.add(_AdvSet(scope="global", scope_id=None, advance_day=AV_KUN,
+                              coefficient=0.5, cap_percent=50, is_active=True))
+            else:
+                existing.advance_day = AV_KUN
+                existing.min_amount = None
+
+            # NoSet — o'z darajasida O'CHIRILGAN sozlama... bu global'ga
+            # tushardi. Shuning uchun global'ni o'chirish o'rniga, bu
+            # xodimni ALOHIDA tekshiruvda sinaymiz (pastda).
+            for nom in ("Normal", "Resign", "NoRate", "Small", "NoSet"):
+                uid = UIDS[nom]
+                for wd in range(5):
+                    s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=True,
+                                             start_time="09:00", end_time="18:00"))
+                for wd in (5, 6):
+                    s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=False))
+                # NoRate — ATAYLAB stavkasiz (chegara 0 bo'lsin)
+                if nom != "NoRate":
+                    s.add(SalaryRate(user_id=uid, pay_basis=PayBasis.monthly.value,
+                                     amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                                     changed_by=uid))
+                for dd in range(1, max(BUGUN.day, 2)):
+                    day = BUGUN.replace(day=dd)
+                    if day.weekday() >= 5:
+                        continue
+                    s.add(_Att(user_id=uid, date=day, status="present",
+                               check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                               check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                               late_minutes=0, worked_minutes=540))
+
+            # Resign — ochiq ishdan bo'shash arizasi
+            s.add(_Req(user_id=UIDS["Resign"], kind=_RK.resignation.value,
+                       reason="T-Day ishdan bo'shash", status=_RS.pending.value))
+            # Small — o'ziga juda katta `min_amount` (chegara undan past chiqadi)
+            s.add(_AdvSet(scope="user", scope_id=UIDS["Small"], advance_day=AV_KUN,
+                          coefficient=0.5, cap_percent=50,
+                          min_amount=99_000_000, is_active=True))
+            await s.commit()
+
+    try:
+        _asyncio.run(_seed())
+    except Exception:
+        check("B-04 sozlash", False, traceback.format_exc(limit=3).strip())
+        cleanup_day()
+        return
+
+    async def _queued():
+        async with async_session() as s:
+            rows = list(await s.scalars(_sel(_Ob).where(_Ob.kind == ad.KIND)))
+            return {r.chat_id: r for r in rows}
+
+    # ── 1. Kun kelmagan ──
+    if AV_KUN > 1:
+        try:
+            r = _asyncio.run(_run_ad_tick(ad, OLDIN))
+            q = _asyncio.run(_queued())
+            check("avans kunidan OLDIN xabar yo'q", not q, f"navbat={len(q)}, {r}")
+        except Exception:
+            check("kun kelmagan ssenariysi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 2, 5-8. Avans kunida ──
+    try:
+        res = _asyncio.run(_run_ad_tick(ad, BUGUN))
+        q = _asyncio.run(_queued())
+        check("avans kunida xabar navbatga tushdi",
+              999609101 in q, f"navbat={sorted(q)}, {res}")
+        check("ishdan bo'shash arizasi berganga YUBORILMAYDI",
+              999609102 not in q, f"navbat={sorted(q)}")
+        check("chegarasi 0 bo'lganga (stavkasiz) YUBORILMAYDI",
+              999609103 not in q, f"navbat={sorted(q)}")
+        check("eng kam summadan past bo'lganga YUBORILMAYDI",
+              999609104 not in q, f"navbat={sorted(q)}")
+        if 999609101 in q:
+            p = q[999609101].payload
+            check("chegara xabar bilan birga saqlangan",
+                  p.get("limit", 0) > 0 and p.get("period") == PERIOD, str(p)[:160])
+            check("xabar matnida ANIQ summa bor (foiz emas)",
+                  "so'm" in p.get("text", "") and "%" not in p.get("text", ""),
+                  p.get("text", "")[:160])
+    except Exception:
+        check("avans kuni tick'i ishga tushdi", False, traceback.format_exc(limit=3).strip())
+
+    # ── 4. Oyiga bir marta ──
+    try:
+        oldingi = len(_asyncio.run(_queued()))
+        res2 = _asyncio.run(_run_ad_tick(ad, BUGUN))
+        keyingi = len(_asyncio.run(_queued()))
+        check("⭐ takror tick yangi xabar QO'SHMAYDI (oyiga bir marta)",
+              keyingi == oldingi and res2["queued"] == 0,
+              f"{oldingi} -> {keyingi}, {res2}")
+    except Exception:
+        check("takroriylik qo'riqchisi testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 3. `>=` semantikasi: navbatni tozalab, KECHIKKAN kun bilan ──
+    try:
+        conn2 = db()
+        conn2.execute("delete from outbox where kind='advance_day'")
+        conn2.commit()
+        conn2.close()
+        kech = BUGUN  # bugun allaqachon AV_KUN dan katta
+        res3 = _asyncio.run(_run_ad_tick(ad, kech))
+        q3 = _asyncio.run(_queued())
+        check("⭐ cron kechiksa ham xabar tushadi (`>=`, `==` emas)",
+              999609101 in q3 and kech.day > AV_KUN,
+              f"kun={kech.day} > avans_kuni={AV_KUN}, navbat={sorted(q3)}")
+    except Exception:
+        check("`>=` semantikasi testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 8. Sozlamasiz xodim ──
+    try:
+        conn3 = db()
+        conn3.execute("delete from outbox where kind='advance_day'")
+        # Global sozlamani vaqtincha o'chiramiz — hech kimda qoida qolmasin
+        conn3.execute("update advance_settings set is_active=0")
+        conn3.commit()
+        conn3.close()
+        res4 = _asyncio.run(_run_ad_tick(ad, BUGUN))
+        q4 = _asyncio.run(_queued())
+        check("sozlamasiz tizim JIM turadi (birorta xabar yo'q)",
+              not q4 and res4["queued"] == 0, f"navbat={len(q4)}, {res4}")
+        conn3 = db()
+        conn3.execute("update advance_settings set is_active=1")
+        conn3.commit()
+        conn3.close()
+    except Exception:
+        check("sozlamasiz ssenariy testi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_day()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+async def _run_ad_tick(ad_module, on_date):
+    """Yordamchi — har chaqiruvda TOZA sessiya (tick o'zi commit qiladi)."""
+    from db.base import async_session
+
+    async with async_session() as s:
+        return await ad_module.tick(s, on_date=on_date)
 
 if __name__ == "__main__":
     main()

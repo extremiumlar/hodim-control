@@ -2308,6 +2308,19 @@ async def calculate_monthly_cron(
     return result
 
 
+@router.post("/advance-day-tick", dependencies=[Depends(verify_bot_secret)])
+async def advance_day_tick(
+    payload: PayrollDateTickRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Avans kuni e'loni (Avans TZ B-04). `target_date` — sinov uchun.
+
+    Mantiq `api/services/advance_day.py` da; cPanel cron uni o'z
+    jarayonida bajaradi (`scripts/cron_tick.py`)."""
+    from api.services.advance_day import tick as _tick
+
+    return await _tick(db, on_date=payload.target_date)
+
+
 @router.post("/outbox-tick", dependencies=[Depends(verify_bot_secret)])
 async def outbox_tick(db: AsyncSession = Depends(get_db)) -> dict:
     """Chiquvchi xabarlar navbatini yuboradi (Avans TZ B-03).

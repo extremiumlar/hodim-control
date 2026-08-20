@@ -644,6 +644,11 @@ async def main() -> None:
     await _run_misc_inprocess(now, "tabrik videosi", "celebration_tick")
     # Xabar navbati (B-03) — HAR DAQIQA, o'z lock'i bilan.
     await _run_outbox_inprocess(now)
+    # Avans kuni e'loni (B-04) — kuniga bir marta ertalab tekshiriladi.
+    # Ichida `>=` semantikasi: cron kechiksa ham xabar tushadi, takror
+    # yuborishdan `outbox.dedupe_key` qo'riqlaydi.
+    if now.hour == 9 and now.minute == 5:
+        await _run_misc_inprocess(now, "avans kuni", "advance_day_tick")
     if now.minute == 0:
         await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
         await _run_hourly_plan_inprocess(now)

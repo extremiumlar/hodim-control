@@ -293,6 +293,17 @@ async def lead_source_tick(db: AsyncSession) -> dict:
     return await lead_source.enrich_tick(db)
 
 
+async def advance_day_tick(db: AsyncSession) -> dict:
+    """Avans kuni e'loni (Avans TZ B-04).
+
+    Kuniga bir marta chaqirilishi yetadi. Ichida `>=` semantikasi bor —
+    cron kechiksa ham xabar tushadi; takror yuborishdan `outbox`
+    `dedupe_key` qo'riqlaydi (oyiga bir marta)."""
+    from api.services import advance_day
+
+    return await advance_day.tick(db)
+
+
 async def outbox_tick(db: AsyncSession) -> dict:
     """Chiquvchi xabarlar navbatini yuboradi (Avans TZ B-03).
 
