@@ -183,6 +183,23 @@ class PayrollAdjustmentStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     rejected = "rejected"
+    # 2026-08-20 (Avans TZ A-04): tasdiq va PUL BERISH boshqa-boshqa
+    # voqealar. Ilgari ular ajratilmagan edi va HR «berilgan sana» ni
+    # kiritishda yozardi — Boshliq rad etsa pul allaqachon qo'lda bo'lardi.
+    # Endi: `pending` -> `approved` (ruxsat berildi) -> `issued` (kassa
+    # pulni berdi). Oylikka `approved` HAM, `issued` HAM kiradi: ruxsat
+    # berilgan avans hisobga olinishi kerak, aks holda oy oxirida
+    # «kutilmagan» ushlanma chiqardi.
+    issued = "issued"
+
+
+# Oylikka KIRADIGAN avans holatlari. Bitta joyda turishi shart: bu ro'yxat
+# `build_payslip`, botdagi payslip va ariza qaytarish mantiqida bir xil
+# bo'lmasa — xodim bitta summani ikki marta ko'radi yoki umuman ko'rmaydi.
+PAYROLL_COUNTED_STATUSES = (
+    PayrollAdjustmentStatus.approved.value,
+    PayrollAdjustmentStatus.issued.value,
+)
 
 
 class PayrollAdjustmentCategory(str, enum.Enum):
@@ -1948,8 +1965,11 @@ class PayrollAdjustment(Base):
     status: Mapped[str] = mapped_column(
         String(20), default=PayrollAdjustmentStatus.approved.value, server_default="approved"
     )
-    # Avans QO'LGA BERILGAN sana. `created_at` dan farq qiladi: HR pulni
-    # 5-kuni bergan bo'lib, tizimga 12-kuni kiritishi mumkin.
+    # Avans QO'LGA BERILGAN sana. 2026-08-20 dan (A-04) u KIRITISHDA
+    # so'ralmaydi va `NULL` bo'ladi — faqat «To'lab berildi» amali uni
+    # to'ldiradi. Sabab: ilgari HR kiritishda «berilgan sana» yozardi,
+    # ya'ni pul Boshliq tasdig'idan OLDIN berilgan bo'lib chiqardi va
+    # rad javobi kelsa qaytarib olib bo'lmasdi.
     issued_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -1962,6 +1982,12 @@ class PayrollAdjustment(Base):
     # migratsiya to'ldiradi: `source_request_id` bor bo'lsa «request»,
     # aks holda «hr_manual».
     source: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    # Pulni KIM va QACHON berdi (A-04). `issued_on` — pul qo'lga berilgan
+    # KUN (kassa ko'rsatadi), `issued_at` — tizimda belgilangan payt.
+    # Ikkalasi bir xil emas: kassa 5-kuni bergan pulni 7-kuni belgilashi
+    # mumkin, va «qachon berildi» savoliga aynan `issued_on` javob beradi.
+    issued_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class PushToken(Base):
@@ -2642,4 +2668,106 @@ class Certificate(Base):
     )
     issued_at: Mapped[date] = mapped_column(Date, index=True)
     issued_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AssetKind(str, enum.Enum):
+    """Mol-mulk turlari (yangi TZ 3.11)."""
+
+    laptop = "laptop"
+    phone = "phone"
+    sim = "sim"
+    furniture = "furniture"
+    tool = "tool"
+    vehicle = "vehicle"
+    other = "other"
+
+
+ASSET_KIND_LABELS: dict[str, str] = {
+    AssetKind.laptop.value: "Kompyuter / noutbuk",
+    AssetKind.phone.value: "Telefon",
+    AssetKind.sim.value: "SIM-karta",
+    AssetKind.furniture.value: "Mebel",
+    AssetKind.tool.value: "Asbob-uskuna",
+    AssetKind.vehicle.value: "Transport",
+    AssetKind.other.value: "Boshqa",
+}
+
+
+class AssetCondition(str, enum.Enum):
+    """Buyumning JISMONIY holati — biriktirish va qaytarishda yoziladi."""
+
+    new = "new"
+    good = "good"
+    worn = "worn"
+    broken = "broken"
+
+
+ASSET_CONDITION_LABELS: dict[str, str] = {
+    AssetCondition.new.value: "Yangi",
+    AssetCondition.good.value: "Yaxshi",
+    AssetCondition.worn.value: "Eskirgan",
+    AssetCondition.broken.value: "Nosoz",
+}
+
+
+class Asset(Base):
+    """Kompaniya mol-mulki (yangi TZ 3.11 / S-18).
+
+    NEGA KERAK: noutbuk, telefon, SIM-karta va asbob kimdaligi hech qayerda
+    yozilmagan. Xodim ishdan bo'shaganda «unda nima bor edi?» degan savolga
+    javob yo'q va buyum shunchaki yo'qoladi.
+
+    ⚠️ `inventory_no` UNIKAL. Inventar raqami buyumning yagona belgisi;
+    takrorlansa ikkita buyum bir-biriga aralashib ketadi va «kimda?»
+    degan savol yana javobsiz qoladi.
+
+    ⚠️ `value` — INTEGER (`Offer.salary` bilan bir xil sabab): matn bo'lsa
+    «5 mln» va «5,000,000» aralashib, jami qiymatni hisoblab bo'lmasdi.
+
+    O'chirish YUMSHOQ: buyum hisobdan chiqarilsa ham biriktirish TARIXI
+    saqlanishi kerak (kimda bo'lgan, qanday holatda qaytgan)."""
+
+    __tablename__ = "assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    inventory_no: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    condition: Mapped[str] = mapped_column(String(12), default=AssetCondition.good.value)
+    value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AssetAssignment(Base):
+    """Buyum kimga, qachon berilgani (yangi TZ 3.11 / S-18).
+
+    ⚠️ BITTA BUYUM — BITTA XODIMDA. Qo'riqchi ikki qatlamli:
+    (1) kod tekshiradi va tushunarli xato beradi;
+    (2) QISMAN UNIKAL indeks (`returned_at IS NULL`) bazada kafolatlaydi.
+    Faqat kodga tayanish yetarli emas: parallel ikki so'rov bir vaqtda
+    tekshiruvdan o'tib, ikkita ochiq biriktirish yaratishi mumkin edi.
+
+    Qaytarilgan qator O'CHIRILMAYDI — tarix. Shu tufayli bitta buyumda
+    ko'p qator bo'ladi, lekin `returned_at IS NULL` bo'lgani faqat bitta."""
+
+    __tablename__ = "asset_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    assigned_at: Mapped[date] = mapped_column(Date, index=True)
+    returned_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    #  Berishdagi va qaytarishdagi holat — ular farq qilsa zarar ko'rinadi.
+    condition_out: Mapped[str] = mapped_column(String(12), default=AssetCondition.good.value)
+    condition_in: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    #  Dalolatnoma (S-19 da S-14 mexanizmi bilan tayyorlanadi).
+    document_file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #  Xodim «Qabul qildim» bosgan vaqt (S-19). NULL — hali tasdiqlamagan.
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -215,8 +215,29 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-04 · «Kiritildi» va «berildi» ni ajratish (TZ #3, #4)
+### A-04 · «Kiritildi» va «berildi» ni ajratish (TZ #3, #4) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-01 · **~5 soat**
+
+> **Bajarilgani:** `PayrollAdjustmentStatus.issued` + `issued_by`/`issued_at`
+> (migratsiya `av02b2c3d4e5`). Zanjir: `pending` → `approved` → `issued`.
+> `issued_on` endi KIRITISHDA so'ralmaydi va yozilmaydi — uni faqat
+> `POST /payroll/advances/{id}/issue` («To'lab berildi») to'ldiradi.
+> Noto'g'ri o'tishlar 400: tasdiqlanmaganni to'lash, ikki marta to'lash,
+> kelajakdagi sana. Web: forma sana maydonisiz, ro'yxatda «To'lab berildi»
+> tugmasi va **xodim bo'yicha oylik jami** bloki. Test:
+> `test_advance_issue_flow` (12/12).
+>
+> **⭐ Eng xavfli joy va u qanday yopildi:** `issued` oylikka kirmasa,
+> to'langan pul oylikdan ayirilmay qolardi. Shuning uchun
+> `PAYROLL_COUNTED_STATUSES = (approved, issued)` konstantasi kiritildi va
+> **uchta** joyda ishlatiladi: `build_payslip`, botdagi payslip
+> (`advance_total`) va ariza qaytarish (`_revert` — to'langan avansni
+> jimgina o'chirmaslik). Test payslipda summani aniq tekshiradi.
+>
+> **Yon ta'sir:** dublikat qo'riqchisi (A-01) endi `issued_on` o'rniga
+> `_advance_ref_date()` ishlatadi — yangi avansda sana bo'sh bo'lgani
+> uchun kiritilgan kun bilan solishtiriladi. Aks holda qo'riqchi eng
+> kerakli holatda (ketma-ket ikki marta kiritish) jim qolardi.
 
 **Ish**
 1. TZ #4: hozir «berilgan sana» kiritiladi, tasdiq keyin so'raladi — boshliq rad etsa **pul allaqachon qo'lda**.
@@ -226,11 +247,12 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 3. TZ #3: xodim bo'yicha **oylik jami** ko'rsatilsin (bittalab qator emas, yuqorida yig'indi).
 
 **Qabul mezoni**
-- [ ] Tasdiqlanmagan avansga `issued_on` yozib bo'lmaydi
-- [ ] `issued` holati alohida va kim belgilagani ko'rinadi
-- [ ] Xodim bo'yicha oylik jami ro'yxatda bor
-- [ ] Payslipga faqat `approved`/`issued` kiradi (hozirgi qoida buzilmasin)
-- [ ] Test: holat zanjiri + noto'g'ri o'tishlar 400
+- [x] Tasdiqlanmagan avansga `issued_on` yozib bo'lmaydi
+- [x] `issued` holati alohida va kim belgilagani ko'rinadi («To'ladi: …»)
+- [x] Xodim bo'yicha oylik jami ro'yxatda bor
+- [x] Payslipga faqat `approved`/`issued` kiradi — testda summa aniq
+      tekshiriladi (200 000 + 50 000 ayirildi, rad etilgan 70 000 yo'q)
+- [x] Test: holat zanjiri + 3 xil noto'g'ri o'tish 400 bilan to'xtaydi
 
 **Tuzoq:** Mavjud yozuvlar `approved` va `issued_on` to'ldirilgan — migratsiyada ularni `issued` qiling, aks holda «to'lanmagan» bo'lib ko'rinadi.
 

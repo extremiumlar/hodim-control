@@ -35,6 +35,7 @@ from api.deps import (
     verify_bot_secret,
 )
 from api.schemas import (
+    AdvanceIssueIn,
     AdvanceLimitOut,
     BotLateStatusOut,
     BotPayslipOut,
@@ -82,6 +83,7 @@ from api.services.push import Category
 from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
 from db.models import (
+    PAYROLL_COUNTED_STATUSES,
     AuditLog,
     FinePolicy,
     KpiRate,
@@ -1029,19 +1031,38 @@ async def _find_duplicate_advance(
     for row in rows:
         if abs(float(row.amount) - amount) > tolerance:
             continue
-        if row.issued_on is None or abs((row.issued_on - issued_on).days) > _DUP_DAYS:
+        if abs((_advance_ref_date(row) - issued_on).days) > _DUP_DAYS:
             continue
         return row
     return None
+
+
+def _advance_ref_date(adj: PayrollAdjustment) -> dt.date:
+    """Avansning «qachonligi» — dublikat solishtiruvi uchun.
+
+    A-04 dan keyin `issued_on` faqat TO'LANGANDA to'ladi, ya'ni yangi
+    kiritilgan avansda u `NULL`. Bunday qatorni sanasiz deb tashlab
+    yuborsak, dublikat qo'riqchisi eng ko'p kerak bo'lgan holatda —
+    ketma-ket ikki marta kiritishda — jim qolardi. Shuning uchun
+    zaxira sana: kiritilgan kun."""
+    if adj.issued_on is not None:
+        return adj.issued_on
+    return adj.created_at.date() if adj.created_at else dt.date.min
 
 
 def _duplicate_message(dup: PayrollAdjustment) -> str:
     """Ogohlantirish matni — HR qaror qabul qilishi uchun YETARLI ma'lumot
     bo'lsin: qachon, qancha, qaysi yo'ldan kelgan."""
     where = "xodim arizasi orqali" if dup.source == PayrollAdjustmentSource.request.value else "qo'lda"
-    when = dup.issued_on.strftime("%d.%m.%Y") if dup.issued_on else "sana ko'rsatilmagan"
+    # A-04 dan keyin yangi avansda `issued_on` bo'sh bo'ladi (pul hali
+    # berilmagan) — bunday holatda kiritilgan kun ko'rsatiladi, aks holda
+    # ogohlantirish «sanasiz» bo'lib, HR uni tanib olmasdi.
+    if dup.issued_on is not None:
+        when = f"to'langan {dup.issued_on.strftime('%d.%m.%Y')}"
+    else:
+        when = f"kiritilgan {_advance_ref_date(dup).strftime('%d.%m.%Y')}"
     return (
-        f"Bu xodimga shu davrda yaqin avans allaqachon kiritilgan: "
+        f"Bu xodimga shu davrda yaqin avans allaqachon bor: "
         f"{_fmt_money(float(dup.amount))}, {when} ({where}). "
         f"Ikki marta ayirilib ketmasin — takror kiritmoqchi bo'lsangiz tasdiqlang."
     )
@@ -1073,6 +1094,9 @@ async def _adjustment_out(db: AsyncSession, adj: PayrollAdjustment) -> PayrollAd
     if adj.decided_by:
         decider = await db.get(User, adj.decided_by)
         out.decided_by_name = decider.full_name if decider else None
+    if adj.issued_by:
+        issuer = await db.get(User, adj.issued_by)
+        out.issued_by_name = issuer.full_name if issuer else None
     return out
 
 
@@ -1140,6 +1164,10 @@ async def create_advance(
             "Bu davr qulflangan — avans hisobga kirmaydi. Avval Dasturchi davrni ochishi kerak.",
         )
 
+    # A-04: pul berilgan sana KIRITISHDA yozilmaydi. Dublikat qo'riqchisi
+    # va chegara uchun mos yozuv sanasi — bugun.
+    entry_date = today_local()
+
     # ── Dublikat qo'riqchisi (Avans TZ A-01) ──
     # Xodim ariza bergan avans ham, HR qo'lda kiritgani ham AYNAN shu
     # jadvalga tushadi. Manba ko'rinmagani uchun HR ariza orqali allaqachon
@@ -1149,7 +1177,7 @@ async def create_advance(
     # bosib o'tadi.
     if not payload.confirm_duplicate:
         dup = await _find_duplicate_advance(
-            db, payload.user_id, payload.period, payload.amount, payload.issued_on
+            db, payload.user_id, payload.period, payload.amount, entry_date
         )
         if dup is not None:
             raise HTTPException(
@@ -1198,7 +1226,7 @@ async def create_advance(
         created_by=actor.id,
         category=PayrollAdjustmentCategory.advance.value,
         status=PayrollAdjustmentStatus.pending.value,
-        issued_on=payload.issued_on,
+        # `issued_on` ATAYLAB bo'sh — uni faqat «To'lab berildi» yozadi.
         source=PayrollAdjustmentSource.hr_manual.value,
     )
     db.add(adj)
@@ -1213,7 +1241,7 @@ async def create_advance(
             after={
                 "period": payload.period,
                 "amount": payload.amount,
-                "issued_on": payload.issued_on.isoformat(),
+                "entry_date": entry_date.isoformat(),
                 "reason": payload.reason,
                 **(
                     {
@@ -1245,10 +1273,11 @@ async def create_advance(
             f"💵 <b>Avans tasdig'i kutilmoqda</b>\n\n"
             f"Xodim: {target.full_name}\n"
             f"Summa: {_fmt_money(payload.amount)}\n"
-            f"Berilgan sana: {payload.issued_on.strftime('%d.%m.%Y')}\n"
             f"Davr: {payload.period}\n"
             f"Sabab: {payload.reason}\n\n"
-            f"Kiritdi: {actor.full_name}",
+            f"Kiritdi: {actor.full_name}\n"
+            # A-04: pul HALI berilmagan — Boshliq buni bilib qaror qilsin.
+            f"<i>Pul hali berilmagan — siz tasdiqlagach kassa to'laydi.</i>",
             data={"path": "/payroll"},
         )
     return await _adjustment_out(db, adj)
@@ -1298,8 +1327,82 @@ async def decide_advance(
             target,
             Category.DECISIONS,
             f"💵 <b>Avans tasdiqlandi</b>\n\n"
+            f"Summa: {_fmt_money(float(adj.amount))}\n\n"
+            f"Bu summa <b>{adj.period}</b> oyligingizdan ayiriladi.\n"
+            # A-04: tasdiq — RUXSAT, pul emas. Xodim «tasdiqlandi» xabarini
+            # ko'rib pulni allaqachon berilgan deb o'ylab qolmasin.
+            f"<i>Pulni kassadan olganingizda tizimda belgilanadi.</i>",
+            data={"path": "/me/payroll"},
+        )
+    return await _adjustment_out(db, adj)
+
+
+@router.post("/advances/{adjustment_id}/issue", response_model=PayrollAdjustmentOut)
+async def issue_advance(
+    adjustment_id: int,
+    payload: AdvanceIssueIn,
+    actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> PayrollAdjustmentOut:
+    """«To'lab berildi» — kassa pulni QO'LGA berganini belgilaydi (A-04).
+
+    Faqat `approved` dan `issued` ga o'tish mumkin. `pending` dan to'g'ridan
+    to'g'ri o'tib bo'lmaydi — bu ajratimning butun ma'nosi: pul Boshliq
+    ruxsatidan KEYIN beriladi, aks holda rad javobi kelganda pul qaytmaydi.
+
+    ⚠️ PUL O'ZGARMAYDI: `issued` ham `approved` kabi oylikka kiradi
+    (`PAYROLL_COUNTED_STATUSES`)."""
+    adj = await db.get(PayrollAdjustment, adjustment_id)
+    if adj is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Yozuv topilmadi")
+    if adj.category != PayrollAdjustmentCategory.advance.value:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu yozuv avans emas")
+    if adj.status == PayrollAdjustmentStatus.issued.value:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Bu avans allaqachon to'langan deb belgilangan"
+        )
+    if adj.status != PayrollAdjustmentStatus.approved.value:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Avval Boshliq tasdiqlashi kerak — tasdiqlanmagan avansni "
+            "to'langan deb belgilab bo'lmaydi.",
+        )
+
+    issued_on = payload.issued_on or today_local()
+    if issued_on > today_local():
+        # Kelajakdagi sana — pul hali berilmagan, ya'ni belgilash erta.
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Berilgan sana kelajakda bo'lishi mumkin emas"
+        )
+
+    before = row_to_dict(adj, exclude=("created_at",))
+    adj.status = PayrollAdjustmentStatus.issued.value
+    adj.issued_on = issued_on
+    adj.issued_by = actor.id
+    adj.issued_at = datetime.utcnow()
+    if payload.note:
+        adj.decided_note = payload.note
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_issued",
+            target_user_id=adj.user_id,
+            before=before,
+            after=row_to_dict(adj, exclude=("created_at",)),
+        )
+    )
+    await db.commit()
+    await db.refresh(adj)
+
+    target = await db.get(User, adj.user_id)
+    if target is not None:
+        await notify_user(
+            db,
+            target,
+            Category.DECISIONS,
+            f"💵 <b>Avans to'lab berildi</b>\n\n"
             f"Summa: {_fmt_money(float(adj.amount))}\n"
-            f"Berilgan sana: {adj.issued_on.strftime('%d.%m.%Y') if adj.issued_on else '—'}\n\n"
+            f"Berilgan sana: {issued_on.strftime('%d.%m.%Y')}\n\n"
             f"Bu summa <b>{adj.period}</b> oyligingizdan ayiriladi.",
             data={"path": "/me/payroll"},
         )
@@ -1976,7 +2079,11 @@ async def _latest_payslip_for_user(db: AsyncSession, user: User) -> BotPayslipOu
             PayrollAdjustment.user_id == user.id,
             PayrollAdjustment.period == payslip.period,
             PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
-            PayrollAdjustment.status == PayrollAdjustmentStatus.approved.value,
+            # `issued` ham kiradi (A-04): payslip uni ayirgan, shuning uchun
+            # bu yerda ham sanalishi SHART — aks holda quyidagi
+            # «adjustments_minus - advance» ayirmasi ishlamay, xodim bitta
+            # summani ikki marta ko'rardi.
+            PayrollAdjustment.status.in_(PAYROLL_COUNTED_STATUSES),
         )
     )
     advance = float(advance_total or 0)

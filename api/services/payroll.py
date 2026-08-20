@@ -32,6 +32,7 @@ from api.routers.hourly_plan import DEFAULT_END, DEFAULT_START
 from api.timeutil import TASHKENT_TZ, today_local, work_minutes
 from db.models import (
     AbsentMode,
+    PAYROLL_COUNTED_STATUSES,
     Attendance,
     Bonus,
     ExcusedDay,
@@ -875,16 +876,21 @@ async def build_payslip(
     bonus_row = await db.scalar(select(Bonus).where(Bonus.user_id == user.id, Bonus.period == period))
     bonus_amount = _dec(bonus_row.amount) if bonus_row is not None else Decimal("0")
 
-    # FAQAT `approved` — avans (2026-08-13) Boshliq tasdig'igacha `pending`
-    # turadi va oylikka KIRMAYDI; rad etilgani esa hech qachon kirmaydi.
-    # Eski yozuvlar migratsiyada `approved` bo'lib qolgan, ya'ni o'tgan
-    # oylarning hisobi o'zgarmaydi.
+    # `approved` VA `issued` — avans (2026-08-13) Boshliq tasdig'igacha
+    # `pending` turadi va oylikka KIRMAYDI; rad etilgani esa hech qachon
+    # kirmaydi. Eski yozuvlar migratsiyada `approved` bo'lib qolgan, ya'ni
+    # o'tgan oylarning hisobi o'zgarmaydi.
+    #
+    # `issued` (A-04, 2026-08-20) — kassa pulni bergan holat. U OYLIKKA
+    # KIRISHI SHART: `approved` bo'lgan avans allaqachon kirardi, to'lash
+    # esa uni hisobdan chiqarib yubormasligi kerak. Bu qatorni unutish
+    # eng xavfli xato bo'lardi — pul berilib, oylikdan ayirilmay qolardi.
     adjustments = list(
         await db.scalars(
             select(PayrollAdjustment).where(
                 PayrollAdjustment.user_id == user.id,
                 PayrollAdjustment.period == period,
-                PayrollAdjustment.status == PayrollAdjustmentStatus.approved.value,
+                PayrollAdjustment.status.in_(PAYROLL_COUNTED_STATUSES),
             )
         )
     )

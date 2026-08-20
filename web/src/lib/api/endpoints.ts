@@ -6,6 +6,8 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  AssetHistoryItem,
+  AssetItem,
   CertificateItem,
   DeadlineItem,
   DocumentTemplate,
@@ -138,6 +140,34 @@ export const api = {
     apiFetch<CertificateItem[]>(
       `/certificates${userId ? `?user_id=${userId}` : ""}`
     ),
+  // ── Mol-mulk (TZ 3.11 / S-18) ──
+  assets: (freeOnly = false) =>
+    apiFetch<AssetItem[]>(`/assets${freeOnly ? "?free_only=true" : ""}`),
+  assetKinds: () =>
+    apiFetch<{
+      kinds: { value: string; label: string }[];
+      conditions: { value: string; label: string }[];
+    }>("/assets/kinds"),
+  addAsset: (body: {
+    inventory_no: string;
+    name: string;
+    kind: string;
+    value?: number | null;
+  }) => apiFetch<AssetItem>("/assets", { method: "POST", body: JSON.stringify(body) }),
+  assignAsset: (body: { id: number; user_id: number; condition_out: string }) =>
+    apiFetch<AssetItem>(`/assets/${body.id}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: body.user_id, condition_out: body.condition_out }),
+    }),
+  returnAsset: (body: { id: number; condition_in: string }) =>
+    apiFetch<AssetItem>(`/assets/${body.id}/return`, {
+      method: "POST",
+      body: JSON.stringify({ condition_in: body.condition_in }),
+    }),
+  assetHistory: (id: number) =>
+    apiFetch<AssetHistoryItem[]>(`/assets/${id}/history`),
+  myAssets: () => apiFetch<AssetItem[]>("/assets/me"),
+
   certificatePurposes: () =>
     apiFetch<{ value: string; label: string }[]>("/certificates/purposes"),
   issueCertificate: (body: {
@@ -563,7 +593,6 @@ export const api = {
     user_id: number;
     period: string;
     amount: number;
-    issued_on: string;
     reason: string;
     // Yaqin summa/sana bilan avans allaqachon bo'lsa server 409 qaytaradi
     // (Avans TZ A-01). HR ogohlantirishni ko'rib «baribir kiritaman» desa,
@@ -576,6 +605,13 @@ export const api = {
   }) => apiFetch<PayrollAdjustment>("/payroll/advances", { method: "POST", body: JSON.stringify(data) }),
   decideAdvance: (adjustmentId: number, data: { approve: boolean; note?: string | null }) =>
     apiFetch<PayrollAdjustment>(`/payroll/advances/${adjustmentId}/decide`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** «To'lab berildi» — kassa pulni berganini belgilaydi (A-04). Faqat
+   *  tasdiqlangan avansda ishlaydi (server 400 beradi). */
+  issueAdvance: (adjustmentId: number, data: { issued_on?: string; note?: string } = {}) =>
+    apiFetch<PayrollAdjustment>(`/payroll/advances/${adjustmentId}/issue`, {
       method: "POST",
       body: JSON.stringify(data),
     }),

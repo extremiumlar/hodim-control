@@ -52,9 +52,12 @@ const MAP: Record<Kind, Record<string, { text: string; cls: string }>> = {
   // Avans: holatlar `overtime` bilan bir xil, lekin matni boshqa — bu yerda
   // «tasdiqlangan» degani "pul oylikdan AYIRILADI", ya'ni HR uchun ma'nosi
   // teskari. Shuning uchun alohida tur (nusxa emas, aniqlik uchun).
+  // A-04: «tasdiqlandi» va «to'lab berildi» BOSHQA-BOSHQA voqealar.
+  // Tasdiq — ruxsat (pul hali kassada), `issued` — pul qo'lga berilgan.
   advance: {
     pending: { text: "Boshliq tasdig'i kutilmoqda", cls: "bg-amber-100 text-amber-700" },
-    approved: { text: "Tasdiqlangan — oylikdan ayiriladi", cls: "bg-emerald-100 text-emerald-700" },
+    approved: { text: "Tasdiqlangan — to'lash kutilmoqda", cls: "bg-sky-100 text-sky-700" },
+    issued: { text: "To'lab berilgan", cls: "bg-emerald-100 text-emerald-700" },
     rejected: { text: "Rad etilgan", cls: "bg-rose-100 text-rose-700" },
   },
   // E'tiroz/shikoyat: `request`dan farqli — oraliq «o'rganilmoqda» holati bor

@@ -1312,6 +1312,10 @@ class PayrollAdjustmentOut(BaseModel):
     # chiqadi — HR o'sha avansni qo'lda ikkinchi marta kiritmasin.
     source: str | None = None
     source_request_id: int | None = None
+    # ── «To'lab berildi» (A-04) ──
+    issued_by: int | None = None
+    issued_at: datetime | None = None
+    issued_by_name: str | None = None
     # Ro'yxatda ism ko'rsatish uchun (jadval har qator uchun alohida so'rov
     # yubormasin) — router to'ldiradi, modelda yo'q.
     full_name: str | None = None
@@ -1328,8 +1332,14 @@ class AdvanceIn(BaseModel):
     user_id: int
     period: str = Field(pattern=r"^\d{4}-\d{2}$")
     amount: float = Field(gt=0)
-    issued_on: dt.date
     reason: str = Field(min_length=3, max_length=500)
+    # ⚠️ 2026-08-20 (A-04) dan KIRITISHDA so'ralmaydi va E'TIBORGA
+    # OLINMAYDI. Ilgari HR bu yerda «berilgan sana» yozardi, tasdiq esa
+    # keyin kelardi — ya'ni pul Boshliq rad etishi mumkin bo'lgan paytda
+    # allaqachon qo'lda bo'lardi va rad javobi kelsa qaytarib olinmasdi.
+    # Endi sanani FAQAT «To'lab berildi» amali yozadi. Maydon eski
+    # mijozlar 422 olmasligi uchun qoldirilgan.
+    issued_on: dt.date | None = None
     # Dublikat qo'riqchisi (A-01): yaqin summa va yaqin sana bilan shu
     # xodimga allaqachon avans bo'lsa, server 409 qaytaradi. HR «baribir
     # kiritaman» desa — `confirm_duplicate=true` bilan qayta yuboradi.
@@ -1340,6 +1350,17 @@ class AdvanceIn(BaseModel):
     # yoziladi). HR bu bayroqni yuborsa 403 oladi.
     override_limit: bool = False
     override_reason: str | None = Field(default=None, max_length=500)
+
+
+class AdvanceIssueIn(BaseModel):
+    """«To'lab berildi» — kassa pulni qo'lga berganini belgilaydi (A-04).
+
+    `issued_on` — pul QO'LGA berilgan kun. Berilmasa bugun. `issued_at`
+    (tizimda belgilangan payt) serverda qo'yiladi: kassa 5-kuni bergan
+    pulni 7-kuni belgilashi mumkin va bu farq ko'rinib turishi kerak."""
+
+    issued_on: dt.date | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class AdvanceLimitOut(BaseModel):

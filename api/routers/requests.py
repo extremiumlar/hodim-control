@@ -67,6 +67,7 @@ from api.services.workdays import (
 from api.telegram_notify import inline_keyboard, send_file_id
 from api.timeutil import today_local
 from db.models import (
+    PAYROLL_COUNTED_STATUSES,
     CERTIFICATE_PURPOSE_LABELS,
     CertificatePurpose,
     LEAVE_KINDS,
@@ -470,7 +471,9 @@ async def _revert(db: AsyncSession, item: EmployeeRequest, user: User) -> dict:
     )
     removed, kept = 0, 0
     for adj in adjustments:
-        if adj.status == PayrollAdjustmentStatus.approved.value:
+        # `issued` ham saqlanadi (A-04): pul allaqachon QO'LGA berilgan,
+        # uni ariza bekor qilinganida jimgina o'chirish — yo'qolgan pul.
+        if adj.status in PAYROLL_COUNTED_STATUSES:
             kept += 1
             continue
         await db.delete(adj)
@@ -478,7 +481,7 @@ async def _revert(db: AsyncSession, item: EmployeeRequest, user: User) -> dict:
     info["advance_removed"] = removed
     if kept:
         info["warning"] = (
-            f"{kept} ta avans allaqachon TASDIQLANGAN — u avtomatik qaytarilmadi. "
+            f"{kept} ta avans allaqachon TASDIQLANGAN yoki TO'LANGAN — u avtomatik qaytarilmadi. "
             "Kerak bo'lsa «Ish haqi» bo'limidan qo'lda o'chiring."
         )
     return info

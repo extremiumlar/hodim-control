@@ -1041,7 +1041,9 @@ export interface PayrollAdjustment {
   // Avans (2026-08-13). `category='manual'` — HR qo'lda kiritgan eski
   // qo'shimcha/ushlanma (tasdiq talab qilmaydi, `status='approved'`).
   category: "manual" | "advance";
-  status: "pending" | "approved" | "rejected";
+  /** `issued` (A-04) — kassa pulni QO'LGA berdi. Oylikka `approved` kabi
+   *  kiradi: to'lash uni hisobdan chiqarmaydi. */
+  status: "pending" | "approved" | "rejected" | "issued";
   issued_on: string | null;
   decided_by: number | null;
   decided_at: string | null;
@@ -1051,6 +1053,9 @@ export interface PayrollAdjustment {
   // qatorlarda `null` (ular uchun manba tushunchasi yo'q).
   source: "hr_manual" | "request" | "bot" | null;
   source_request_id: number | null;
+  issued_by: number | null;
+  issued_at: string | null;
+  issued_by_name: string | null;
   full_name: string | null;
   created_by_name: string | null;
   decided_by_name: string | null;
@@ -1501,4 +1506,33 @@ export type CertificateItem = {
   request_id: number | null;
   document_id: number | null;
   created_at: string;
+};
+
+/** Kompaniya buyumi (TZ 3.11 / S-18). `holder_id === null` — omborda. */
+export type AssetItem = {
+  id: number;
+  inventory_no: string;
+  name: string;
+  kind: string;
+  kind_label: string;
+  condition: string;
+  condition_label: string;
+  value: number | null;
+  note: string | null;
+  holder_id: number | null;
+  holder_name: string | null;
+  assigned_at: string | null;
+  accepted: boolean;
+};
+
+export type AssetHistoryItem = {
+  id: number;
+  user_id: number;
+  user_name: string;
+  assigned_at: string;
+  returned_at: string | null;
+  condition_out: string;
+  condition_in: string | null;
+  accepted_at: string | null;
+  note: string | null;
 };

@@ -13,7 +13,7 @@
  */
 import { useState, type FormEvent } from "react";
 import { format } from "date-fns";
-import { Check, X } from "lucide-react";
+import { Banknote, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
 
@@ -48,6 +48,7 @@ import {
   useAdvanceLimit,
   useCreateAdvance,
   useDecideAdvance,
+  useIssueAdvance,
   usePayrollAdjustments,
   useUsers,
 } from "@/lib/queries";
@@ -64,10 +65,11 @@ export default function AdvanceTab() {
   const listQuery = usePayrollAdjustments({ period, category: "advance" });
   const createAdvance = useCreateAdvance();
   const decide = useDecideAdvance();
+  // A-04: «To'lab berildi» — tasdiqdan KEYINGI alohida amal (kassa).
+  const issue = useIssueAdvance();
 
   const [userId, setUserId] = useState<number | null>(null);
   const [amount, setAmount] = useState("");
-  const [issuedOn, setIssuedOn] = useState(format(new Date(), "yyyy-MM-dd"));
   const [reason, setReason] = useState("");
   // Dublikat ogohlantirishi (Avans TZ A-01). Server 409 qaytarsa oyna
   // ochiladi; HR «Baribir kiritish» desa AYNAN o'sha so'rov
@@ -86,9 +88,32 @@ export default function AdvanceTab() {
   const pendingTotal = rows
     .filter((a) => a.status === "pending")
     .reduce((s, a) => s + a.amount, 0);
-  const approvedTotal = rows
+  // Tasdiqlangan, lekin hali TO'LANMAGAN — kassa uchun ish ro'yxati.
+  const toPayTotal = rows
     .filter((a) => a.status === "approved")
     .reduce((s, a) => s + a.amount, 0);
+  const issuedTotal = rows
+    .filter((a) => a.status === "issued")
+    .reduce((s, a) => s + a.amount, 0);
+
+  // A-04: xodim bo'yicha OYLIK JAMI. Bittalab qatorlarga qarab HR
+  // «bu xodim shu oyda jami qancha oldi?» degan savolga javob topa
+  // olmasdi — endi yuqorida yig'indi turadi.
+  const perEmployee = Object.values(
+    rows
+      .filter((a) => a.status !== "rejected")
+      .reduce<Record<number, { name: string; total: number; count: number }>>((acc, a) => {
+        const cur = acc[a.user_id] ?? {
+          name: a.full_name ?? `#${a.user_id}`,
+          total: 0,
+          count: 0,
+        };
+        cur.total += a.amount;
+        cur.count += 1;
+        acc[a.user_id] = cur;
+        return acc;
+      }, {})
+  ).sort((x, y) => y.total - x.total);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -120,7 +145,6 @@ export default function AdvanceTab() {
         user_id: userId,
         period,
         amount: n,
-        issued_on: issuedOn,
         reason: reason.trim(),
         confirm_duplicate: force,
         ...(override ? { override_limit: true, override_reason: overReason.trim() } : {}),
@@ -188,9 +212,15 @@ export default function AdvanceTab() {
     },
     {
       accessorKey: "issued_on",
-      header: "Berilgan sana",
+      header: "To'langan sana",
       cell: ({ row }) =>
-        row.original.issued_on ? format(new Date(row.original.issued_on), "dd.MM.yyyy") : "—",
+        row.original.issued_on ? (
+          format(new Date(row.original.issued_on), "dd.MM.yyyy")
+        ) : (
+          // Bo'sh katak emas, IZOH: sana yo'qligi xato emas — pul hali
+          // berilmagan degani (A-04).
+          <span className="text-slate-400">hali to'lanmagan</span>
+        ),
     },
     { accessorKey: "reason", header: "Sabab" },
     {
@@ -205,6 +235,7 @@ export default function AdvanceTab() {
         <div className="text-xs text-slate-500">
           <div>Kiritdi: {row.original.created_by_name ?? "—"}</div>
           {row.original.decided_by_name && <div>Qaror: {row.original.decided_by_name}</div>}
+          {row.original.issued_by_name && <div>To'ladi: {row.original.issued_by_name}</div>}
         </div>
       ),
     },
@@ -212,6 +243,26 @@ export default function AdvanceTab() {
       id: "actions",
       header: "",
       cell: ({ row }) => {
+        // Tasdiqlangan, lekin to'lanmagan — kassa amali. Uni HR ham
+        // bosa oladi (pulni odatda HR/kassa beradi, Boshliq emas).
+        if (row.original.status === "approved") {
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={issue.isPending}
+              onClick={() =>
+                issue.mutate(
+                  { adjustmentId: row.original.id },
+                  { onSuccess: () => toast.success("To'lab berildi deb belgilandi") }
+                )
+              }
+            >
+              <Banknote className="mr-1 h-4 w-4" />
+              To'lab berildi
+            </Button>
+          );
+        }
         if (!canDecide || row.original.status !== "pending") return null;
         return (
           <div className="flex gap-1">
@@ -294,18 +345,6 @@ export default function AdvanceTab() {
                 />
               </div>
               <div>
-                {/* Pul QO'LGA BERILGAN sana — bugungi sana emas: HR pulni
-                    5-kuni berib, tizimga 12-kuni kiritishi mumkin. */}
-                <Label htmlFor="adv-date">Berilgan sana</Label>
-                <Input
-                  id="adv-date"
-                  type="date"
-                  value={issuedOn}
-                  onChange={(e) => setIssuedOn(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
                 <Label htmlFor="adv-reason">Sabab</Label>
                 <Input
                   id="adv-reason"
@@ -364,7 +403,9 @@ export default function AdvanceTab() {
               )}
               <p className="text-xs text-slate-500">
                 Avans <b>{period}</b> oyligidan ayiriladi. Kiritilgach Boshliqqa tasdiq uchun xabar
-                boradi — tasdiqlangunicha oylikka kirmaydi.
+                boradi — tasdiqlangunicha oylikka kirmaydi.{" "}
+                <b>Pul tasdiqdan keyin beriladi</b> va ro'yxatdagi «To'lab berildi» tugmasi bilan
+                belgilanadi.
               </p>
               <Button type="submit" disabled={createAdvance.isPending || !userId} className="w-full">
                 {createAdvance.isPending ? "Saqlanmoqda..." : "Kiritish"}
@@ -381,9 +422,31 @@ export default function AdvanceTab() {
                   Tasdiq kutilmoqda: <b>{fmtMoney(pendingTotal)}</b>
                 </span>
               )}
+              {toPayTotal > 0 && (
+                <span className="rounded-lg bg-sky-50 px-3 py-1.5 text-sky-800">
+                  To'lash kutilmoqda: <b>{fmtMoney(toPayTotal)}</b>
+                </span>
+              )}
               <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-slate-700">
-                Tasdiqlangan (oylikdan ayiriladi): <b>{fmtMoney(approvedTotal)}</b>
+                To'lab berilgan: <b>{fmtMoney(issuedTotal)}</b>
               </span>
+            </div>
+          )}
+          {perEmployee.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="mb-1.5 text-xs font-medium text-slate-500">
+                Xodim bo'yicha oylik jami (rad etilganlar hisobga olinmagan)
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                {perEmployee.map((e) => (
+                  <span key={e.name} className="text-slate-700">
+                    {e.name}: <b>{fmtMoney(e.total)}</b>
+                    {e.count > 1 && (
+                      <span className="text-slate-400"> ({e.count} ta)</span>
+                    )}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
           <DataTable

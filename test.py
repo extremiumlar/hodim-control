@@ -10194,6 +10194,205 @@ def test_certificates() -> None:
         conn.close()
 
 
+def test_assets() -> None:
+    """S-18 (TZ 3.11) — kompaniya mol-mulki va biriktirish.
+
+    Qabul mezonlari (TZ):
+      • BAND buyumni ikkinchi xodimga biriktirib bo'lmaydi;
+      • inventar raqami takrorlanmaydi;
+      • test: biriktirish -> qaytarish -> QAYTA biriktirish.
+
+    «Bitta buyum — bitta xodimda» qo'riqchisi IKKI QATLAMLI va ikkalasi
+    ham alohida sinaladi: (1) kod tekshiruvi tushunarli xato beradi,
+    (2) qisman unikal indeks (`returned_at IS NULL`) bazada kafolatlaydi
+    — kodni chetlab o'tib to'g'ridan-to'g'ri INSERT qilinsa ham.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-18: MOL-MULK (bitta buyum — bitta xodimda)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    asset_id = None
+    try:
+        cur.execute("delete from users where full_name like 'T-Ast%'")
+        cur.execute(
+            "delete from asset_assignments where asset_id in"
+            " (select id from assets where inventory_no like 'T-INV%')")
+        cur.execute("delete from assets where inventory_no like 'T-INV%'")
+        conn.commit()
+
+        for n, (nom, rol, tg) in enumerate(
+            [("T-Ast Birinchi", "employee", 999701801),
+             ("T-Ast Ikkinchi", "employee", 999701802)]):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,?,0,1,datetime('now'))",
+                (tg, nom, rol))
+            ids[f"u{n}"] = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.get("/assets/kinds", headers=auth(mgr_t))
+            check("S-18: turlar va holatlar ro'yxati bor",
+                  r.status_code == 200 and len(r.json().get("kinds", [])) >= 7
+                  and len(r.json().get("conditions", [])) == 4,
+                  "kod=" + str(r.status_code))
+
+            # ── BUYUM QO'SHISH ──
+            r = c.post("/assets", headers=auth(mgr_t), json={
+                "inventory_no": "T-INV-001", "name": "T-Ast Noutbuk",
+                "kind": "laptop", "value": 9000000})
+            check("S-18: buyum qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            asset_id = r.json().get("id") if r.status_code == 201 else None
+            check("S-18: yangi buyum OMBORDA (egasi yo'q)",
+                  r.status_code == 201 and r.json().get("holder_id") is None,
+                  "=" + r.text[:120])
+
+            # ── INVENTAR RAQAMI TAKRORLANMAYDI ──
+            r = c.post("/assets", headers=auth(mgr_t), json={
+                "inventory_no": "T-INV-001", "name": "Boshqa buyum", "kind": "phone"})
+            check("S-18: takroriy inventar raqami -> 409", r.status_code == 409,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            soni = cur.execute(
+                "select count(*) from assets where inventory_no='T-INV-001'").fetchone()[0]
+            check("S-18: ikkinchi qator YARATILMADI", soni == 1, "=" + str(soni))
+
+            # Noma'lum tur
+            r = c.post("/assets", headers=auth(mgr_t), json={
+                "inventory_no": "T-INV-002", "name": "X", "kind": "yolgon"})
+            check("S-18: noma'lum tur -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ── BIRIKTIRISH ──
+            r = c.post(f"/assets/{asset_id}/assign", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "condition_out": "good"})
+            check("S-18: birinchi xodimga biriktirildi -> 200",
+                  r.status_code == 200 and r.json().get("holder_id") == ids["u0"],
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            check("S-18: xodim hali «qabul qildim» bosmagan",
+                  r.status_code == 200 and r.json().get("accepted") is False,
+                  "=" + r.text[:120])
+
+            # ── ⚠️ BAND BUYUM: 1-qatlam (kod) ──
+            r = c.post(f"/assets/{asset_id}/assign", headers=auth(mgr_t), json={
+                "user_id": ids["u1"], "condition_out": "good"})
+            check("S-18: BAND buyumni ikkinchi xodimga berish -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code))
+            check("S-18: xato xabari KIMDA ekanini aytadi",
+                  r.status_code == 409 and "T-Ast Birinchi" in r.text, r.text[:160])
+            ochiq = cur.execute(
+                "select count(*) from asset_assignments where asset_id=?"
+                " and returned_at is null", (asset_id,)).fetchone()[0]
+            check("S-18: ochiq biriktirish hamon BITTA", ochiq == 1, "=" + str(ochiq))
+
+            # ── ⚠️ BAND BUYUM: 2-qatlam (baza indeksi) ──
+            # Kodni CHETLAB O'TIB to'g'ridan-to'g'ri INSERT — indeks to'sishi kerak.
+            import sqlite3 as _sq
+
+            try:
+                cur.execute(
+                    "insert into asset_assignments (asset_id, user_id, assigned_at,"
+                    " condition_out, created_at) values (?,?,date('now'),'good',"
+                    "datetime('now'))", (asset_id, ids["u1"]))
+                conn.commit()
+                check("S-18: BAZA indeksi ikkinchi ochiq biriktirishni to'sdi",
+                      False, "INSERT o'tib ketdi — indeks ishlamayapti!")
+                cur.execute("delete from asset_assignments where asset_id=? and user_id=?",
+                            (asset_id, ids["u1"]))
+                conn.commit()
+            except _sq.IntegrityError as e:
+                check("S-18: BAZA indeksi ikkinchi ochiq biriktirishni to'sdi",
+                      True, str(e)[:80])
+                conn.rollback()
+
+            # ── Biriktirilgan buyumni hisobdan chiqarib bo'lmaydi ──
+            r = c.delete(f"/assets/{asset_id}", headers=auth(mgr_t))
+            check("S-18: xodimdagi buyumni hisobdan chiqarish -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:110])
+
+            # ── Xodim O'ZINIKINI ko'radi ──
+            r = c.get("/assets/me", headers=auth(token_for(ids["u0"], "employee")))
+            check("S-18: xodim o'ziga biriktirilganini ko'radi",
+                  r.status_code == 200 and len(r.json()) == 1
+                  and r.json()[0]["inventory_no"] == "T-INV-001",
+                  f"kod={r.status_code} {r.text[:110]}")
+            r = c.get("/assets/me", headers=auth(token_for(ids["u1"], "employee")))
+            check("S-18: boshqa xodimda bo'sh ro'yxat",
+                  r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+            r = c.get("/assets", headers=auth(token_for(ids["u0"], "employee")))
+            check("S-18: oddiy xodim UMUMIY ro'yxatni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── QAYTARISH ──
+            r = c.post(f"/assets/{asset_id}/return", headers=auth(mgr_t),
+                       json={"condition_in": "worn"})
+            check("S-18: qaytarib olindi -> 200",
+                  r.status_code == 200 and r.json().get("holder_id") is None,
+                  "kod=" + str(r.status_code) + " " + r.text[:130])
+            check("S-18: buyum holati qaytarishdagiga tenglashdi",
+                  r.status_code == 200 and r.json().get("condition") == "worn",
+                  "=" + r.text[:130])
+            qator = cur.execute(
+                "select returned_at, condition_out, condition_in from asset_assignments"
+                " where asset_id=?", (asset_id,)).fetchone()
+            check("S-18: qator O'CHIRILMADI — tarix qoldi",
+                  qator is not None and qator[0] is not None, "=" + str(qator))
+            check("S-18: berish va qaytarish holati alohida yozildi (zarar ko'rinadi)",
+                  qator == (qator[0], "good", "worn"), "=" + str(qator))
+
+            r = c.post(f"/assets/{asset_id}/return", headers=auth(mgr_t),
+                       json={"condition_in": "good"})
+            check("S-18: bo'sh buyumni qaytarish -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ── QAYTA BIRIKTIRISH (TZ zanjirining uchinchi qadami) ──
+            r = c.post(f"/assets/{asset_id}/assign", headers=auth(mgr_t), json={
+                "user_id": ids["u1"], "condition_out": "worn"})
+            check("S-18: qaytargandan keyin BOSHQA xodimga biriktirildi",
+                  r.status_code == 200 and r.json().get("holder_id") == ids["u1"],
+                  "kod=" + str(r.status_code) + " " + r.text[:130])
+            jami = cur.execute(
+                "select count(*) from asset_assignments where asset_id=?",
+                (asset_id,)).fetchone()[0]
+            check("S-18: tarixda IKKITA yozuv (eskisi saqlandi)", jami == 2,
+                  "=" + str(jami))
+
+            # ── TARIX ──
+            r = c.get(f"/assets/{asset_id}/history", headers=auth(mgr_t))
+            tarix = r.json() if r.status_code == 200 else []
+            check("S-18: tarixda ikkala egasi ham ko'rinadi",
+                  len(tarix) == 2 and {x["user_name"] for x in tarix} ==
+                  {"T-Ast Birinchi", "T-Ast Ikkinchi"},
+                  "=" + str([x["user_name"] for x in tarix]))
+            check("S-18: tarixda holat o'zgarishi saqlangan (good -> worn)",
+                  any(x["condition_out"] == "good" and x["condition_in"] == "worn"
+                      for x in tarix), "=" + str(tarix))
+    except Exception:
+        check("S-18 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if asset_id:
+                cur.execute("delete from asset_assignments where asset_id=?", (asset_id,))
+                cur.execute("delete from assets where id=?", (asset_id,))
+            cur.execute("delete from assets where inventory_no like 'T-INV%'")
+            cur.execute("delete from users where full_name like 'T-Ast%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -10353,6 +10552,11 @@ def main() -> None:
         print("S-17 malumotnoma testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_assets()
+    except Exception:
+        print("S-18 mol-mulk testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         test_payroll_api()
     except Exception:
         print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
@@ -10486,6 +10690,11 @@ def main() -> None:
         test_advance_limit_gate()
     except Exception:
         print("Avans chegara-eshigi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_advance_issue_flow()
+    except Exception:
+        print("Avans to'lash zanjiri testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         cleanup_orphans()
@@ -10746,9 +10955,14 @@ def test_advance_duplicate_guard() -> None:
     other_uid = cur.lastrowid
     conn.commit()
 
-    PERIOD = "2020-05"        # jonli davrlarga tegmaydigan, ataylab eski oy
-    OTHER_PERIOD = "2020-06"
-    BASE_DATE = _date(2020, 5, 10)
+    # Dublikat qidiruvi DAVR bo'yicha filtrlaydi, sana esa kiritilgan kun
+    # bo'yicha solishtiriladi — shuning uchun davr ham joriy oy bo'lishi
+    # kerak (aks holda ikkisi hech qachon uchrashmasdi).
+    PERIOD = _date.today().strftime("%Y-%m")
+    OTHER_PERIOD = "2019-06"
+    # Dublikat oynasi (±7 kun) KIRITILGAN kundan hisoblanadi — sinov
+    # yozuvlari ham bugun yaratiladi, shuning uchun tayanch sana bugun.
+    BASE_DATE = _date.today()
     BASE_AMOUNT = 2_000_000.0
 
     def cleanup_adv():
@@ -10769,14 +10983,17 @@ def test_advance_duplicate_guard() -> None:
 
     async def _seed_and_check():
         async with async_session() as s:
-            # Ariza yo'lidan kelgan avans (mavjud yozuv)
+            # Ariza yo'lidan kelgan avans (mavjud yozuv). A-04 dan keyin
+            # yangi avansda `issued_on` BO'SH bo'ladi — pul hali berilmagan;
+            # dublikat qo'riqchisi bunday qatorni KIRITILGAN kuni bo'yicha
+            # solishtiradi.
             s.add(PayrollAdjustment(
                 user_id=emp_uid, period=PERIOD,
                 kind=PayrollAdjustmentKind.minus.value,
                 category=PayrollAdjustmentCategory.advance.value,
                 status=PayrollAdjustmentStatus.pending.value,
                 amount=BASE_AMOUNT, reason="T-Adv ariza avansi",
-                issued_on=BASE_DATE, created_by=emp_uid,
+                issued_on=None, created_by=emp_uid,
                 source=PayrollAdjustmentSource.request.value,
             ))
             # Rad etilgan avans — dublikat SANALMASLIGI kerak
@@ -10786,7 +11003,7 @@ def test_advance_duplicate_guard() -> None:
                 category=PayrollAdjustmentCategory.advance.value,
                 status=PayrollAdjustmentStatus.rejected.value,
                 amount=500_000.0, reason="T-Adv rad etilgan",
-                issued_on=_date(2020, 5, 25), created_by=emp_uid,
+                issued_on=None, created_by=emp_uid,
                 source=PayrollAdjustmentSource.hr_manual.value,
             ))
             # Boshqa xodimning avansi — aralashmasligi kerak
@@ -10809,8 +11026,10 @@ def test_advance_duplicate_guard() -> None:
                     s, emp_uid, PERIOD, BASE_AMOUNT * 2, BASE_DATE),
                 "far_date": await _find_duplicate_advance(
                     s, emp_uid, PERIOD, BASE_AMOUNT, BASE_DATE + _td(days=20)),
+                # Rad etilganga AYNAN mos (summa ham, sana ham) — baribir
+                # dublikat sanalmaydi: u oylikka kirmaydi.
                 "rejected": await _find_duplicate_advance(
-                    s, emp_uid, PERIOD, 500_000.0, _date(2020, 5, 25)),
+                    s, emp_uid, PERIOD, 500_000.0, BASE_DATE),
                 "other_period": await _find_duplicate_advance(
                     s, emp_uid, OTHER_PERIOD, BASE_AMOUNT, BASE_DATE),
             }
@@ -10827,7 +11046,7 @@ def test_advance_duplicate_guard() -> None:
             msg = _duplicate_message(res["exact"])
             check("ogohlantirish manbani ko'rsatadi (ariza)", "ariza" in msg.lower(), msg)
             check("ogohlantirish summa va sanani ko'rsatadi",
-                  "2 000 000" in msg and "10.05.2020" in msg, msg)
+                  "2 000 000" in msg and BASE_DATE.strftime("%d.%m.%Y") in msg, msg)
     except Exception:
         check("dublikat qo'riqchisi testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
         cleanup_adv()
@@ -10844,7 +11063,6 @@ def test_advance_duplicate_guard() -> None:
         "user_id": emp_uid,
         "period": PERIOD,
         "amount": BASE_AMOUNT,
-        "issued_on": BASE_DATE.isoformat(),
         "reason": "T-Adv qo'lda takror",
     }
     try:
@@ -10886,7 +11104,7 @@ def test_advance_duplicate_guard() -> None:
                     return None, sent
                 payload = AdvanceIn(
                     user_id=emp_uid, period=PERIOD, amount=BASE_AMOUNT,
-                    issued_on=BASE_DATE, reason="T-Adv tasdiqlangan takror",
+                    reason="T-Adv tasdiqlangan takror",
                     confirm_duplicate=True, override_limit=True,
                     override_reason="Sinov: chegara testdan tashqarida",
                 )
@@ -11415,6 +11633,246 @@ def test_advance_limit_gate() -> None:
         check("ariza yo'li testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
 
     cleanup_gate()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_issue_flow() -> None:
+    """«Kiritildi» va «berildi» ajratimi (Avans TZ A-04).
+
+    MUAMMO: ilgari HR kiritishda «berilgan sana» yozardi, tasdiq esa keyin
+    kelardi — ya'ni pul Boshliq rad etishi mumkin bo'lgan paytda allaqachon
+    qo'lda bo'lardi va qaytarib olinmasdi.
+
+    Yangi zanjir: pending → approved (ruxsat) → issued (kassa to'ladi).
+
+    Tekshiriladi:
+      1. Kiritishda `issued_on` YOZILMAYDI (bo'sh qoladi)
+      2. `pending` avansni to'langan deb belgilab bo'lmaydi -> 400
+      3. `approved` -> `issued` o'tadi, kim va qachon belgilagani saqlanadi
+      4. Ikkinchi marta to'lash -> 400
+      5. Kelajakdagi sana -> 400
+      6. Auditda `advance_issued` amali
+      7. ⭐ PAYSLIP: `issued` avans oylikdan AYIRILADI (`approved` kabi) —
+         to'lash uni hisobdan chiqarib yubormaydi
+      8. Rad etilgan avans payslipga kirmaydi (eski qoida buzilmagan)
+    """
+    print("\n=== AVANS: kiritildi/berildi ajratimi (A-04) ===")
+    import asyncio as _asyncio
+    from datetime import date as _dt_date, datetime as _dt_datetime, timedelta as _td
+
+    from api.routers import payroll as pay_router
+    from api.schemas import AdvanceIn, AdvanceDecision, AdvanceIssueIn
+    from api.services.payroll import build_payslip
+    from db.base import async_session
+    from db.models import (
+        Attendance as _Att,
+        AuditLog as _Audit,
+        PayBasis,
+        PayrollAdjustmentStatus,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import select as _sel
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Iss-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600931,'T-Iss-Emp','employee',1,1,datetime('now'))")
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    # Joriy oy — chegara musbat bo'lishi uchun davomat kerak
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+
+    def cleanup_iss():
+        try:
+            c2 = db()
+            pslips = [r[0] for r in c2.execute(
+                "select id from payslips where user_id=?", (emp_uid,)).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id=?", (emp_uid,))
+            c2.execute("delete from audit_logs where target_user_id=?", (emp_uid,))
+            c2.execute("delete from users where id=?", (emp_uid,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  A-04 tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    boss_row = conn.execute(
+        "select id from users where role in ('boss','dasturchi') and is_active=1 limit 1").fetchone()
+    hr_row = conn.execute(
+        "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+    if not boss_row or not hr_row:
+        check("A-04 testi uchun HR va Boshliq topildi", False)
+        cleanup_iss()
+        return
+
+    async def _flow():
+        """Butun zanjir. `notify_user` patch qilinadi — jonli xodimga/Boshliqqa
+        test xabari bormasin (⚠️ test-telegram-xavfi)."""
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        out = {}
+        try:
+            async with async_session() as s:
+                for wd in range(5):
+                    s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                             start_time="09:00", end_time="18:00"))
+                for wd in (5, 6):
+                    s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+                s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                                 amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                                 changed_by=emp_uid))
+                for dd in range(1, max(BUGUN.day, 2)):
+                    day = BUGUN.replace(day=dd)
+                    if day.weekday() >= 5:
+                        continue
+                    s.add(_Att(user_id=emp_uid, date=day, status="present",
+                               check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                               check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                               late_minutes=0, worked_minutes=540))
+                await s.commit()
+
+                hr = await s.get(_User, hr_row[0])
+                boss = await s.get(_User, boss_row[0])
+
+                # 1. Kiritish — `issued_on` yozilmasligi kerak
+                adj = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=200_000,
+                              reason="T-Iss sinov avansi",
+                              # Eski mijoz sana yuborsa ham E'TIBORGA OLINMASIN
+                              issued_on=_dt_date(2020, 1, 1)),
+                    hr, s)
+                out["created"] = adj
+
+                # 2. `pending` ni to'langan deb belgilash — taqiqlanadi
+                try:
+                    await pay_router.issue_advance(adj.id, AdvanceIssueIn(), hr, s)
+                    out["issue_pending"] = "o'tib ketdi"
+                except Exception as e:
+                    out["issue_pending"] = getattr(e, "detail", str(e))
+
+                # 3. Tasdiqlash -> to'lash
+                await pay_router.decide_advance(adj.id, AdvanceDecision(approve=True), boss, s)
+                issued = await pay_router.issue_advance(
+                    adj.id, AdvanceIssueIn(note="T-Iss kassadan berildi"), hr, s)
+                out["issued"] = issued
+
+                # 4. Ikkinchi marta to'lash
+                try:
+                    await pay_router.issue_advance(adj.id, AdvanceIssueIn(), hr, s)
+                    out["issue_twice"] = "o'tib ketdi"
+                except Exception as e:
+                    out["issue_twice"] = getattr(e, "detail", str(e))
+
+                # 5. Kelajakdagi sana (yangi, tasdiqlangan avansda)
+                adj2 = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=50_000,
+                              reason="T-Iss ikkinchi avans", confirm_duplicate=True),
+                    hr, s)
+                await pay_router.decide_advance(adj2.id, AdvanceDecision(approve=True), boss, s)
+                try:
+                    await pay_router.issue_advance(
+                        adj2.id, AdvanceIssueIn(issued_on=BUGUN + _td(days=3)), hr, s)
+                    out["future"] = "o'tib ketdi"
+                except Exception as e:
+                    out["future"] = getattr(e, "detail", str(e))
+
+                # 6. Rad etilgan avans (payslipga kirmasligi kerak)
+                adj3 = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=70_000,
+                              reason="T-Iss rad etiladigan", confirm_duplicate=True),
+                    hr, s)
+                await pay_router.decide_advance(adj3.id, AdvanceDecision(approve=False), boss, s)
+
+                out["audits"] = list(await s.scalars(
+                    _sel(_Audit).where(_Audit.target_user_id == emp_uid)))
+
+                # 7. Payslip — `issued` (200k) + `approved` (50k) ayirilsin,
+                #    rad etilgan (70k) esa YO'Q
+                emp = await s.get(_User, emp_uid)
+                out["payslip"] = await build_payslip(s, emp, PERIOD)
+                return out, sent
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        out, sent = _asyncio.run(_flow())
+    except Exception:
+        check("A-04 zanjiri ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_iss()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    created = out["created"]
+    check("kiritishda `issued_on` yozilmaydi (pul hali berilmagan)",
+          created.issued_on is None, f"issued_on={created.issued_on}")
+    check("kiritilgan avans holati `pending`",
+          created.status == PayrollAdjustmentStatus.pending.value, f"status={created.status}")
+
+    check("tasdiqlanmagan avansni to'langan deb belgilab bo'lmaydi",
+          out["issue_pending"] != "o'tib ketdi"
+          and "tasdiq" in str(out["issue_pending"]).lower(),
+          str(out["issue_pending"])[:140])
+
+    issued = out["issued"]
+    check("tasdiqlangach `issued` holatiga o'tadi",
+          issued.status == PayrollAdjustmentStatus.issued.value, f"status={issued.status}")
+    check("to'langan sana bugungi kun bilan to'ldirildi",
+          issued.issued_on == _dt_date.today(), f"issued_on={issued.issued_on}")
+    check("kim va qachon to'laganini tizim saqladi",
+          issued.issued_by == hr_row[0] and issued.issued_at is not None
+          and issued.issued_by_name,
+          f"by={issued.issued_by}, at={issued.issued_at}, ism={issued.issued_by_name}")
+
+    check("ikkinchi marta to'lab bo'lmaydi",
+          out["issue_twice"] != "o'tib ketdi"
+          and "allaqachon" in str(out["issue_twice"]).lower(),
+          str(out["issue_twice"])[:140])
+    check("kelajakdagi sana bilan to'lab bo'lmaydi",
+          out["future"] != "o'tib ketdi" and "kelajak" in str(out["future"]).lower(),
+          str(out["future"])[:140])
+
+    acts = [a.action for a in out["audits"]]
+    check("auditda `advance_issued` amali bor", "advance_issued" in acts, f"amallar={acts}")
+
+    # ⭐ Eng muhim tekshiruv: to'lash pulni hisobdan CHIQARIB YUBORMAYDI
+    f = out["payslip"]["fields"]
+    check("payslipda `issued` + `approved` ayirildi (200 000 + 50 000)",
+          abs(f["adjustments_minus"] - 250_000) < 1, f"adjustments_minus={f['adjustments_minus']}")
+    check("rad etilgan avans payslipga KIRMADI (70 000 yo'q)",
+          abs(f["adjustments_minus"] - 320_000) > 1, f"adjustments_minus={f['adjustments_minus']}")
+    check("xabarlar patch qilingan yuboruvchiga bordi (jonli emas)",
+          isinstance(sent, list), f"xabarlar={len(sent)}")
+
+    cleanup_iss()
     try:
         conn.close()
     except Exception:

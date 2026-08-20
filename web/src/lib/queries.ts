@@ -27,6 +27,10 @@ export const qk = {
   documentTemplates: ["document-templates"] as const,
   certificates: (userId?: number) => ["certificates", userId ?? "all"] as const,
   certificatePurposes: ["certificates", "purposes"] as const,
+  assets: ["assets"] as const,
+  assetKinds: ["assets", "kinds"] as const,
+  assetHistory: (id: number) => ["assets", "history", id] as const,
+  myAssets: ["assets", "me"] as const,
   offers: (q: string) => ["offers", q] as const,
   userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
@@ -235,6 +239,26 @@ export const useDocumentTemplates = () =>
     queryFn: api.documentTemplates,
     staleTime: 10 * 60 * 1000,
   });
+
+// ─── Mol-mulk (TZ 3.11 / S-18) ───
+export const useAssets = () => useQuery({ queryKey: qk.assets, queryFn: () => api.assets() });
+
+export const useAssetKinds = () =>
+  useQuery({ queryKey: qk.assetKinds, queryFn: api.assetKinds, staleTime: 60 * 60 * 1000 });
+
+/** `id` null bo'lsa so'rov yuborilmaydi — tarix yopiq. */
+export const useAssetHistory = (id: number | null) =>
+  useQuery({
+    queryKey: qk.assetHistory(id ?? 0),
+    queryFn: () => api.assetHistory(id as number),
+    enabled: id !== null,
+  });
+
+export const useMyAssets = () => useQuery({ queryKey: qk.myAssets, queryFn: api.myAssets });
+
+export const useAddAsset = () => useApiMutation(api.addAsset, [["assets"]]);
+export const useAssignAsset = () => useApiMutation(api.assignAsset, [["assets"]]);
+export const useReturnAsset = () => useApiMutation(api.returnAsset, [["assets"]]);
 
 export const useCertificates = (userId?: number) =>
   useQuery({
@@ -665,6 +689,14 @@ export const useCreateAdvance = () =>
   // `payslips`/`periods` ham yangilanadi: avans tasdiqlangach oylik summasi
   // o'zgaradi va jadval eski raqam bilan qolib ketmasin.
   useApiMutation(api.createAdvance, [["payroll", "adjustments"], ["payroll", "advance-limit"]]);
+
+export const useIssueAdvance = () =>
+  useApiMutation(
+    (vars: { adjustmentId: number; issued_on?: string; note?: string }) =>
+      api.issueAdvance(vars.adjustmentId, { issued_on: vars.issued_on, note: vars.note }),
+    // Payslip ham yangilanadi: `issued` oylikka `approved` kabi kiradi.
+    [["payroll", "adjustments"], ["payroll", "payslips"], ["payroll", "payslip"]]
+  );
 
 export const useDecideAdvance = () =>
   useApiMutation(
