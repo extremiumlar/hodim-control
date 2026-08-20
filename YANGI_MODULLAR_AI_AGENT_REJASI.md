@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 8/22 (2026-08-20)
+## Holat: 9/22 (2026-08-20)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -364,10 +364,11 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-14 hujjat generatsiyasi (.docx) | ✅ | `3f3a63f` |
 | S-15 ish taklifi — model va forma | ✅ | `904e9a6` |
 | S-16 offer → xodim → onboarding | ✅ | `8016b0e` |
-| S-17 ma'lumotnoma generatsiyasi | ✅ | (shu commit) |
-| S-18…S-31 | ⬜ | — |
+| S-17 ma'lumotnoma generatsiyasi | ✅ | `eb5baa5` |
+| S-18 mol-mulk — model va HR paneli | ✅ | `71cea51` |
+| S-19…S-31 | ⬜ | — |
 
-**Keyingisi: S-18** (biriktirilgan mol-mulk, 3.11).
+**Keyingisi: S-19** (mol-mulk — xodim tomoni va dalolatnoma, 3.11).
 
 ⚠️ S-16 ning 3-4 bandlari (shtat o'rni «band», onboarding rejasi) 3.20 va
 3.2 modullariga bog'liq — ular hali qurilmagan. Javobda `onboarding_ready`
