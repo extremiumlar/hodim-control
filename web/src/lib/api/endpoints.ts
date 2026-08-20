@@ -2,6 +2,8 @@ import { apiFetch, apiUpload, ApiError, API_BASE_URL, getToken, UNAUTHORIZED_EVE
 import type {
   AdminRecord,
   AdvanceLimit,
+  AdvanceSettings,
+  AdvanceSettingsInput,
   Appeal,
   AppealDecideResult,
   Attendance,
@@ -167,6 +169,37 @@ export const api = {
   assetHistory: (id: number) =>
     apiFetch<AssetHistoryItem[]>(`/assets/${id}/history`),
   myAssets: () => apiFetch<AssetItem[]>("/assets/me"),
+  acceptAsset: (id: number) =>
+    apiFetch<{ ok: boolean; accepted_at: string }>(`/assets/${id}/accept`, {
+      method: "POST",
+    }),
+  assetAct: (body: { id: number; template_id: number; action: "out" | "in" }) =>
+    apiFetch<{ job_id: number; missing: string[] }>(`/assets/${body.id}/act`, {
+      method: "POST",
+      body: JSON.stringify({ template_id: body.template_id, action: body.action }),
+    }),
+  assetStandardSet: (positionId: number) =>
+    apiFetch<{
+      position_id: number;
+      items: { kind: string; kind_label: string; quantity: number; note: string | null }[];
+    }>(`/assets/standard-set/${positionId}`),
+  setAssetStandardSet: (body: { position_id: number; items: Record<string, number> }) =>
+    apiFetch<{ ok: boolean; count: number }>("/assets/standard-set", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  assetChecklist: (userId: number) =>
+    apiFetch<{
+      user_id: number;
+      has_position: boolean;
+      items: {
+        kind: string;
+        kind_label: string;
+        required: number;
+        held: number;
+        missing: number;
+      }[];
+    }>(`/assets/checklist/${userId}`),
 
   certificatePurposes: () =>
     apiFetch<{ value: string; label: string }[]>("/certificates/purposes"),
@@ -585,6 +618,15 @@ export const api = {
     ).toString();
     return apiFetch<PayrollAdjustment[]>(`/payroll/adjustments${q ? `?${q}` : ""}`);
   },
+  // ── Avans sozlamalari (B-01/B-02) ──
+  advanceSettings: () => apiFetch<AdvanceSettings[]>("/payroll/advance-settings"),
+  upsertAdvanceSettings: (body: AdvanceSettingsInput) =>
+    apiFetch<AdvanceSettings>("/payroll/advance-settings", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteAdvanceSettings: (id: number) =>
+    apiFetch<{ deleted: boolean }>(`/payroll/advance-settings/${id}`, { method: "DELETE" }),
   advanceLimit: (userId: number, period?: string) =>
     apiFetch<AdvanceLimit>(
       `/payroll/advances/limit?user_id=${userId}${period ? `&period=${period}` : ""}`

@@ -36,6 +36,8 @@ from api.deps import (
 )
 from api.schemas import (
     AdvanceIssueIn,
+    AdvanceSettingsIn,
+    AdvanceSettingsOut,
     MyAdvanceRow,
     MyAdvancesOut,
     AdvanceLimitOut,
@@ -65,7 +67,12 @@ from api.schemas import (
     SalaryRateOut,
     SalaryRateUpdate,
 )
-from api.services.advance import AdvanceLimit, limit_for as advance_limit_for
+from api.services.advance import (
+    DEFAULT_PENDING_ON_CLOSE,
+    AdvanceLimit,
+    limit_for as advance_limit_for,
+    resolve_advance_settings,
+)
 from api.services.attendance import collect_readiness
 from api.services.export import build_payroll_xlsx
 from api.services.payroll import (
@@ -86,6 +93,7 @@ from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
 from db.models import (
     PAYROLL_COUNTED_STATUSES,
+    AdvanceSettings,
     AuditLog,
     FinePolicy,
     KpiRate,
@@ -244,6 +252,111 @@ async def _policy_label(db: AsyncSession, policy: FinePolicy) -> str | None:
         pos = await db.get(Position, policy.scope_id)
         return pos.name if pos else f"#{policy.scope_id}"
     return None
+
+
+# ── Avans sozlamalari (Avans TZ B-01/B-02) ──
+# `fine_policies` bilan AYNAN bir xil naqsh: uch darajali qamrov, upsert,
+# har o'zgarish auditga. Ikki sozlama sahifasi bir xil ishlasin.
+
+
+async def _advance_scope_label(db: AsyncSession, row: AdvanceSettings) -> str | None:
+    if row.scope == "user" and row.scope_id:
+        u = await db.get(User, row.scope_id)
+        return u.full_name if u else f"#{row.scope_id}"
+    if row.scope == "position" and row.scope_id:
+        pos = await db.get(Position, row.scope_id)
+        return pos.name if pos else f"#{row.scope_id}"
+    return None
+
+
+@router.get("/advance-settings", response_model=list[AdvanceSettingsOut])
+async def list_advance_settings(
+    _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> list[AdvanceSettingsOut]:
+    rows = list(
+        await db.scalars(
+            select(AdvanceSettings).order_by(AdvanceSettings.scope, AdvanceSettings.scope_id)
+        )
+    )
+    out: list[AdvanceSettingsOut] = []
+    for r in rows:
+        item = AdvanceSettingsOut.model_validate(r)
+        item.scope_name = await _advance_scope_label(db, r)
+        out.append(item)
+    return out
+
+
+@router.put("/advance-settings", response_model=AdvanceSettingsOut)
+async def upsert_advance_settings(
+    payload: AdvanceSettingsIn,
+    actor: User = Depends(_require_manage),
+    db: AsyncSession = Depends(get_db),
+) -> AdvanceSettingsOut:
+    """Qamrov (scope + scope_id) bo'yicha upsert.
+
+    Har o'zgarish auditga TO'LIQ oldingi holat bilan yoziladi: bu
+    qiymatlar xodim qancha pul ola olishini belgilaydi, ya'ni
+    «kim koeffitsientni oshirdi?» degan savol albatta chiqadi."""
+    q = select(AdvanceSettings).where(AdvanceSettings.scope == payload.scope)
+    q = (
+        q.where(AdvanceSettings.scope_id.is_(None))
+        if payload.scope_id is None
+        else q.where(AdvanceSettings.scope_id == payload.scope_id)
+    )
+    existing = await db.scalar(q)
+
+    before = None
+    if existing is not None:
+        # `row_to_dict` SHART: xom qiymatlar ichida `Decimal` bor
+        # (coefficient, cap_percent, min_amount) va u JSON ustunga
+        # yozilmaydi — audit commit paytida yiqilib, SOZLAMA o'zgarishi
+        # ham qaytarilardi (`fine_policies` da aynan shu tuzoq bo'lgan).
+        before = row_to_dict(existing, exclude=("id",))
+        for field, value in payload.model_dump(exclude={"scope", "scope_id"}).items():
+            setattr(existing, field, value)
+        row = existing
+    else:
+        row = AdvanceSettings(**payload.model_dump())
+        db.add(row)
+    row.updated_by = actor.id
+
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_settings_upserted",
+            target_user_id=payload.scope_id if payload.scope == "user" else None,
+            before=before,
+            after={**payload.model_dump()},
+        )
+    )
+    await db.commit()
+    await db.refresh(row)
+    out = AdvanceSettingsOut.model_validate(row)
+    out.scope_name = await _advance_scope_label(db, row)
+    return out
+
+
+@router.delete("/advance-settings/{settings_id}")
+async def delete_advance_settings(
+    settings_id: int, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Qamrovni olib tashlash — xodim/lavozim shundan keyin kengroq
+    darajadagi sozlamaga qaytadi (`resolve_advance_settings`)."""
+    row = await db.get(AdvanceSettings, settings_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sozlama topilmadi")
+    db.add(
+        AuditLog(
+            actor_id=actor.id,
+            action="advance_settings_deleted",
+            target_user_id=row.scope_id if row.scope == "user" else None,
+            before=row_to_dict(row, exclude=("id",)),
+            after=None,
+        )
+    )
+    await db.delete(row)
+    await db.commit()
+    return {"deleted": True}
 
 
 @router.get("/policies", response_model=list[FinePolicyOut])
@@ -1084,8 +1197,8 @@ async def _check_reason(db: AsyncSession, target: User, reason: str) -> None:
 
     DEFAULT O'CHIQ: C blokdagi bot oqimida xodim tugma bosib avans
     so'raydi va matn yozmaydi — majburiy qilsak o'sha oqim buzilardi."""
-    policy = await resolve_policy(db, target)
-    if policy is None or not policy.advance_reason_required:
+    settings = await resolve_advance_settings(db, target)
+    if settings is None or not settings.reason_required:
         return
     text = (reason or "").strip()
     if len(text) < _MIN_REASON_LEN or text.lower() in _MEANINGLESS_REASONS:
@@ -1093,7 +1206,7 @@ async def _check_reason(db: AsyncSession, target: User, reason: str) -> None:
             status.HTTP_400_BAD_REQUEST,
             f"Sabab kamida {_MIN_REASON_LEN} belgidan iborat va MA'NOLI bo'lishi kerak "
             "(«avans», «kerak» kabi matnlar qabul qilinmaydi). "
-            "Qoidani HR «Ish haqi → Sozlamalar» dan o'zgartirishi mumkin.",
+            "Qoidani HR «Ish haqi → Sozlamalar → Avans» dan o'zgartirishi mumkin.",
         )
 
 
@@ -1133,8 +1246,10 @@ async def _close_pending_advances(db: AsyncSession, period: str, actor: User) ->
     notify: list = []
     for adj in rows:
         target = await db.get(User, adj.user_id)
-        policy = await resolve_policy(db, target) if target is not None else None
-        mode = policy.advance_pending_on_close if policy is not None else "carry"
+        settings = (
+            await resolve_advance_settings(db, target) if target is not None else None
+        )
+        mode = settings.pending_on_close if settings is not None else DEFAULT_PENDING_ON_CLOSE
         before = row_to_dict(adj, exclude=("created_at",))
         if mode == "cancel":
             adj.status = PayrollAdjustmentStatus.rejected.value

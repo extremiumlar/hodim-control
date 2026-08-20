@@ -908,9 +908,6 @@ export interface FinePolicy {
   hot_lead_cool_minutes: number | null;
   hot_lead_fine: number | null;
   /** Avans sababi majburiymi (A-05). Default `false`. */
-  advance_reason_required: boolean;
-  /** Davr yopilganda pending avans: 'carry' (keyingi oyga) yoki 'cancel'. */
-  advance_pending_on_close: string;
   is_active: boolean;
   updated_at: string;
 }
@@ -932,8 +929,6 @@ export interface FinePolicyInput {
   fine_remainder_mode?: "drop" | "carry_next_month" | "from_salary";
   hot_lead_cool_minutes?: number | null;
   hot_lead_fine?: number | null;
-  advance_reason_required?: boolean;
-  advance_pending_on_close?: string;
   is_active?: boolean;
 }
 
@@ -1034,6 +1029,34 @@ export interface AdvanceLimit {
   reason: string | null;
   warnings: string[];
 }
+
+/** Avans sozlamasi — uch darajali qamrov (Avans TZ B-01). */
+export interface AdvanceSettings {
+  id: number;
+  scope: "global" | "position" | "user";
+  scope_id: number | null;
+  /** Oyning nechanchi kuni avans e'lon qilinadi (cron kechiksa ham `>=`). */
+  advance_day: number;
+  /** Ishlab bo'lingan pulning qanchasi (0.5 = yarmi). */
+  coefficient: number;
+  /** Oylikning eng ko'pi bilan necha foizi. */
+  cap_percent: number;
+  /** Shundan kam chegara qolganga avans taklif qilinmaydi. */
+  min_amount: number | null;
+  reminder_time: string;
+  pending_on_close: "carry" | "cancel";
+  reason_required: boolean;
+  is_active: boolean;
+  effective_from: string | null;
+  updated_by: number | null;
+  updated_at: string;
+  scope_name: string | null;
+}
+
+export type AdvanceSettingsInput = Omit<
+  AdvanceSettings,
+  "id" | "updated_by" | "updated_at" | "scope_name"
+>;
 
 export interface PayrollAdjustment {
   id: number;

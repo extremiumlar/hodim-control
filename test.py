@@ -10393,6 +10393,251 @@ def test_assets() -> None:
         conn.close()
 
 
+def test_assets_employee() -> None:
+    """S-19 (TZ 3.11) — xodim tomoni, dalolatnoma va standart to'plam.
+
+    Qabul mezonlari (TZ):
+      • xodim FAQAT o'ziga biriktirilganini ko'radi;
+      • «Qabul qildim» VAQTI yoziladi;
+      • dalolatnoma `.docx` chiqadi.
+
+    «Qabul qildim» ni faqat xodimning O'ZI bosishi mumkin: nizo chiqqanda
+    «men buni olganim yo'q» degan da'voga javob shu yozuv bo'ladi.
+    Tasdiqlash IDEMPOTENT — qayta bosilsa BIRINCHI vaqt saqlanadi, aks
+    holda xodim sanani «yangilab» qo'yishi mumkin edi.
+    """
+    import asyncio
+    import time as _t
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-19: MOL-MULK — XODIM TOMONI VA DALOLATNOMA")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    asset_id = tmpl_id = None
+    try:
+        cur.execute("delete from users where full_name like 'T-A19%'")
+        cur.execute(
+            "delete from asset_assignments where asset_id in"
+            " (select id from assets where inventory_no like 'T-I19%')")
+        cur.execute("delete from assets where inventory_no like 'T-I19%'")
+        cur.execute("delete from document_templates where name like 'T-Act%'")
+        conn.commit()
+
+        pos = cur.execute("select id, name from positions limit 1").fetchone()
+        for n, tg in enumerate((999701901, 999701902)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, position_id, created_at)"
+                " values (?,?,'employee',0,1,?,datetime('now'))",
+                (tg, f"T-A19 Xodim{n}", pos[0] if pos and n == 0 else None))
+            ids[f"u{n}"] = cur.lastrowid
+        conn.commit()
+        t0 = token_for(ids["u0"], "employee")
+        t1 = token_for(ids["u1"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/assets", headers=auth(mgr_t), json={
+                "inventory_no": "T-I19-01", "name": "T-A19 Noutbuk",
+                "kind": "laptop", "value": 8000000})
+            asset_id = r.json().get("id") if r.status_code == 201 else None
+            c.post(f"/assets/{asset_id}/assign", headers=auth(mgr_t),
+                   json={"user_id": ids["u0"], "condition_out": "good"})
+
+            # ── XODIM FAQAT O'ZINIKINI KO'RADI ──
+            r = c.get("/assets/me", headers=auth(t0))
+            check("S-19: egasi o'z buyumini ko'radi",
+                  r.status_code == 200 and len(r.json()) == 1, "=" + r.text[:110])
+            r = c.get("/assets/me", headers=auth(t1))
+            check("S-19: boshqa xodim ko'rmaydi",
+                  r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+
+            # ── «QABUL QILDIM» ──
+            r = c.post(f"/assets/{asset_id}/accept", headers=auth(t1))
+            check("S-19: BEGONA xodim tasdiqlay olmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+            r = c.post(f"/assets/{asset_id}/accept", headers=auth(mgr_t))
+            check("S-19: HR xodim NOMIDAN tasdiqlay olmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            r = c.post(f"/assets/{asset_id}/accept", headers=auth(t0))
+            check("S-19: egasi tasdiqladi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            birinchi = r.json().get("accepted_at") if r.status_code == 200 else None
+            check("S-19: tasdiqlash VAQTI yozildi", bool(birinchi), "=" + str(birinchi))
+            bazada = cur.execute(
+                "select accepted_at from asset_assignments where asset_id=?"
+                " and returned_at is null", (asset_id,)).fetchone()
+            check("S-19: vaqt bazada ham bor", bazada and bazada[0] is not None,
+                  "=" + str(bazada))
+
+            # IDEMPOTENT: qayta bosish vaqtni O'ZGARTIRMAYDI
+            _t.sleep(1.1)
+            r = c.post(f"/assets/{asset_id}/accept", headers=auth(t0))
+            check("S-19: qayta bosishda BIRINCHI vaqt saqlandi",
+                  r.status_code == 200 and r.json().get("accepted_at") == birinchi,
+                  f"{birinchi} vs {r.json().get('accepted_at')}")
+
+            r = c.get("/assets/me", headers=auth(t0))
+            check("S-19: ro'yxatda «qabul qilingan» belgisi paydo bo'ldi",
+                  r.status_code == 200 and r.json()[0].get("accepted") is True,
+                  "=" + r.text[:120])
+
+            # ── DALOLATNOMA ──
+            r = c.post("/document-templates", headers=auth(mgr_t), json={
+                "kind": "act", "name": "T-Act dalolatnoma", "file_id": "T-ACT-TMPL",
+                "placeholders": ["fish", "buyum", "inventar", "amal", "holati"]})
+            tmpl_id = r.json().get("id") if r.status_code == 201 else None
+
+            r = c.get("/assets/act-placeholders", headers=auth(mgr_t))
+            nomlar = {x["name"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-19: dalolatnoma belgilari e'lon qilingan",
+                  {"fish", "buyum", "inventar", "amal", "holati", "qiymati_sozda"}
+                  <= nomlar, "=" + str(sorted(nomlar)))
+
+            boshi = _t.perf_counter()
+            r = c.post(f"/assets/{asset_id}/act", headers=auth(mgr_t),
+                       json={"template_id": tmpl_id, "action": "out"})
+            ketgan = _t.perf_counter() - boshi
+            check("S-19: dalolatnoma NAVBATGA qo'yildi -> 202",
+                  r.status_code == 202, "kod=" + str(r.status_code) + " " + r.text[:120])
+            check("S-19: so'rov TEZ qaytdi (fon ishi)", ketgan < 1.0, f"{ketgan:.3f}s")
+
+            natija: dict = {}
+            d = _docx_fixture("<w:p><w:r><w:t>{{fish}} — {{buyum}} ({{</w:t></w:r>"
+                              "<w:r><w:t>inventar}}) {{amal}}, holati: {{holati}}"
+                              "</w:t></w:r></w:p>")
+
+            async def _tick():
+                import api.telegram_notify as tn
+                from api.services.background_jobs import background_tick
+
+                asl_dl, asl_send = tn.download_file, tn.send_media_file
+
+                async def soxta_dl(file_id):
+                    return d
+
+                async def soxta_send(chat_id, content, filename, kind, caption=None):
+                    natija["bytes"] = content
+                    natija["filename"] = filename
+                    return {"ok": True, "result": {"document": {"file_id": "T-ACT-OUT"}}}
+
+                tn.download_file, tn.send_media_file = soxta_dl, soxta_send
+                try:
+                    async with async_session() as s2:
+                        return await background_tick(s2)
+                finally:
+                    tn.download_file, tn.send_media_file = asl_dl, asl_send
+
+            res = asyncio.run(_tick())
+            check("S-19: cron dalolatnomani tayyorladi", res.get("ok") is True,
+                  "=" + str(res))
+            if natija.get("bytes"):
+                matn = _docx_text(natija["bytes"])
+                check("S-19: dalolatnomada xodim, buyum va inventar bor",
+                      "T-A19 Xodim0" in matn and "T-I19-01" in matn, "=" + matn)
+                check("S-19: «berildi» deb yozilgan", "berildi" in matn, "=" + matn)
+                check("S-19: holat tarjima qilingan (Yaxshi)", "Yaxshi" in matn,
+                      "=" + matn)
+
+            # Qaytarilmagan buyumga «in» dalolatnomasi bo'lmaydi
+            r = c.post(f"/assets/{asset_id}/act", headers=auth(mgr_t),
+                       json={"template_id": tmpl_id, "action": "in"})
+            check("S-19: qaytarilmagan buyumga «in» dalolatnomasi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:110])
+
+            # ── STANDART TO'PLAM ──
+            if pos:
+                r = c.put("/assets/standard-set", headers=auth(mgr_t), json={
+                    "position_id": pos[0], "items": {"laptop": 1, "phone": 1, "sim": 2}})
+                check("S-19: standart to'plam saqlandi",
+                      r.status_code == 200 and r.json().get("count") == 3,
+                      "kod=" + str(r.status_code) + " " + r.text[:110])
+
+                r = c.put("/assets/standard-set", headers=auth(mgr_t), json={
+                    "position_id": pos[0], "items": {"laptop": 0}})
+                check("S-19: nol miqdor rad etildi -> 400", r.status_code == 400,
+                      "kod=" + str(r.status_code) + " " + r.text[:110])
+                r = c.put("/assets/standard-set", headers=auth(mgr_t), json={
+                    "position_id": pos[0], "items": {"yolgon": 1}})
+                check("S-19: noma'lum tur rad etildi -> 400", r.status_code == 400,
+                      "kod=" + str(r.status_code))
+
+                r = c.get(f"/assets/standard-set/{pos[0]}", headers=auth(mgr_t))
+                turlar = {i["kind"]: i["quantity"] for i in r.json().get("items", [])}
+                check("S-19: to'plam o'qildi va xato urinishlar buzmadi",
+                      turlar == {"laptop": 1, "phone": 1, "sim": 2}, "=" + str(turlar))
+
+                # To'liq ALMASHTIRISH (qisman yangilash emas)
+                c.put("/assets/standard-set", headers=auth(mgr_t), json={
+                    "position_id": pos[0], "items": {"laptop": 1}})
+                r = c.get(f"/assets/standard-set/{pos[0]}", headers=auth(mgr_t))
+                check("S-19: to'plam BUTUNLAY almashtirildi (eskisi o'chdi)",
+                      [i["kind"] for i in r.json().get("items", [])] == ["laptop"],
+                      "=" + str(r.json().get("items")))
+
+                # ── NAZORAT RO'YXATI ──
+                c.put("/assets/standard-set", headers=auth(mgr_t), json={
+                    "position_id": pos[0], "items": {"laptop": 1, "phone": 1}})
+                r = c.get(f"/assets/checklist/{ids['u0']}", headers=auth(mgr_t))
+                bandlar = {i["kind"]: i for i in r.json().get("items", [])}
+                check("S-19: nazoratda noutbuk BOR deb ko'rsatilgan",
+                      bandlar.get("laptop", {}).get("held") == 1
+                      and bandlar["laptop"]["missing"] == 0, "=" + str(bandlar))
+                check("S-19: nazoratda telefon YETISHMAYDI deb ko'rsatilgan",
+                      bandlar.get("phone", {}).get("held") == 0
+                      and bandlar["phone"]["missing"] == 1, "=" + str(bandlar))
+
+                r = c.get(f"/assets/checklist/{ids['u1']}", headers=auth(mgr_t))
+                check("S-19: lavozimsiz xodimda bo'sh nazorat va bayroq",
+                      r.status_code == 200 and r.json().get("has_position") is False
+                      and r.json().get("items") == [], "=" + r.text[:120])
+
+            # ── Qaytargandan keyin xodim ro'yxatidan chiqadi ──
+            c.post(f"/assets/{asset_id}/return", headers=auth(mgr_t),
+                   json={"condition_in": "worn"})
+            r = c.get("/assets/me", headers=auth(t0))
+            check("S-19: qaytarilgach xodim ro'yxatidan chiqdi",
+                  r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+            r = c.post(f"/assets/{asset_id}/accept", headers=auth(t0))
+            check("S-19: qaytarilgan buyumni tasdiqlab bo'lmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # Endi «in» dalolatnomasi ishlaydi
+            r = c.post(f"/assets/{asset_id}/act", headers=auth(mgr_t),
+                       json={"template_id": tmpl_id, "action": "in"})
+            check("S-19: qaytargandan keyin «in» dalolatnomasi -> 202",
+                  r.status_code == 202, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-19 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if pos:
+                cur.execute("delete from position_asset_sets where position_id=?", (pos[0],))
+            if asset_id:
+                cur.execute("delete from asset_assignments where asset_id=?", (asset_id,))
+                cur.execute("delete from assets where id=?", (asset_id,))
+            cur.execute("delete from background_jobs where kind='document_render'")
+            cur.execute("delete from document_templates where name like 'T-Act%'")
+            cur.execute("delete from users where full_name like 'T-A19%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -10557,6 +10802,11 @@ def main() -> None:
         print("S-18 mol-mulk testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_assets_employee()
+    except Exception:
+        print("S-19 mol-mulk xodim testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         test_payroll_api()
     except Exception:
         print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
@@ -10705,6 +10955,11 @@ def main() -> None:
         test_advance_period_close()
     except Exception:
         print("Avans oy yopilishi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_advance_settings()
+    except Exception:
+        print("Avans sozlamalari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         cleanup_orphans()
@@ -11920,7 +12175,7 @@ def test_advance_soft_delete() -> None:
     from db.models import (
         Attendance as _Att,
         AuditLog as _Audit,
-        FinePolicy as _Policy,
+        AdvanceSettings as _AdvSet,
         PayBasis,
         PayrollAdjustment as _Adj,
         SalaryRate,
@@ -11964,7 +12219,7 @@ def test_advance_soft_delete() -> None:
             c2.execute("delete from users where id=?", (emp_uid,))
             # Sinov FAQAT xodim darajasidagi qoida yaratadi — global
             # sozlamaga tegilmaydi. Qolib ketgan bo'lsa o'chiramiz.
-            c2.execute("delete from fine_policies where scope='user' and scope_id=?", (emp_uid,))
+            c2.execute("delete from advance_settings where scope='user' and scope_id=?", (emp_uid,))
             c2.commit()
             c2.close()
         except Exception:
@@ -12055,12 +12310,12 @@ def test_advance_soft_delete() -> None:
                 out["audits"] = list(await s.scalars(
                     _sel(_Audit).where(_Audit.target_user_id == emp_uid)))
 
-                # 9. Sabab qoidasi. GLOBAL qoidaga TEGILMAYDI — sinov
-                #    xodimining O'ZIGA qoida yaratamiz (resolve_policy
-                #    tartibi: xodim > lavozim > global), oxirida o'chiramiz.
-                policy = _Policy(scope="user", scope_id=emp_uid,
-                                 free_late_minutes_per_month=0,
-                                 advance_reason_required=True, is_active=True)
+                # 9. Sabab qoidasi (B-01 dan keyin `advance_settings` da).
+                #    GLOBAL sozlamaga TEGILMAYDI — sinov xodimining O'ZIGA
+                #    qoida yaratamiz (xodim > lavozim > global), oxirida
+                #    o'chiramiz.
+                policy = _AdvSet(scope="user", scope_id=emp_uid,
+                                 reason_required=True, is_active=True)
                 s.add(policy)
                 await s.commit()
                 if policy is not None:
@@ -12176,7 +12431,7 @@ def test_advance_period_close() -> None:
     from db.models import (
         Attendance as _Att,
         AuditLog as _Audit,
-        FinePolicy as _Policy,
+        AdvanceSettings as _AdvSet,
         PayBasis,
         PayrollAdjustment as _Adj,
         PayrollAdjustmentStatus,
@@ -12202,7 +12457,7 @@ def test_advance_period_close() -> None:
         for tbl in ("payroll_adjustments", "salary_rates", "attendance",
                     "work_schedule_weekly", "work_schedule_override"):
             cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
-        cur.execute(f"delete from fine_policies where scope='user' and scope_id in ({qm})", stale)
+        cur.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", stale)
         cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
         cur.execute(f"delete from users where id in ({qm})", stale)
     cur.execute(
@@ -12231,7 +12486,7 @@ def test_advance_period_close() -> None:
             for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
                         "work_schedule_weekly", "work_schedule_override"):
                 c2.execute(f"delete from {tbl} where user_id in ({qm})", UIDS)
-            c2.execute(f"delete from fine_policies where scope='user' and scope_id in ({qm})", UIDS)
+            c2.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", UIDS)
             c2.execute(f"delete from audit_logs where target_user_id in ({qm})", UIDS)
             c2.execute(f"delete from users where id in ({qm})", UIDS)
             c2.commit()
@@ -12277,9 +12532,8 @@ def test_advance_period_close() -> None:
                                    check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
                                    late_minutes=0, worked_minutes=540))
                 # `cancel` xodimiga O'ZIGA qoida (global sozlamaga tegilmaydi)
-                s.add(_Policy(scope="user", scope_id=cancel_uid,
-                              free_late_minutes_per_month=0,
-                              advance_pending_on_close="cancel", is_active=True))
+                s.add(_AdvSet(scope="user", scope_id=cancel_uid,
+                              pending_on_close="cancel", is_active=True))
                 await s.commit()
 
                 hr = await s.get(_User, hr_row[0])
@@ -12406,6 +12660,279 @@ def test_advance_period_close() -> None:
           isinstance(sent, list), f"xabarlar={len(sent)}")
 
     cleanup_close()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_settings() -> None:
+    """Avans sozlamalari — uch darajali qamrov (Avans TZ B-01, B-02).
+
+    MUAMMO: A blokda ikkita sozlama vaqtincha `fine_policies` da turgan
+    edi va koeffitsient/cap umuman sozlanmasdi — ular kod ichidagi
+    o'zgarmas qiymat edi.
+
+    Tekshiriladi:
+      1. Uch daraja: xodim > lavozim > global
+      2. Har darajadagi bo'shliqda keyingi (kengroq) darajaga o'tiladi
+      3. `is_active=False` qator O'TKAZIB YUBORILADI
+      4. Hech qanday sozlama bo'lmasa — `None` (bot jim turadi)
+      5. ⭐ Chegara sozlamadagi koeffitsient/cap bilan hisoblanadi
+      6. Sozlamasiz chegara default bilan ishlayveradi (HR ishi to'xtamasin)
+      7. HTTP: upsert (yaratish + yangilash), ro'yxat, o'chirish
+      8. Har o'zgarish auditda (`advance_settings_upserted`)
+      9. `position`/`user` qamrovda `scope_id` majburiy -> 422
+     10. «Sozlanmagan modullar» ro'yxatida qator bor
+    """
+    print("\n=== AVANS: sozlamalar va uch darajali qamrov (B-01/B-02) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import date as _dt_date, datetime as _dt_datetime
+    from decimal import Decimal as D
+
+    from api.services import advance as adv
+    from api.services.setup_status import collect_setup_status
+    from db.base import async_session
+    from db.models import (
+        AdvanceSettings as _Set,
+        Attendance as _Att,
+        AuditLog as _Audit,
+        PayBasis,
+        Position as _Pos,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import select as _sel
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Set-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from positions where name like 'T-Set-%'")
+    cur.execute("insert into positions (name, is_active, created_at) values ('T-Set-Lavozim',1,datetime('now'))")
+    pos_id = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, position_id, bot_started, is_active, created_at)"
+        " values (999600961,'T-Set-Emp','employee',?,1,1,datetime('now'))", (pos_id,))
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+    # Jonli sozlama bormi — test oxirida holatni AYNAN qaytarish uchun.
+    had_global = conn.execute(
+        "select count(*) from advance_settings where scope='global'").fetchone()[0]
+
+    def cleanup_set():
+        try:
+            c2 = db()
+            for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id=?", (emp_uid,))
+            c2.execute("delete from audit_logs where target_user_id=?", (emp_uid,))
+            c2.execute("delete from advance_settings where scope='user' and scope_id=?", (emp_uid,))
+            c2.execute("delete from advance_settings where scope='position' and scope_id=?", (pos_id,))
+            # Global qatorni FAQAT test yaratgan bo'lsa o'chiramiz.
+            if not had_global:
+                c2.execute("delete from advance_settings where scope='global'")
+            c2.execute("delete from users where id=?", (emp_uid,))
+            c2.execute("delete from positions where id=?", (pos_id,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  B-01 tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    mgr = find_manager_id()
+    mgr_t = token_for(mgr[0], mgr[1]) if mgr else None
+    if not mgr_t:
+        check("B-01 testi uchun rahbar topildi", False)
+        cleanup_set()
+        return
+
+    async def _levels():
+        out = {}
+        async with async_session() as s:
+            emp = await s.get(_User, emp_uid)
+
+            # 4. Sozlamasiz
+            if not had_global:
+                out["empty"] = await adv.resolve_advance_settings(s, emp)
+
+            # global
+            s.add(_Set(scope="global", scope_id=None, coefficient=0.5, cap_percent=50,
+                       advance_day=20, is_active=True))
+            await s.commit()
+            out["global"] = await adv.resolve_advance_settings(s, emp)
+
+            # lavozim global'dan kuchli
+            s.add(_Set(scope="position", scope_id=pos_id, coefficient=0.6, cap_percent=60,
+                       advance_day=15, is_active=True))
+            await s.commit()
+            out["position"] = await adv.resolve_advance_settings(s, emp)
+
+            # xodim lavozimdan kuchli
+            user_row = _Set(scope="user", scope_id=emp_uid, coefficient=0.8, cap_percent=80,
+                            advance_day=10, is_active=True)
+            s.add(user_row)
+            await s.commit()
+            out["user"] = await adv.resolve_advance_settings(s, emp)
+
+            # 3. Faol emas -> o'tkazib yuboriladi
+            user_row.is_active = False
+            await s.commit()
+            out["user_inactive"] = await adv.resolve_advance_settings(s, emp)
+            return out
+
+    try:
+        lv = _asyncio.run(_levels())
+    except Exception:
+        check("uch daraja testi ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_set()
+        return
+
+    if "empty" in lv:
+        check("sozlamasiz -> None (bot jim turadi)", lv["empty"] is None)
+    check("global daraja topiladi",
+          lv["global"] is not None and lv["global"].scope == "global",
+          str(getattr(lv["global"], "scope", None)))
+    check("lavozim global'dan kuchli",
+          lv["position"] is not None and lv["position"].scope == "position",
+          str(getattr(lv["position"], "scope", None)))
+    check("xodim lavozimdan kuchli",
+          lv["user"] is not None and lv["user"].scope == "user",
+          str(getattr(lv["user"], "scope", None)))
+    check("faol bo'lmagan daraja o'tkazib yuboriladi (lavozimga qaytadi)",
+          lv["user_inactive"] is not None and lv["user_inactive"].scope == "position",
+          str(getattr(lv["user_inactive"], "scope", None)))
+
+    # ── 5-6. Chegara sozlamani O'QIYDIMI ──
+    async def _limit_uses_settings():
+        async with async_session() as s:
+            for wd in range(5):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                         start_time="09:00", end_time="18:00"))
+            for wd in (5, 6):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+            s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                             amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                             changed_by=emp_uid))
+            for dd in range(1, max(BUGUN.day, 2)):
+                day = BUGUN.replace(day=dd)
+                if day.weekday() >= 5:
+                    continue
+                s.add(_Att(user_id=emp_uid, date=day, status="present",
+                           check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                           check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                           late_minutes=0, worked_minutes=540))
+            await s.commit()
+            emp = await s.get(_User, emp_uid)
+
+            # Amaldagi qoida — lavozim (koef 0.6)
+            with_settings = await adv.limit_for(s, emp, period=PERIOD)
+            # Aynan shu sharoit uchun default bilan (koef 0.5)
+            with_default = await adv.limit_for(
+                s, emp, period=PERIOD,
+                coefficient=adv.DEFAULT_COEFFICIENT, cap_percent=adv.DEFAULT_CAP_PERCENT)
+            return with_settings, with_default
+
+    try:
+        with_settings, with_default = _asyncio.run(_limit_uses_settings())
+        check("⭐ chegara sozlamadagi koeffitsientni o'qiydi (0.6 > 0.5)",
+              with_settings.coefficient == 0.6 and with_settings.limit > with_default.limit,
+              f"koef={with_settings.coefficient}, {with_settings.limit} > {with_default.limit}")
+        check("sozlamasiz chegara default bilan ishlayveradi",
+              with_default.coefficient == 0.5 and with_default.limit > 0,
+              f"koef={with_default.coefficient}, limit={with_default.limit}")
+    except Exception:
+        check("chegara-sozlama bog'lanishi testi ishga tushdi", False,
+              traceback.format_exc(limit=3).strip())
+
+    # ── 7-9. HTTP ──
+    try:
+        with httpx.Client(timeout=20) as client:
+            r = client.get(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t))
+            check("sozlamalar ro'yxati -> 200", r.status_code == 200, f"kod={r.status_code}")
+            check("ro'yxatda qamrov nomi bor",
+                  r.status_code == 200
+                  and any(x["scope"] == "position" and x["scope_name"] == "T-Set-Lavozim"
+                          for x in r.json()),
+                  str(r.json())[:200] if r.status_code == 200 else "")
+
+            # 9. scope_id majburiy
+            r = client.put(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t),
+                           json={"scope": "position", "scope_id": None})
+            check("lavozim qamrovida scope_id majburiy -> 422",
+                  r.status_code == 422, f"kod={r.status_code}")
+
+            # 7. Yangilash (upsert)
+            r = client.put(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t),
+                           json={"scope": "position", "scope_id": pos_id,
+                                 "advance_day": 25, "coefficient": 0.7, "cap_percent": 70,
+                                 "min_amount": 200000, "reminder_time": "16:30",
+                                 "pending_on_close": "cancel", "reason_required": True,
+                                 "is_active": True})
+            check("mavjud qamrov YANGILANADI (yangi qator emas)",
+                  r.status_code == 200 and r.json()["advance_day"] == 25
+                  and r.json()["coefficient"] == 0.7,
+                  f"kod={r.status_code} {str(r.json())[:150]}")
+            upd_id = r.json()["id"] if r.status_code == 200 else None
+
+            r2 = client.get(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t))
+            pos_rows = [x for x in r2.json() if x["scope"] == "position"]
+            check("lavozim qamrovi BITTA qator bo'lib qoldi", len(pos_rows) == 1,
+                  f"={len(pos_rows)}")
+
+            # Noto'g'ri qiymatlar
+            r = client.put(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t),
+                           json={"scope": "global", "advance_day": 31})
+            check("advance_day 28 dan oshmaydi -> 422", r.status_code == 422, f"kod={r.status_code}")
+            r = client.put(f"{API_BASE}/payroll/advance-settings", headers=auth(mgr_t),
+                           json={"scope": "global", "pending_on_close": "nimadir"})
+            check("noto'g'ri pending_on_close -> 422", r.status_code == 422, f"kod={r.status_code}")
+
+            # 7. O'chirish
+            if upd_id:
+                r = client.delete(f"{API_BASE}/payroll/advance-settings/{upd_id}",
+                                  headers=auth(mgr_t))
+                check("qamrovni o'chirish -> 200", r.status_code == 200, f"kod={r.status_code}")
+    except Exception:
+        check("B-01 HTTP testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    # ── 8. Audit va 10. sozlanmagan modullar ──
+    async def _audit_and_setup():
+        async with async_session() as s:
+            acts = [
+                a.action
+                for a in await s.scalars(
+                    _sel(_Audit).where(_Audit.action.like("advance_settings%"))
+                )
+            ]
+            items = await collect_setup_status(s)
+            return acts, items
+
+    try:
+        acts, items = _asyncio.run(_audit_and_setup())
+        check("sozlama o'zgarishi auditda", "advance_settings_upserted" in acts, str(acts)[:150])
+        check("o'chirish ham auditda", "advance_settings_deleted" in acts, str(acts)[:150])
+        item = next((i for i in items if i.key == "advance_settings"), None)
+        check("«Sozlanmagan modullar» ro'yxatida avans qatori bor",
+              item is not None, f"kalitlar={[i.key for i in items]}")
+        if item is not None:
+            check("global sozlama bor — modul «tayyor» deb ko'rsatiladi",
+                  item.ready is True, f"ready={item.ready}, {item.missing}")
+    except Exception:
+        check("audit/setup testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_set()
     try:
         conn.close()
     except Exception:

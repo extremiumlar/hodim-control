@@ -1803,23 +1803,10 @@ class FinePolicy(Base):
     # (HR o'z panelidan o'zgartiradi — 0 bo'lsa xabarga summa yozilmaydi).
     hot_lead_cool_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hot_lead_fine: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
-    # ── Avans sababi majburiymi (Avans TZ A-05 / TZ #8) ──
-    # DEFAULT `False` (so'ralmaydi). Sabab: C blokdagi bot oqimida xodim
-    # tugma bosib avans so'raydi va matn yozmaydi — sababni majburiy
-    # qilsak o'sha oqim buziladi. HR chindan kerak deb hisoblasa
-    # panelidan yoqadi; yoqilganda «avans» kabi ma'nosiz matn ham
-    # o'tmaydi (`_MEANINGLESS_REASONS`).
-    advance_reason_required: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="0"
-    )
-    # ── Davr yopilganda hali `pending` bo'lgan avans nima bo'ladi ──
-    # (Avans TZ A-06 / TZ #5). DEFAULT `carry`: keyingi davrga o'tadi.
-    # Sabab: pul so'ragan odam javobsiz qolmasin — davr yopilishi
-    # so'rovning taqdiri emas, faqat hisob-kitob chegarasi.
-    # `cancel` — avtomatik rad etiladi (xodimga xabar boradi).
-    advance_pending_on_close: Mapped[str] = mapped_column(
-        String(10), default="carry", server_default="carry"
-    )
+    # ⚠️ Avans sozlamalari BU YERDA EMAS. A blokda ular vaqtincha shu
+    # jadvalga qo'yilgan edi (yagona mavjud «HR paneli» jadvali edi),
+    # B-01 da `advance_settings` ga ko'chirildi — jarima qoidasi bilan
+    # avans qoidasi aralashmasin.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -2013,6 +2000,65 @@ class PayrollAdjustment(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     deleted_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class AdvanceSettings(Base):
+    """Avans sozlamalari — UCH DARAJALI qamrov (Avans TZ B-01).
+
+    NEGA ALOHIDA JADVAL: A blokda ikkita sozlama vaqtincha `fine_policies`
+    ga qo'yilgan edi (u yagona mavjud «HR paneli sozlamalari» jadvali edi).
+    Lekin avansning o'z qiymatlari beshta va ular jarima qoidasiga hech
+    qanday aloqasi yo'q — bitta jadvalda saqlash ikkalasini ham
+    tushunarsiz qilardi. Bu yerga ko'chirilgach `fine_policies` yana
+    faqat jarimaga oid bo'ldi.
+
+    DARAJALAR: xodim > lavozim > global (`resolve_advance_settings`).
+    Naqsh `payroll.resolve_policy` bilan AYNAN bir xil — ikki xil qoida
+    ikki xil natija bermasin.
+
+    HECH QANDAY SOZLAMA BO'LMASA: bot avans kuni xabarini UMUMAN
+    yubormaydi (sozlanmagan holat xavfsiz tomonga — TZ talabi). HR ning
+    qo'lda kiritish yo'li esa ishlayveradi va `advance.py` dagi default
+    koeffitsientlardan foydalanadi.
+    """
+
+    __tablename__ = "advance_settings"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_id", name="uq_advance_settings_scope"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope: Mapped[str] = mapped_column(String(20))          # global | position | user
+    scope_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Oyning nechanchi kuni avans e'lon qilinadi. Cron kechiksa ham
+    # o'tkazib yubormaslik uchun taqqoslash `>=` (B-04).
+    advance_day: Mapped[int] = mapped_column(Integer, default=20, server_default="20")
+    # Ishlab bo'lingan pulning qanchasi berilishi mumkin (0.5 = yarmi).
+    coefficient: Mapped[float] = mapped_column(Numeric(4, 2), default=0.5, server_default="0.5")
+    # Oylikning eng ko'pi bilan necha foizi (koeffitsientdan qat'i nazar).
+    cap_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=50, server_default="50")
+    # Shundan kam chegara qolgan xodimga avans taklif qilinmaydi — mayda
+    # summa uchun butun oqimni ishga tushirishning ma'nosi yo'q.
+    min_amount: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    # Avans kuni xabari soati ("HH:MM", mahalliy vaqt).
+    reminder_time: Mapped[str] = mapped_column(String(5), default="14:00", server_default="14:00")
+    # Davr yopilganda `pending` avans: carry (keyingi davrga) | cancel.
+    pending_on_close: Mapped[str] = mapped_column(
+        String(10), default="carry", server_default="carry"
+    )
+    # Sabab majburiymi. Default `False` — botda xodim tugma bosadi, matn
+    # yozmaydi; majburiy qilinsa o'sha oqim buziladi.
+    reason_required: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Qachondan amal qiladi — o'tgan oylarni qayta hisoblaganda eski
+    # qoidani saqlab qolish uchun (hozircha ma'lumot sifatida yoziladi).
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
 
 
 class PushToken(Base):
@@ -2795,4 +2841,31 @@ class AssetAssignment(Base):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PositionAssetSet(Base):
+    """Lavozimga tegishli STANDART mol-mulk to'plami (yangi TZ 3.11 / S-19).
+
+    NEGA KERAK: yangi sotuvchi kelganda unga nima berish kerakligini HR
+    xotirasidan tiklaydi va har safar bir narsa unutiladi (odatda SIM-karta
+    yoki quloqchin). Ishdan bo'shaganda esa aksincha — nima qaytarilishi
+    kerakligi noma'lum bo'lib qoladi.
+
+    Bu jadval BUYUMNI EMAS, TURNI belgilaydi: «sotuvchiga 1 ta noutbuk,
+    1 ta telefon, 1 ta SIM». Aniq inventar raqamni HR biriktirish paytida
+    tanlaydi — omborda qaysi biri bo'sh bo'lsa o'sha.
+
+    Onboarding (3.2) va offboarding (3.7) shu ro'yxatdan foydalanadi."""
+
+    __tablename__ = "position_asset_sets"
+    __table_args__ = (
+        UniqueConstraint("position_id", "kind", name="uq_position_asset_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[int] = mapped_column(ForeignKey("positions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

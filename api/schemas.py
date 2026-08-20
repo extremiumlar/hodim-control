@@ -998,10 +998,6 @@ class FinePolicyIn(BaseModel):
     hot_lead_fine: float | None = Field(default=None, ge=0)
     # Avans sababi majburiymi (A-05 / Avans TZ #8). DEFAULT `False` —
     # bot oqimida xodim tugma bosib avans so'raydi va matn yozmaydi.
-    advance_reason_required: bool = False
-    # Davr yopilganda hali tasdiqlanmagan avans: `carry` (keyingi davrga,
-    # DEFAULT) yoki `cancel` (avtomatik rad).
-    advance_pending_on_close: str = "carry"
     is_active: bool = True
 
     @field_validator("scope")
@@ -1039,12 +1035,6 @@ class FinePolicyIn(BaseModel):
             raise ValueError("noto'g'ri fine_remainder_mode")
         return v
 
-    @field_validator("advance_pending_on_close")
-    @classmethod
-    def _valid_on_close(cls, v: str) -> str:
-        if v not in {"carry", "cancel"}:
-            raise ValueError("advance_pending_on_close 'carry' yoki 'cancel' bo'lishi kerak")
-        return v
 
     @model_validator(mode="after")
     def _check_combination(self):
@@ -1082,8 +1072,6 @@ class FinePolicyOut(BaseModel):
     fine_remainder_mode: str = "drop"
     hot_lead_cool_minutes: int | None = None
     hot_lead_fine: float | None = None
-    advance_reason_required: bool = False
-    advance_pending_on_close: str = "carry"
     is_active: bool
     updated_at: datetime
 
@@ -1365,6 +1353,68 @@ class AdvanceIn(BaseModel):
     # yoziladi). HR bu bayroqni yuborsa 403 oladi.
     override_limit: bool = False
     override_reason: str | None = Field(default=None, max_length=500)
+
+
+class AdvanceSettingsIn(BaseModel):
+    """Avans sozlamasi (B-01/B-02). `scope='global'`da `scope_id` bo'lmaydi;
+    `position`/`user`da MAJBURIY — `FinePolicyIn` bilan aynan bir xil qoida."""
+
+    scope: str
+    scope_id: int | None = None
+    advance_day: int = Field(default=20, ge=1, le=28)
+    coefficient: float = Field(default=0.5, gt=0, le=1)
+    cap_percent: float = Field(default=50, gt=0, le=100)
+    min_amount: float | None = Field(default=None, ge=0)
+    reminder_time: str = Field(default="14:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    pending_on_close: str = "carry"
+    reason_required: bool = False
+    is_active: bool = True
+    effective_from: dt.date | None = None
+
+    @field_validator("scope")
+    @classmethod
+    def _valid_scope(cls, v: str) -> str:
+        if v not in {"global", "position", "user"}:
+            raise ValueError("scope 'global', 'position' yoki 'user' bo'lishi kerak")
+        return v
+
+    @field_validator("pending_on_close")
+    @classmethod
+    def _valid_on_close(cls, v: str) -> str:
+        if v not in {"carry", "cancel"}:
+            raise ValueError("pending_on_close 'carry' yoki 'cancel' bo'lishi kerak")
+        return v
+
+    @model_validator(mode="after")
+    def _check_scope_id(self):
+        # `advance_day` 28 dan oshmaydi: fevralda 29/30/31-kun yo'q va
+        # xabar o'sha oylarda umuman yuborilmasdi.
+        if self.scope == "global":
+            self.scope_id = None
+        elif self.scope_id is None:
+            raise ValueError("position/user qamrovida scope_id majburiy")
+        return self
+
+
+class AdvanceSettingsOut(BaseModel):
+    id: int
+    scope: str
+    scope_id: int | None
+    advance_day: int
+    coefficient: float
+    cap_percent: float
+    min_amount: float | None
+    reminder_time: str
+    pending_on_close: str
+    reason_required: bool
+    is_active: bool
+    effective_from: dt.date | None
+    updated_by: int | None
+    updated_at: datetime
+    # Ro'yxatda qamrov nomini ko'rsatish uchun (router to'ldiradi).
+    scope_name: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
 class AdvanceIssueIn(BaseModel):

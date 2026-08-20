@@ -31,6 +31,8 @@ export const qk = {
   assetKinds: ["assets", "kinds"] as const,
   assetHistory: (id: number) => ["assets", "history", id] as const,
   myAssets: ["assets", "me"] as const,
+  assetStandardSet: (id: number) => ["assets", "standard-set", id] as const,
+  assetChecklist: (id: number) => ["assets", "checklist", id] as const,
   offers: (q: string) => ["offers", q] as const,
   userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
@@ -255,6 +257,27 @@ export const useAssetHistory = (id: number | null) =>
   });
 
 export const useMyAssets = () => useQuery({ queryKey: qk.myAssets, queryFn: api.myAssets });
+
+/** `positionId` null bo'lsa so'rov yuborilmaydi — lavozim tanlanmagan. */
+export const useAssetStandardSet = (positionId: number | null) =>
+  useQuery({
+    queryKey: qk.assetStandardSet(positionId ?? 0),
+    queryFn: () => api.assetStandardSet(positionId as number),
+    enabled: positionId !== null,
+  });
+
+export const useAssetChecklist = (userId: number | null) =>
+  useQuery({
+    queryKey: qk.assetChecklist(userId ?? 0),
+    queryFn: () => api.assetChecklist(userId as number),
+    enabled: userId !== null,
+  });
+
+export const useAcceptAsset = () => useApiMutation(api.acceptAsset, [["assets"]]);
+/** Dalolatnoma NAVBATGA qo'yiladi — ro'yxat o'zgarmaydi. */
+export const useAssetAct = () => useApiMutation(api.assetAct);
+export const useSetAssetStandardSet = () =>
+  useApiMutation(api.setAssetStandardSet, [["assets"]]);
 
 export const useAddAsset = () => useApiMutation(api.addAsset, [["assets"]]);
 export const useAssignAsset = () => useApiMutation(api.assignAsset, [["assets"]]);
@@ -673,6 +696,26 @@ export const usePayrollAdjustments = (
     queryFn: () => api.listPayrollAdjustments(params),
     enabled,
   });
+
+// ── Avans sozlamalari (B-01/B-02) ──
+export const useAdvanceSettings = () =>
+  useQuery({ queryKey: ["payroll", "advance-settings"] as const, queryFn: api.advanceSettings });
+
+export const useUpsertAdvanceSettings = () =>
+  // `advance-limit` ham yangilanadi: koeffitsient/cap o'zgarsa chegara
+  // darhol boshqacha chiqadi va forma eski raqamni ko'rsatmasin.
+  useApiMutation(api.upsertAdvanceSettings, [
+    ["payroll", "advance-settings"],
+    ["payroll", "advance-limit"],
+    ["me", "setup-status"],
+  ]);
+
+export const useDeleteAdvanceSettings = () =>
+  useApiMutation(api.deleteAdvanceSettings, [
+    ["payroll", "advance-settings"],
+    ["payroll", "advance-limit"],
+    ["me", "setup-status"],
+  ]);
 
 /** Avans chegarasi (A-03) — xodim tanlangan zahoti forma ostida ko'rinadi.
  *  Har o'zgarishda serverdan qayta so'raladi: chegara boshqa HR kiritgan

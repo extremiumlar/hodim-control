@@ -22,11 +22,12 @@ payroll qanday hisoblasa avans ham AYNAN shundan oladi. Aks holda
 (`net + adjustments_minus`) — chunki formulaning oxirgi ikki qatori
 avans va ushlanmani ALOHIDA ayiradi. Aks holda ular ikki marta ayirilardi.
 
-SOZLAMA: `coefficient` va `cap_percent` hozircha shu modulda default
-qiymat. B-01 bosqichi `advance_settings` jadvalini qo'shganda
-`resolve_advance_settings(user)` shu ikki qiymatni beradi — `limit_for()`
-allaqachon ularni parametr sifatida qabul qiladi, ya'ni ulash bir qator
-o'zgarish bo'ladi.
+SOZLAMA (B-01): `resolve_advance_settings(user)` — xodim > lavozim >
+global. `limit_for()` uni O'ZI yechadi; sozlama topilmasa quyidagi
+default qiymatlar ishlatiladi, ya'ni HR ning qo'lda kiritish yo'li
+sozlamasiz ham ishlayveradi. Botning avans kuni xabari esa sozlamasiz
+UMUMAN yuborilmaydi (`announce_ready()` — sozlanmagan holat xavfsiz
+tomonga, TZ talabi).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.services.payroll import _dec, build_payslip, round_money
 from db.models import (
+    AdvanceSettings,
     PayrollAdjustment,
     PayrollAdjustmentCategory,
     PayrollAdjustmentKind,
@@ -47,9 +49,64 @@ from db.models import (
     User,
 )
 
-# B-01 gacha amal qiladigan default qiymatlar (TZ jadvalidagi tavsiya).
+# Sozlama TOPILMAGANDA amal qiladigan qiymatlar (TZ jadvalidagi tavsiya).
+# Bular «sukut bo'yicha siyosat», bo'shliqni yashirish emas: chegara baribir
+# hisoblanadi va HR ning qo'lda kiritish yo'li ishlayveradi.
 DEFAULT_COEFFICIENT = Decimal("0.5")   # ishlab bo'lingan pulning yarmi
 DEFAULT_CAP_PERCENT = Decimal("50")    # oylikning yarmidan oshmasin
+DEFAULT_ADVANCE_DAY = 20
+DEFAULT_REMINDER_TIME = "14:00"
+DEFAULT_PENDING_ON_CLOSE = "carry"
+
+
+async def resolve_advance_settings(db: AsyncSession, user: User) -> AdvanceSettings | None:
+    """Avans sozlamasi — 3 DARAJALI: xodim > lavozim > global (B-01).
+
+    Naqsh `payroll.resolve_policy` bilan AYNAN bir xil: faqat FAOL
+    (`is_active`) qator ishtirok etadi, bir daraja faol qatorsiz bo'lsa
+    keyingi (kengroq) darajaga o'tiladi.
+
+    `None` — hech qanday sozlama yo'q. Chaqiruvchilar buni ikki xil
+    talqin qiladi va bu ATAYLAB:
+      • chegara hisobi — default qiymatlar bilan davom etadi
+        (HR ishi to'xtab qolmasin);
+      • botning avans kuni xabari — UMUMAN yuborilmaydi
+        (sozlanmagan tizim xodimga pul taklif qilmasin)."""
+    row = await db.scalar(
+        select(AdvanceSettings).where(
+            AdvanceSettings.scope == "user",
+            AdvanceSettings.scope_id == user.id,
+            AdvanceSettings.is_active.is_(True),
+        )
+    )
+    if row is not None:
+        return row
+
+    if user.position_id is not None:
+        row = await db.scalar(
+            select(AdvanceSettings).where(
+                AdvanceSettings.scope == "position",
+                AdvanceSettings.scope_id == user.position_id,
+                AdvanceSettings.is_active.is_(True),
+            )
+        )
+        if row is not None:
+            return row
+
+    return await db.scalar(
+        select(AdvanceSettings).where(
+            AdvanceSettings.scope == "global", AdvanceSettings.is_active.is_(True)
+        )
+    )
+
+
+async def announce_ready(db: AsyncSession, user: User) -> AdvanceSettings | None:
+    """Bu xodimga avans kuni xabarini yuborish MUMKINMI (B-04/C-01 uchun).
+
+    Sozlama yo'q bo'lsa `None` — xabar yuborilmaydi. Alohida funksiya
+    sifatida ajratilgani ataylab: «sozlamasiz jim tur» qoidasi bitta
+    joyda tursin, har bir chaqiruvchi uni o'zicha talqin qilmasin."""
+    return await resolve_advance_settings(db, user)
 
 # Chegara 0 bo'lishining sabablari — xodim/HR «nega 0?» deb qolmasin.
 REASON_NO_RATE = "stavka belgilanmagan"
@@ -170,6 +227,17 @@ async def limit_for(
     period = period or on_date.strftime("%Y-%m")
 
     warnings: list[str] = []
+    # Sozlama chaqiruvchidan kelmagan bo'lsa — uni O'ZIMIZ yechamiz.
+    # Aks holda har bir chaqiruvchi buni takrorlashi kerak bo'lardi va
+    # bittasi unutsa jimgina default bilan ishlab ketardi.
+    if coefficient is None or cap_percent is None:
+        settings = await resolve_advance_settings(db, user)
+        if settings is not None:
+            if coefficient is None:
+                coefficient = Decimal(str(settings.coefficient))
+            if cap_percent is None:
+                cap_percent = Decimal(str(settings.cap_percent))
+
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
     locked = period_row is not None and period_row.locked
 

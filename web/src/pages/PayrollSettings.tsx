@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { type ColumnDef } from "@tanstack/react-table";
+import AdvanceSettingsTab from "@/components/payroll/AdvanceSettingsTab";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DataTable from "@/components/DataTable";
 import PageHeader from "@/components/PageHeader";
@@ -68,8 +69,6 @@ const emptyPolicyDraft = (): FinePolicyInput => ({
   // Issiq lid (2026-08-06, egasining talabi): boshlang'ich 10 daqiqa / 0 so'm
   hot_lead_cool_minutes: 10,
   hot_lead_fine: 0,
-  advance_reason_required: false,
-  advance_pending_on_close: "carry",
   is_active: true,
 });
 
@@ -106,8 +105,6 @@ function FinePolicyDialog({
         fine_remainder_mode: initial.fine_remainder_mode ?? "drop",
         hot_lead_cool_minutes: initial.hot_lead_cool_minutes ?? 10,
         hot_lead_fine: initial.hot_lead_fine ?? 0,
-        advance_reason_required: initial.advance_reason_required ?? false,
-        advance_pending_on_close: initial.advance_pending_on_close ?? "carry",
         is_active: initial.is_active,
       });
     } else {
@@ -349,70 +346,6 @@ function FinePolicyDialog({
               </p>
             </div>
           )}
-
-          {/* Avans sababi (A-05 / Avans TZ #8). Default O'CHIQ — botda
-              xodim tugma bosib avans so'raydi va matn yozmaydi; majburiy
-              qilinsa o'sha oqim buziladi. */}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <label className="flex items-start gap-2.5">
-              <input
-                type="checkbox"
-                className="mt-0.5 h-4 w-4"
-                checked={!!draft.advance_reason_required}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, advance_reason_required: e.target.checked }))
-                }
-              />
-              <span>
-                <span className="text-sm font-medium text-slate-800">
-                  Avans sababi majburiy bo'lsin
-                </span>
-                <span className="mt-0.5 block text-xs text-slate-600">
-                  Yoqilsa: sabab kamida 5 belgi va ma'noli bo'lishi kerak — «avans»,
-                  «kerak», «pul» kabi matnlar qabul qilinmaydi. O'chiq bo'lsa sabab
-                  ixtiyoriy (botdagi tugmali oqim uchun shu qulay).
-                </span>
-              </span>
-            </label>
-
-            {/* A-06 / Avans TZ #5: davr yopilganda tasdiqlanmagan avans
-                nima bo'ladi. Ilgari qoida umuman yo'q edi va bunday
-                avans qulflangan davrda abadiy osilib qolardi. */}
-            <div className="mt-3 border-t border-slate-200 pt-3">
-              <Label className="mb-1.5 block text-sm">
-                Oy yopilganda tasdiqlanmagan avans
-              </Label>
-              <div className="space-y-1.5">
-                {[
-                  {
-                    v: "carry",
-                    t: "Keyingi oyga o'tadi",
-                    d: "Tasdiq kutishda qoladi — pul so'ragan odam javobsiz qolmaydi.",
-                  },
-                  {
-                    v: "cancel",
-                    t: "Avtomatik bekor bo'ladi",
-                    d: "Rad etiladi va xodimga sabab bilan xabar boradi.",
-                  },
-                ].map((o) => (
-                  <label key={o.v} className="flex items-start gap-2.5">
-                    <input
-                      type="radio"
-                      className="mt-0.5 h-4 w-4"
-                      checked={(draft.advance_pending_on_close ?? "carry") === o.v}
-                      onChange={() =>
-                        setDraft((d) => ({ ...d, advance_pending_on_close: o.v }))
-                      }
-                    />
-                    <span>
-                      <span className="text-sm text-slate-800">{o.t}</span>
-                      <span className="mt-0.5 block text-xs text-slate-600">{o.d}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </div>
 
           <div>
             <Label className="mb-1.5 block">
@@ -1130,6 +1063,7 @@ export default function PayrollSettings() {
       <Tabs defaultValue="policy">
         <TabsList>
           <TabsTrigger value="policy">Ushlanma qoidasi</TabsTrigger>
+          {isPayrollManager && <TabsTrigger value="advance">Avans</TabsTrigger>}
           {isPayrollManager && <TabsTrigger value="overtime">Qo'shimcha ish</TabsTrigger>}
         </TabsList>
         <TabsContent value="policy">
@@ -1138,6 +1072,11 @@ export default function PayrollSettings() {
             {canGrant && <FinePolicyEditorsCard />}
           </div>
         </TabsContent>
+        {isPayrollManager && (
+          <TabsContent value="advance">
+            <AdvanceSettingsTab />
+          </TabsContent>
+        )}
         {isPayrollManager && (
           <TabsContent value="overtime">
             <OvertimeProfileTab />

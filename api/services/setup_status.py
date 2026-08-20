@@ -89,6 +89,14 @@ async def _fine_policy(db: AsyncSession) -> bool:
     return await _bor(db, FinePolicy)
 
 
+async def _advance_settings(db: AsyncSession) -> bool:
+    """Avans sozlamasi (B-01). Bo'lmasa bot avans kuni xabarini UMUMAN
+    yubormaydi — mexanizm tayyor, lekin jim turadi."""
+    from db.models import AdvanceSettings
+
+    return await _bor(db, AdvanceSettings, AdvanceSettings.is_active.is_(True))
+
+
 async def _funnel_target(db: AsyncSession) -> bool:
     return await _bor(db, FunnelMonth, FunnelMonth.target_contracts.isnot(None))
 
@@ -121,6 +129,10 @@ _TEKSHIRUVLAR: list[_Tekshiruv] = [
      "/payroll/settings", True),
     ("overtime", "Qo'shimcha ish", _overtime,
      "Birorta profil yoqilmagan — qo'shimcha ish doim 0 chiqadi",
+     "/payroll/settings", True),
+    ("advance_settings", "Avans sozlamasi", _advance_settings,
+     "Qamrov kiritilmagan — bot avans kuni xabarini yubormaydi va chegara "
+     "sukut bo'yicha qiymatlar bilan hisoblanadi",
      "/payroll/settings", True),
     ("video_norm", "Mobilograf video normasi", _video_norm,
      "Kunlik video normasi belgilanmagan — bajarilish foizi hisoblanmaydi",

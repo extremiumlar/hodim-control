@@ -358,8 +358,24 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 
 ---
 
-### B-01 · `advance_settings` — uch darajali qamrov
+### B-01 · `advance_settings` — uch darajali qamrov — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-06 · **~5 soat**
+
+> **Bajarilgani:** `advance_settings` jadvali (migratsiya `av05e5f6a7b8`)
+> TZ dagi barcha maydonlar bilan. `resolve_advance_settings(db, user)` —
+> xodim > lavozim > global, faqat `is_active`; naqsh `payroll.resolve_policy`
+> dan AYNAN ko'chirilgan. A blokda vaqtincha `fine_policies` da turgan ikki
+> sozlama migratsiyada **qamrovi bilan birga ko'chirildi** va eski ustunlar
+> o'chirildi — HR kiritgan qiymat yo'qolmadi. `limit_for()` endi sozlamani
+> O'ZI yechadi (chaqiruvchilar takrorlamasin va bittasi unutib default
+> bilan ishlab ketmasin). Test: `test_advance_settings` (19/19).
+>
+> **«Sozlamasiz» holat ikki xil talqin qilinadi va bu ataylab:**
+> chegara hisobi default qiymatlar bilan DAVOM ETADI (HR ning qo'lda
+> kiritish ishi to'xtab qolmasin), botning avans kuni xabari esa UMUMAN
+> yuborilmaydi (`announce_ready()` — sozlanmagan tizim xodimga pul taklif
+> qilmasin). Ikkalasi bitta funksiyada, har chaqiruvchi o'zicha
+> talqin qilmasin.
 
 **Ish**
 1. `advance_settings`: `scope` (global/position/user), `scope_id`, `advance_day` (20), `coefficient` (0.5), `cap_percent` (50), `min_amount`, `reminder_time` (14:00), `pending_on_close` (carry/cancel), `reason_required`, `is_active`, `effective_from`.
@@ -367,14 +383,31 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 3. Hech qanday sozlama bo'lmasa — **avans so'rovi umuman yuborilmaydi** (sozlanmagan holat xavfsiz tomonga).
 
 **Qabul mezoni**
-- [ ] Uch daraja to'g'ri ishlaydi (test: har daraja + bo'shliq)
-- [ ] Sozlamasiz tizim jim turadi
-- [ ] «Sozlanmagan modullar» blokiga qator qo'shildi
+- [x] Uch daraja to'g'ri ishlaydi (test: har daraja + `is_active=False` bo'shligi)
+- [x] Sozlamasiz tizim jim turadi (`resolve_advance_settings` -> `None`)
+- [x] «Sozlanmagan modullar» blokiga qator qo'shildi (`advance_settings`, critical)
 
 ---
 
-### B-02 · Sozlamalar paneli (HR)
+### B-02 · Sozlamalar paneli (HR) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** B-01 · **~4 soat**
+
+> **Bajarilgani:** `/payroll/settings` da yangi **«Avans»** tabi
+> (`AdvanceSettingsTab.tsx`) — beshta qiymat ham (avans kuni, koeffitsient,
+> cap %, eng kam summa, xabar soati) + oy yopilishi qoidasi va sabab
+> bayrog'i. Har maydon ostida bir qatorlik izoh. Qamrov tanlash:
+> hamma / lavozim / xodim; qamrovni o'chirish kengroq darajaga qaytaradi.
+> Endpointlar: `GET/PUT /payroll/advance-settings`,
+> `DELETE /payroll/advance-settings/{id}` — `fine_policies` bilan aynan
+> bir xil upsert naqshi. Har o'zgarish auditda
+> (`advance_settings_upserted` / `advance_settings_deleted`), `before`
+> to'liq oldingi holat bilan.
+>
+> **Ikki tuzoq oldindan yopildi:** (a) `row_to_dict` SHART — `Decimal`
+> qiymatlar (coefficient, cap, min_amount) JSON audit ustuniga yozilmaydi
+> va commit paytida sozlama o'zgarishi ham qaytarilardi (`fine_policies`
+> da aynan shu xato bo'lgan); (b) `advance_day` 28 dan oshmaydi —
+> fevralda 29–31-kun yo'q va xabar o'sha oyda umuman yuborilmasdi.
 
 **Ish**
 1. `/payroll/settings` ga «Avans» bo'limi: TZ jadvalidagi beshta qiymat + qamrov tanlash.
@@ -382,9 +415,9 @@ Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
 3. Kim o'zgartiradi: HR/Boshliq/Dasturchi. Har o'zgarish auditga.
 
 **Qabul mezoni**
-- [ ] Beshta qiymat ham panelda
-- [ ] Lavozimga alohida chegara qo'yish ishlaydi
-- [ ] O'zgarish auditda ko'rinadi
+- [x] Beshta qiymat ham panelda (+ yopilish qoidasi va sabab bayrog'i)
+- [x] Lavozimga alohida chegara qo'yish ishlaydi (test: koef 0.6 -> chegara oshdi)
+- [x] O'zgarish auditda ko'rinadi (yaratish, yangilash va o'chirish)
 
 ---
 
