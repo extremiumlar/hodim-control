@@ -353,6 +353,18 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
+## Holat: 4/22 (2026-08-20)
+
+| Bosqich | Holat | Commit |
+|---|---|---|
+| S-10 kadr hujjatlari — API | ✅ | `c8bc84f` |
+| S-11 kadr hujjatlari — bot va kabinet | ✅ | `bdc8211` |
+| S-12 muddat eslatmalari — yadro | ✅ | `733d45e` |
+| S-13 muddat eslatmalari — cron va panel | ✅ | `7e25112` |
+| S-14…S-31 | ⬜ | — |
+
+**Keyingisi: S-14** (hujjat generatsiyasi mexanizmi, 3.3).
+
 ---
 
 ### S-10 · Kadr hujjatlari arxivi — model va API (3.4)
