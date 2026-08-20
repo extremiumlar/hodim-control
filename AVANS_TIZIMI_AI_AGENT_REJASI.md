@@ -298,8 +298,24 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 
 ---
 
-### A-06 · Oy yopilishi qoidasi va xodim ko'rinishi (TZ #5, #6)
+### A-06 · Oy yopilishi qoidasi va xodim ko'rinishi (TZ #5, #6) — ✅ BAJARILDI (2026-08-20)
 **Oldin:** A-04 · **~5 soat**
+
+> **Bajarilgani:** `fine_policies.advance_pending_on_close`
+> (`carry` DEFAULT / `cancel`, migratsiya `av04d4e5f6a7`) + HR panelida
+> tanlash. `approve_period` davrni qulflaganda `_close_pending_advances()`
+> chaqiriladi — davr qulfi bilan **bitta tranzaksiyada** (yarim
+> ko'chirilgan holat bo'lmasin). Har xodimning O'Z qoidasi o'qiladi
+> (`resolve_policy`: xodim > lavozim > global). Xodimga ALOHIDA xabar
+> boradi — «oyligingiz tasdiqlandi» xabarining ichiga qo'shilmaydi,
+> chunki bu boshqa voqea. Preflight endi `pending_advances` qaytaradi va
+> `ok=False` qiladi. Bot: «💵 Avanslarim» tugmasi (`/payroll/my/{tg}/advances`),
+> kabinet uchun `/payroll/me/advances` — ikkalasi AYNAN bitta funksiyani
+> chaqiradi. Test: `test_advance_period_close` (20/20).
+>
+> **Muhim tafsilot:** tasdiqlangan va to'langan avanslarga TEGILMAYDI —
+> faqat `pending` ishlanadi. Ko'chirilgan avans keyingi davrda `pending`
+> bo'lib qoladi, ya'ni tasdiq zanjiri uzilmaydi.
 
 **Ish**
 1. TZ #5: davr yopilganda (`payroll_periods.locked`) hali `pending` bo'lgan avans nima bo'ladi — **sozlamada**: (a) keyingi davrga o'tadi, (b) avtomatik bekor bo'ladi. Default: **(a) o'tadi** (pul so'ragan odam javobsiz qolmasin).
@@ -307,14 +323,34 @@ C BLOK (bot oqimi)          D BLOK (HR paneli va nazorat)
 3. TZ #6: xodim **botda** ham o'z avansini ko'rsin — «💵 Mening avanslarim»: shu oydagi so'rovlar, holati, jami va **qolgan chegara**. Kabinetda payslipda allaqachon ko'rinadi (tekshirilgan).
 
 **Qabul mezoni**
-- [ ] Yopilganda pending avans sozlamaga muvofiq ishlanadi
-- [ ] HR ogohlantirish oladi
-- [ ] Xodim botdan o'z avansini va qolgan chegarasini ko'radi
-- [ ] Boshqa xodimniki ko'rinmaydi (404)
+- [x] Yopilganda pending avans sozlamaga muvofiq ishlanadi
+      (`carry` → keyingi davr, `cancel` → rad + sabab)
+- [x] HR ogohlantirish oladi (preflight `pending_advances`, `ok=False`)
+- [x] Xodim botdan o'z avansini, jamisini va qolgan chegarasini ko'radi
+- [x] Boshqa xodimniki ko'rinmaydi — yo'lda `user_id` umuman yo'q,
+      shaxs `telegram_id`/JWT dan yechiladi; noma'lum id → 404,
+      bot sirisiz → 401
 
 ---
 
-**✅ A BLOK YAKUNI:** mavjud modul pul xatosi bermaydigan holatga keldi. Endi bot qo'shish xavfsiz.
+**✅ A BLOK YAKUNI (2026-08-20 — TUGADI):** A-01…A-06 bajarildi, mavjud
+modul pul xatosi bermaydigan holatga keldi. Endi bot qo'shish xavfsiz.
+
+Umumiy test: 6 ta yangi test funksiyasi, avans+oylik jami **193/193**.
+Migratsiyalar: `av01a1b2c3d4` (manba), `av02b2c3d4e5` (to'lash holati),
+`av03c3d4e5f6` (yumshoq o'chirish + sabab), `av04d4e5f6a7` (oy yopilishi).
+
+**Keyingi agent uchun eng muhim uch narsa:**
+1. `PAYROLL_COUNTED_STATUSES` va `deleted_at IS NULL` — avans o'qiladigan
+   HAR bir joyda ikkalasi ham bo'lishi shart. Yangi o'qish joyi
+   qo'shsangiz shu ikkisini unutmang, aks holda pul jimgina noto'g'ri
+   hisoblanadi.
+2. `limit_for()` ichida `build_payslip` bor — QIMMAT. Ro'yxat ustida
+   sikl ichida chaqirmang (C blok bot taqsimotida kesh kerak bo'ladi).
+3. Sozlamalar hozircha `fine_policies` da (`advance_reason_required`,
+   `advance_pending_on_close`). B-01 `advance_settings` jadvalini
+   qurganda ularni O'SHA YERGA ko'chiring va `resolve_advance_settings`
+   ni `limit_for(coefficient=..., cap_percent=...)` ga ulang.
 
 ---
 

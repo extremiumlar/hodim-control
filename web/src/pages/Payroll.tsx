@@ -70,6 +70,13 @@ function PreflightSection({ period }: { period: string }) {
       hint: "«kelmagan» sanaladi va oylikdan ayiriladi — tekshiring",
     },
     { items: data.pending_overtime, label: "Qo'shimcha ish tasdiqlanmagan", hint: "hisobga kirmaydi" },
+    // A-06: davr yopilgach bu avanslar sozlamaga ko'ra keyingi oyga
+    // ko'chadi yoki bekor bo'ladi — HR bilmasdan qolmasin.
+    {
+      items: data.pending_advances ?? [],
+      label: "Avans tasdiqlanmagan",
+      hint: "davr yopilgach keyingi oyga ko'chadi yoki bekor bo'ladi",
+    },
     { items: data.attendance.no_schedule, label: "Ish jadvali yo'q", hint: "kechikish taxminiy" },
     { items: data.attendance.open_checkouts, label: "«Ketdim» yopilmagan", hint: "ishlangan vaqt noaniq" },
     { items: data.attendance.auto_closed, label: "Avtomatik yopilgan kunlar", hint: "ishlangan vaqt taxminiy" },

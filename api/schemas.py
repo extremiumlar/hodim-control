@@ -999,6 +999,9 @@ class FinePolicyIn(BaseModel):
     # Avans sababi majburiymi (A-05 / Avans TZ #8). DEFAULT `False` —
     # bot oqimida xodim tugma bosib avans so'raydi va matn yozmaydi.
     advance_reason_required: bool = False
+    # Davr yopilganda hali tasdiqlanmagan avans: `carry` (keyingi davrga,
+    # DEFAULT) yoki `cancel` (avtomatik rad).
+    advance_pending_on_close: str = "carry"
     is_active: bool = True
 
     @field_validator("scope")
@@ -1034,6 +1037,13 @@ class FinePolicyIn(BaseModel):
     def _valid_remainder_mode(cls, v: str) -> str:
         if v not in {"drop", "carry_next_month", "from_salary"}:
             raise ValueError("noto'g'ri fine_remainder_mode")
+        return v
+
+    @field_validator("advance_pending_on_close")
+    @classmethod
+    def _valid_on_close(cls, v: str) -> str:
+        if v not in {"carry", "cancel"}:
+            raise ValueError("advance_pending_on_close 'carry' yoki 'cancel' bo'lishi kerak")
         return v
 
     @model_validator(mode="after")
@@ -1073,6 +1083,7 @@ class FinePolicyOut(BaseModel):
     hot_lead_cool_minutes: int | None = None
     hot_lead_fine: float | None = None
     advance_reason_required: bool = False
+    advance_pending_on_close: str = "carry"
     is_active: bool
     updated_at: datetime
 
@@ -1367,6 +1378,32 @@ class AdvanceIssueIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class MyAdvanceRow(BaseModel):
+    """Xodim ko'radigan bitta avans qatori — RAHBAR ko'rinishidan farqli:
+    kim kiritgani, kim tasdiqlagani ko'rsatilmaydi (xodimga kerak emas va
+    ichki ma'lumot)."""
+
+    id: int
+    amount: float
+    status: str
+    reason: str
+    issued_on: dt.date | None
+    created_at: datetime
+
+
+class MyAdvancesOut(BaseModel):
+    """«💵 Mening avanslarim» — botda ham, kabinetda ham AYNAN shu javob.
+
+    `remaining_limit` bo'lmasa (`limit_reason` to'ldiriladi) xodim «nega
+    so'ray olmayapman?» degan savol bilan qolmaydi."""
+
+    period: str
+    rows: list[MyAdvanceRow]
+    total: float                 # shu oyda olingan (rad etilganlarsiz)
+    remaining_limit: float
+    limit_reason: str | None = None
+
+
 class AdvanceLimitOut(BaseModel):
     """Chegara va uning KELIB CHIQISHI — forma HR ga kiritishdan OLDIN
     ko'rsatadi, aks holda HR ko'r-ko'rona kiritib 400 oladi."""
@@ -1473,6 +1510,9 @@ class PayrollPreflightOut(BaseModel):
     # §5.3 — ish kuni bo'lib, o'tgan, LEKIN davomat yozuvi umuman yo'q
     # kunlar. Ular jimgina «kelmagan» sanalib oylikdan pul kesadi.
     missing_attendance: list[ReadinessIssue] = []
+    # A-06 — hali tasdiqlanmagan avanslar. Davr yopilgach ular sozlamaga
+    # ko'ra keyingi oyga ko'chadi yoki bekor bo'ladi; HR bilmasdan qolmasin.
+    pending_advances: list[ReadinessIssue] = []
 
 
 class PayrollCalculateRequest(BaseModel):

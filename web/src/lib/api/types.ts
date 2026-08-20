@@ -909,6 +909,8 @@ export interface FinePolicy {
   hot_lead_fine: number | null;
   /** Avans sababi majburiymi (A-05). Default `false`. */
   advance_reason_required: boolean;
+  /** Davr yopilganda pending avans: 'carry' (keyingi oyga) yoki 'cancel'. */
+  advance_pending_on_close: string;
   is_active: boolean;
   updated_at: string;
 }
@@ -931,6 +933,7 @@ export interface FinePolicyInput {
   hot_lead_cool_minutes?: number | null;
   hot_lead_fine?: number | null;
   advance_reason_required?: boolean;
+  advance_pending_on_close?: string;
   is_active?: boolean;
 }
 
@@ -1154,6 +1157,9 @@ export interface PayrollPreflight {
   /** Ish kuni bo'lib, o'tgan, lekin davomat yozuvi UMUMAN yo'q kunlar —
    *  ular jimgina «kelmagan» sanalib oylikdan pul kesadi (§5.3). */
   missing_attendance: ReadinessIssue[];
+  /** A-06: hali tasdiqlanmagan avanslar — davr yopilgach ular
+   *  sozlamaga ko'ra ko'chadi yoki bekor bo'ladi. */
+  pending_advances: ReadinessIssue[];
 }
 
 /** Fon rejimidagi hisoblash holati (§4.3). `state`:

@@ -69,6 +69,7 @@ const emptyPolicyDraft = (): FinePolicyInput => ({
   hot_lead_cool_minutes: 10,
   hot_lead_fine: 0,
   advance_reason_required: false,
+  advance_pending_on_close: "carry",
   is_active: true,
 });
 
@@ -106,6 +107,7 @@ function FinePolicyDialog({
         hot_lead_cool_minutes: initial.hot_lead_cool_minutes ?? 10,
         hot_lead_fine: initial.hot_lead_fine ?? 0,
         advance_reason_required: initial.advance_reason_required ?? false,
+        advance_pending_on_close: initial.advance_pending_on_close ?? "carry",
         is_active: initial.is_active,
       });
     } else {
@@ -372,6 +374,44 @@ function FinePolicyDialog({
                 </span>
               </span>
             </label>
+
+            {/* A-06 / Avans TZ #5: davr yopilganda tasdiqlanmagan avans
+                nima bo'ladi. Ilgari qoida umuman yo'q edi va bunday
+                avans qulflangan davrda abadiy osilib qolardi. */}
+            <div className="mt-3 border-t border-slate-200 pt-3">
+              <Label className="mb-1.5 block text-sm">
+                Oy yopilganda tasdiqlanmagan avans
+              </Label>
+              <div className="space-y-1.5">
+                {[
+                  {
+                    v: "carry",
+                    t: "Keyingi oyga o'tadi",
+                    d: "Tasdiq kutishda qoladi — pul so'ragan odam javobsiz qolmaydi.",
+                  },
+                  {
+                    v: "cancel",
+                    t: "Avtomatik bekor bo'ladi",
+                    d: "Rad etiladi va xodimga sabab bilan xabar boradi.",
+                  },
+                ].map((o) => (
+                  <label key={o.v} className="flex items-start gap-2.5">
+                    <input
+                      type="radio"
+                      className="mt-0.5 h-4 w-4"
+                      checked={(draft.advance_pending_on_close ?? "carry") === o.v}
+                      onChange={() =>
+                        setDraft((d) => ({ ...d, advance_pending_on_close: o.v }))
+                      }
+                    />
+                    <span>
+                      <span className="text-sm text-slate-800">{o.t}</span>
+                      <span className="mt-0.5 block text-xs text-slate-600">{o.d}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div>

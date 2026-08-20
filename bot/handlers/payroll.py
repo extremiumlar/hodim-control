@@ -58,9 +58,22 @@ def _payslip_text(data: dict) -> str:
 
 
 def _late_status_keyboard() -> InlineKeyboardMarkup:
+    # A-06: «Avanslarim» shu yerga qo'shildi — xodim uni qidirib
+    # yurmasin. Ikkalasi ham oylikka tegishli va bitta xabar ostida.
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🕐 Kechikishlarim", callback_data="payroll_late_status")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🕐 Kechikishlarim", callback_data="payroll_late_status")],
+            [InlineKeyboardButton(text="💵 Avanslarim", callback_data="payroll_my_advances")],
+        ]
     )
+
+
+_ADVANCE_STATUS = {
+    "pending": "Boshliq tasdig'i kutilmoqda",
+    "approved": "Tasdiqlangan — to'lash kutilmoqda",
+    "issued": "To'lab berilgan",
+    "rejected": "Rad etilgan",
+}
 
 
 @router.message(F.text == BTN_PAYROLL)
@@ -97,4 +110,41 @@ async def show_late_status(callback: CallbackQuery) -> None:
         fined = data.get("fined_days_so_far", 0)
         if fined:
             lines.append(f"Bu oy allaqachon <b>{fined}</b> kun ushlanmaga tushdi.")
+    await callback.message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data == "payroll_my_advances")
+async def show_my_advances(callback: CallbackQuery) -> None:
+    """«💵 Avanslarim» (Avans TZ A-06 / TZ #6).
+
+    Xodim shu oyda nima so'raganini, har birining holatini, jamini va
+    QOLGAN CHEGARASINI ko'radi. Chegara ko'rsatilmasa xodim «nega
+    so'ray olmayapman?» degan savol bilan qolardi."""
+    await callback.answer()
+    data = await api_client.my_advances(callback.from_user.id)
+    rows = data.get("rows", [])
+
+    lines = [f"💵 <b>{data['period']} oyi — avanslaringiz</b>", ""]
+    if not rows:
+        lines.append("Bu oyda avans so'ramagansiz.")
+    else:
+        for r in rows:
+            holat = _ADVANCE_STATUS.get(r["status"], r["status"])
+            qator = f"• {_fmt_money(r['amount'])} — {holat}"
+            if r.get("issued_on"):
+                qator += f" ({r['issued_on'][:10]} da to'langan)"
+            lines.append(qator)
+        lines.append("")
+        lines.append(f"<b>Jami: {_fmt_money(data['total'])}</b> (rad etilganlarsiz)")
+
+    lines.append("")
+    if data.get("remaining_limit", 0) > 0:
+        lines.append(f"Yana <b>{_fmt_money(data['remaining_limit'])}</b> gacha avans so'rashingiz mumkin.")
+    else:
+        sabab = data.get("limit_reason")
+        lines.append(
+            f"Hozircha yangi avans so'rab bo'lmaydi ({sabab})."
+            if sabab
+            else "Hozircha yangi avans so'rab bo'lmaydi."
+        )
     await callback.message.answer("\n".join(lines))

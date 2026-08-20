@@ -10702,6 +10702,11 @@ def main() -> None:
         print("Avans o'chirish testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_period_close()
+    except Exception:
+        print("Avans oy yopilishi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -12136,6 +12141,271 @@ def test_advance_soft_delete() -> None:
           isinstance(sent, list), f"xabarlar={len(sent)}")
 
     cleanup_del()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_advance_period_close() -> None:
+    """Oy yopilishi qoidasi va xodim ko'rinishi (Avans TZ A-06).
+
+    MUAMMO: davr qulflanganda hali `pending` bo'lgan avans abadiy osilib
+    qolardi — oylikka ham kirmasdi, rad ham etilmasdi, xodim javob kutib
+    o'tirardi.
+
+    Tekshiriladi:
+      1. `_next_period` chegara holatlari (dekabr → yanvar)
+      2. `carry` (default): pending avans keyingi davrga KO'CHADI
+      3. `cancel`: pending avans rad etiladi va sabab yoziladi
+      4. Tasdiqlangan/to'langan avansga TEGILMAYDI
+      5. Auditda `advance_period_closed`
+      6. Preflight HR ni ogohlantiradi (`pending_advances`) va `ok=False`
+      7. Xodim o'z avanslarini va QOLGAN chegarasini ko'radi
+      8. Rad etilgan avans xodim jamiga kirmaydi
+      9. Boshqa xodimniki ko'rinmaydi (bot yo'li telegram_id dan yechadi)
+    """
+    print("\n=== AVANS: oy yopilishi va xodim ko'rinishi (A-06) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import date as _dt_date, datetime as _dt_datetime
+
+    from api.routers import payroll as pay_router
+    from api.schemas import AdvanceIn, AdvanceDecision
+    from db.base import async_session
+    from db.models import (
+        Attendance as _Att,
+        AuditLog as _Audit,
+        FinePolicy as _Policy,
+        PayBasis,
+        PayrollAdjustment as _Adj,
+        PayrollAdjustmentStatus,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import select as _sel
+
+    # ── 1. Toza funksiya ──
+    check("davr o'sishi: 2026-08 -> 2026-09",
+          pay_router._next_period("2026-08") == "2026-09")
+    check("yil chegarasi: 2026-12 -> 2027-01",
+          pay_router._next_period("2026-12") == "2027-01",
+          pay_router._next_period("2026-12"))
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Close-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "work_schedule_override"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from fine_policies where scope='user' and scope_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600951,'T-Close-Carry','employee',1,1,datetime('now'))")
+    carry_uid = cur.lastrowid
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (999600952,'T-Close-Cancel','employee',1,1,datetime('now'))")
+    cancel_uid = cur.lastrowid
+    conn.commit()
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+    UIDS = [carry_uid, cancel_uid]
+
+    def cleanup_close():
+        try:
+            c2 = db()
+            qm = ",".join("?" * len(UIDS))
+            pslips = [r[0] for r in c2.execute(
+                f"select id from payslips where user_id in ({qm})", UIDS).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            for tbl in ("payslips", "payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "work_schedule_override"):
+                c2.execute(f"delete from {tbl} where user_id in ({qm})", UIDS)
+            c2.execute(f"delete from fine_policies where scope='user' and scope_id in ({qm})", UIDS)
+            c2.execute(f"delete from audit_logs where target_user_id in ({qm})", UIDS)
+            c2.execute(f"delete from users where id in ({qm})", UIDS)
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  A-06 tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    boss_row = conn.execute(
+        "select id from users where role in ('boss','dasturchi') and is_active=1 limit 1").fetchone()
+    hr_row = conn.execute(
+        "select id from users where role='hr' and is_active=1 limit 1").fetchone()
+    if not boss_row or not hr_row:
+        check("A-06 testi uchun HR va Boshliq topildi", False)
+        cleanup_close()
+        return
+
+    async def _flow():
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        out = {}
+        try:
+            async with async_session() as s:
+                for uid in UIDS:
+                    for wd in range(5):
+                        s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=True,
+                                                 start_time="09:00", end_time="18:00"))
+                    for wd in (5, 6):
+                        s.add(WorkScheduleWeekly(user_id=uid, weekday=wd, is_working=False))
+                    s.add(SalaryRate(user_id=uid, pay_basis=PayBasis.monthly.value,
+                                     amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                                     changed_by=uid))
+                    for dd in range(1, max(BUGUN.day, 2)):
+                        day = BUGUN.replace(day=dd)
+                        if day.weekday() >= 5:
+                            continue
+                        s.add(_Att(user_id=uid, date=day, status="present",
+                                   check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                                   check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                                   late_minutes=0, worked_minutes=540))
+                # `cancel` xodimiga O'ZIGA qoida (global sozlamaga tegilmaydi)
+                s.add(_Policy(scope="user", scope_id=cancel_uid,
+                              free_late_minutes_per_month=0,
+                              advance_pending_on_close="cancel", is_active=True))
+                await s.commit()
+
+                hr = await s.get(_User, hr_row[0])
+                boss = await s.get(_User, boss_row[0])
+
+                # Har xodimga: 1 ta pending + 1 ta tasdiqlangan
+                made = {}
+                for uid in UIDS:
+                    p1 = await pay_router.create_advance(
+                        AdvanceIn(user_id=uid, period=PERIOD, amount=100_000,
+                                  reason="T-Close kutilayotgan"), hr, s)
+                    p2 = await pay_router.create_advance(
+                        AdvanceIn(user_id=uid, period=PERIOD, amount=250_000,
+                                  reason="T-Close tasdiqlanadigan", confirm_duplicate=True), hr, s)
+                    await pay_router.decide_advance(p2.id, AdvanceDecision(approve=True), boss, s)
+                    made[uid] = (p1.id, p2.id)
+
+                # 7-8. Xodim ko'rinishi (yopishdan OLDIN)
+                emp = await s.get(_User, carry_uid)
+                out["mine"] = await pay_router._my_advances(s, emp)
+
+                # 6. Preflight ogohlantirishi
+                out["preflight"] = await pay_router.preflight(PERIOD, hr, s)
+
+                # 2-3. Yopilish qoidasi
+                out["closed"] = await pay_router._close_pending_advances(s, PERIOD, boss)
+                await s.commit()
+
+                out["rows"] = {
+                    uid: {
+                        a.id: (a.status, a.period, a.decided_note)
+                        for a in await s.scalars(_sel(_Adj).where(_Adj.user_id == uid))
+                    }
+                    for uid in UIDS
+                }
+                out["made"] = made
+                out["audits"] = [
+                    a.action
+                    for a in await s.scalars(_sel(_Audit).where(_Audit.target_user_id.in_(UIDS)))
+                ]
+                return out, sent
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        out, sent = _asyncio.run(_flow())
+    except Exception:
+        check("A-06 zanjiri ishga tushdi", False, traceback.format_exc(limit=3).strip())
+        cleanup_close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
+
+    made = out["made"]
+    carry_pending, carry_approved = made[carry_uid]
+    cancel_pending, cancel_approved = made[cancel_uid]
+    KEYINGI = pay_router._next_period(PERIOD)
+
+    c_rows = out["rows"][carry_uid]
+    check("`carry`: pending avans keyingi davrga ko'chdi",
+          c_rows[carry_pending] == (PayrollAdjustmentStatus.pending.value, KEYINGI, None),
+          str(c_rows[carry_pending]))
+    check("`carry`: tasdiqlangan avansga TEGILMADI",
+          c_rows[carry_approved][0] == PayrollAdjustmentStatus.approved.value
+          and c_rows[carry_approved][1] == PERIOD,
+          str(c_rows[carry_approved]))
+
+    x_rows = out["rows"][cancel_uid]
+    check("`cancel`: pending avans rad etildi",
+          x_rows[cancel_pending][0] == PayrollAdjustmentStatus.rejected.value
+          and x_rows[cancel_pending][1] == PERIOD,
+          str(x_rows[cancel_pending]))
+    check("`cancel`: rad sababi yozilgan",
+          "yopildi" in str(x_rows[cancel_pending][2] or ""), str(x_rows[cancel_pending][2]))
+    check("`cancel`: tasdiqlangan avansga TEGILMADI",
+          x_rows[cancel_approved][0] == PayrollAdjustmentStatus.approved.value,
+          str(x_rows[cancel_approved]))
+
+    check("natija hisoblandi (1 ko'chdi, 1 bekor)",
+          out["closed"]["carried"] == 1 and out["closed"]["cancelled"] == 1,
+          str({k: v for k, v in out["closed"].items() if k != "notify"}))
+    check("auditda `advance_period_closed` (2 ta)",
+          out["audits"].count("advance_period_closed") == 2,
+          f"={out['audits'].count('advance_period_closed')}")
+
+    pf = out["preflight"]
+    check("preflight tasdiqlanmagan avanslarni ko'rsatadi (2 ta)",
+          len(pf.pending_advances) == 2, f"={len(pf.pending_advances)}")
+    check("preflight `ok=False` (HR ko'rmay o'tmasin)", pf.ok is False, f"ok={pf.ok}")
+
+    mine = out["mine"]
+    check("xodim o'z avanslarini ko'radi (2 ta)", len(mine.rows) == 2, f"={len(mine.rows)}")
+    check("xodim jamisi to'g'ri (100 000 + 250 000)",
+          abs(mine.total - 350_000) < 1, f"total={mine.total}")
+    check("xodim QOLGAN chegarasini ko'radi",
+          mine.remaining_limit > 0 and mine.limit_reason is None,
+          f"limit={mine.remaining_limit}, sabab={mine.limit_reason}")
+
+    # 9. Bot yo'li — boshqa xodimniki ko'rinmaydi
+    try:
+        with httpx.Client(timeout=15) as client:
+            r = client.get(f"{API_BASE}/payroll/my/999600951/advances", headers=bot_secret_hdr())
+            check("bot yo'li o'z avanslarini qaytaradi", r.status_code == 200, f"kod={r.status_code}")
+            if r.status_code == 200:
+                d = r.json()
+                # Bu chaqiruv yopilishdan KEYIN — ko'chirilgan avans endi
+                # keyingi oyda, ya'ni joriy oyda faqat tasdiqlangani qoladi.
+                check("bot javobida faqat SHU xodimning JORIY oy avanslari",
+                      len(d["rows"]) == 1 and abs(d["rows"][0]["amount"] - 250_000) < 1,
+                      f"={[(r['amount'], r['status']) for r in d['rows']]}")
+                check("ko'chirilgan avans joriy oy jamisiga kirmaydi",
+                      abs(d["total"] - 250_000) < 1, f"total={d['total']}")
+            r = client.get(f"{API_BASE}/payroll/my/999600999/advances", headers=bot_secret_hdr())
+            check("mavjud bo'lmagan telegram_id -> 404", r.status_code == 404, f"kod={r.status_code}")
+            r = client.get(f"{API_BASE}/payroll/my/999600951/advances")
+            check("bot siri bo'lmasa -> 401/403",
+                  r.status_code in (401, 403), f"kod={r.status_code}")
+    except Exception:
+        check("A-06 bot yo'li testi ishga tushdi", False, traceback.format_exc(limit=2).strip())
+
+    check("xabarlar patch qilingan yuboruvchiga bordi (jonli emas)",
+          isinstance(sent, list), f"xabarlar={len(sent)}")
+
+    cleanup_close()
     try:
         conn.close()
     except Exception:

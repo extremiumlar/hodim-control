@@ -444,6 +444,16 @@ async def my_payslip(telegram_id: int) -> dict:
     return resp.json()
 
 
+async def my_advances(telegram_id: int) -> dict:
+    """Joriy oydagi o'z avanslarim va qolgan chegara (Avans TZ A-06).
+
+    Shaxs `telegram_id` dan serverda yechiladi — bot boshqa xodimning
+    avansini so'ray olmaydi."""
+    resp = await _get_client().get(f"/payroll/my/{telegram_id}/advances")
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def my_payroll_late_status(telegram_id: int) -> dict:
     """Joriy oyda kechikish limiti holati — JONLI hisoblanadi (hali
     yakunlanmagan oy uchun, Payslip'dan emas)."""

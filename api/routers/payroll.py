@@ -36,6 +36,8 @@ from api.deps import (
 )
 from api.schemas import (
     AdvanceIssueIn,
+    MyAdvanceRow,
+    MyAdvancesOut,
     AdvanceLimitOut,
     BotLateStatusOut,
     BotPayslipOut,
@@ -1095,6 +1097,76 @@ async def _check_reason(db: AsyncSession, target: User, reason: str) -> None:
         )
 
 
+async def _close_pending_advances(db: AsyncSession, period: str, actor: User) -> dict:
+    """Davr qulflanganda hali `pending` bo'lgan avanslar bilan nima qilish
+    (A-06 / Avans TZ #5).
+
+    MUAMMO: ilgari qoida umuman yo'q edi va `pending` avans qulflangan
+    davrda abadiy osilib qolardi — oylikka ham kirmasdi, rad ham
+    etilmasdi, xodim esa javob kutib turardi.
+
+    Har bir xodimning O'Z qoidasi o'qiladi (`resolve_policy`: xodim >
+    lavozim > global), chunki lavozimga alohida siyosat qo'yish mumkin.
+
+    `carry` (default) — avans KEYINGI davrga ko'chiriladi va tasdiq
+    kutishda qoladi. `cancel` — rad etiladi va xodimga sabab bilan
+    xabar boradi.
+
+    ⚠️ Chaqiruvchi `commit` qilmaydi — bu funksiya `db.add`/maydon
+    o'zgartirish bilan cheklanadi, davr qulfi bilan BITTA tranzaksiyada
+    yakunlanadi (yarim ko'chirilgan holat bo'lmasin)."""
+    rows = list(
+        await db.scalars(
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.period == period,
+                PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+                PayrollAdjustment.status == PayrollAdjustmentStatus.pending.value,
+                PayrollAdjustment.deleted_at.is_(None),
+            )
+        )
+    )
+    if not rows:
+        return {"carried": 0, "cancelled": 0}
+
+    next_period = _next_period(period)
+    carried = cancelled = 0
+    notify: list = []
+    for adj in rows:
+        target = await db.get(User, adj.user_id)
+        policy = await resolve_policy(db, target) if target is not None else None
+        mode = policy.advance_pending_on_close if policy is not None else "carry"
+        before = row_to_dict(adj, exclude=("created_at",))
+        if mode == "cancel":
+            adj.status = PayrollAdjustmentStatus.rejected.value
+            adj.decided_by = actor.id
+            adj.decided_at = datetime.utcnow()
+            adj.decided_note = f"{period} davri yopildi — tasdiqlanmagan avans avtomatik bekor qilindi"
+            cancelled += 1
+            if target is not None:
+                notify.append((target, adj, "cancel"))
+        else:
+            adj.period = next_period
+            carried += 1
+            if target is not None:
+                notify.append((target, adj, "carry"))
+        db.add(
+            AuditLog(
+                actor_id=actor.id,
+                action="advance_period_closed",
+                target_user_id=adj.user_id,
+                before=before,
+                after=row_to_dict(adj, exclude=("created_at",)),
+            )
+        )
+    return {"carried": carried, "cancelled": cancelled, "notify": notify}
+
+
+def _next_period(period: str) -> str:
+    """'2026-08' -> '2026-09'."""
+    y, m = (int(x) for x in period.split("-"))
+    return f"{y + 1}-01" if m == 12 else f"{y}-{m + 1:02d}"
+
+
 def _limit_message(info: AdvanceLimit, requested: float) -> str:
     """Rad javobi HR uchun QARORGA yetarli bo'lsin: qancha so'raldi, qancha
     mumkin va nega. «Chegaradan oshdi» degan quruq matn HR ni raqamni
@@ -1606,11 +1678,37 @@ async def preflight(
                     )
                 )
 
+    # ── A-06: hali tasdiqlanmagan avanslar ──
+    # Davr yopilgach ular sozlamaga ko'ra ko'chadi yoki bekor bo'ladi —
+    # ikkalasi ham HR bilmagan holda sodir bo'lmasin.
+    pending_adv_rows = list(
+        await db.scalars(
+            select(PayrollAdjustment).where(
+                PayrollAdjustment.period == period,
+                PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+                PayrollAdjustment.status == PayrollAdjustmentStatus.pending.value,
+                PayrollAdjustment.deleted_at.is_(None),
+            )
+        )
+    )
+    pending_advances = [
+        ReadinessIssue(
+            user_id=a.user_id,
+            full_name=names.get(a.user_id, f"#{a.user_id}"),
+            date=a.issued_on,
+            detail=f"{_fmt_money(float(a.amount))} — hali tasdiqlanmagan",
+        )
+        for a in pending_adv_rows
+    ]
+
     ok = (
         attendance_readiness["ok"]
         and not no_salary_rate
         and not pending_overtime
         and not missing_attendance
+        # Tasdiqlanmagan avans hisobni BUZMAYDI (u oylikka kirmaydi), lekin
+        # davr yopilishi uning taqdirini hal qiladi — HR ko'rmay o'tmasin.
+        and not pending_advances
     )
     return PayrollPreflightOut(
         period=period,
@@ -1619,6 +1717,7 @@ async def preflight(
         no_salary_rate=no_salary_rate,
         pending_overtime=pending_overtime,
         missing_attendance=missing_attendance,
+        pending_advances=pending_advances,
     )
 
 
@@ -1945,13 +2044,23 @@ async def approve_period(
     period_row.approved_by = actor.id
     period_row.approved_at = now
 
+    # A-06: hali tasdiqlanmagan avanslar sozlamaga muvofiq ishlanadi —
+    # davr qulfi bilan BITTA tranzaksiyada (yarim ko'chirilgan holat
+    # bo'lmasin).
+    advance_result = await _close_pending_advances(db, period, actor)
+
     db.add(
         AuditLog(
             actor_id=actor.id,
             action="payroll_period_approved",
             target_user_id=None,
             before=None,
-            after={"period": period, "payslip_count": len(payslips)},
+            after={
+                "period": period,
+                "payslip_count": len(payslips),
+                "advances_carried": advance_result.get("carried", 0),
+                "advances_cancelled": advance_result.get("cancelled", 0),
+            },
         )
     )
     await db.commit()
@@ -1980,7 +2089,32 @@ async def approve_period(
             data={"path": "/me/payroll"},
         )
 
-    return {"period": period, "approved": len(payslips)}
+    # A-06: avansi ko'chirilgan/bekor qilingan xodimga ALOHIDA xabar.
+    # «Oyligingiz tasdiqlandi» xabarining ichiga qo'shib yuborilmaydi —
+    # bu boshqa voqea va u yo'qolib ketmasligi kerak.
+    for emp, adj, mode in advance_result.get("notify", []):
+        if mode == "carry":
+            text = (
+                f"💵 <b>Avans so'rovingiz keyingi oyga ko'chdi</b>\n\n"
+                f"Summa: {_fmt_money(float(adj.amount))}\n"
+                f"{period} davri yopildi, so'rov hali tasdiqlanmagan edi — u "
+                f"<b>{adj.period}</b> davrida tasdiq kutishda qoladi."
+            )
+        else:
+            text = (
+                f"💵 <b>Avans so'rovingiz bekor qilindi</b>\n\n"
+                f"Summa: {_fmt_money(float(adj.amount))}\n"
+                f"{period} davri yopildi, so'rov esa tasdiqlanmagan edi. "
+                f"Kerak bo'lsa yangi so'rov yuboring."
+            )
+        await notify_user(db, emp, Category.DECISIONS, text, data={"path": "/me/payroll"})
+
+    return {
+        "period": period,
+        "approved": len(payslips),
+        "advances_carried": advance_result.get("carried", 0),
+        "advances_cancelled": advance_result.get("cancelled", 0),
+    }
 
 
 # ─────────────────────────────────────────────
@@ -2186,6 +2320,71 @@ async def _late_status_for_user(db: AsyncSession, user: User) -> BotLateStatusOu
         fined_days_so_far=late["fined_days"],
         fine_per_day=float(policy.fine_per_day) if policy and policy.fine_per_day is not None else None,
     )
+
+
+async def _my_advances(db: AsyncSession, user: User) -> MyAdvancesOut:
+    """Xodimning JORIY oydagi avanslari va qolgan chegarasi (A-06 / TZ #6).
+
+    Bot va kabinet AYNAN shu funksiyani chaqiradi — ikki joyda ikki xil
+    raqam chiqmasin."""
+    period = today_local().strftime("%Y-%m")
+    rows = list(
+        await db.scalars(
+            select(PayrollAdjustment)
+            .where(
+                PayrollAdjustment.user_id == user.id,
+                PayrollAdjustment.period == period,
+                PayrollAdjustment.category == PayrollAdjustmentCategory.advance.value,
+                PayrollAdjustment.deleted_at.is_(None),
+            )
+            .order_by(PayrollAdjustment.created_at.desc())
+        )
+    )
+    info = await advance_limit_for(db, user, period=period)
+    return MyAdvancesOut(
+        period=period,
+        rows=[
+            MyAdvanceRow(
+                id=r.id,
+                amount=float(r.amount),
+                status=r.status,
+                reason=r.reason,
+                issued_on=r.issued_on,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ],
+        # Rad etilgani JAMIGA kirmaydi — u pul emas.
+        total=sum(
+            float(r.amount)
+            for r in rows
+            if r.status != PayrollAdjustmentStatus.rejected.value
+        ),
+        remaining_limit=info.limit,
+        limit_reason=info.reason,
+    )
+
+
+@router.get(
+    "/my/{telegram_id}/advances",
+    response_model=MyAdvancesOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def my_advances_bot(telegram_id: int, db: AsyncSession = Depends(get_db)) -> MyAdvancesOut:
+    """Bot uchun. Shaxs `telegram_id` dan yechiladi — boshqa xodimning
+    avansini so'rash imkoni yo'q (path'da user_id umuman yo'q)."""
+    user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None or not user.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _my_advances(db, user)
+
+
+@router.get("/me/advances", response_model=MyAdvancesOut)
+async def my_advances_web(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> MyAdvancesOut:
+    """Kabinet (JWT) versiyasi — shaxs TOKENDAN olinadi."""
+    return await _my_advances(db, user)
 
 
 @router.get("/my/{telegram_id}", response_model=BotPayslipOut, dependencies=[Depends(verify_bot_secret)])

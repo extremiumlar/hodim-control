@@ -1812,6 +1812,14 @@ class FinePolicy(Base):
     advance_reason_required: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0"
     )
+    # ── Davr yopilganda hali `pending` bo'lgan avans nima bo'ladi ──
+    # (Avans TZ A-06 / TZ #5). DEFAULT `carry`: keyingi davrga o'tadi.
+    # Sabab: pul so'ragan odam javobsiz qolmasin — davr yopilishi
+    # so'rovning taqdiri emas, faqat hisob-kitob chegarasi.
+    # `cancel` — avtomatik rad etiladi (xodimga xabar boradi).
+    advance_pending_on_close: Mapped[str] = mapped_column(
+        String(10), default="carry", server_default="carry"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
