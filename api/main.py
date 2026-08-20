@@ -67,6 +67,7 @@ from api.routers import (
     excused_days,
     funnel,
     hot_lead,
+    assets,
     certificates,
     deadlines,
     document_templates,
@@ -167,6 +168,7 @@ app.include_router(bonuses.router)
 app.include_router(audit_logs.router)
 app.include_router(positions.router)
 app.include_router(stats.router)
+app.include_router(assets.router)
 app.include_router(certificates.router)
 app.include_router(deadlines.router)
 app.include_router(document_templates.router)
