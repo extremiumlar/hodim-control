@@ -53,6 +53,7 @@ const Deadlines = lazy(() => import("./pages/Deadlines"));
 const Offers = lazy(() => import("./pages/Offers"));
 const Certificates = lazy(() => import("./pages/Certificates"));
 const Assets = lazy(() => import("./pages/Assets"));
+const MeAssets = lazy(() => import("./pages/me/Assets"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -204,6 +205,7 @@ export default function App() {
           <Route path="me/appeals" element={<MeAppeals />} />
           <Route path="me/requests" element={<MeRequests />} />
           <Route path="me/documents" element={<MeDocuments />} />
+          <Route path="me/assets" element={<MeAssets />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

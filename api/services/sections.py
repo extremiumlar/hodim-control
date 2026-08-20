@@ -202,6 +202,7 @@ _EMPLOYEE: list[Section] = [
             visible=lambda c: c.role != "boss"),
     Section("documents", "Hujjatlarim", "/me/documents", "FolderOpen", 125, "employee",
             bot_button="📁 Hujjatlarim"),
+    Section("my-assets", "Menga biriktirilgan", "/me/assets", "Package", 127, "employee"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
