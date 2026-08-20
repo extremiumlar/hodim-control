@@ -9608,6 +9608,211 @@ def test_docx_render() -> None:
         conn.close()
 
 
+def test_offers() -> None:
+    """S-15 (TZ 3.3) — ish taklifi: model, forma va hujjat.
+
+    Qabul mezonlari (TZ):
+      • `salary` INTEGER (matn emas);
+      • taklif bazada qoladi, keyin qidiriladi;
+      • fayl FON ishida tayyorlanadi;
+      • test: forma -> hujjat -> baza yozuvi.
+
+    ⚠️ TIZIM NOMZODGA HECH NARSA YUBORMAYDI (TZ talabi). Bu ham
+    tekshiriladi: hujjat SO'RAGAN HR ga boradi, nomzodga emas — nomzodning
+    telefoni bazada bo'lsa ham.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-15: ISH TAKLIFLARI")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    tmpl_id = None
+    try:
+        cur.execute("delete from offers where candidate_name like 'T-Of%'")
+        cur.execute("delete from document_templates where name like 'T-OfTmpl%'")
+        conn.commit()
+
+        pos = cur.execute("select id, name from positions limit 1").fetchone()
+        if not pos:
+            check("lavozim topildi", False, "positions bo'sh")
+            return
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── Belgilar ro'yxati oldindan ma'lum ──
+            r = c.get("/offers/placeholders", headers=auth(mgr_t))
+            nomlar = {x["name"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-15: shablon belgilari ro'yxati bor",
+                  {"fish", "lavozim", "oylik", "oylik_sozda"} <= nomlar,
+                  "=" + str(sorted(nomlar)))
+
+            # ── FORMA -> BAZA ──
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Of Ali Valiyev", "phone": "+998901234567",
+                "position_id": pos[0], "salary": 12000000,
+                "probation_months": 3, "start_date": "2026-09-01",
+                "manager_id": mgr[0]})
+            check("S-15: taklif saqlandi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            offer_id = r.json().get("id") if r.status_code == 201 else None
+
+            # ── `salary` INTEGER ──
+            tur = cur.execute("select typeof(salary), salary from offers where id=?",
+                              (offer_id,)).fetchone()
+            check("S-15: `salary` bazada INTEGER (matn emas)",
+                  tur == ("integer", 12000000), "=" + str(tur))
+            r2 = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Of Matn", "position_id": pos[0],
+                "salary": "12 mln"})
+            check("S-15: matn oylik rad etildi -> 422", r2.status_code == 422,
+                  "kod=" + str(r2.status_code))
+            r2 = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Of Nol", "position_id": pos[0], "salary": 0})
+            check("S-15: nol oylik rad etildi -> 422", r2.status_code == 422,
+                  "kod=" + str(r2.status_code))
+            r2 = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Of Lavozimsiz", "salary": 5000000})
+            check("S-15: lavozimsiz taklif rad etildi -> 400",
+                  r2.status_code == 400, "kod=" + str(r2.status_code))
+
+            # ── QIDIRUV (TZ: «keyin qidiriladi») ──
+            r = c.get("/offers", headers=auth(mgr_t), params={"q": "Valiyev"})
+            check("S-15: ism bo'yicha qidiruv ishladi",
+                  r.status_code == 200 and any(o["id"] == offer_id for o in r.json()),
+                  f"kod={r.status_code} soni={len(r.json()) if r.status_code == 200 else '-'}")
+            r = c.get("/offers", headers=auth(mgr_t), params={"q": "901234567"})
+            check("S-15: telefon bo'yicha ham topiladi",
+                  r.status_code == 200 and any(o["id"] == offer_id for o in r.json()),
+                  "=" + str(r.status_code))
+            r = c.get("/offers", headers=auth(mgr_t), params={"q": "yoq-bunday-odam"})
+            check("S-15: topilmasa bo'sh ro'yxat", r.status_code == 200 and r.json() == [],
+                  "=" + r.text[:60])
+
+            # ── HOLAT ──
+            r = c.put(f"/offers/{offer_id}/status", headers=auth(mgr_t),
+                      json={"status": "accepted"})
+            check("S-15: holat o'zgardi", r.status_code == 200
+                  and r.json().get("status_label") == "Qabul qilingan",
+                  "=" + r.text[:100])
+            r = c.put(f"/offers/{offer_id}/status", headers=auth(mgr_t),
+                      json={"status": "yolgon"})
+            check("S-15: noma'lum holat -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ── RUXSAT ──
+            emp = cur.execute(
+                "select id from users where role='employee' and is_active=1 limit 1"
+            ).fetchone()
+            if emp:
+                r = c.get("/offers", headers=auth(token_for(emp[0], "employee")))
+                check("S-15: oddiy xodim takliflarni ko'rmaydi -> 403",
+                      r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── HUJJAT: FON ishida ──
+            r = c.post("/document-templates", headers=auth(mgr_t), json={
+                "kind": "offer", "name": "T-OfTmpl", "file_id": "T-OF-TMPL",
+                "placeholders": ["fish", "lavozim", "oylik_sozda", "yolgon_belgi"]})
+            tmpl_id = r.json().get("id") if r.status_code == 201 else None
+
+            import time as _t
+
+            boshi = _t.perf_counter()
+            r = c.post(f"/offers/{offer_id}/generate", headers=auth(mgr_t),
+                       json={"template_id": tmpl_id})
+            ketgan = _t.perf_counter() - boshi
+            check("S-15: hujjat NAVBATGA qo'yildi -> 202", r.status_code == 202,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            check("S-15: so'rov TEZ qaytdi (fon ishi)", ketgan < 1.0, f"{ketgan:.3f}s")
+            check("S-15: shablonda yo'q belgi ogohlantirildi",
+                  r.status_code == 202 and r.json().get("missing") == ["yolgon_belgi"],
+                  "=" + r.text[:120])
+            job_id = r.json().get("job_id") if r.status_code == 202 else None
+            holat = cur.execute(
+                "select status, kind, user_id from background_jobs where id=?",
+                (job_id,)).fetchone()
+            check("S-15: navbatdagi ish SO'RAGAN HR ga bog'langan",
+                  holat == ("queued", "document_render", mgr[0]), "=" + str(holat))
+
+            # ── Cron bajaradi: hujjat to'ldiriladi, HR ga boradi ──
+            natija: dict = {}
+            d = _docx_fixture(
+                "<w:p><w:r><w:t>{{fish}} — {{lavozim}}, oylik: {{</w:t></w:r>"
+                "<w:r><w:t>oylik_sozda}} so'm</w:t></w:r></w:p>")
+
+            async def _tick():
+                import api.telegram_notify as tn
+                from api.services.background_jobs import background_tick
+
+                asl_dl, asl_send = tn.download_file, tn.send_media_file
+
+                async def soxta_dl(file_id):
+                    return d
+
+                async def soxta_send(chat_id, content, filename, kind, caption=None):
+                    natija["chat_id"] = chat_id
+                    natija["bytes"] = content
+                    natija["filename"] = filename
+                    return {"ok": True, "result": {"document": {"file_id": "T-OUT"}}}
+
+                tn.download_file, tn.send_media_file = soxta_dl, soxta_send
+                try:
+                    async with async_session() as s2:
+                        return await background_tick(s2)
+                finally:
+                    tn.download_file, tn.send_media_file = asl_dl, asl_send
+
+            res = asyncio.run(_tick())
+            check("S-15: cron hujjatni tayyorladi",
+                  res.get("ok") is True and res.get("ran") == "document_render",
+                  "=" + str(res))
+            if natija.get("bytes"):
+                matn = _docx_text(natija["bytes"])
+                check("S-15: hujjatda nomzod ismi va lavozimi bor",
+                      "T-Of Ali Valiyev" in matn and pos[1] in matn, "=" + matn)
+                check("S-15: oylik odam o'qiydigan ko'rinishda (12 000 000)",
+                      "12 000 000" in matn, "=" + matn)
+            check("S-15: fayl nomida nomzod ismi bor",
+                  "T-Of" in (natija.get("filename") or ""),
+                  "=" + str(natija.get("filename")))
+
+            # ⚠️ Hujjat HR ga bordi, NOMZODGA emas
+            hr_tg = cur.execute("select telegram_id from users where id=?",
+                                (mgr[0],)).fetchone()
+            check("S-15: hujjat SO'RAGAN HR ga bordi (nomzodga emas)",
+                  hr_tg is not None and natija.get("chat_id") == hr_tg[0],
+                  f"chat={natija.get('chat_id')}, hr={hr_tg[0] if hr_tg else '-'}")
+
+            # ── Taklif bazada QOLDI ──
+            qoldi = cur.execute(
+                "select candidate_name, salary, status from offers where id=?",
+                (offer_id,)).fetchone()
+            check("S-15: hujjat tayyorlangach ham taklif bazada qoldi",
+                  qoldi == ("T-Of Ali Valiyev", 12000000, "accepted"), "=" + str(qoldi))
+    except Exception:
+        check("S-15 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            cur.execute("delete from background_jobs where kind='document_render'")
+            cur.execute("delete from offers where candidate_name like 'T-Of%'")
+            cur.execute("delete from document_templates where name like 'T-OfTmpl%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -9750,6 +9955,11 @@ def main() -> None:
         test_docx_render()
     except Exception:
         print("S-14 docx testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_offers()
+    except Exception:
+        print("S-15 takliflar testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

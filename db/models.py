@@ -2496,3 +2496,70 @@ class DocumentTemplate(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class OfferStatus(str, enum.Enum):
+    """Ish taklifi holati (yangi TZ 3.3 / S-15).
+
+    ⚠️ `sent` — «HR nomzodga YUBORDI» degani, tizim yuborgani emas.
+    Tizim nomzodga hech narsa jo'natmaydi (TZ talabi): nomzod hali
+    xodim emas, uning Telegram'i bizda yo'q va bo'lmasligi ham kerak."""
+
+    draft = "draft"  # tayyorlanmoqda
+    sent = "sent"  # HR nomzodga yubordi
+    accepted = "accepted"  # nomzod rozi bo'ldi
+    declined = "declined"  # nomzod rad etdi
+    cancelled = "cancelled"  # kompaniya bekor qildi
+
+
+OFFER_STATUS_LABELS: dict[str, str] = {
+    OfferStatus.draft.value: "Qoralama",
+    OfferStatus.sent.value: "Yuborilgan",
+    OfferStatus.accepted.value: "Qabul qilingan",
+    OfferStatus.declined.value: "Rad etilgan",
+    OfferStatus.cancelled.value: "Bekor qilingan",
+}
+
+
+class Offer(Base):
+    """Ish taklifi (yangi TZ 3.3 / S-15).
+
+    NEGA BAZADA QOLADI: taklif hozir Word faylida va HR ning
+    yozishmalarida. «O'tgan oy falonchiga qancha taklif qilgandik?» degan
+    savolga javob yo'q, kelishilgan oylik esa ishga qabul qilinganda
+    boshqacha bo'lib chiqadi.
+
+    ⚠️ `salary` — INTEGER (TZ qabul mezoni). Matn bo'lsa «12 mln»,
+    «12,000,000», «12000000 so'm» kabi yozuvlar aralashib, taqqoslash va
+    yig'ish umuman ishlamasdi.
+
+    ⚠️ TIZIM NOMZODGA HECH NARSA YUBORMAYDI. Hujjat HR ga beriladi, uni
+    nomzodga HR o'zi jo'natadi. Nomzod hali xodim emas."""
+
+    __tablename__ = "offers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    candidate_name: Mapped[str] = mapped_column(String(200), index=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #  Lavozim ro'yxatdan yoki erkin matn: yangi lavozim hali
+    #  `positions` da bo'lmasligi mumkin, taklif esa kutib turmasin.
+    position_id: Mapped[int | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True
+    )
+    position_text: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    salary: Mapped[int] = mapped_column(Integer)
+    probation_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #  Bo'lajak rahbari — qabul qilinganda xodimning `manager_id` siga o'tadi.
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(12), default=OfferStatus.draft.value, index=True
+    )
+    #  Nomzod xodimga aylangach shu yerga bog'lanadi (S-16).
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

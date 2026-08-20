@@ -6,8 +6,10 @@ import type {
   Attendance,
   EmployeeRequest,
   DeadlineItem,
+  DocumentTemplate,
   DeadlineKind,
   EmployeeDocument,
+  Offer,
   Holiday,
   LeaveBalance,
   RequestCalc,
@@ -126,6 +128,31 @@ export const api = {
     apiFetch<{ ok: boolean }>("/deadlines/close", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  // ── Hujjat shablonlari va ish takliflari (TZ 3.3 / S-14, S-15) ──
+  documentTemplates: () => apiFetch<DocumentTemplate[]>("/document-templates"),
+  offers: (q?: string) =>
+    apiFetch<Offer[]>(`/offers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  addOffer: (body: {
+    candidate_name: string;
+    phone?: string | null;
+    position_id?: number | null;
+    position_text?: string | null;
+    salary: number;
+    probation_months?: number | null;
+    start_date?: string | null;
+    manager_id?: number | null;
+  }) => apiFetch<Offer>("/offers", { method: "POST", body: JSON.stringify(body) }),
+  setOfferStatus: (body: { id: number; status: string }) =>
+    apiFetch<Offer>(`/offers/${body.id}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status: body.status }),
+    }),
+  generateOfferDoc: (body: { id: number; template_id: number }) =>
+    apiFetch<{ job_id: number; missing: string[] }>(`/offers/${body.id}/generate`, {
+      method: "POST",
+      body: JSON.stringify({ template_id: body.template_id }),
     }),
   // --- Davomat (kelib-ketish) ---
   myAttendanceToday: () => apiFetch<Attendance | null>("/attendance/me/today"),

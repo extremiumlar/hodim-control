@@ -1435,3 +1435,32 @@ export type DeadlineItem = {
 };
 
 export type DeadlineKind = { value: string; label: string; computed: boolean };
+
+/** Ish taklifi (TZ 3.3 / S-15). `salary` — SON (matn emas): matn bo'lsa
+ *  «12 mln» va «12,000,000» aralashib, taqqoslash ishlamasdi. */
+export type Offer = {
+  id: number;
+  candidate_name: string;
+  phone: string | null;
+  position_label: string | null;
+  salary: number;
+  probation_months: number | null;
+  start_date: string | null;
+  manager_id: number | null;
+  manager_name: string | null;
+  status: string;
+  status_label: string;
+  user_id: number | null;
+  note: string | null;
+  created_at: string;
+};
+
+/** `.docx` shabloni (TZ 3.3 / S-14). */
+export type DocumentTemplate = {
+  id: number;
+  kind: string;
+  kind_label: string;
+  name: string;
+  placeholders: string[];
+  is_active: boolean;
+};

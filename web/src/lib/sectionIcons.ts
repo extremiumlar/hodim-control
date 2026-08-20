@@ -39,6 +39,7 @@ import {
   TimerReset,
   TrendingUp,
   UserCheck,
+  UserPlus,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -71,6 +72,7 @@ const ICONS: Record<string, LucideIcon> = {
   TimerReset,
   TrendingUp,
   UserCheck,
+  UserPlus,
   Users,
 };
 

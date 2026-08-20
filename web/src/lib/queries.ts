@@ -23,6 +23,8 @@ export const qk = {
   myDocuments: ["documents", "me"] as const,
   deadlines: (days: number) => ["deadlines", days] as const,
   deadlineKinds: ["deadlines", "kinds"] as const,
+  documentTemplates: ["document-templates"] as const,
+  offers: (q: string) => ["offers", q] as const,
   userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
   attendance: (params?: object) => ["attendance", "list", params ?? {}] as const,
@@ -210,6 +212,22 @@ export const useDeadlineKinds = () =>
 
 export const useAddDeadline = () => useApiMutation(api.addDeadline, [["deadlines"]]);
 export const useCloseDeadline = () => useApiMutation(api.closeDeadline, [["deadlines"]]);
+
+// ─── Hujjat shablonlari va ish takliflari (TZ 3.3 / S-14, S-15) ───
+export const useDocumentTemplates = () =>
+  useQuery({
+    queryKey: qk.documentTemplates,
+    queryFn: api.documentTemplates,
+    staleTime: 10 * 60 * 1000,
+  });
+
+export const useOffers = (q = "") =>
+  useQuery({ queryKey: qk.offers(q), queryFn: () => api.offers(q || undefined) });
+
+export const useAddOffer = () => useApiMutation(api.addOffer, [["offers"]]);
+export const useSetOfferStatus = () => useApiMutation(api.setOfferStatus, [["offers"]]);
+/** Hujjat NAVBATGA qo'yiladi — ro'yxat o'zgarmaydi, invalidate kerak emas. */
+export const useGenerateOfferDoc = () => useApiMutation(api.generateOfferDoc);
 
 // ─── Davomat ───
 export const useMyAttendanceToday = () =>
