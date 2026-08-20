@@ -6,6 +6,7 @@ import type {
   AdvanceLimit,
   AdvanceSettings,
   AdvanceSettingsInput,
+  MyAdvances,
   Appeal,
   AppealDecideResult,
   Attendance,
@@ -656,6 +657,9 @@ export const api = {
     ).toString();
     return apiFetch<PayrollAdjustment[]>(`/payroll/adjustments${q ? `?${q}` : ""}`);
   },
+  /** Xodimning o'z avanslari (kabinet). Shaxs TOKENDAN olinadi. */
+  myAdvances: () => apiFetch<MyAdvances>("/payroll/me/advances"),
+
   // ── HR paneli va nazorat (D-01…D-03) ──
   advanceSummary: (period?: string) =>
     apiFetch<AdvanceDaySummary>(

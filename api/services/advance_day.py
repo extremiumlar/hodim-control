@@ -58,6 +58,10 @@ from db.models import (
 )
 
 KIND = "advance_day"
+# Qo'lda e'lon — OGOHLANTIRISH xabari (summasiz, tugmasiz). Taklif
+# `KIND` bilan alohida ketadi, shuning uchun turi ham alohida:
+# hisobotda «e'lon» va «taklif» aralashmasin.
+KIND_NOTICE = "advance_notice"
 
 # Avans e'loni FAQAT shu rollarga — payroll qamrovi bilan bir xil.
 TRACKED_ROLES = (Role.employee.value, Role.rop.value, Role.hr.value)
@@ -81,16 +85,21 @@ async def _resigning_user_ids(db: AsyncSession) -> set[int]:
 
 
 def _text(full_name: str, limit: float, period: str) -> str:
-    """Eslatma OHANGIDA, aniq summa bilan (TZ talabi: foiz emas).
+    """Avans kuni xabari — TZ 1-bo'limidagi namuna bo'yicha.
 
-    «Sizga 1 200 000 so'mgacha avans olish mumkin» — xodim o'ylab
-    ko'rishi uchun yetarli; majburlash yoki reklama ohangi yo'q."""
+    Uch qoida (hammasi TZ dan):
+    · foiz EMAS, aniq summa — «oylikning 40%i» degan matn HR bilan
+      bahsga olib kelardi;
+    · eslatma ohangi, taklif emas — «Qancha avans olasiz?» degan
+      savol avansni odatga aylantiradi (TZ 4-bo'lim);
+    · nima qilish kerakligi AYTILADI — tugma bor, lekin xodim
+      summani shunchaki yozishi ham mumkinligini bilishi kerak."""
     summa = f"{int(round(limit)):,}".replace(",", " ")
     return (
-        f"💵 <b>Bugun avans kuni</b>\n\n"
-        f"{full_name}, shu oyda <b>{summa} so'm</b>gacha avans olishingiz mumkin.\n\n"
-        f"Bu summa {period} oyligingizdan ayiriladi. Majburiy emas — "
-        f"kerak bo'lmasa e'tiborsiz qoldiring."
+        f"💰 <b>Bugun — avans kuni</b>\n\n"
+        f"{full_name}, siz bugun <b>{summa} so'm</b>gacha avans olishingiz mumkin.\n"
+        f"Kerak bo'lsa summani yozing, kerak bo'lmasa «Kerak emas» tugmasini bosing.\n\n"
+        f"<i>Bu summa {period} oyligingizdan ayiriladi. Majburiy emas.</i>"
     )
 
 
@@ -117,19 +126,19 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
     if not users:
         return {"date": on_date.isoformat(), "queued": 0, "reason": "mos xodim yo'q"}
 
-    # ⚠️ D-01: shu davr uchun HR QO'LDA e'lon qilgan bo'lsa, avtomatik
-    # xabar UMUMAN yuborilmaydi — aks holda xodim ikki marta xabar
-    # olardi (qo'lda + avtomatik).
-    qolda = await db.scalar(
-        select(AdvanceAnnouncement.id).where(AdvanceAnnouncement.period == period)
+    # ⚠️ D-01: shu davr uchun HR QO'LDA e'lon qilgan bo'lsa, avans kuni
+    # SOZLAMADAN emas, E'LONDAN olinadi. Ogohlantirish xabari
+    # allaqachon ketgan; bu yerda faqat TAKLIF yuboriladi va u
+    # e'londagi sanadan boshlab ketadi.
+    ann_row = await db.scalar(
+        select(AdvanceAnnouncement)
+        .where(AdvanceAnnouncement.period == period)
+        .order_by(AdvanceAnnouncement.id.desc())
     )
-    if qolda is not None:
-        return {
-            "date": on_date.isoformat(),
-            "period": period,
-            "queued": 0,
-            "reason": "bu oy uchun qo'lda e'lon qilingan",
-        }
+
+    # E'lon bo'lsa — avans kuni O'SHA e'londagi sana (TZ 3-bo'lim:
+    # «20-dan 23-ga ko'chirildi» bo'lsa taklif 23-kuni ketadi).
+    override_day = ann_row.advance_date.day if ann_row is not None else None
 
     resigning = await _resigning_user_ids(db)
     queued = 0
@@ -143,7 +152,7 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
             skipped["sozlama yo'q"] += 1
             continue
         # `>=` — cron kechiksa ham xabar tushadi (TZ talabi).
-        if on_date.day < settings.advance_day:
+        if on_date.day < (override_day or settings.advance_day):
             skipped["kun kelmagan"] += 1
             continue
         if user.id in resigning:
@@ -207,6 +216,17 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
     }
 
 
+async def _queue_offers(db: AsyncSession, period: str, on_date: date) -> int:
+    """Taklif xabarlarini navbatga qo'yadi — `tick` bilan AYNAN bir xil
+    qoidalar bo'yicha.
+
+    Qo'lda e'lon sanasi allaqachon kelgan bo'lsa shu funksiya darhol
+    chaqiriladi: xodim «bugun avans kuni» degan xabarni olib, summani
+    ertagagacha kutib o'tirmasin."""
+    res = await tick(db, on_date=on_date)
+    return int(res.get("queued", 0))
+
+
 async def announce_manually(
     db: AsyncSession,
     actor: User,
@@ -224,17 +244,21 @@ async def announce_manually(
     uchun yangi xabarda sana aniq aytiladi va xodim oxirgisiga
     qaraydi.
 
-    Qabul qiluvchilar ro'yxati avtomatik e'lon bilan AYNAN bir xil
-    (chegara 0, ishdan bo'shash, `min_amount` istisnolari) — ikki yo'l
-    turli odamlarga xabar yuborsa chalkashlik bo'lardi."""
+    ⚠️ BU XABARDA SUMMA YO'Q (TZ 3-bo'lim namunasi). E'lon faqat
+    «avans kuni qachon» degan savolga javob beradi; qancha olish
+    mumkinligi O'SHA KUNI alohida taklif xabari bilan keladi.
+    Sabab: e'lon oy boshida qilinishi mumkin, o'shanda hisoblangan
+    chegara avans kuniga kelib O'ZGARADI (ishlangan kun ortadi).
+    Summani oldindan aytish — keyin uni qaytarib olish demakdir."""
     period = advance_date.strftime("%Y-%m")
 
-    # Eski e'londan qolgan yuborilmagan xabarlarni tozalaymiz.
+    # Eski e'londan qolgan yuborilmagan xabarlarni tozalaymiz — ham
+    # ogohlantirishni, ham taklifni («oxirgisi kuchda»).
     await db.execute(
         _delete(Outbox).where(
-            Outbox.kind == KIND,
+            Outbox.kind.in_((KIND, KIND_NOTICE)),
             Outbox.status == OutboxStatus.pending.value,
-            Outbox.dedupe_key.like(f"{KIND}:{period}:%"),
+            Outbox.dedupe_key.like(f"%:{period}:%"),
         )
     )
     await db.flush()
@@ -256,56 +280,38 @@ async def announce_manually(
             )
         )
     )
+    # Sana ko'chirilganmi — xabar matni shunga qarab boshqacha.
+    settings_any = await resolve_advance_settings(db, users[0]) if users else None
+    moved = settings_any is not None and advance_date.day != settings_any.advance_day
+
     resigning = await _resigning_user_ids(db)
     queued = 0
     for user in users:
         settings = await resolve_advance_settings(db, user)
         if settings is None or user.id in resigning:
             continue
-        info = await limit_for(db, user, on_date=advance_date, period=period)
-        if info.limit <= 0:
-            continue
-        if settings.min_amount is not None and info.limit < float(settings.min_amount):
-            continue
 
         row = await enqueue(
             db,
             chat_id=user.telegram_id,
-            kind=KIND,
-            text=_manual_text(user.full_name, info.limit, period, advance_date, ann.note),
-            reply_markup=advance_keyboard(period),
+            kind=KIND_NOTICE,
+            text=_manual_text(advance_date, ann.note, moved),
             # E'lon `id` si kalitda: qayta e'lon qilinsa YANGI xabar
             # ketadi (eskisi yuqorida navbatdan olib tashlangan).
-            dedupe_key=f"{KIND}:{period}:{user.id}:a{ann.id}",
+            dedupe_key=f"{KIND_NOTICE}:{period}:{user.id}:a{ann.id}",
         )
         if row is None:
             continue
-        row.payload = {**row.payload, "limit": info.limit, "period": period,
-                       "user_id": user.id}
-
-        resp = await db.scalar(
-            select(AdvanceResponse).where(
-                AdvanceResponse.user_id == user.id, AdvanceResponse.period == period
-            )
-        )
-        if resp is None:
-            db.add(
-                AdvanceResponse(
-                    user_id=user.id, period=period,
-                    state=AdvanceResponseState.offered.value,
-                    offered_limit=info.limit,
-                )
-            )
-        else:
-            # Qayta e'lon — javob bergan xodim ham yangi sanani ko'rsin,
-            # lekin uning javobi (`declined`/`submitted`) SAQLANADI.
-            resp.offered_limit = info.limit
-            if resp.state == AdvanceResponseState.waiting_input.value:
-                resp.state = AdvanceResponseState.offered.value
-            resp.reminded_at = None
         queued += 1
 
     ann.recipients = queued
+
+    # Sana ALLAQACHON kelgan bo'lsa (HR o'sha kuni yoki keyin e'lon
+    # qildi) — taklifni ham darhol yuboramiz. Aks holda xodim
+    # «bugun avans kuni» degan xabarni olib, summani ertagagacha
+    # kutib o'tirardi.
+    if advance_date <= today_local():
+        await _queue_offers(db, period, advance_date)
     db.add(
         AuditLog(
             actor_id=actor.id,
@@ -321,22 +327,28 @@ async def announce_manually(
             "recipients": queued, "announcement_id": ann.id}
 
 
-def _manual_text(
-    full_name: str, limit: float, period: str, advance_date: date, note: str | None
-) -> str:
-    """Qo'lda e'lon matni. Sana ANIQ aytiladi (TZ D-01.3): «Avans kuni
-    23-avgustga ko'chirildi» — xodim qachonligini taxmin qilmasin."""
-    summa = f"{int(round(limit)):,}".replace(",", " ")
+def _manual_text(advance_date: date, note: str | None, moved: bool) -> str:
+    """Qo'lda e'lon — OGOHLANTIRISH xabari (TZ 3-bo'lim namunasi).
+
+    ⚠️ Bu TAKLIF EMAS va unda summa YO'Q. Sabab TZ namunasida aniq:
+    e'lon faqat «avans kuni qachon» degan savolga javob beradi, qancha
+    olish mumkinligi esa O'SHA KUNI alohida xabar bilan keladi.
+
+    Nega shunday: e'lon oyning boshida qilinishi mumkin, o'shanda
+    hisoblangan chegara avans kuniga kelib O'ZGARADI (ishlangan kun
+    ortadi, boshqa ushlanma tushadi). Summani oldindan aytish —
+    keyin uni qaytarib olish demakdir."""
     oylar = ("yanvar", "fevral", "mart", "aprel", "may", "iyun",
              "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr")
     sana = f"{advance_date.day}-{oylar[advance_date.month - 1]}"
-    qatorlar = [
-        "💵 <b>Avans kuni e'lon qilindi</b>",
-        "",
-        f"{full_name}, avans <b>{sana}</b> kuni beriladi.",
-        f"Sizga <b>{summa} so'm</b>gacha avans olish mumkin.",
-    ]
+    qatorlar = ["📢 <b>Diqqat</b>", ""]
+    if moved:
+        qatorlar.append(f"Bu oy avans kuni <b>{sana}</b>ga ko'chirildi.")
+    else:
+        qatorlar.append(f"Bu oy avans kuni — <b>{sana}</b>.")
+    qatorlar.append(
+        "O'sha kuni sizga qancha avans olishingiz mumkinligi haqida xabar keladi."
+    )
     if note:
         qatorlar += ["", note]
-    qatorlar += ["", f"Bu summa {period} oyligingizdan ayiriladi. Majburiy emas."]
     return "\n".join(qatorlar)

@@ -863,9 +863,49 @@ tekshiruvda savol chiqsa javob beriladi.
 
 ---
 
+# 🔍 ASL TZ BILAN SOLISHTIRISH (2026-08-20)
+
+19 bosqich tugagach asl hujjat (`Avans_tizimi.docx`) band-band qayta
+o'qildi. **Uch farq topildi va tuzatildi** — ular rejada emas, rejaning
+o'zida yo'q edi (reja hujjatdan yozilganda tushib qolgan):
+
+**1. Xabar matni tugmalarni tushuntirmasdi.** TZ namunasida
+«Kerak bo'lsa summani yozing, kerak bo'lmasa «Kerak emas» tugmasini
+bosing» qatori bor — mening matnimda yo'q edi. Xodim summani shunchaki
+yozishi ham mumkinligini bilmasdi. Matn TZ namunasiga to'liq
+moslashtirildi (💰 emoji, «Bugun — avans kuni», aynan o'sha qator).
+
+**2. ⭐ Qo'lda e'lon TAKLIF yuborardi, OGOHLANTIRISH emas.** TZ
+3-bo'limidagi namuna aniq: e'lon faqat «avans kuni qachon» deydi va
+«o'sha kuni sizga qancha mumkinligi haqida xabar keladi» deb tugaydi.
+Menda esa e'lon darhol summa va tugmalar bilan ketardi, avtomatik
+xabar esa butunlay o'chardi — natijada **sana ko'chirilsa, xodim
+ko'chirilgan kuni HECH QANDAY taklif olmasdi**.
+
+Tuzatildi: e'lon endi `advance_notice` turidagi summasiz, tugmasiz
+ogohlantirish; taklif esa **e'londagi sanada** ketadi (`tick` avans
+kunini sozlamadan emas, e'londan oladi). E'lon sanasi allaqachon
+kelgan bo'lsa taklif darhol ham qo'shiladi — xodim «bugun avans kuni»
+xabarini olib, summani ertagagacha kutib o'tirmasin.
+
+**Nega e'londa summa yo'q:** e'lon oy boshida qilinishi mumkin,
+o'shanda hisoblangan chegara avans kuniga kelib O'ZGARADI (ishlangan
+kun ortadi, boshqa ushlanma tushadi). Summani oldindan aytish — keyin
+uni qaytarib olish demakdir.
+
+**3. Xodim kabinetida avans ko'rinmasdi.** TZ 5-bo'lim 6-band:
+«Kabinetda VA botda ko'rinsin». Botda bor edi, kabinetda esa faqat
+payslipdagi bitta «Avans (olingan)» qatori — u FAQAT tasdiqlangan
+varaqada ko'rinadi, ya'ni joriy oyda so'ralgan va hali hal qilinmagan
+avans hech qayerda ko'rinmasdi. `MyAdvancesCard` qo'shildi: joriy
+oydagi har bir so'rov, holati, jami va qolgan chegara. Varaqa hali
+yo'q bo'lsa ham ko'rsatiladi.
+
+---
+
 # ✅ YAKUN — HAMMA BLOK TUGADI (2026-08-20)
 
-19 bosqichning hammasi bajarildi. Test: **278/278** (avans + oylik).
+19 bosqichning hammasi bajarildi. Test: **283/283** (avans + oylik).
 
 **Migratsiyalar (deployда `alembic upgrade heads`):**
 `av01a1b2c3d4` manba · `av02b2c3d4e5` to'lash holati ·

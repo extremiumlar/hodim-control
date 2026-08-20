@@ -736,6 +736,9 @@ export const usePayrollAdjustments = (
     enabled,
   });
 
+export const useMyAdvances = () =>
+  useQuery({ queryKey: ["payroll", "me", "advances"] as const, queryFn: api.myAdvances });
+
 // ── HR paneli va nazorat (D-01…D-03) ──
 export const useAdvanceSummary = (period: string) =>
   useQuery({

@@ -14428,24 +14428,37 @@ def test_advance_hr_panel() -> None:
         async with async_session() as s:
             hr = await s.get(_User, hr_row[0])
             res = await ad.announce_manually(s, hr, sana, izoh)
-            msgs = list(await s.scalars(
+            notice = list(await s.scalars(
+                _sel(_Ob).where(_Ob.kind == ad.KIND_NOTICE, _Ob.chat_id == TG)))
+            offers = list(await s.scalars(
                 _sel(_Ob).where(_Ob.kind == ad.KIND, _Ob.chat_id == TG)))
-            return res, msgs
+            return res, notice, offers
 
     try:
         sana1 = BUGUN.replace(day=min(BUGUN.day, 20))
-        res, msgs = _asyncio.run(_announce(sana1, "Bayram sababli ko'chirildi"))
-        check("qo'lda e'lon xabari navbatga tushdi",
-              res["recipients"] >= 1 and len(msgs) == 1, f"{res}, xabarlar={len(msgs)}")
-        if msgs:
-            matn = msgs[0].payload.get("text", "")
+        res, notice, offers = _asyncio.run(_announce(sana1, "Bayram sababli ko'chirildi"))
+        check("qo'lda e'lon: OGOHLANTIRISH xabari navbatga tushdi",
+              res["recipients"] >= 1 and len(notice) == 1, f"{res}, xabarlar={len(notice)}")
+        if notice:
+            matn = notice[0].payload.get("text", "")
             oylar = ("yanvar", "fevral", "mart", "aprel", "may", "iyun",
                      "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr")
             kutilgan = f"{sana1.day}-{oylar[sana1.month - 1]}"
-            check("xabarda avans SANASI aniq ko'rsatiladi",
+            check("e'londa avans SANASI aniq ko'rsatiladi (TZ 3-bo'lim namunasi)",
                   kutilgan in matn, f"«{kutilgan}» kutilgan edi: {matn[:160]}")
             check("HR izohi xabarga qo'shildi",
                   "Bayram sababli" in matn, matn[:200])
+            check("⭐ e'londa SUMMA YO'Q (u avans kuni alohida keladi)",
+                  "so'm" not in matn and "tugma" not in matn.lower(), matn[:200])
+            check("e'londa tugma yo'q (bu taklif emas, ogohlantirish)",
+                  "reply_markup" not in notice[0].payload, str(notice[0].payload)[:120])
+        # Sana allaqachon kelgan -> TAKLIF ham darhol ketadi
+        check("⭐ sana kelgan bo'lsa taklif ham darhol yuboriladi",
+              len(offers) == 1, f"takliflar={len(offers)}")
+        if offers:
+            tm = offers[0].payload.get("text", "")
+            check("taklifda aniq summa va tugma tushuntirilgan (TZ namunasi)",
+                  "so'm" in tm and "Kerak emas" in tm and "%" not in tm, tm[:200])
     except Exception:
         check("D-01 e'lon testi", False, traceback.format_exc(limit=3).strip())
 
@@ -14456,17 +14469,22 @@ def test_advance_hr_panel() -> None:
 
     try:
         r = _asyncio.run(_auto())
-        check("⭐ e'lon qilingan oyda AVTOMATIK xabar ketmaydi",
-              r["queued"] == 0 and "qo'lda e'lon" in str(r.get("reason", "")), str(r))
+        check("⭐ e'londan keyin avtomatik tick TAKRORLAMAYDI (dedupe)",
+              r["queued"] == 0, str(r))
     except Exception:
         check("avtomatik to'xtatish testi", False, traceback.format_exc(limit=2).strip())
 
     # ── D-01: qayta e'lon ──
     try:
-        sana2 = BUGUN.replace(day=min(BUGUN.day + 3, 28)) if BUGUN.day + 3 <= 28 else sana1
-        res2, msgs2 = _asyncio.run(_announce(sana2, None))
+        # Kelajakdagi sanaga qayta e'lon: ogohlantirish ketadi, taklif esa
+        # O'SHA KUNGACHA KUTADI (TZ 3-bo'lim: «23-ga ko'chirildi»).
+        sana2 = BUGUN.replace(day=28) if BUGUN.day < 28 else sana1
+        res2, notice2, offers2 = _asyncio.run(_announce(sana2, None))
         check("qayta e'lon: eski YUBORILMAGAN xabar navbatdan olindi",
-              len(msgs2) == 1, f"navbatda {len(msgs2)} xabar (1 bo'lishi kerak)")
+              len(notice2) == 1, f"navbatda {len(notice2)} ogohlantirish (1 bo'lishi kerak)")
+        if sana2 > BUGUN:
+            check("⭐ sana KELAJAKDA bo'lsa taklif hali yuborilmaydi",
+                  len(offers2) == 0, f"takliflar={len(offers2)}")
     except Exception:
         check("qayta e'lon testi", False, traceback.format_exc(limit=2).strip())
 

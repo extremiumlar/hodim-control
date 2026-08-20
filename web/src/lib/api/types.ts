@@ -1030,6 +1030,26 @@ export interface AdvanceLimit {
   warnings: string[];
 }
 
+/** Xodimning O'Z avanslari — kabinet va bot uchun (Avans TZ 5.6). */
+export interface MyAdvanceRow {
+  id: number;
+  amount: number;
+  status: "pending" | "approved" | "rejected" | "issued";
+  reason: string;
+  issued_on: string | null;
+  created_at: string;
+}
+
+export interface MyAdvances {
+  period: string;
+  rows: MyAdvanceRow[];
+  /** Rad etilganlarsiz jami. */
+  total: number;
+  remaining_limit: number;
+  /** `remaining_limit === 0` bo'lsa — nega. */
+  limit_reason: string | null;
+}
+
 /** HR qo'lda e'lon qilgan avans kuni (Avans TZ D-01). */
 export interface AdvanceAnnouncement {
   id: number;

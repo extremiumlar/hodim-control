@@ -15,6 +15,7 @@
 import { CheckCircle2 } from "lucide-react";
 
 import LateStatusCard from "@/components/LateStatusCard";
+import MyAdvancesCard from "@/components/MyAdvancesCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMyPayslip } from "@/lib/queries";
 import { cn, fmtMoney } from "@/lib/utils";
@@ -76,6 +77,10 @@ export default function MyPayroll() {
             tasdiqlagach shu yerda ko'rinadi.
           </p>
         </div>
+        {/* Varaqa hali yo'q bo'lsa ham avans ko'rinishi SHART: xodim
+            joriy oyda avans so'ragan bo'lishi mumkin va uning holati
+            aynan shu yerda kerak. */}
+        <MyAdvancesCard />
         <LateStatusCard />
       </div>
     );
@@ -137,6 +142,11 @@ export default function MyPayroll() {
           Tasdiqlangan: {data.approved_at.slice(0, 10)}
         </p>
       )}
+
+      {/* TZ 5.6: xodim o'z avansini KABINETDA ham ko'rsin —
+          payslipdagi bitta qator joriy oydagi hal qilinmagan
+          so'rovni ko'rsatmaydi. */}
+      <MyAdvancesCard />
 
       <LateStatusCard />
     </div>
