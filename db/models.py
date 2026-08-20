@@ -2285,3 +2285,73 @@ class Holiday(Base):
     kind: Mapped[str] = mapped_column(String(10), default=HolidayKind.state.value)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DocumentType(str, enum.Enum):
+    """Kadr hujjati turlari (yangi TZ 3.4).
+
+    Ro'yxat YOPIQ: HR har safar o'z nomini yozsa bir xil hujjat besh xil
+    nom bilan yotardi va «kimda mehnat shartnomasi yo'q?» degan savolga
+    javob berib bo'lmasdi. Yangi tur kerak bo'lsa — shu yerga qo'shiladi."""
+
+    contract = "contract"  # mehnat shartnomasi
+    job_description = "job_description"  # lavozim yo'riqnomasi
+    property_act = "property_act"  # mol-mulk dalolatnomasi
+    handover_act = "handover_act"  # ishni topshirish dalolatnomasi
+    medical = "medical"  # tibbiy ma'lumotnoma
+    diploma = "diploma"  # diplom / sertifikat
+    other = "other"  # boshqa
+
+
+#  Foydalanuvchiga ko'rsatiladigan nomlar — bitta joyda (bot, web, kabinet
+#  shu lug'atdan oladi, aks holda uch xil tarjima paydo bo'lardi).
+DOCUMENT_TYPE_LABELS: dict[str, str] = {
+    DocumentType.contract.value: "Mehnat shartnomasi",
+    DocumentType.job_description.value: "Lavozim yo'riqnomasi",
+    DocumentType.property_act.value: "Mol-mulk dalolatnomasi",
+    DocumentType.handover_act.value: "Ishni topshirish dalolatnomasi",
+    DocumentType.medical.value: "Tibbiy ma'lumotnoma",
+    DocumentType.diploma.value: "Diplom / sertifikat",
+    DocumentType.other.value: "Boshqa",
+}
+
+
+class EmployeeDocument(Base):
+    """Xodimning kadr hujjati (yangi TZ 3.4 / S-10).
+
+    NEGA KERAK: hujjatlar hozir HR ning shaxsiy Telegram yozishmalarida va
+    qog'oz papkasida. «Falonchining mehnat shartnomasi qani?» degan savol
+    har safar qidiruvga aylanadi, ishdan bo'shaganda esa mol-mulk
+    dalolatnomasi topilmaydi.
+
+    ⚠️ FAYL SERVERDA SAQLANMAYDI — faqat Telegram `file_id`. Disk kvotasi
+    tor (1 GB) va TZ 1.1 shuni talab qiladi; fayl Telegram'ning o'zida
+    qoladi, biz uni istagancha qayta yuboramiz (`send_file_id` naqshi,
+    `CelebrationMedia` bilan bir xil).
+
+    ⚠️ MAXFIY. Ruxsat `api/deps.py::assert_can_view(..., rop_sees_team=False)`
+    orqali: xodim faqat O'ZINIKINI, HR/Boshliq/Dasturchi hammasini ko'radi.
+    ROP bu modulda «begona» — o'z jamoasining diplomini ham ko'rmaydi.
+
+    O'chirish YUMSHOQ (`deleted_at`): kadr hujjatini butunlay yo'qotish
+    huquqiy xavf, xato bosilgan «o'chirish» qaytarilishi kerak. BARCHA
+    o'qish `deleted_at IS NULL` bilan filtrlanishi SHART."""
+
+    __tablename__ = "employee_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    doc_type: Mapped[str] = mapped_column(String(24), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    file_id: Mapped[str] = mapped_column(String(512))
+    # "document" -> sendDocument, "photo" -> sendPhoto
+    file_type: Mapped[str] = mapped_column(String(16), default="document")
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    #  Hujjat qachon berilgan va qachon tugaydi. `expires_at` NULL —
+    #  muddatsiz (mehnat shartnomasi odatda shunday). S-12 muddat
+    #  eslatmalari aynan shu ustundan o'qiydi.
+    issued_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expires_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

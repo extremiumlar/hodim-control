@@ -8568,6 +8568,201 @@ def test_holidays() -> None:
         conn.close()
 
 
+def test_employee_documents() -> None:
+    """S-10 (TZ 3.4) — kadr hujjatlari arxivi: model va API.
+
+    Modulning eng nozik joyi RUXSAT: bu maxfiy ma'lumot (diplom, tibbiy
+    ma'lumotnoma, shartnoma). TZ ataylab talab qiladi — **ROP umuman
+    ko'rmaydi**, hatto O'Z JAMOASI bo'lsa ham. Boshqa modullarda ROP
+    jamoasini ko'radi, shuning uchun bu chetlanish alohida sinaladi.
+
+    Begona so'ralganda 403 EMAS, 404: 403 «bu odamda hujjat bor» degan
+    ma'lumotni oshkor qilardi.
+
+    Qabul mezonlari (TZ):
+      • xodim faqat o'zinikini ko'radi, begonaga 404;
+      • ROP ga 404 (hatto o'z jamoasi bo'lsa ham);
+      • barcha o'qish `deleted_at IS NULL`;
+      • fayl serverda saqlanmaydi — faqat `file_id`;
+      • test: 8+ (rol matritsasi, soft delete, 404, muddat maydoni).
+    """
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-10: KADR HUJJATLARI (ruxsat matritsasi)")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Doc%'")
+        conn.commit()
+
+        def _yarat(nom: str, rol: str, tg: int, manager: int | None = None) -> int:
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+                " manager_id, created_at) values (?,?,?,0,1,?,datetime('now'))",
+                (tg, nom, rol, manager))
+            conn.commit()
+            return cur.lastrowid
+
+        ids["hr"] = _yarat("T-DocHR", "hr", 999701001)
+        ids["rop"] = _yarat("T-DocRop", "rop", 999701002)
+        # ROP ning BEVOSITA bo'ysunuvchisi — «o'z jamoasi» aynan shu
+        ids["team"] = _yarat("T-DocTeam", "employee", 999701003, ids["rop"])
+        ids["other"] = _yarat("T-DocOther", "employee", 999701004)
+
+        t = {k: token_for(v, r) for (k, v), r in zip(
+            ids.items(), ["hr", "rop", "employee", "employee"])}
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── Tur ro'yxati yagona manbadan ──
+            r = c.get("/employee-documents/types", headers=auth(t["team"]))
+            check("S-10: /types -> 200", r.status_code == 200, "kod=" + str(r.status_code))
+            if r.status_code == 200:
+                turlar = {x["value"] for x in r.json()}
+                check("S-10: TZ dagi 7 tur ham bor",
+                      {"contract", "job_description", "property_act", "handover_act",
+                       "medical", "diploma", "other"} <= turlar, "=" + str(sorted(turlar)))
+
+            # ── YUKLASH ruxsati ──
+            yangi = {
+                "user_id": ids["team"], "doc_type": "contract",
+                "name": "T-Doc mehnat shartnomasi", "file_id": "T-FAKE-FILE-ID-1",
+                "file_type": "document", "issued_at": "2026-01-10",
+            }
+            r = c.post("/employee-documents", headers=auth(t["team"]), json=yangi)
+            check("S-10: oddiy xodim yuklay olmaydi -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+            r = c.post("/employee-documents", headers=auth(t["rop"]), json=yangi)
+            check("S-10: ROP yuklay olmaydi -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+            r = c.post("/employee-documents", headers=auth(t["hr"]), json=yangi)
+            check("S-10: HR yukladi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            doc_id = r.json().get("id") if r.status_code == 201 else None
+            if r.status_code == 201:
+                check("S-10: javobda tur nomi tarjima qilingan",
+                      r.json().get("doc_type_label") == "Mehnat shartnomasi",
+                      "=" + str(r.json().get("doc_type_label")))
+
+            # ── Fayl SERVERDA saqlanmaydi ──
+            if doc_id:
+                row = cur.execute(
+                    "select file_id from employee_documents where id=?", (doc_id,)).fetchone()
+                check("S-10: bazada faqat file_id (fayl yo'q)",
+                      row is not None and row[0] == "T-FAKE-FILE-ID-1", "=" + str(row))
+
+            # ── RUXSAT MATRITSASI (o'qish) ──
+            r = c.get("/employee-documents/me", headers=auth(t["team"]))
+            check("S-10: xodim O'ZINIKINI ko'radi -> 200 (1 ta)",
+                  r.status_code == 200 and len(r.json()) == 1,
+                  f"kod={r.status_code} soni={len(r.json()) if r.status_code == 200 else '-'}")
+
+            r = c.get(f"/employee-documents/user/{ids['team']}", headers=auth(t["other"]))
+            check("S-10: BEGONA xodim -> 404 (403 emas — oshkor qilmaydi)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # ⚠️ ASOSIY CHETLANISH: ROP o'z jamoasini ham ko'rmaydi
+            r = c.get(f"/employee-documents/user/{ids['team']}", headers=auth(t["rop"]))
+            check("S-10: ROP O'Z JAMOASINI ham ko'rmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            r = c.get(f"/employee-documents/user/{ids['rop']}", headers=auth(t["rop"]))
+            check("S-10: ROP o'zinikini ko'radi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+
+            r = c.get(f"/employee-documents/user/{ids['team']}", headers=auth(t["hr"]))
+            check("S-10: HR hammani ko'radi -> 200 (1 ta)",
+                  r.status_code == 200 and len(r.json()) == 1,
+                  f"kod={r.status_code} soni={len(r.json()) if r.status_code == 200 else '-'}")
+
+            # ── MUDDAT maydoni ──
+            bugun = _date.today()
+            c.post("/employee-documents", headers=auth(t["hr"]), json={
+                "user_id": ids["team"], "doc_type": "medical",
+                "name": "T-Doc muddati o'tgan", "file_id": "T-FAKE-2",
+                "expires_at": (bugun - _td(days=5)).isoformat()})
+            c.post("/employee-documents", headers=auth(t["hr"]), json={
+                "user_id": ids["team"], "doc_type": "diploma",
+                "name": "T-Doc kelajakda", "file_id": "T-FAKE-3",
+                "expires_at": (bugun + _td(days=10)).isoformat()})
+            r = c.get("/employee-documents/me", headers=auth(t["team"]))
+            hujjatlar = {d["name"]: d for d in r.json()} if r.status_code == 200 else {}
+            check("S-10: muddati o'tgan hujjat belgilandi",
+                  hujjatlar.get("T-Doc muddati o'tgan", {}).get("is_expired") is True
+                  and hujjatlar["T-Doc muddati o'tgan"]["days_left"] == -5,
+                  "=" + str(hujjatlar.get("T-Doc muddati o'tgan", {}).get("days_left")))
+            check("S-10: amaldagi hujjat muddati o'tgan emas",
+                  hujjatlar.get("T-Doc kelajakda", {}).get("is_expired") is False
+                  and hujjatlar["T-Doc kelajakda"]["days_left"] == 10,
+                  "=" + str(hujjatlar.get("T-Doc kelajakda", {}).get("days_left")))
+            check("S-10: muddatsiz hujjatda days_left=None",
+                  hujjatlar.get("T-Doc mehnat shartnomasi", {}).get("days_left") is None,
+                  "=" + str(hujjatlar.get("T-Doc mehnat shartnomasi", {}).get("days_left")))
+            # Muddati tugaydiganlar TEPADA (muddatsizlar oxirida)
+            tartib = [d["name"] for d in r.json()] if r.status_code == 200 else []
+            check("S-10: muddati yaqinlari tepada, muddatsiz oxirida",
+                  tartib and tartib[-1] == "T-Doc mehnat shartnomasi"
+                  and tartib[0] == "T-Doc muddati o'tgan", "=" + str(tartib))
+
+            # ── Xato kiritishlar ──
+            r = c.post("/employee-documents", headers=auth(t["hr"]), json={
+                "user_id": ids["team"], "doc_type": "yolgon_tur",
+                "name": "T-Doc x", "file_id": "T-FAKE-4"})
+            check("S-10: noma'lum tur -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+            r = c.post("/employee-documents", headers=auth(t["hr"]), json={
+                "user_id": ids["team"], "doc_type": "other", "name": "T-Doc y",
+                "file_id": "T-FAKE-5", "issued_at": "2026-05-01",
+                "expires_at": "2026-04-01"})
+            check("S-10: tugash sanasi berilgandan oldin -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+            r = c.post("/employee-documents", headers=auth(t["hr"]), json={
+                "user_id": 99999999, "doc_type": "other", "name": "T-Doc z",
+                "file_id": "T-FAKE-6"})
+            check("S-10: yo'q xodimga yuklash -> 404", r.status_code == 404,
+                  "kod=" + str(r.status_code))
+
+            # ── YUMSHOQ o'chirish ──
+            if doc_id:
+                r = c.delete(f"/employee-documents/{doc_id}", headers=auth(t["rop"]))
+                check("S-10: ROP o'chira olmaydi -> 403", r.status_code == 403,
+                      "kod=" + str(r.status_code))
+                r = c.delete(f"/employee-documents/{doc_id}", headers=auth(t["hr"]))
+                check("S-10: HR o'chirdi -> 200", r.status_code == 200,
+                      "kod=" + str(r.status_code))
+                qator = cur.execute(
+                    "select deleted_at from employee_documents where id=?",
+                    (doc_id,)).fetchone()
+                check("S-10: o'chirish YUMSHOQ (qator bazada, deleted_at to'ldi)",
+                      qator is not None and qator[0] is not None, "=" + str(qator))
+                r = c.get("/employee-documents/me", headers=auth(t["team"]))
+                nomlar = [d["name"] for d in r.json()] if r.status_code == 200 else []
+                check("S-10: o'chirilgani ro'yxatda YO'Q (deleted_at IS NULL filtri)",
+                      "T-Doc mehnat shartnomasi" not in nomlar, "=" + str(nomlar))
+                r = c.delete(f"/employee-documents/{doc_id}", headers=auth(t["hr"]))
+                check("S-10: ikkinchi marta o'chirish -> 404", r.status_code == 404,
+                      "kod=" + str(r.status_code))
+    except Exception:
+        check("S-10 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                cur.execute(
+                    "delete from employee_documents where user_id in (%s)"
+                    % ",".join("?" * len(ids)), tuple(ids.values()))
+            cur.execute("delete from users where full_name like 'T-Doc%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -8685,6 +8880,11 @@ def main() -> None:
         test_holidays()
     except Exception:
         print("S-09 bayramlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_employee_documents()
+    except Exception:
+        print("S-10 hujjatlar testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()
