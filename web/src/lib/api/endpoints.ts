@@ -5,6 +5,7 @@ import type {
   AppealDecideResult,
   Attendance,
   EmployeeRequest,
+  CertificateItem,
   DeadlineItem,
   DocumentTemplate,
   DeadlineKind,
@@ -132,6 +133,21 @@ export const api = {
 
   // ── Hujjat shablonlari va ish takliflari (TZ 3.3 / S-14, S-15) ──
   documentTemplates: () => apiFetch<DocumentTemplate[]>("/document-templates"),
+  certificates: (userId?: number) =>
+    apiFetch<CertificateItem[]>(
+      `/certificates${userId ? `?user_id=${userId}` : ""}`
+    ),
+  certificatePurposes: () =>
+    apiFetch<{ value: string; label: string }[]>("/certificates/purposes"),
+  issueCertificate: (body: {
+    user_id: number;
+    purpose: string;
+    include_salary: boolean;
+  }) =>
+    apiFetch<{ id: number; number: string; queued: boolean; note: string | null }>(
+      "/certificates",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
   offers: (q?: string) =>
     apiFetch<Offer[]>(`/offers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   addOffer: (body: {

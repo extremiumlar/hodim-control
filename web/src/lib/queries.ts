@@ -24,6 +24,8 @@ export const qk = {
   deadlines: (days: number) => ["deadlines", days] as const,
   deadlineKinds: ["deadlines", "kinds"] as const,
   documentTemplates: ["document-templates"] as const,
+  certificates: (userId?: number) => ["certificates", userId ?? "all"] as const,
+  certificatePurposes: ["certificates", "purposes"] as const,
   offers: (q: string) => ["offers", q] as const,
   userDocuments: (id: number) => ["documents", "user", id] as const,
   attendanceToday: ["attendance", "me", "today"] as const,
@@ -220,6 +222,23 @@ export const useDocumentTemplates = () =>
     queryFn: api.documentTemplates,
     staleTime: 10 * 60 * 1000,
   });
+
+export const useCertificates = (userId?: number) =>
+  useQuery({
+    queryKey: qk.certificates(userId),
+    queryFn: () => api.certificates(userId),
+  });
+
+export const useCertificatePurposes = () =>
+  useQuery({
+    queryKey: qk.certificatePurposes,
+    queryFn: api.certificatePurposes,
+    staleTime: 60 * 60 * 1000,
+  });
+
+/** Ma'lumotnoma kadr arxiviga ham tushadi — hujjatlarni ham yangilaymiz. */
+export const useIssueCertificate = () =>
+  useApiMutation(api.issueCertificate, [["certificates"], ["documents"]]);
 
 export const useOffers = (q = "") =>
   useQuery({ queryKey: qk.offers(q), queryFn: () => api.offers(q || undefined) });

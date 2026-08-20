@@ -2563,3 +2563,59 @@ class Offer(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class CertificatePurpose(str, enum.Enum):
+    """Ma'lumotnoma maqsadi (yangi TZ 3.9). HAR BIRIGA alohida shablon —
+    bankka beriladigan matn bilan bog'chaga beriladigani bir xil emas."""
+
+    bank = "bank"
+    visa = "visa"
+    kindergarten = "kindergarten"
+    other = "other"
+
+
+CERTIFICATE_PURPOSE_LABELS: dict[str, str] = {
+    CertificatePurpose.bank.value: "Bank uchun",
+    CertificatePurpose.visa.value: "Viza uchun",
+    CertificatePurpose.kindergarten.value: "Bog'cha uchun",
+    CertificatePurpose.other.value: "Boshqa",
+}
+
+
+class Certificate(Base):
+    """Berilgan ma'lumotnoma — ARXIV (yangi TZ 3.9 / S-17).
+
+    NEGA JADVAL KERAK: TZ «arxivda kimga, qachon, qaysi maqsadda tarixi
+    qoladi» deydi. Amalda bu savol tez-tez chiqadi — «bu odamga shu yil
+    nechta ma'lumotnoma berdik?», «bankka bergani qaysi raqamda edi?».
+
+    ⚠️ `number` UNIKAL. Ma'lumotnoma raqami rasmiy rekvizit: ikkita
+    hujjat bir xil raqam bilan chiqsa tashqi tashkilot ularni qalbaki
+    deb hisoblaydi. Unikallik BAZA darajasida kafolatlanadi, kod
+    darajasidagi hisoblash yetarli emas (parallel tasdiq)."""
+
+    __tablename__ = "certificates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    #  Qaysi arizadan chiqqani. Qo'lda berilgan bo'lsa NULL.
+    request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employee_requests.id"), nullable=True, index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(16), index=True)
+    number: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    #  O'rtacha oylik FAQAT so'ralganda yoziladi (TZ qabul mezoni):
+    #  bu maxfiy ma'lumot va bog'chaga kerak emas.
+    include_salary: Mapped[bool] = mapped_column(Boolean, default=False)
+    avg_salary: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    template_id: Mapped[int | None] = mapped_column(
+        ForeignKey("document_templates.id"), nullable=True
+    )
+    #  Tayyor hujjat `employee_documents` ga yozilgach shu yerga bog'lanadi.
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("employee_documents.id"), nullable=True
+    )
+    issued_at: Mapped[date] = mapped_column(Date, index=True)
+    issued_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

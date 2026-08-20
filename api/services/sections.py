@@ -152,6 +152,8 @@ _MANAGER: list[Section] = [
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("offers", "Ish takliflari", "/offers", "UserPlus", 158, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    Section("certificates", "Ma'lumotnomalar", "/certificates", "ScrollText", 159,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",

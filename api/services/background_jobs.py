@@ -26,6 +26,8 @@ darajasidagi navbat yoki lock ishlamaydi (TZ tuzog'i).
 """
 from __future__ import annotations
 
+import logging
+
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 
@@ -33,6 +35,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import BackgroundJob, BackgroundJobStatus, User
+
+logger = logging.getLogger(__name__)
 
 # `running` holatida shuncha daqiqadan ko'p turgan ish — o'lgan jarayon
 # qoldig'i (cron o'ldirilgan, server qayta yuklangan). Aks holda navbat
@@ -44,12 +48,32 @@ JobResult = tuple[str, bytes, str]  # (fayl nomi, baytlar, foydalanuvchiga izoh)
 
 _HANDLERS: dict[str, Callable[[AsyncSession, dict, User | None], Awaitable[JobResult]]] = {}
 
+#  Fayl Telegram'ga YETKAZILGANDAN KEYIN chaqiriladigan ilgak.
+#  NEGA KERAK: ba'zi ishlar natijaning `file_id` sini bilishi shart
+#  (masalan ma'lumotnoma kadr arxiviga yozilishi kerak), lekin yuborish
+#  `background_tick` ning ichida bo'ladi — ishlovchining o'zi `file_id`
+#  ni ko'ra olmaydi.
+_AFTER: dict[str, Callable[[AsyncSession, dict, str | None], Awaitable[None]]] = {}
+
 
 def handler(kind: str):
     """Ishlovchini ro'yxatdan o'tkazadi: `@handler("report_export")`."""
 
     def wrap(fn):
         _HANDLERS[kind] = fn
+        return fn
+
+    return wrap
+
+
+def after_delivery(kind: str):
+    """Yetkazilgandan keyingi ilgak: `@after_delivery("document_render")`.
+
+    Ilgakdagi xato ISHNI YIQITMAYDI — fayl allaqachon foydalanuvchida.
+    Xato faqat jurnalga yoziladi."""
+
+    def wrap(fn):
+        _AFTER[kind] = fn
         return fn
 
     return wrap
@@ -165,6 +189,16 @@ async def background_tick(db: AsyncSession) -> dict:
         row.finished_at = datetime.utcnow()
         await db.commit()
 
+    keyin = _AFTER.get(kind)
+    if keyin is not None:
+        try:
+            await keyin(db, params, file_id)
+        except Exception:  # noqa: BLE001
+            #  Ish MUVAFFAQIYATLI hisoblanadi: fayl foydalanuvchida.
+            #  Ilgak (masalan arxivga yozish) alohida muammo.
+            logger.exception("«%s» ishining keyingi ilgagi xato berdi", kind)
+            await db.rollback()
+
     return {
         "ran": kind,
         "job_id": job_id,
@@ -242,3 +276,42 @@ async def _document_render(db: AsyncSession, params: dict, user: User | None) ->
         #  BILISHI shart, aks holda shundayligicha jo'natib yuborardi.
         izoh += "\n⚠️ To'ldirilmagan: " + ", ".join(qolgan)
     return nom, natija, izoh
+
+
+@after_delivery("document_render")
+async def _document_to_archive(db: AsyncSession, params: dict, file_id: str | None) -> None:
+    """Tayyor ma'lumotnomani KADR ARXIVIGA yozadi (yangi TZ 3.9 / S-17).
+
+    Faqat `certificate_id` bo'lgan ishlarda ishlaydi — oddiy hujjat
+    generatsiyasi (ish taklifi va h.k.) arxivga tushmaydi, u nomzodniki
+    va xodim hujjati emas.
+
+    `file_id` bo'lmasa (yuborilmadi) yozilmaydi: arxivda ochib
+    bo'lmaydigan yozuv turgani yo'qidan yomonroq — HR uni bor deb
+    o'ylab, keyin topa olmaydi."""
+    from datetime import date as _date
+
+    from db.models import Certificate, DocumentType, EmployeeDocument
+
+    cert_id = params.get("certificate_id")
+    if not cert_id or not file_id:
+        return
+
+    cert = await db.get(Certificate, int(cert_id))
+    if cert is None or cert.document_id:
+        return
+
+    doc = EmployeeDocument(
+        user_id=cert.user_id,
+        doc_type=DocumentType.other.value,
+        name=f"Ma'lumotnoma {cert.number}",
+        file_id=file_id,
+        file_type="document",
+        uploaded_by=cert.issued_by,
+        issued_at=cert.issued_at or _date.today(),
+        note=f"Maqsad: {cert.purpose}",
+    )
+    db.add(doc)
+    await db.flush()
+    cert.document_id = doc.id
+    await db.commit()

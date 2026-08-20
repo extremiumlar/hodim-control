@@ -9974,6 +9974,226 @@ def test_offer_hire() -> None:
         conn.close()
 
 
+def test_certificates() -> None:
+    """S-17 (TZ 3.9) — ma'lumotnoma ariza tasdiqlanishi bilan chiqadi.
+
+    Qabul mezonlari (TZ):
+      • ariza tasdiqlanishi bilan hujjat tayyorlanadi;
+      • hujjat raqami TAKRORLANMAYDI;
+      • o'rtacha oylik FAQAT so'ralganda yoziladi;
+      • arxivda «kimga, qachon, qaysi maqsadda» tarixi qoladi.
+
+    O'RTACHA OYLIK — maxfiy ma'lumot. Bankka kerak, bog'chaga umuman
+    kerak emas. So'ralmagan bo'lsa hisoblanmaydi ham, hujjatga yozilmaydi
+    ham; arxivda ham faqat bayroq turadi, summaning o'zi emas.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-17: MA'LUMOTNOMA (avtomatik)")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    uid = tmpl_id = None
+    try:
+        cur.execute("delete from certificates where number like '%/9%'")
+        cur.execute("delete from users where full_name like 'T-Cert%'")
+        cur.execute("delete from document_templates where name like 'T-CertTmpl%'")
+        conn.commit()
+
+        pos = cur.execute("select id, name from positions limit 1").fetchone()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, hire_date, created_at) values (999701701,'T-Cert Xodim',"
+            "'employee',1,1,?,'2024-03-15',datetime('now'))", (pos[0] if pos else None,))
+        uid = cur.lastrowid
+        conn.commit()
+        emp_t = token_for(uid, "employee")
+
+        # ── Shablon ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/document-templates", headers=auth(mgr_t), json={
+                "kind": "reference", "name": "T-CertTmpl bank",
+                "file_id": "T-CERT-TMPL",
+                "placeholders": ["raqam", "fish", "lavozim", "ortacha_oylik_sozda"]})
+            tmpl_id = r.json().get("id") if r.status_code == 201 else None
+            check("S-17: «reference» shabloni yuklandi", tmpl_id is not None,
+                  "kod=" + str(r.status_code))
+
+            # ── Belgilar ro'yxati ──
+            r = c.get("/certificates/placeholders", headers=auth(mgr_t))
+            nomlar = {x["name"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-17: shablon belgilari e'lon qilingan",
+                  {"raqam", "fish", "lavozim", "ishga_qabul_sanasi",
+                   "ortacha_oylik"} <= nomlar, "=" + str(sorted(nomlar)))
+
+            # ── ARIZA -> TASDIQ -> HUJJAT (oyliksiz, bog'cha) ──
+            r = c.post("/requests/me", headers=auth(emp_t), json={
+                "kind": "certificate",
+                "reason": "Bog'chaga ma'lumotnoma kerak, iltimos tayyorlang",
+                "payload": {"purpose": "kindergarten", "include_salary": False}})
+            check("S-17: ariza yuborildi", r.status_code in (200, 201),
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            req_id = r.json().get("id") if r.status_code in (200, 201) else None
+
+            r = c.post(f"/requests/{req_id}/decide", headers=auth(mgr_t),
+                       json={"decision": "approved", "note": "Tayyorlansin"})
+            check("S-17: HR tasdiqladi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:160])
+            info = r.json().get("applied", {}) if r.status_code == 200 else {}
+            check("S-17: tasdiq bilan MA'LUMOTNOMA yaratildi (C guruh emas)",
+                  bool(info.get("certificate_id")) and bool(info.get("number")),
+                  "=" + str(info))
+            check("S-17: keyingi qadam matni raqamni aytadi",
+                  r.status_code == 200 and str(info.get("number", "")) in
+                  (r.json().get("next_step") or ""), "=" + str(r.json().get("next_step")))
+            raqam1 = info.get("number")
+
+            cert = cur.execute(
+                "select purpose, include_salary, avg_salary, request_id, user_id"
+                " from certificates where number=?", (raqam1,)).fetchone()
+            check("S-17: arxivda maqsad va ariza bog'lanishi bor",
+                  cert == ("kindergarten", 0, None, req_id, uid), "=" + str(cert))
+            check("S-17: OYLIK SO'RALMAGAN — hisoblanmadi ham, yozilmadi ham",
+                  cert and cert[2] is None, "=" + str(cert[2] if cert else "-"))
+
+            # Navbatga qo'yildimi
+            ish = cur.execute(
+                "select kind, status, user_id, params from background_jobs"
+                " order by id desc limit 1").fetchone()
+            check("S-17: hujjat NAVBATGA qo'yildi",
+                  ish and ish[0] == "document_render" and ish[1] == "queued",
+                  "=" + str(ish[:3] if ish else None))
+            check("S-17: fayl XODIMNING o'ziga boradi (HR ga emas)",
+                  ish and ish[2] == uid, f"job_user={ish[2] if ish else '-'}, xodim={uid}")
+
+            # ── Cron bajaradi -> arxivga yoziladi ──
+            d = _docx_fixture("<w:p><w:r><w:t>{{raqam}} {{fish}} {{lavozim}} "
+                              "[{{ortacha_oylik_sozda}}]</w:t></w:r></w:p>")
+            natija: dict = {}
+
+            async def _tick():
+                import api.telegram_notify as tn
+                from api.services.background_jobs import background_tick
+
+                asl_dl, asl_send = tn.download_file, tn.send_media_file
+
+                async def soxta_dl(file_id):
+                    return d
+
+                async def soxta_send(chat_id, content, filename, kind, caption=None):
+                    natija["bytes"] = content
+                    natija["chat_id"] = chat_id
+                    return {"ok": True, "result": {"document": {"file_id": "T-CERT-OUT"}}}
+
+                tn.download_file, tn.send_media_file = soxta_dl, soxta_send
+                try:
+                    async with async_session() as s2:
+                        return await background_tick(s2)
+                finally:
+                    tn.download_file, tn.send_media_file = asl_dl, asl_send
+
+            res = asyncio.run(_tick())
+            check("S-17: cron hujjatni tayyorladi", res.get("ok") is True, "=" + str(res))
+            if natija.get("bytes"):
+                matn = _docx_text(natija["bytes"])
+                check("S-17: hujjatda raqam, ism va lavozim bor",
+                      raqam1 in matn and "T-Cert Xodim" in matn, "=" + matn)
+                check("S-17: oylik so'ralmagani uchun BO'SH qoldi",
+                      "[]" in matn, "=" + matn)
+
+            # ── ARXIVGA yozildi ──
+            hujjat = cur.execute(
+                "select d.name, d.file_id, d.user_id from employee_documents d"
+                " join certificates c on c.document_id = d.id where c.number=?",
+                (raqam1,)).fetchone()
+            check("S-17: tayyor hujjat KADR ARXIVIGA yozildi",
+                  hujjat is not None and hujjat[1] == "T-CERT-OUT" and hujjat[2] == uid,
+                  "=" + str(hujjat))
+            check("S-17: arxivdagi nomda raqam bor",
+                  hujjat and raqam1 in hujjat[0], "=" + str(hujjat[0] if hujjat else "-"))
+
+            # ── OYLIK BILAN (bank) ──
+            cur.execute(
+                "insert into payslips (user_id, period, base_amount, net, calculated_at)"
+                " values (?,?,?,?,datetime('now'))", (uid, "2026-06", 8000000, 8000000))
+            cur.execute(
+                "insert into payslips (user_id, period, base_amount, net, calculated_at)"
+                " values (?,?,?,?,datetime('now'))", (uid, "2026-07", 10000000, 10000000))
+            conn.commit()
+
+            r = c.post("/certificates", headers=auth(mgr_t), json={
+                "user_id": uid, "purpose": "bank", "include_salary": True})
+            check("S-17: arizasiz berish -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            raqam2 = r.json().get("number") if r.status_code == 201 else None
+
+            # ── RAQAM TAKRORLANMAYDI ──
+            check("S-17: ikkinchi raqam BIRINCHISIDAN farq qiladi",
+                  raqam1 and raqam2 and raqam1 != raqam2, f"{raqam1} vs {raqam2}")
+            check("S-17: raqamlar ketma-ket (0001 -> 0002)",
+                  raqam1 and raqam2
+                  and int(raqam2.split("/")[1]) == int(raqam1.split("/")[1]) + 1,
+                  f"{raqam1} -> {raqam2}")
+            jami, noyob = cur.execute(
+                "select count(*), count(distinct number) from certificates").fetchone()
+            check("S-17: barcha raqamlar NOYOB", jami == noyob, f"{jami} qator, {noyob} raqam")
+
+            cert2 = cur.execute(
+                "select include_salary, avg_salary from certificates where number=?",
+                (raqam2,)).fetchone()
+            check("S-17: oylik SO'RALGANDA hisoblandi (8M va 10M o'rtachasi = 9M)",
+                  cert2 and cert2[0] == 1 and float(cert2[1]) == 9000000.0,
+                  "=" + str(cert2))
+
+            # ── ARXIV ro'yxati ──
+            r = c.get("/certificates", headers=auth(mgr_t), params={"user_id": uid})
+            arxiv = r.json() if r.status_code == 200 else []
+            check("S-17: arxivda ikkala ma'lumotnoma ham bor", len(arxiv) == 2,
+                  "=" + str(len(arxiv)))
+            check("S-17: arxivda «kimga, qachon, qaysi maqsadda» ko'rinadi",
+                  all({"user_name", "issued_at", "purpose_label"} <= set(x)
+                      for x in arxiv), "=" + str(arxiv[:1]))
+            check("S-17: arxiv oylik SUMMASINI oshkor QILMAYDI (faqat bayroq)",
+                  all("avg_salary" not in x for x in arxiv),
+                  "=" + str(sorted(arxiv[0]) if arxiv else []))
+            check("S-17: qaysi biri oylik bilan ekani ko'rinadi",
+                  sorted(x["include_salary"] for x in arxiv) == [False, True],
+                  "=" + str([x["include_salary"] for x in arxiv]))
+
+            # ── RUXSAT ──
+            r = c.get("/certificates", headers=auth(emp_t))
+            check("S-17: oddiy xodim arxivni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-17 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if uid:
+                cur.execute("delete from payslips where user_id=?", (uid,))
+                cur.execute("delete from employee_documents where user_id=?", (uid,))
+                cur.execute("delete from certificates where user_id=?", (uid,))
+                cur.execute("delete from employee_requests where user_id=?", (uid,))
+                cur.execute("delete from users where id=?", (uid,))
+            cur.execute("delete from background_jobs where kind='document_render'")
+            cur.execute("delete from document_templates where name like 'T-CertTmpl%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -10126,6 +10346,11 @@ def main() -> None:
         test_offer_hire()
     except Exception:
         print("S-16 ishga olish testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_certificates()
+    except Exception:
+        print("S-17 malumotnoma testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

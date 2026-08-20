@@ -10,8 +10,10 @@ oqibatiga qarab uch guruhga bo'linadi (modulning markaziy g'oyasi):
                   ham yangi hisob kodi yozilmaydi.
   B — pulga:      advance  → `PayrollAdjustment(category='advance',
                   status='pending')` → Boshliq tasdiqlaydi (mavjud oqim).
-  C — qo'lda:     certificate / schedule_change / resignation / other →
+  C — qo'lda:     schedule_change / resignation / other →
                   tizim hech nima yozmaydi, HR ga «keyingi qadam» beriladi.
+  D — hujjat:     certificate → ma'lumotnoma AVTOMATIK tayyorlanadi
+                  (yangi TZ 3.9 / S-17). Ilgari C guruhda edi.
 
 QAYTARISH: yozilgan qatorlar `source_request_id` bilan arizaga bog'lanadi,
 bekor qilinganda aynan shular topib qaytariladi.
@@ -64,6 +66,8 @@ from api.services.workdays import (
 from api.telegram_notify import inline_keyboard, send_file_id
 from api.timeutil import today_local
 from db.models import (
+    CERTIFICATE_PURPOSE_LABELS,
+    CertificatePurpose,
     LEAVE_KINDS,
     MONEY_KINDS,
     REQUEST_OPEN_STATUSES,
@@ -116,9 +120,6 @@ _KIND_LABELS = {
 # C guruh — tizim hech nima yozmaydi, HR qo'lda bajaradi. Qaror qabul
 # qilinganda shu matn qaytariladi (Appeal'dagi `next_step` naqshi).
 _NEXT_STEP = {
-    RequestKind.certificate.value: (
-        "Ma'lumotnomani tayyorlab, xodimga bering. Tizim hujjat yaratmaydi."
-    ),
     RequestKind.schedule_change.value: (
         "«Ish jadvali» bo'limidan xodimning jadvalini o'zgartiring — "
         "tizim buni avtomatik qilmaydi (variantlar ko'p, xato xavfi yuqori)."
@@ -245,7 +246,63 @@ async def _apply(db: AsyncSession, item: EmployeeRequest, user: User) -> tuple[s
         return None, await _apply_leave(db, item, user)
     if item.kind in MONEY_KINDS:
         return None, await _apply_advance(db, item, user)
+    if item.kind == RequestKind.certificate.value:
+        return await _apply_certificate(db, item, user)
     return _NEXT_STEP.get(item.kind), {}
+
+
+async def _apply_certificate(
+    db: AsyncSession, item: EmployeeRequest, user: User
+) -> tuple[str | None, dict]:
+    """Ma'lumotnoma (yangi TZ 3.9 / S-17) — ilgari «C guruh» edi.
+
+    Tasdiqlangan zahoti hujjat AVTOMATIK tayyorlanadi: raqam beriladi,
+    generatsiya navbatga qo'yiladi, tayyor fayl xodimga boradi va kadr
+    arxiviga yoziladi.
+
+    Maqsad va «o'rtacha oylik kerakmi» — arizaning `payload` ida
+    (xodim so'raganda tanlaydi). Bo'lmasa «boshqa», oyliksiz: o'rtacha
+    oylik MAXFIY, so'ralmagan bo'lsa yozilmaydi (TZ qabul mezoni).
+
+    ⚠️ Shablon yuklanmagan bo'lsa ariza BLOKLANMAYDI: raqam beriladi,
+    arxivda iz qoladi, HR ga «shablon yo'q» deb aytiladi. Aks holda
+    xodimning arizasi HR ning sozlamasi tufayli osilib qolardi."""
+    from api.services import certificates as cert_svc
+
+    payload = item.payload or {}
+    maqsad = payload.get("purpose") or CertificatePurpose.other.value
+    if maqsad not in CERTIFICATE_PURPOSE_LABELS:
+        maqsad = CertificatePurpose.other.value
+    oylik_kerak = bool(payload.get("include_salary"))
+
+    cert, tmpl = await cert_svc.issue(
+        db,
+        user=user,
+        purpose=maqsad,
+        include_salary=oylik_kerak,
+        today=today_local(),
+        issued_by=item.decided_by,
+        request_id=item.id,
+    )
+    info = {
+        "certificate_id": cert.id,
+        "number": cert.number,
+        "purpose": maqsad,
+        "include_salary": oylik_kerak,
+    }
+    if tmpl is None:
+        return (
+            f"Ma'lumotnoma raqami berildi: {cert.number}. "
+            "Lekin «reference» turidagi hujjat shabloni yuklanmagan — "
+            "hujjatni qo'lda tayyorlang yoki shablonni «Hujjat shablonlari» "
+            "bo'limiga yuklang.",
+            info,
+        )
+    return (
+        f"Ma'lumotnoma {cert.number} tayyorlanmoqda — bir daqiqada "
+        "xodimning Telegram'iga boradi va kadr arxiviga yoziladi.",
+        info,
+    )
 
 
 async def _apply_leave(db: AsyncSession, item: EmployeeRequest, user: User) -> dict:

@@ -1464,3 +1464,19 @@ export type DocumentTemplate = {
   placeholders: string[];
   is_active: boolean;
 };
+
+/** Berilgan ma'lumotnoma (TZ 3.9 / S-17). ⚠️ O'rtacha oylik SUMMASI
+ *  qaytarilmaydi — faqat `include_salary` bayrog'i; summa maxfiy. */
+export type CertificateItem = {
+  id: number;
+  user_id: number;
+  user_name: string;
+  purpose: string;
+  purpose_label: string;
+  number: string;
+  include_salary: boolean;
+  issued_at: string;
+  request_id: number | null;
+  document_id: number | null;
+  created_at: string;
+};
