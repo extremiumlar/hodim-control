@@ -35,6 +35,9 @@ from api.deps import (
     verify_bot_secret,
 )
 from api.schemas import (
+    AdvanceBotCallback,
+    AdvanceBotOut,
+    AdvanceBotText,
     AdvanceIssueIn,
     AdvanceSettingsIn,
     AdvanceSettingsOut,
@@ -1539,6 +1542,14 @@ async def decide_advance(
     await db.commit()
     await db.refresh(adj)
 
+    # C-04: bot orqali kelgan so'rov bo'lsa — natija xabari OUTBOX
+    # orqali (rad bo'lsa sabab bilan). Qaror so'rovi ichida Telegramga
+    # chiqish saytni qotirardi.
+    from api.services.advance_bot import notify_decision as _advance_notify
+
+    await _advance_notify(db, adj)
+    await db.commit()
+
     target = await db.get(User, adj.user_id)
     if payload.approve and target is not None:
         await notify_user(
@@ -2306,6 +2317,54 @@ async def calculate_monthly_cron(
     )
     await db.commit()
     return result
+
+
+# ── Avans bot oqimi (Avans TZ C-01…C-05) ──
+# Butun mantiq `api/services/advance_bot.py` da; bu yerda faqat yupqa
+# o'ram. Shaxs HAR DOIM `telegram_id` dan yechiladi — bot boshqa
+# xodim nomidan so'rov yubora olmaydi.
+
+
+@router.post(
+    "/advance-bot/callback",
+    response_model=AdvanceBotOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def advance_bot_callback(
+    payload: AdvanceBotCallback, db: AsyncSession = Depends(get_db)
+) -> AdvanceBotOut:
+    """«Summa kiritish» / «Kerak emas» tugmasi bosilganda."""
+    from api.services.advance_bot import on_callback
+
+    res = await on_callback(db, payload.telegram_id, payload.action, payload.period)
+    return AdvanceBotOut(handled=True, **res)
+
+
+@router.post(
+    "/advance-bot/text",
+    response_model=AdvanceBotOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def advance_bot_text(
+    payload: AdvanceBotText, db: AsyncSession = Depends(get_db)
+) -> AdvanceBotOut:
+    """Xodim matn yozganda. `handled=False` bo'lsa bot xabarni keyingi
+    handlerga o'tkazadi (`SkipHandler`) — yangi oqim anketa javoblari va
+    AI sabab matnlarini yutib yubormasin."""
+    from api.services.advance_bot import on_text
+
+    res = await on_text(db, payload.telegram_id, payload.text)
+    return AdvanceBotOut(**res)
+
+
+@router.post("/advance-reminder-tick", dependencies=[Depends(verify_bot_secret)])
+async def advance_reminder_tick(
+    payload: PayrollDateTickRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Javob bermaganlarga BITTA takroriy eslatma (C-05)."""
+    from api.services.advance_bot import reminder_tick
+
+    return await reminder_tick(db, on_date=payload.target_date)
 
 
 @router.post("/advance-day-tick", dependencies=[Depends(verify_bot_secret)])

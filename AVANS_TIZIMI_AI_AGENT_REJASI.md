@@ -532,8 +532,15 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 
 ---
 
-### C-01 · Avans kuni xabari
+### C-01 · Avans kuni xabari — ✅ BAJARILDI (2026-08-20)
 **Oldin:** B-04 · **~5 soat**
+
+> B-04 dagi xabarga tugmalar qo'shildi (`advance_bot.keyboard`).
+> `callback_data` — `adv:need:2026-08` / `adv:no:2026-08`: DAVR ichida,
+> shuning uchun o'tgan oyning xabari bosilsa «bu xabar eskirgan» deyiladi
+> va jimgina joriy oyga yozilmaydi. «Kerak emas» → `declined` (takroriy
+> eslatma ketmaydi) + qisqa tasdiq. Matn foizsiz, aniq summa bilan,
+> eslatma ohangida — «Majburiy emas, kerak bo'lmasa e'tiborsiz qoldiring».
 
 **Ish**
 1. Xabar matni TZ namunasidek — **aniq summa**, foiz yo'q, **eslatma ohangida**:
@@ -547,15 +554,30 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 3. Tugma `callback_data` da **davr** bo'lsin (`adv:need:2026-08`) — eski xabar bosilsa chalkashmasin.
 
 **Qabul mezoni**
-- [ ] Xabarda foiz **yo'q**, aniq summa bor
-- [ ] «Kerak emas» javobi yoziladi
-- [ ] O'tgan oyning xabari bosilsa «bu xabar eskirgan» deydi
-- [ ] Matn taklif emas, eslatma ohangida (ko'rib chiqilgan)
+- [x] Xabarda foiz **yo'q**, aniq summa bor
+- [x] «Kerak emas» javobi yoziladi (`advance_responses.state='declined'`)
+- [x] O'tgan oyning xabari bosilsa «bu xabar eskirgan» deydi
+- [x] Matn taklif emas, eslatma ohangida (ko'rib chiqilgan)
 
 ---
 
-### C-02 · Summa kiritish — holat bazada
+### C-02 · Summa kiritish — holat bazada — ✅ BAJARILDI (2026-08-20)
 **Oldin:** C-01 · **~5 soat**
+
+> `advance_responses` jadvali (migratsiya `av07b8c9d0e1`) —
+> `state='waiting_input'` + `input_expires_at` (2 soat). FSM da EMAS:
+> Passenger jarayoni qayta ishga tushganda xodim yozayotgan summa
+> yo'qolardi va u sababini tushunmasdi. Test ATAYLAB yangi sessiyada
+> holatni o'qiydi (restart simulyatsiyasi).
+>
+> **Alohida `advance_pending_input` qurilmadi** — bitta jadval to'rt
+> savolga javob beradi: summa kutilyaptimi · javob berdimi (C-05) ·
+> eslatma yuborilganmi · qanday summa ko'rsatilgan edi.
+>
+> **Handler tartibi tuzog'i yopildi.** `amount_router` dispatcher'da
+> `anketa.answer_router` dan OLDIN, lekin API summa kutmayotgan bo'lsa
+> `SkipHandler` qiladi — aks holda u anketa javoblarini va AI sabab
+> matnlarini YUTIB YUBORARDI. Raqamsiz matn ham o'tkaziladi.
 
 **Ish**
 1. «Summa kiritish» bosilganda holat **bazaga** yoziladi (`advance_pending_input`: user_id, davr, chegara, `expires_at`) — **FSM da emas** (Passenger o'chadi).
@@ -564,15 +586,27 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 4. ⚠️ Bot matn handlerlari tartibi nozik (anketa modulida uchragan tuzoq) — yangi handler boshqa oqimlarni **yutib yubormasin**.
 
 **Qabul mezoni**
-- [ ] Bot restartdan keyin ham kutish holati saqlanadi
-- [ ] Raqam bo'lmagan matn boshqa handlerga xalaqit bermaydi
-- [ ] Muddat o'tsa holat bekor bo'ladi
-- [ ] Test: restart simulyatsiyasi (holat bazadan o'qiladi)
+- [x] Bot restartdan keyin ham kutish holati saqlanadi
+- [x] Raqam bo'lmagan matn boshqa handlerga xalaqit bermaydi
+- [x] Muddat o'tsa holat bekor bo'ladi va matn keyingi handlerga o'tadi
+- [x] Test: restart simulyatsiyasi (ataylab yangi sessiyada o'qiladi)
 
 ---
 
-### C-03 · Chegara tekshiruvi va rad javobi
+### C-03 · Chegara tekshiruvi va rad javobi — ✅ BAJARILDI (2026-08-20)
 **Oldin:** C-02, A-02 · **~4 soat**
+
+> Chegara **kiritilgan paytda** qayta hisoblanadi — xabar yuborilgan
+> paytdagi qiymatga ISHONILMAYDI. Test buni aniq tekshiradi: oraliqda
+> boshqa avans tasdiqlanadi va o'sha summa endi «oshiq» bo'lib chiqadi.
+> Rad javobida aniq raqam (ruxsat etilgan / so'ralgan) va holat
+> `waiting_input` da QOLADI — xodim kichikroq summa yozishi mumkin.
+> `min_amount` dan past summa ham rad etiladi.
+>
+> **Summa matni keng tushuniladi** (`parse_amount`): «1200000»,
+> «1 200 000», «1.200.000», «1,5 mln», «500000 so'm». Sabab: «raqam
+> tushunilmadi» degan javob xodimni to'xtatib qo'yardi. Butunlay
+> raqamsiz matn esa avans oqimiga tegishli emas deb o'tkaziladi.
 
 **Ish**
 1. Kiritilgan summa chegaradan oshsa — **qabul qilinmaydi**, ruxsat etilgan summa qayta ko'rsatiladi va qayta kiritish taklif qilinadi.
@@ -580,15 +614,26 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 3. Chegara **xabar yuborilgan paytdagi** emas, **kiritilgan paytdagi** holatdan qayta hisoblanadi (oraliqda boshqa avans tasdiqlangan bo'lishi mumkin).
 
 **Qabul mezoni**
-- [ ] Oshiq summa rad etiladi, aniq raqam ko'rsatiladi
-- [ ] Eng kam summadan past rad etiladi
-- [ ] Chegara qayta hisoblanadi (eski qiymatga ishonilmaydi)
-- [ ] Test: oraliqda chegara kamaygan holat
+- [x] Oshiq summa rad etiladi, aniq raqam ko'rsatiladi
+- [x] Eng kam summadan past rad etiladi
+- [x] Chegara qayta hisoblanadi (eski qiymatga ishonilmaydi)
+- [x] Test: oraliqda chegara kamaygan holat
 
 ---
 
-### C-04 · So'rov panelga tushishi va natija xabari
+### C-04 · So'rov panelga tushishi va natija xabari — ✅ BAJARILDI (2026-08-20)
 **Oldin:** C-03 · **~5 soat**
+
+> Bot so'rovi `PayrollAdjustment(category='advance', source='bot',
+> status='pending')` bo'lib MAVJUD ro'yxatga tushadi — yangi jadval
+> yo'q, HR paneli va payslip o'zgarishsiz ishlaydi (A-01 dagi `source`
+> ustuni aynan shu kun uchun qo'yilgan edi va endi uchinchi qiymati
+> ham ishlatilyapti). Barcha xabarlar OUTBOX orqali.
+>
+> **Natija xabari faqat `source='bot'` uchun** — HR qo'lda kiritganida
+> `decide_advance` allaqachon xodimga xabar beradi va ikki marta
+> yuborilmasligi kerak. Rad xabarida `decided_note` SABAB sifatida
+> ko'rsatiladi.
 
 **Ish**
 1. Qabul qilingan summa `PayrollAdjustment(category='advance', source='bot', status='pending')` bo'lib yoziladi — **mavjud ro'yxatga** tushadi, yangi jadval yo'q.
@@ -597,15 +642,30 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 4. Rad sababi maydoni (`decided_note` mavjud) — xabarda ko'rsatiladi.
 
 **Qabul mezoni**
-- [ ] Bot so'rovi mavjud avans ro'yxatida `source='bot'` bilan ko'rinadi
-- [ ] Tasdiq/rad natijasi xodimga boradi
-- [ ] Rad sababi xabarda bor
-- [ ] Xabarlar outbox orqali (so'rov ichida emas)
+- [x] Bot so'rovi mavjud avans ro'yxatida `source='bot'` bilan ko'rinadi
+      (web'da «bot orqali» yorlig'i A-01 da qo'yilgan)
+- [x] Tasdiq/rad natijasi xodimga boradi
+- [x] Rad sababi xabarda bor
+- [x] Xabarlar outbox orqali (so'rov ichida emas)
 
 ---
 
-### C-05 · Takroriy eslatma va to'xtash
+### C-05 · Takroriy eslatma va to'xtash — ✅ BAJARILDI (2026-08-20)
 **Oldin:** C-04 · **~4 soat**
+
+> `advance_bot.reminder_tick` — `cron_jobs.advance_reminder_tick`,
+> soatiga bir marta (`scripts/cron_tick.py`, `minute == 7`). Servis
+> o'zi sozlamadagi `reminder_time` ni tekshiradi, shuning uchun cron
+> jadvalida aniq soat qattiq yozilmagan — HR vaqtni panelidan
+> o'zgartirsa kod tegilmaydi.
+>
+> **IKKI QATLAM to'xtatish:** `advance_responses.reminded_at` (kimga
+> yuborilgani) va `outbox.dedupe_key` (`advance_reminder:2026-08:42`).
+> `reminded_at` `enqueue` natijasidan QAT'I NAZAR qo'yiladi — dedupe
+> ushlab qolsa ham eslatma allaqachon navbatda.
+>
+> Eslatmada chegara QAYTA hisoblanadi — asosiy xabardan beri
+> o'zgargan bo'lishi mumkin.
 
 **Ish**
 1. Sozlamadagi vaqtda (default 14:00) javob bermaganlarga **bitta** takroriy eslatma.
@@ -613,9 +673,27 @@ Migratsiyalar: `av05e5f6a7b8` (sozlamalar), `av06a7b8c9d0` (outbox),
 3. «Kerak emas» bosgan yoki summa kiritganlarga eslatma **ketmaydi**.
 
 **Qabul mezoni**
-- [ ] Bir kunda ko'pi bilan 2 xabar (asosiy + 1 eslatma)
-- [ ] Javob berganlarga eslatma ketmaydi
-- [ ] Test: javob bergan / bermagan / kech javob bergan
+- [x] Bir kunda ko'pi bilan 2 xabar (asosiy + 1 eslatma) — ikkinchi
+      tick yangi eslatma qo'shmasligi test bilan tekshirilgan
+- [x] Javob berganlarga eslatma ketmaydi (`declined`/`submitted`)
+- [x] Test: javob bergan / bermagan / muddati o'tgan holat
+
+---
+
+**✅ C BLOK YAKUNI (2026-08-20 — TUGADI):** C-01…C-05 bajarildi.
+Bot oqimi to'liq: e'lon → tugma → summa → so'rov → natija, javob
+bermaganga bitta eslatma.
+
+Test: `test_advance_bot_flow` (36/36), avans+oylik jami **247/247**.
+Migratsiya: `av07b8c9d0e1` (`advance_responses`).
+
+**D blok agenti uchun:**
+1. Bot so'rovlari `PayrollAdjustment(source='bot')` — alohida jadval
+   YO'Q. D blokdagi hisobotlar shu ustundan filtrlaydi.
+2. `advance_responses` — kim javob bergan/bermaganini ko'rsatadi.
+   D-01 dagi «qo'lda e'lon qilish» tugmasi `advance_day.tick(on_date=…)`
+   ni chaqirsa yetadi: takroriylik qo'riqchisi allaqachon bor.
+3. Xabar yuborish — HAR DOIM `outbox.enqueue()`.
 
 ---
 

@@ -649,6 +649,11 @@ async def main() -> None:
     # yuborishdan `outbox.dedupe_key` qo'riqlaydi.
     if now.hour == 9 and now.minute == 5:
         await _run_misc_inprocess(now, "avans kuni", "advance_day_tick")
+    # Takroriy eslatma (C-05) — soatiga bir marta tekshiriladi; servis
+    # o'zi sozlamadagi `reminder_time` ni va «oyiga bir marta» ni
+    # qo'riqlaydi, shuning uchun bu yerda aniq soat qattiq yozilmagan.
+    if now.minute == 7:
+        await _run_misc_inprocess(now, "avans eslatmasi", "advance_reminder_tick")
     if now.minute == 0:
         await _run_misc_inprocess(now, "login tozalash", "cleanup_login_security")
         await _run_hourly_plan_inprocess(now)

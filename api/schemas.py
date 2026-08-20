@@ -1355,6 +1355,29 @@ class AdvanceIn(BaseModel):
     override_reason: str | None = Field(default=None, max_length=500)
 
 
+class AdvanceBotCallback(BaseModel):
+    """Bot: tugma bosildi. Shaxs `telegram_id` dan SERVERDA yechiladi —
+    mijoz `user_id` yubora olmaydi (boshqa birov nomidan so'ramasin)."""
+
+    telegram_id: int
+    action: str = Field(pattern=r"^(need|no)$")
+    period: str = Field(pattern=r"^\d{4}-\d{2}$")
+
+
+class AdvanceBotText(BaseModel):
+    """Bot: xodim matn yozdi. Javobdagi `handled=False` — bu xabar avans
+    oqimiga tegishli emas va bot uni keyingi handlerga o'tkazadi."""
+
+    telegram_id: int
+    text: str = Field(max_length=500)
+
+
+class AdvanceBotOut(BaseModel):
+    handled: bool = True
+    text: str | None = None
+    clear_keyboard: bool = False
+
+
 class AdvanceSettingsIn(BaseModel):
     """Avans sozlamasi (B-01/B-02). `scope='global'`da `scope_id` bo'lmaydi;
     `position`/`user`da MAJBURIY — `FinePolicyIn` bilan aynan bir xil qoida."""

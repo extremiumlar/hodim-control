@@ -12,6 +12,7 @@ from aiogram.types import ErrorEvent
 from bot.config import BOT_TOKEN
 from bot.handlers import (
     admin_override,
+    advance,
     ai_center,
     ai_watch,
     anketa,
@@ -103,6 +104,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(request.router)
     dp.include_router(norms.router)
     dp.include_router(payroll.router)
+    dp.include_router(advance.router)
     dp.include_router(admin_override.router)
     dp.include_router(mobilograf.router)
     dp.include_router(assign_task.router)
@@ -116,10 +118,14 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(sales_ai.router)
     dp.include_router(celebration.router)
     dp.include_router(documents.router)
-    # ENG OXIRIDA ikki "erkin matn" ushlagichi, tartib muhim:
-    # 1) anketa javoblari — API'da faol savol kutilmayotgan bo'lsa SkipHandler
+    # ENG OXIRIDA UCH "erkin matn" ushlagichi, tartib muhim:
+    # 1) avans summasi — API'da summa kutilmayotgan bo'lsa SkipHandler;
+    #    BIRINCHI, chunki bu holat qisqa muddatli va xodim aynan shu
+    #    daqiqada tugma bosib kirgan (aniq niyat);
+    # 2) anketa javoblari — API'da faol savol kutilmayotgan bo'lsa SkipHandler
     #    bilan keyingisiga o'tkazadi;
-    # 2) AI sabab matni — yuqoridagi hech bir handler olmagan xabarlar.
+    # 3) AI sabab matni — yuqoridagi hech bir handler olmagan xabarlar.
+    dp.include_router(advance.amount_router)
     dp.include_router(anketa.answer_router)
     dp.include_router(ai_watch.reason_text_router)
 

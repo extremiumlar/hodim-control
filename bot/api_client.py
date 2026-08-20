@@ -444,6 +444,30 @@ async def my_payslip(telegram_id: int) -> dict:
     return resp.json()
 
 
+async def advance_bot_callback(telegram_id: int, action: str, period: str) -> dict:
+    """Avans kuni xabaridagi tugma (C-01/C-02). Qaror API'da qabul
+    qilinadi — bot faqat natijani ko'rsatadi."""
+    resp = await _get_client().post(
+        "/payroll/advance-bot/callback",
+        json={"telegram_id": telegram_id, "action": action, "period": period},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def advance_bot_text(telegram_id: int, text: str) -> dict:
+    """Xodim yozgan matn avans summasi bo'lishi mumkin (C-02/C-03).
+
+    `handled=False` — bu xabar avans oqimiga tegishli emas va bot uni
+    keyingi handlerga o'tkazishi kerak."""
+    resp = await _get_client().post(
+        "/payroll/advance-bot/text",
+        json={"telegram_id": telegram_id, "text": text},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def my_advances(telegram_id: int) -> dict:
     """Joriy oydagi o'z avanslarim va qolgan chegara (Avans TZ A-06).
 

@@ -293,6 +293,17 @@ async def lead_source_tick(db: AsyncSession) -> dict:
     return await lead_source.enrich_tick(db)
 
 
+async def advance_reminder_tick(db: AsyncSession) -> dict:
+    """Avans taklifiga javob bermaganlarga BITTA takroriy eslatma (C-05).
+
+    Har soatda chaqirilishi mumkin — servis o'zi sozlamadagi
+    `reminder_time` ni tekshiradi va har xodimga oyiga bir marta
+    yuboradi (`reminded_at` + `outbox.dedupe_key` — ikki qatlam)."""
+    from api.services.advance_bot import reminder_tick
+
+    return await reminder_tick(db)
+
+
 async def advance_day_tick(db: AsyncSession) -> dict:
     """Avans kuni e'loni (Avans TZ B-04).
 

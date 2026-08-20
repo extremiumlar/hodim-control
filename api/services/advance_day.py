@@ -39,10 +39,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.services.advance import limit_for, resolve_advance_settings
+from api.services.advance_bot import keyboard as advance_keyboard
 from api.services.outbox import enqueue
 from api.timeutil import today_local
 from db.models import (
     REQUEST_OPEN_STATUSES,
+    AdvanceResponse,
+    AdvanceResponseState,
     EmployeeRequest,
     PayrollAdjustmentStatus,
     RequestKind,
@@ -142,6 +145,9 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
             chat_id=user.telegram_id,
             kind=KIND,
             text=_text(user.full_name, info.limit, period),
+            # C-01: tugmalar. `callback_data` da DAVR bor — o'tgan oyning
+            # xabari bosilsa chalkashmasin.
+            reply_markup=advance_keyboard(period),
             dedupe_key=dedupe_key(period, user.id),
         )
         if row is None:
@@ -152,6 +158,26 @@ async def tick(db: AsyncSession, on_date: date | None = None) -> dict:
         # summa ko'rgan edi?» savoliga javob qolsin.
         row.payload = {**row.payload, "limit": info.limit, "period": period,
                        "user_id": user.id}
+
+        # C-01/C-05: munosabat yozuvi. Bu qator bo'lmasa takroriy eslatma
+        # (C-05) kimga yuborilishini bila olmasdi — «javob bermaganlar»
+        # ro'yxati aynan shu jadvaldan olinadi.
+        resp = await db.scalar(
+            select(AdvanceResponse).where(
+                AdvanceResponse.user_id == user.id, AdvanceResponse.period == period
+            )
+        )
+        if resp is None:
+            db.add(
+                AdvanceResponse(
+                    user_id=user.id,
+                    period=period,
+                    state=AdvanceResponseState.offered.value,
+                    offered_limit=info.limit,
+                )
+            )
+        else:
+            resp.offered_limit = info.limit
         queued += 1
 
     await db.commit()

@@ -11179,6 +11179,11 @@ def main() -> None:
         print("Avans kuni cron testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_advance_bot_flow()
+    except Exception:
+        print("Avans bot oqimi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -13429,7 +13434,8 @@ def test_advance_day_tick() -> None:
     if stale:
         qm = ",".join("?" * len(stale))
         for tbl in ("payroll_adjustments", "salary_rates", "attendance",
-                    "work_schedule_weekly", "work_schedule_override", "employee_requests"):
+                    "work_schedule_weekly", "work_schedule_override",
+                    "employee_requests", "advance_responses"):
             cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
         cur.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", stale)
         cur.execute(f"delete from users where id in ({qm})", stale)
@@ -13464,7 +13470,7 @@ def test_advance_day_tick() -> None:
             qm = ",".join("?" * len(ALL))
             for tbl in ("payroll_adjustments", "salary_rates", "attendance",
                         "work_schedule_weekly", "work_schedule_override",
-                        "employee_requests"):
+                        "employee_requests", "advance_responses"):
                 c2.execute(f"delete from {tbl} where user_id in ({qm})", ALL)
             pslips = [r[0] for r in c2.execute(
                 f"select id from payslips where user_id in ({qm})", ALL).fetchall()]
@@ -13628,6 +13634,411 @@ async def _run_ad_tick(ad_module, on_date):
 
     async with async_session() as s:
         return await ad_module.tick(s, on_date=on_date)
+
+
+def test_advance_bot_flow() -> None:
+    """Avans bot oqimi — tugmalar, summa, natija (Avans TZ C-01…C-05).
+
+    Tekshiriladi:
+      C-01  1. Xabarda tugmalar bor, `callback_data` da DAVR bor
+            2. «Kerak emas» javobi bazaga yoziladi
+            3. O'tgan oyning xabari bosilsa «eskirgan» deyiladi
+      C-02  4. «Summa kiritish» holati BAZADA saqlanadi (FSM emas)
+            5. ⭐ Restart simulyatsiyasi: yangi sessiyada ham holat bor
+            6. Raqamsiz matn `handled=False` — boshqa handlerga o'tadi
+            7. Muddat o'tsa holat bekor bo'ladi va matn o'tkaziladi
+      C-03  8. Chegaradan oshiq summa rad etiladi, aniq raqam bilan
+            9. ⭐ Chegara QAYTA hisoblanadi (oraliqda kamaysa)
+      C-04 10. So'rov `source='bot'` bilan yoziladi
+           11. HR/Boshliqqa xabar OUTBOX orqali
+           12. Tasdiq/rad natijasi xodimga (rad — SABAB bilan)
+      C-05 13. Javob bermaganga BITTA eslatma
+           14. Javob berganga eslatma KETMAYDI
+           15. Ikkinchi tick yangi eslatma qo'shmaydi
+      Turli 16. Summa matnini keng tushunish («1 200 000», «1.5 mln»)
+    """
+    print("\n=== AVANS BOT OQIMI (C-01…C-05) ===")
+    import asyncio as _asyncio
+    from datetime import date as _dt_date, datetime as _dt_datetime, timedelta as _td
+
+    from api.routers import payroll as pay_router
+    from api.schemas import AdvanceDecision
+    from api.services import advance_bot as ab
+    from api.services import advance_day as ad
+    from db.base import async_session
+    from db.models import (
+        AdvanceResponse as _Resp,
+        AdvanceResponseState as _RState,
+        AdvanceSettings as _AdvSet,
+        Attendance as _Att,
+        Outbox as _Ob,
+        PayBasis,
+        PayrollAdjustment as _Adj,
+        PayrollAdjustmentSource as _Src,
+        PayrollAdjustmentStatus as _AStatus,
+        SalaryRate,
+        User as _User,
+        WorkScheduleWeekly,
+    )
+    from sqlalchemy import delete as _del, select as _sel
+
+    # ── 16. Summa matnini tushunish (toza funksiya) ──
+    for matn, kutilgan in (
+        ("1200000", 1_200_000),
+        ("1 200 000", 1_200_000),
+        ("1.200.000", 1_200_000),
+        ("1,200,000", 1_200_000),
+        ("500000 so'm", 500_000),
+        ("1,5 mln", 1_500_000),
+        ("2 mln", 2_000_000),
+    ):
+        got = ab.parse_amount(matn)
+        check(f"summa matni tushunildi: «{matn}»", got == kutilgan, f"{got} != {kutilgan}")
+    for matn in ("salom", "", "kerak emas", "yo'q"):
+        check(f"raqamsiz matn summa DEB QABUL QILINMAYDI: «{matn}»",
+              ab.parse_amount(matn) is None, str(ab.parse_amount(matn)))
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Bot-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                    "work_schedule_weekly", "advance_responses"):
+            cur.execute(f"delete from {tbl} where user_id in ({qm})", stale)
+        cur.execute(f"delete from advance_settings where scope='user' and scope_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    cur.execute("delete from outbox where kind like 'advance%'")
+    TG = 999609201
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (?, 'T-Bot-Emp','employee',1,1,datetime('now'))", (TG,))
+    emp_uid = cur.lastrowid
+    conn.commit()
+
+    BUGUN = _dt_date.today()
+    PERIOD = BUGUN.strftime("%Y-%m")
+    ESKI = "2019-01"
+    had_global = conn.execute(
+        "select count(*) from advance_settings where scope='global'").fetchone()[0]
+
+    def cleanup_bot():
+        try:
+            c2 = db()
+            for tbl in ("payroll_adjustments", "salary_rates", "attendance",
+                        "work_schedule_weekly", "advance_responses"):
+                c2.execute(f"delete from {tbl} where user_id=?", (emp_uid,))
+            pslips = [r[0] for r in c2.execute(
+                "select id from payslips where user_id=?", (emp_uid,)).fetchall()]
+            if pslips:
+                qm2 = ",".join("?" * len(pslips))
+                c2.execute(f"delete from payslip_items where payslip_id in ({qm2})", pslips)
+            c2.execute("delete from payslips where user_id=?", (emp_uid,))
+            c2.execute("delete from advance_settings where scope='user' and scope_id=?", (emp_uid,))
+            if not had_global:
+                c2.execute("delete from advance_settings where scope='global'")
+            c2.execute("delete from outbox where kind like 'advance%'")
+            c2.execute("delete from audit_logs where target_user_id=?", (emp_uid,))
+            c2.execute("delete from users where id=?", (emp_uid,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  C blok tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    async def _seed():
+        async with async_session() as s:
+            existing = await s.scalar(_sel(_AdvSet).where(_AdvSet.scope == "global"))
+            if existing is None:
+                s.add(_AdvSet(scope="global", scope_id=None, advance_day=1,
+                              coefficient=0.5, cap_percent=50, is_active=True))
+            for wd in range(5):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=True,
+                                         start_time="09:00", end_time="18:00"))
+            for wd in (5, 6):
+                s.add(WorkScheduleWeekly(user_id=emp_uid, weekday=wd, is_working=False))
+            s.add(SalaryRate(user_id=emp_uid, pay_basis=PayBasis.monthly.value,
+                             amount=5_000_000, effective_from=BUGUN.replace(day=1),
+                             changed_by=emp_uid))
+            for dd in range(1, max(BUGUN.day, 2)):
+                day = BUGUN.replace(day=dd)
+                if day.weekday() >= 5:
+                    continue
+                s.add(_Att(user_id=emp_uid, date=day, status="present",
+                           check_in_time=_dt_datetime(day.year, day.month, dd, 4, 0),
+                           check_out_time=_dt_datetime(day.year, day.month, dd, 13, 0),
+                           late_minutes=0, worked_minutes=540))
+            await s.commit()
+
+    try:
+        _asyncio.run(_seed())
+    except Exception:
+        check("C blok sozlash", False, traceback.format_exc(limit=3).strip())
+        cleanup_bot()
+        return
+
+    out = {}
+
+    # ── C-01: avans kuni xabari tugmalar bilan ──
+    async def _announce():
+        async with async_session() as s:
+            res = await ad.tick(s, on_date=BUGUN)
+            row = await s.scalar(
+                _sel(_Ob).where(_Ob.kind == "advance_day", _Ob.chat_id == TG))
+            resp = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            return res, row, resp
+
+    try:
+        res, ob_row, resp = _asyncio.run(_announce())
+        check("avans kuni xabari navbatga tushdi", ob_row is not None, str(res))
+        if ob_row is not None:
+            km = ob_row.payload.get("reply_markup", {})
+            tugmalar = [b for qator in km.get("inline_keyboard", []) for b in qator]
+            check("xabarda ikkita tugma bor", len(tugmalar) == 2, str(tugmalar))
+            check("`callback_data` da DAVR bor (eski xabar chalkashmasin)",
+                  all(PERIOD in b["callback_data"] for b in tugmalar), str(tugmalar))
+        check("munosabat yozuvi yaratildi (`offered`)",
+              resp is not None and resp.state == "offered",
+              str(getattr(resp, "state", None)))
+    except Exception:
+        check("C-01 e'lon testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── C-01: eski xabar ──
+    async def _old_message():
+        async with async_session() as s:
+            return await ab.on_callback(s, TG, "need", ESKI)
+
+    try:
+        r = _asyncio.run(_old_message())
+        check("o'tgan oyning xabari bosilsa «eskirgan» deydi",
+              "eskirgan" in r["text"].lower() and r["clear_keyboard"], str(r)[:160])
+    except Exception:
+        check("eski xabar testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── C-02: «Summa kiritish» -> holat BAZADA ──
+    async def _need():
+        async with async_session() as s:
+            return await ab.on_callback(s, TG, "need", PERIOD)
+
+    async def _state():
+        """ATAYLAB YANGI sessiya — «bot qayta ishga tushdi» simulyatsiyasi."""
+        async with async_session() as s:
+            return await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+
+    try:
+        r = _asyncio.run(_need())
+        st = _asyncio.run(_state())
+        check("«Summa kiritish» -> ruxsat etilgan summa ko'rsatiladi",
+              "so'm" in r["text"], r["text"][:120])
+        check("⭐ holat BAZADA saqlandi (restartdan omon qoladi)",
+              st is not None and st.state == "waiting_input"
+              and st.input_expires_at is not None,
+              f"state={getattr(st,'state',None)}, muddat={getattr(st,'input_expires_at',None)}")
+        out["limit"] = float(st.offered_limit)
+    except Exception:
+        check("C-02 holat testi", False, traceback.format_exc(limit=3).strip())
+        cleanup_bot()
+        return
+
+    # ── C-02: raqamsiz matn o'tkaziladi ──
+    async def _text(t):
+        async with async_session() as s:
+            return await ab.on_text(s, TG, t)
+
+    try:
+        r = _asyncio.run(_text("bugun ob-havo yaxshi"))
+        check("raqamsiz matn boshqa handlerga o'tadi (`handled=False`)",
+              r.get("handled") is False, str(r))
+    except Exception:
+        check("raqamsiz matn testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── C-03: chegaradan oshiq ──
+    try:
+        r = _asyncio.run(_text(str(int(out["limit"]) + 1_000_000)))
+        check("chegaradan oshiq summa rad etiladi va aniq raqam ko'rsatiladi",
+              r.get("handled") and "chegaradan oshdi" in r["text"].lower()
+              and "so'm" in r["text"], r.get("text", "")[:180])
+        st = _asyncio.run(_state())
+        check("rad etilgach holat `waiting_input` da QOLADI (qayta yozish mumkin)",
+              st.state == "waiting_input", st.state)
+    except Exception:
+        check("C-03 chegara testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── C-03: chegara QAYTA hisoblanadi ──
+    async def _shrink_limit():
+        """Oraliqda boshqa avans tasdiqlanadi — chegara kamayadi."""
+        async with async_session() as s:
+            s.add(_Adj(user_id=emp_uid, period=PERIOD, kind="minus",
+                       category="advance", status=_AStatus.approved.value,
+                       amount=out["limit"] - 50_000, reason="T-Bot oraliq avans",
+                       created_by=emp_uid, source=_Src.hr_manual.value))
+            await s.commit()
+
+    try:
+        _asyncio.run(_shrink_limit())
+        # Endi eski chegara bo'yicha o'tadigan summa ham oshiq bo'lishi kerak
+        r = _asyncio.run(_text(str(int(out["limit"] - 10_000))))
+        check("⭐ chegara QAYTA hisoblanadi (eski qiymatga ishonilmaydi)",
+              r.get("handled") and "chegaradan oshdi" in r["text"].lower(),
+              r.get("text", "")[:180])
+    except Exception:
+        check("chegara qayta hisoblash testi", False, traceback.format_exc(limit=2).strip())
+
+    # Oraliq avansni olib tashlab, toza holatga qaytamiz
+    async def _restore():
+        async with async_session() as s:
+            await s.execute(_del(_Adj).where(_Adj.reason == "T-Bot oraliq avans"))
+            await s.commit()
+
+    _asyncio.run(_restore())
+
+    # ── C-04: so'rov yaratiladi ──
+    try:
+        r = _asyncio.run(_text("300000"))
+        check("qabul qilingan summa uchun tasdiq xabari",
+              r.get("handled") and "yuborildi" in r["text"].lower(), r.get("text", "")[:140])
+    except Exception:
+        check("C-04 so'rov testi", False, traceback.format_exc(limit=2).strip())
+
+    async def _after_submit():
+        async with async_session() as s:
+            adj = await s.scalar(
+                _sel(_Adj).where(_Adj.user_id == emp_uid, _Adj.source == _Src.bot.value))
+            st = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            req_msgs = list(await s.scalars(
+                _sel(_Ob).where(_Ob.kind == ab.KIND_REQUEST)))
+            return adj, st, req_msgs
+
+    try:
+        adj, st, req_msgs = _asyncio.run(_after_submit())
+        check("so'rov `source='bot'` bilan yozildi",
+              adj is not None and adj.source == "bot" and float(adj.amount) == 300_000,
+              f"source={getattr(adj,'source',None)}, summa={getattr(adj,'amount',None)}")
+        check("so'rov `pending` — Boshliq tasdig'i kutilmoqda",
+              adj is not None and adj.status == "pending", str(getattr(adj, "status", None)))
+        check("holat `submitted` va so'rovga bog'landi",
+              st.state == "submitted" and st.adjustment_id == adj.id,
+              f"state={st.state}, adj={st.adjustment_id}")
+        check("HR/Boshliqqa xabar OUTBOX orqali (so'rov ichida emas)",
+              len(req_msgs) >= 1, f"={len(req_msgs)}")
+        out["adj_id"] = adj.id
+    except Exception:
+        check("C-04 natija testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── C-04: rad javobi SABAB bilan ──
+    async def _reject():
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        try:
+            async with async_session() as s:
+                boss = await s.scalar(_sel(_User).where(
+                    _User.role.in_(("boss", "dasturchi")), _User.is_active.is_(True)))
+                await pay_router.decide_advance(
+                    out["adj_id"],
+                    AdvanceDecision(approve=False, note="Bu oy byudjet yo'q"),
+                    boss, s)
+                msgs = list(await s.scalars(_sel(_Ob).where(_Ob.kind == ab.KIND_RESULT)))
+                return msgs
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        msgs = _asyncio.run(_reject())
+        check("rad natijasi xodimga OUTBOX orqali bordi", len(msgs) == 1, f"={len(msgs)}")
+        if msgs:
+            matn = msgs[0].payload.get("text", "")
+            check("rad xabarida SABAB bor",
+                  "Bu oy byudjet yo'q" in matn, matn[:160])
+    except Exception:
+        check("C-04 rad javobi testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── C-01: «Kerak emas» ──
+    async def _decline():
+        async with async_session() as s:
+            st = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            st.state = _RState.offered.value
+            await s.commit()
+            r = await ab.on_callback(s, TG, "no", PERIOD)
+            st2 = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            return r, st2.state
+
+    try:
+        r, holat = _asyncio.run(_decline())
+        check("«Kerak emas» javobi bazaga yozildi", holat == "declined", holat)
+        check("«Kerak emas» ga qisqa tasdiq beriladi", bool(r.get("text")), str(r)[:120])
+    except Exception:
+        check("«Kerak emas» testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── C-05: takroriy eslatma ──
+    async def _reminder(state_value):
+        async with async_session() as s:
+            await s.execute(_del(_Ob).where(_Ob.kind == ab.KIND_REMINDER))
+            st = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            st.state = state_value
+            st.reminded_at = None
+            # Sozlamadagi vaqt allaqachon o'tgan bo'lsin
+            g = await s.scalar(_sel(_AdvSet).where(_AdvSet.scope == "global"))
+            g.reminder_time = "00:01"
+            await s.commit()
+            res = await ab.reminder_tick(s, on_date=BUGUN)
+            msgs = list(await s.scalars(
+                _sel(_Ob).where(_Ob.kind == ab.KIND_REMINDER, _Ob.chat_id == TG)))
+            res2 = await ab.reminder_tick(s, on_date=BUGUN)
+            msgs2 = list(await s.scalars(
+                _sel(_Ob).where(_Ob.kind == ab.KIND_REMINDER, _Ob.chat_id == TG)))
+            return res, len(msgs), res2, len(msgs2)
+
+    try:
+        res, n1, res2, n2 = _asyncio.run(_reminder(_RState.offered.value))
+        check("javob bermaganga eslatma yuborildi", n1 == 1, f"={n1}, {res}")
+        check("ikkinchi tick YANGI eslatma qo'shmaydi (bir kunda ko'pi bilan 2 xabar)",
+              n2 == 1, f"={n2}, {res2}")
+    except Exception:
+        check("C-05 eslatma testi", False, traceback.format_exc(limit=3).strip())
+
+    try:
+        res, n1, _, _ = _asyncio.run(_reminder(_RState.declined.value))
+        check("«Kerak emas» degan xodimga eslatma KETMAYDI", n1 == 0, f"={n1}, {res}")
+    except Exception:
+        check("C-05 javob bergan testi", False, traceback.format_exc(limit=2).strip())
+
+    # ── C-02: muddat o'tsa holat bekor ──
+    async def _expired():
+        async with async_session() as s:
+            st = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            st.state = _RState.waiting_input.value
+            st.input_expires_at = _dt_datetime.utcnow() - _td(minutes=5)
+            await s.commit()
+            r = await ab.on_text(s, TG, "250000")
+            st2 = await s.scalar(
+                _sel(_Resp).where(_Resp.user_id == emp_uid, _Resp.period == PERIOD))
+            return r, st2.state
+
+    try:
+        r, holat = _asyncio.run(_expired())
+        check("muddat o'tgan holatda matn boshqa handlerga o'tadi",
+              r.get("handled") is False, str(r))
+        check("muddat o'tgan holat bekor qilinadi", holat == "offered", holat)
+    except Exception:
+        check("muddat testi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_bot()
+    try:
+        conn.close()
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
