@@ -12065,6 +12065,227 @@ def test_profile_changes() -> None:
         conn.close()
 
 
+def test_contract_registration() -> None:
+    """S-27 (TZ 3.28) — shartnomani davlat ro'yxatidan o'tkazish belgisi.
+
+    Qabul mezonlari (TZ):
+      • belgisiz xodimlar RO'YXATI bor;
+      • 3 kundan keyin eslatma, TAKRORLANMAYDI;
+      • kadr auditi (3.30) uchun so'rov tayyor.
+
+    ⚠️ TIZIM RO'YXATGA OLISHNI BAJARMAYDI — bu tashqi jarayon (mehnat
+    organi). Tizim faqat «qilindimi?» degan BELGINI yuritadi.
+    """
+    import asyncio
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-27: SHARTNOMANI RO'YXATGA OLISH")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+    bugun = _date.today()
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Cr%'")
+        conn.commit()
+
+        # 10 kun oldin kelgan — kechikkan
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999702701,'T-Cr Kechikkan','employee',0,1,"
+            "?,datetime('now'))", ((bugun - _td(days=10)).isoformat(),))
+        ids["kech"] = cur.lastrowid
+        # Bugun kelgan — hali muddat yetmagan
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999702702,'T-Cr Yangi','employee',0,1,"
+            "?,datetime('now'))", (bugun.isoformat(),))
+        ids["yangi"] = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── BELGISIZ XODIMLAR RO'YXATI ──
+            r = c.get("/employee-documents/unregistered", headers=auth(mgr_t))
+            check("S-27: belgisiz ro'yxat -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            qatorlar = {x["full_name"]: x for x in r.json()} if r.status_code == 200 else {}
+            check("S-27: shartnomasi yo'q xodim ro'yxatda",
+                  "T-Cr Kechikkan" in qatorlar, "=" + str(sorted(qatorlar)))
+            check("S-27: hujjat umuman yo'qligi ko'rsatilgan",
+                  qatorlar.get("T-Cr Kechikkan", {}).get("document_id") is None,
+                  "=" + str(qatorlar.get("T-Cr Kechikkan", {})))
+            check("S-27: 10 kun kechikkani «overdue» deb belgilangan",
+                  qatorlar.get("T-Cr Kechikkan", {}).get("overdue") is True
+                  and qatorlar["T-Cr Kechikkan"]["days_since_hire"] == 10,
+                  "=" + str(qatorlar.get("T-Cr Kechikkan", {})))
+            check("S-27: bugun kelgan xodim «overdue» EMAS",
+                  qatorlar.get("T-Cr Yangi", {}).get("overdue") is False,
+                  "=" + str(qatorlar.get("T-Cr Yangi", {})))
+
+            # ── Shartnoma yuklandi, lekin BELGI yo'q ──
+            r = c.post("/employee-documents", headers=auth(mgr_t), json={
+                "user_id": ids["kech"], "doc_type": "contract",
+                "name": "T-Cr shartnoma", "file_id": "T-CR-1"})
+            doc_id = r.json().get("id") if r.status_code == 201 else None
+            r = c.get("/employee-documents/unregistered", headers=auth(mgr_t))
+            qatorlar = {x["full_name"]: x for x in r.json()}
+            check("S-27: hujjat bor, belgi yo'q — HAMON ro'yxatda",
+                  "T-Cr Kechikkan" in qatorlar
+                  and qatorlar["T-Cr Kechikkan"]["document_id"] == doc_id,
+                  "=" + str(qatorlar.get("T-Cr Kechikkan", {})))
+
+            # ── BELGI qo'yish ──
+            r = c.post(f"/employee-documents/{doc_id}/register", headers=auth(mgr_t),
+                       json={"registered_at": (bugun - _td(days=1)).isoformat(),
+                             "note": "T-Cr mehnat organida"})
+            check("S-27: belgi qo'yildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            bazada = cur.execute(
+                "select registered_at, registered_by, registration_note"
+                " from employee_documents where id=?", (doc_id,)).fetchone()
+            check("S-27: sana, kim va izoh bazaga yozildi",
+                  bazada is not None and bazada[0] == (bugun - _td(days=1)).isoformat()
+                  and bazada[1] == mgr[0] and bazada[2] == "T-Cr mehnat organida",
+                  "=" + str(bazada))
+
+            r = c.get("/employee-documents/unregistered", headers=auth(mgr_t))
+            check("S-27: belgi qo'yilgach ro'yxatdan CHIQDI",
+                  "T-Cr Kechikkan" not in {x["full_name"] for x in r.json()},
+                  "=" + str([x["full_name"] for x in r.json()]))
+
+            # ── IDEMPOTENT: qayta bosish sanani siljitmaydi ──
+            r = c.post(f"/employee-documents/{doc_id}/register", headers=auth(mgr_t),
+                       json={})
+            keyin = cur.execute(
+                "select registered_at from employee_documents where id=?",
+                (doc_id,)).fetchone()
+            check("S-27: qayta bosishda BIRINCHI sana saqlandi",
+                  keyin == ((bugun - _td(days=1)).isoformat(),), "=" + str(keyin))
+
+            # ── Xato holatlar ──
+            #  Kelajakdagi sana idempotentlik TEKSHIRUVIDAN OLDIN rad
+            #  etiladi: noto'g'ri kiritish har doim xato bersin, hatto
+            #  natija o'zgarmaydigan holatda ham — aks holda HR sanani
+            #  xato yozganini bilmay qolardi.
+            r = c.post(f"/employee-documents/{doc_id}/register", headers=auth(mgr_t),
+                       json={"registered_at": (bugun + _td(days=5)).isoformat()})
+            check("S-27: kelajakdagi sana rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:110])
+            hamon = cur.execute(
+                "select registered_at from employee_documents where id=?",
+                (doc_id,)).fetchone()
+            check("S-27: rad etilgan urinish saqlangan sanaga TEGMADI",
+                  hamon == ((bugun - _td(days=1)).isoformat(),), "=" + str(hamon))
+
+            r = c.post("/employee-documents", headers=auth(mgr_t), json={
+                "user_id": ids["yangi"], "doc_type": "diploma",
+                "name": "T-Cr diplom", "file_id": "T-CR-2"})
+            dip_id = r.json().get("id") if r.status_code == 201 else None
+            r = c.post(f"/employee-documents/{dip_id}/register", headers=auth(mgr_t),
+                       json={})
+            check("S-27: diplomga belgi qo'yib bo'lmaydi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:110])
+
+            # ── RUXSAT ──
+            r = c.get("/employee-documents/unregistered",
+                      headers=auth(token_for(ids["kech"], "employee")))
+            check("S-27: oddiy xodim ro'yxatni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+        # ── ⚠️ 3 KUNDAN KEYIN MUDDAT, TAKRORLANMAYDI ──
+        async def _tick():
+            import api.services.cron_jobs as cj
+            async with async_session() as s2:
+                return await cj.contract_registration_tick(s2)
+
+        res1 = asyncio.run(_tick())
+        muddatlar = cur.execute(
+            "select user_id, due_date, status from deadlines"
+            " where kind='contract_registration' and user_id in (?,?)",
+            (ids["kech"], ids["yangi"])).fetchall()
+        check("S-27: belgisi bor xodimga muddat yaratilmadi",
+              not any(m[0] == ids["kech"] and m[2] == "open" for m in muddatlar),
+              "=" + str(muddatlar))
+        check("S-27: 3 kun to'lmagan xodimga ham muddat yo'q",
+              not any(m[0] == ids["yangi"] for m in muddatlar),
+              f"={muddatlar}, natija={res1}")
+
+        # Belgisiz va kechikkan xodim qo'shamiz
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " hire_date, created_at) values (999702703,'T-Cr Belgisiz','employee',0,1,"
+            "?,datetime('now'))", ((bugun - _td(days=7)).isoformat(),))
+        ids["belgisiz"] = cur.lastrowid
+        conn.commit()
+
+        res2 = asyncio.run(_tick())
+        check("S-27: kechikkan va belgisiz xodimga MUDDAT yaratildi",
+              res2.get("created") == 1, "=" + str(res2))
+        m = cur.execute(
+            "select due_date, status, note from deadlines"
+            " where kind='contract_registration' and user_id=?",
+            (ids["belgisiz"],)).fetchone()
+        check("S-27: muddat = ishga qabul + 3 kun",
+              m is not None and m[0] == (bugun - _td(days=4)).isoformat(),
+              "=" + str(m))
+        check("S-27: muddat izohida sabab yozilgan",
+              m is not None and "ro'yxatidan o'tkazilmagan" in (m[2] or ""),
+              "=" + str(m[2] if m else None))
+
+        # ── TAKRORLANMAYDI ──
+        res3 = asyncio.run(_tick())
+        soni = cur.execute(
+            "select count(*) from deadlines where kind='contract_registration'"
+            " and user_id=?", (ids["belgisiz"],)).fetchone()[0]
+        check("S-27: ikkinchi tick IKKINCHI muddat yaratmadi",
+              soni == 1 and res3.get("created") == 0, f"soni={soni}, {res3}")
+
+        # ── Belgi qo'yilgach muddat YOPILADI ──
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/employee-documents", headers=auth(mgr_t), json={
+                "user_id": ids["belgisiz"], "doc_type": "contract",
+                "name": "T-Cr shartnoma 2", "file_id": "T-CR-3"})
+            d2 = r.json().get("id") if r.status_code == 201 else None
+            c.post(f"/employee-documents/{d2}/register", headers=auth(mgr_t), json={})
+
+        res4 = asyncio.run(_tick())
+        holat = cur.execute(
+            "select status from deadlines where kind='contract_registration'"
+            " and user_id=?", (ids["belgisiz"],)).fetchone()
+        check("S-27: belgi qo'yilgach muddat AVTOMATIK yopildi",
+              holat == ("done",) and res4.get("closed") == 1,
+              f"={holat}, {res4}")
+    except Exception:
+        check("S-27 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from deadlines where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(
+                    f"delete from employee_documents where user_id in ({belgi})",
+                    tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -12438,6 +12659,11 @@ def main() -> None:
         test_profile_changes()
     except Exception:
         print("S-26 profil so'rovlari testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_contract_registration()
+    except Exception:
+        print("S-27 shartnoma royxati testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

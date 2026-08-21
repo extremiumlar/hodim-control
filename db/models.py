@@ -2675,6 +2675,15 @@ class EmployeeDocument(Base):
     issued_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     expires_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #  ── Davlat ro'yxatidan o'tkazish belgisi (yangi TZ 3.28 / S-27) ──
+    #  ⚠️ TIZIM RO'YXATGA OLISHNI BAJARMAYDI. Bu tashqi jarayon (mehnat
+    #  organi); tizim faqat «qilindimi?» degan BELGINI yuritadi. Aks
+    #  holda HR uni bajarilgan deb o'ylab, aslida qilinmagan bo'lardi.
+    registered_at: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    registered_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    registration_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -2692,6 +2701,11 @@ class DeadlineKind(str, enum.Enum):
     medical_exam = "medical_exam"  # tibbiy ko'rik
     permit = "permit"  # pasport / ruxsatnoma
     course = "course"  # majburiy kurs
+    #  Shartnomani davlat ro'yxatidan o'tkazish (yangi TZ 3.28 / S-27).
+    #  Muddati qo'lda emas, ishga qabul sanasidan hisoblanadi, lekin
+    #  qator QO'LDA yaratiladi (cron) — chunki u faqat belgi qo'yilmagan
+    #  xodimlar uchun kerak, hammasi uchun emas.
+    contract_registration = "contract_registration"
 
 
 DEADLINE_KIND_LABELS: dict[str, str] = {
@@ -2702,6 +2716,7 @@ DEADLINE_KIND_LABELS: dict[str, str] = {
     DeadlineKind.medical_exam.value: "Tibbiy ko'rik",
     DeadlineKind.permit.value: "Pasport / ruxsatnoma",
     DeadlineKind.course.value: "Majburiy kurs",
+    DeadlineKind.contract_registration.value: "Shartnomani ro'yxatga olish",
 }
 
 #  Bu turlar jadvalga YOZILMAYDI — sanasi manbasidan hisoblanadi.

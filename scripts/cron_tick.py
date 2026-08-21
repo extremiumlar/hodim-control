@@ -639,6 +639,13 @@ async def main() -> None:
         await _run_misc_inprocess(
             now, "ertangi tabrik eslatmasi", "celebration_people_reminder_tick"
         )
+    # Ro'yxatga olinmagan shartnomalar (S-27) — 8:55 da MUDDAT yaratadi,
+    # eslatmani esa quyidagi `deadline_tick` (9:00) yuboradi. Tartib
+    # muhim: muddat avval yaratilsin, keyin xabar ketsin.
+    if now.hour == 8 and now.minute == 55:
+        await _run_misc_inprocess(
+            now, "shartnoma ro'yxati", "contract_registration_tick"
+        )
     # Muddat eslatmalari (S-13) — HAR KUNI ertalab soat 9:00.
     # Kuniga bir marta: `reminded_at` takrorlanishni o'zi to'sadi, ya'ni
     # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.

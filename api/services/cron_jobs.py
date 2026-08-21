@@ -343,6 +343,87 @@ async def celebration_people_reminder_tick(db: AsyncSession) -> dict:
     return {"ok": True, "found": len(hodisalar), "notified": len(targets)}
 
 
+async def contract_registration_tick(db: AsyncSession) -> dict:
+    """Shartnomasi ro'yxatdan o'tkazilmagan xodimlar uchun MUDDAT
+    yaratadi (yangi TZ 3.28 / S-27).
+
+    ⚠️ YANGI XABAR YO'LI QURILMAYDI. Muddat `deadlines` (S-12) ga
+    yoziladi va eslatmani `deadline_tick` (S-13) yuboradi — u
+    allaqachon takrorlanishni to'sadi (`reminded_at`) va bir kunga
+    tushgan bandlarni bitta xabarga birlashtiradi.
+
+    ⚠️ TAKRORLANMAYDI: xodim uchun OCHIQ muddat bo'lsa ikkinchisi
+    yaratilmaydi. Belgi qo'yilgach muddat avtomatik YOPILADI."""
+    from sqlalchemy import select
+
+    from api.routers.employee_documents import REGISTRATION_GRACE_DAYS
+    from api.timeutil import today_local
+    from db.models import (
+        Deadline,
+        DeadlineKind,
+        DeadlineStatus,
+        DocumentType,
+        EmployeeDocument,
+        User,
+    )
+
+    bugun = today_local()
+    ochiq = {
+        d.user_id: d
+        for d in await db.scalars(
+            select(Deadline).where(
+                Deadline.kind == DeadlineKind.contract_registration.value,
+                Deadline.status == DeadlineStatus.open.value,
+            )
+        )
+    }
+    belgilangan = {
+        d.user_id
+        for d in await db.scalars(
+            select(EmployeeDocument).where(
+                EmployeeDocument.deleted_at.is_(None),
+                EmployeeDocument.doc_type == DocumentType.contract.value,
+                EmployeeDocument.registered_at.isnot(None),
+            )
+        )
+    }
+
+    yaratildi = yopildi = 0
+    for u in await db.scalars(
+        select(User).where(User.is_active.is_(True), User.hire_date.isnot(None))
+    ):
+        kechikish = (bugun - u.hire_date).days
+        band = ochiq.get(u.id)
+
+        if u.id in belgilangan:
+            #  Belgi qo'yilgan — ochiq muddat bo'lsa yopamiz.
+            if band is not None:
+                band.status = DeadlineStatus.done.value
+                yopildi += 1
+            continue
+
+        if kechikish < REGISTRATION_GRACE_DAYS or band is not None:
+            continue
+
+        db.add(
+            Deadline(
+                user_id=u.id,
+                kind=DeadlineKind.contract_registration.value,
+                #  Muddat — ishga qabul + ruxsat etilgan kunlar. O'tib
+                #  ketgan bo'lsa `deadline_tick` uni «muddati o'tgan»
+                #  bo'limida ko'rsatadi.
+                due_date=u.hire_date + timedelta(days=REGISTRATION_GRACE_DAYS),
+                note="Shartnoma davlat ro'yxatidan o'tkazilmagan",
+                status=DeadlineStatus.open.value,
+            )
+        )
+        yaratildi += 1
+
+    if yaratildi or yopildi:
+        await db.commit()
+    return {"ok": True, "created": yaratildi, "closed": yopildi}
+
+
 async def lead_source_tick(db: AsyncSession) -> dict:
     """Lid manbasini byudjet bilan to'ldirish (voronka 2-bosqich).
 

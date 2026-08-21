@@ -311,3 +311,128 @@ async def bot_send_document(
     #  `resp is None` — bildirishnomalar o'chiq (test rejimi) yoki token yo'q.
     #  Bu XATO emas: chaqiruvchi «yuborildi» deb ko'rsatmasligi uchun bayroq.
     return {"ok": True, "delivered": resp is not None}
+
+
+# ─────────────────────────────────────────────────────────────
+# S-27 — shartnomani DAVLAT RO'YXATIDAN o'tkazish belgisi (TZ 3.28)
+#
+# ⚠️ TIZIM RO'YXATGA OLISHNI BAJARMAYDI. Bu tashqi jarayon (mehnat
+# organi); tizim faqat «qilindimi?» degan BELGINI yuritadi. Aks holda
+# HR uni bajarilgan deb o'ylab, aslida qilinmagan bo'lardi.
+#
+# «3 kun» — TZ dagi qiymat: shartnoma qonun bo'yicha ishga qabuldan
+# keyin qisqa muddatda ro'yxatdan o'tkazilishi kerak.
+# ─────────────────────────────────────────────────────────────
+
+REGISTRATION_GRACE_DAYS = 3
+
+
+class RegisterIn(BaseModel):
+    registered_at: date | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
+class UnregisteredOut(BaseModel):
+    user_id: int
+    full_name: str
+    hire_date: date | None
+    days_since_hire: int | None
+    #  Shartnoma hujjati BORmi. `None` — hujjat umuman yuklanmagan,
+    #  ya'ni belgi qo'yadigan narsaning o'zi yo'q.
+    document_id: int | None
+    overdue: bool
+
+
+@router.post("/{doc_id}/register")
+async def mark_registered(
+    doc_id: int,
+    payload: RegisterIn,
+    actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Shartnoma ro'yxatdan o'tkazilgani BELGISINI qo'yadi.
+
+    ⚠️ Tizim ro'yxatga olishni bajarmaydi — HR uni tashqi organda
+    bajarib, natijasini shu yerda belgilaydi.
+
+    IDEMPOTENT: qayta bosilsa BIRINCHI sana saqlanadi. Aks holda belgi
+    har bosishda «bugun» ga siljib, haqiqiy sana yo'qolardi."""
+    from api.timeutil import today_local
+
+    doc = await db.get(EmployeeDocument, doc_id)
+    if doc is None or doc.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Hujjat topilmadi")
+    if doc.doc_type != DocumentType.contract.value:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ro'yxatga olish belgisi faqat mehnat shartnomasiga qo'yiladi",
+        )
+    sana = payload.registered_at or today_local()
+    if sana > today_local():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Kelajakdagi sana ko'rsatilmaydi"
+        )
+
+    if doc.registered_at is None:
+        doc.registered_at = sana
+        doc.registered_by = actor.id
+        doc.registration_note = (payload.note or "").strip() or None
+        await db.commit()
+    return {
+        "ok": True,
+        "registered_at": doc.registered_at.isoformat(),
+        "already": doc.registered_by != actor.id or doc.registered_at != sana,
+    }
+
+
+@router.get("/unregistered", response_model=list[UnregisteredOut])
+async def unregistered(
+    _actor: User = Depends(require_roles(*_HR)), db: AsyncSession = Depends(get_db)
+) -> list[UnregisteredOut]:
+    """Shartnomasi ro'yxatdan o'tkazilmagan xodimlar (TZ qabul mezoni).
+
+    Ikki holat ham kiradi:
+      • shartnoma hujjati umuman yuklanmagan;
+      • hujjat bor, lekin belgi qo'yilmagan.
+    Ikkalasi ham HR uchun bir xil ish — shuning uchun bitta ro'yxat.
+
+    Kadr auditi (3.30) shu so'rovni qayta ishlatadi."""
+    from api.timeutil import today_local
+
+    bugun = today_local()
+    xodimlar = list(
+        await db.scalars(select(User).where(User.is_active.is_(True)))
+    )
+    shartnomalar: dict[int, EmployeeDocument] = {}
+    for d in await db.scalars(
+        select(EmployeeDocument).where(
+            EmployeeDocument.deleted_at.is_(None),
+            EmployeeDocument.doc_type == DocumentType.contract.value,
+        )
+    ):
+        #  Bir xodimda bir necha shartnoma bo'lsa — RO'YXATDAN
+        #  O'TKAZILGANI ustun. Aks holda eski qoralama tufayli xodim
+        #  «belgisiz» bo'lib qolardi.
+        bor = shartnomalar.get(d.user_id)
+        if bor is None or (bor.registered_at is None and d.registered_at is not None):
+            shartnomalar[d.user_id] = d
+
+    out: list[UnregisteredOut] = []
+    for u in xodimlar:
+        doc = shartnomalar.get(u.id)
+        if doc is not None and doc.registered_at is not None:
+            continue
+        kun = (bugun - u.hire_date).days if u.hire_date else None
+        out.append(
+            UnregisteredOut(
+                user_id=u.id,
+                full_name=u.full_name,
+                hire_date=u.hire_date,
+                days_since_hire=kun,
+                document_id=doc.id if doc else None,
+                overdue=kun is not None and kun > REGISTRATION_GRACE_DAYS,
+            )
+        )
+    #  Eng ko'p kechikkani tepada.
+    out.sort(key=lambda x: -(x.days_since_hire or 0))
+    return out
