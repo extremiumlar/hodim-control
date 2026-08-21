@@ -27,7 +27,7 @@ from db.models import (
     WorkScheduleOverride,
     WorkScheduleWeekly,
 )
-from api.services.sections import bot_menu_rows
+from api.services.sections import bot_commands_payload, bot_menu_rows
 from api.schemas import (
     CrmOperatorRow,
     CrmVisitOperatorRow,
@@ -311,6 +311,22 @@ async def create_user(
     return UserCreateOut(user=UserOut.model_validate(user), invite_link=_invite_link(token))
 
 
+def _with_bot_view(user: User) -> UserOut:
+    """Botga beriladigan foydalanuvchi: menyu tugmalari + slash-buyruqlar.
+
+    Ikkala ro'yxat ham `api/services/sections.py` da quriladi — «kim nimani
+    ko'radi» qoidasi sayt, bot va buyruq nazorati uchun BIR MANBADAN.
+
+    ⚠️ BU FUNKSIYA IKKI JOYDA ishlatiladi: `/by-telegram/{id}` va
+    `/telegram-start`. Ilgari `telegram_start` menyusiz `UserOut` qaytarardi,
+    ya'ni xodim `/start` bosganda `menu_for_user` zaxira (bitta tugmali)
+    klaviaturaga tushib qolardi — menyu faqat keyingi so'rovda to'lardi."""
+    out = UserOut.model_validate(user)
+    out.bot_menu = bot_menu_rows(user)
+    out.bot_commands = bot_commands_payload(user)
+    return out
+
+
 @router.get("/by-telegram/{telegram_id}", response_model=UserOut, dependencies=[Depends(verify_bot_secret)])
 async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_db)) -> UserOut:
     """Bot foydalanuvchini shu yerdan oladi — javobda BOT MENYUSI ham bor.
@@ -321,9 +337,7 @@ async def get_user_by_telegram(telegram_id: int, db: AsyncSession = Depends(get_
     user = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-    out = UserOut.model_validate(user)
-    out.bot_menu = bot_menu_rows(user)
-    return out
+    return _with_bot_view(user)
 
 
 @router.get("/{user_id}/invite-link")
@@ -413,7 +427,7 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         user.invite_token = None
         await db.commit()
         await db.refresh(user)
-        return TelegramStartResponse(status="ok", user=UserOut.model_validate(user))
+        return TelegramStartResponse(status="ok", user=_with_bot_view(user))
 
     user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
     if not user or not user.is_active:
@@ -424,7 +438,7 @@ async def telegram_start(payload: TelegramStartRequest, db: AsyncSession = Depen
         await db.commit()
         await db.refresh(user)
 
-    return TelegramStartResponse(status="ok", user=UserOut.model_validate(user))
+    return TelegramStartResponse(status="ok", user=_with_bot_view(user))
 
 
 @router.get("/{user_id}", response_model=UserOut)

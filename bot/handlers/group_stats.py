@@ -20,7 +20,11 @@ async def _is_stats_chat(message: Message) -> bool:
     return message.chat.id in main_ids or message.chat.id in stats_ids
 
 
-@router.message(Command("statistika"), _is_stats_chat)
+#  ⚠️ Ilgari bu shart HANDLER FILTRI edi (`Command(...), _is_stats_chat`).
+#  Filtr mos kelmasa handler umuman ishga tushmaydi — ya'ni rahbar buyruqni
+#  noto'g'ri guruhda yozsa, bot JIM qolardi. Endi joy va maqsad tekshiruvi
+#  `CommandGuard` da (sababini aytadi), bu funksiya esa ikkinchi qavat.
+@router.message(Command("statistika"))
 async def cmd_statistika(message: Message) -> None:
     """Guruhda /statistika — kunlik yagona digestni (vazifa + qo'ng'iroq/lid/tashrif
     + AI xulosa, bitta xabar) sozlangan guruh(lar)ga darhol yuboradi (asosiy +
@@ -28,6 +32,12 @@ async def cmd_statistika(message: Message) -> None:
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user["role"] not in MANAGER_ROLES:
         await message.reply("Bu buyruq faqat HR/ROP/Boshliq uchun mavjud.")
+        return
+    if not await _is_stats_chat(message):
+        await message.reply(
+            "⛔ Bu guruh statistika uchun biriktirilmagan — "
+            "Dasturchi <code>/guruh_biriktir main</code> (yoki <code>stats</code>) bilan belgilaydi."
+        )
         return
 
     await send_global_stats(message, to_group=True)

@@ -10,6 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ErrorEvent
 
 from bot.config import BOT_TOKEN
+from bot.middlewares import CommandGuard
 from bot.handlers import (
     admin_override,
     advance,
@@ -26,6 +27,7 @@ from bot.handlers import (
     excused,
     group_admin,
     group_stats,
+    help as help_handler,
     hot_lead,
     hourly_plan,
     lead_stats,
@@ -53,20 +55,20 @@ def build_bot() -> Bot:
 
 
 async def setup_bot_commands(bot: Bot) -> None:
-    """UX2-W4 (C8): Telegram'ning "/" menyusi — ilgari umuman sozlanmagan edi,
-    /davomat_vaqt kabi buyruqlar faqat hujjatdan bilinardi. Polling'da
-    dp.startup orqali, webhook'da scripts/set_webhook.py orqali chaqiriladi
-    (ikkalasida ham bir marta yetadi — Telegram saqlab qoladi)."""
-    from aiogram.types import BotCommand
+    """Telegram «/» menyusining UMUMIY (zaxira) ro'yxati.
 
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Bosh menyu"),
-            BotCommand(command="statistika", description="Kunlik digest (guruhda, rahbar)"),
-            BotCommand(command="davomat_vaqt", description="Davomat digesti vaqti (rahbar)"),
-            BotCommand(command="guruhlar", description="Bot guruhlari ro'yxati (rahbar)"),
-        ]
-    )
+    Ilgari bu yerda qo'lda yozilgan 4 ta buyruq turardi — HAMMAGA bir xil,
+    ya'ni oddiy xodim ham `/guruhlar` ni ko'rardi (bossa — jimlik), rahbar
+    esa o'ziga tegishli qolgan 15+ buyruqni umuman ko'rmasdi.
+
+    Endi umumiy ro'yxat ataylab MINIMAL (`/start`), har xodimning haqiqiy
+    ro'yxati esa lavozimiga qarab shaxsiy qamrovda beriladi:
+      · shaxsiy chat — `bot/commands.py: sync_private` (`/start` da);
+      · guruh — `sync_group_member` (guruhda birinchi harakatda).
+    Qoida manbai: `api/services/sections.py: ALL_COMMANDS`."""
+    from bot.commands import set_default_commands
+
+    await set_default_commands(bot)
 
 
 def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
@@ -84,11 +86,17 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
         except Exception:
             logger.exception("Bot buyruqlar menyusini o'rnatib bo'lmadi")
 
+    # Slash-buyruq nazorati — HANDLER FILTRLARIDAN OLDIN ishlashi shart
+    # (`outer_middleware`), aks holda `F.chat.type` kabi filtrlar buyruqni
+    # jimgina yutib yuboradi va xodim hech qanday javob olmaydi.
+    dp.message.outer_middleware(CommandGuard())
+
     # menu/stats routerlari FSM oqimlaridan (norms, assign_task) OLDIN turadi:
     # asosiy menyu tugmasi bosilganda u FSMning "istalgan matn" bosqichiga
     # tushib qolmasdan, tegishli handlerda ushlanadi va (handler ichida
     # state.clear() bilan) chala qolgan oqimni tozalaydi.
     dp.include_router(start.router)
+    dp.include_router(help_handler.router)
     dp.include_router(menu.router)
     dp.include_router(stats.router)
     dp.include_router(attendance_stats.router)

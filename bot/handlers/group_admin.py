@@ -1,7 +1,7 @@
 import logging
 
 import httpx
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
@@ -20,9 +20,15 @@ PURPOSE_LABELS = {
 
 async def _require_dasturchi(message: Message) -> dict | None:
     """Faqat Dasturchi — bu bot-tomon (UI) tekshiruvi; API tomonda
-    `monitored_groups._require_dasturchi` yana bir bor qat'iy tasdiqlaydi."""
+    `monitored_groups._require_dasturchi` yana bir bor qat'iy tasdiqlaydi.
+
+    ⚠️ Odatda bu yergacha yetib kelinmaydi: `CommandGuard` ruxsatni oldinroq
+    tekshirib, sababini aytadi. Bu — ikkinchi qavat (guard o'chirilsa yoki
+    backend javob bermay guard o'tkazib yuborsa). Shuning uchun endi JIM
+    qaytmaydi: ilgari xodim buyruqni bosardi va hech qanday javob olmasdi."""
     user = await api_client.get_user_by_telegram(message.from_user.id)
     if not user or user.get("role") != "dasturchi":
+        await message.reply("⛔ Bu buyruq faqat Dasturchi uchun. Sizga ruxsat etilganlari: /buyruqlar")
         return None
     return user
 
@@ -32,7 +38,7 @@ def _purpose_help(prefix: str) -> str:
     return f"{prefix}\n{options}"
 
 
-@router.message(Command("guruh_biriktir"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(Command("guruh_biriktir"))
 async def cmd_guruh_biriktir(message: Message, command: CommandObject) -> None:
     """Guruh ICHIDA yuborilganda joriy chatni shu maqsadga belgilaydi —
     "mobilograf"/"main" uchun eskisi avtomatik almashadi (guruhni o'zgartirish)."""
@@ -57,7 +63,7 @@ async def cmd_guruh_biriktir(message: Message, command: CommandObject) -> None:
     await message.answer(f"✅ Bu guruh endi <b>{PURPOSE_LABELS[purpose]}</b> uchun belgilandi.")
 
 
-@router.message(Command("guruh_ochir"), F.chat.type.in_({"group", "supergroup"}))
+@router.message(Command("guruh_ochir"))
 async def cmd_guruh_ochir(message: Message, command: CommandObject) -> None:
     """Guruh ICHIDA yuborilganda joriy chatni shu maqsaddan olib tashlaydi."""
     if not await _require_dasturchi(message):
@@ -82,7 +88,7 @@ async def cmd_guruh_ochir(message: Message, command: CommandObject) -> None:
     await message.answer(f"✅ Bu guruh <b>{PURPOSE_LABELS[purpose]}</b> ro'yxatidan olib tashlandi.")
 
 
-@router.message(Command("guruhlar"), F.chat.type == "private")
+@router.message(Command("guruhlar"))
 async def cmd_guruhlar(message: Message) -> None:
     """Shaxsiy chatda — barcha faol guruh-maqsad bog'lanishlarini ko'rsatadi."""
     if not await _require_dasturchi(message):

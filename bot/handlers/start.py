@@ -1,22 +1,17 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
-from bot import api_client
+from bot import api_client, group_registry
+from bot.commands import ROLE_LABELS, sync_group_member, sync_private
 from bot.keyboards import BTN_CANCEL, cancel_menu, menu_for_user
 
 router = Router(name="start")
-
-ROLE_NAMES = {
-    "employee": "Xodim",
-    "hr": "HR",
-    "rop": "ROP",
-    "boss": "Boshliq",
-    "dasturchi": "Dasturchi",
-}
-
+logger = logging.getLogger(__name__)
 
 APP_LOGIN_PREFIX = "applogin_"
 
@@ -184,11 +179,36 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         return
 
     user = result["user"]
-    role_name = ROLE_NAMES.get(user["role"], user["role"])
+    role_name = ROLE_LABELS.get(user["role"], user["role"])
     position = user.get("position") or {}
     position_line = f"\nLavozim: <b>{position['name']}</b>" if position.get("name") else ""
     await message.answer(
         f"Assalomu alaykum, {user['full_name']}!\n"
-        f"Siz tizimga <b>{role_name}</b> sifatida ulandingiz.{position_line}",
+        f"Siz tizimga <b>{role_name}</b> sifatida ulandingiz.{position_line}\n\n"
+        "Buyruqlar ro'yxati: /buyruqlar",
         reply_markup=menu_for_user(user),
     )
+    await _sync_commands(message, user)
+
+
+async def _sync_commands(message: Message, user: dict) -> None:
+    """Telegram «/» menyusini shu xodim lavozimiga moslaydi.
+
+    Shaxsiy chat — darhol. Guruhlar — biriktirilgan HAR guruh uchun alohida
+    (`chat_member` qamrovi): Telegram'da guruh menyusini a'zoga qarab berish
+    yagona yo'li shu. Xodim o'sha guruh a'zosi bo'lmasa Telegram xato beradi —
+    u yutiladi (`sync_group_member` ichida), oqim to'xtamaydi."""
+    specs = user.get("bot_commands")
+    if not specs:
+        return
+    try:
+        await sync_private(message.bot, message.from_user.id, specs)
+    except Exception:  # noqa: BLE001
+        logger.warning("Shaxsiy «/» menyusini o'rnatib bo'lmadi", exc_info=True)
+
+    for purpose in ("main", "stats", "mobilograf"):
+        try:
+            for chat_id in await group_registry.get_group_ids(purpose):
+                await sync_group_member(message.bot, chat_id, message.from_user.id, specs)
+        except Exception:  # noqa: BLE001
+            logger.warning("Guruh «/» menyusini o'rnatib bo'lmadi (%s)", purpose, exc_info=True)
