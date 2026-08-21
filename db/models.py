@@ -3333,3 +3333,72 @@ class ProfileChangeRequest(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     decision_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class HrInquiryCategory(str, enum.Enum):
+    """Murojaat toifasi (yangi TZ 3.29 / S-28).
+
+    ⚠️ AI HUKM CHIQARMAYDI (TZ 3-band) — u faqat TOIFANI taxmin
+    qiladi. Javobni har doim odam yozadi va toifani HR o'zgartira
+    oladi. Bu chegara ataylab: HR savoliga AI javob bersa, xato javob
+    rasmiy pozitsiya sifatida qabul qilinardi."""
+
+    salary = "salary"  # oylik, ushlanma, avans
+    vacation = "vacation"  # ta'til, sababli kun
+    documents = "documents"  # hujjat, ma'lumotnoma
+    schedule = "schedule"  # ish jadvali, smena
+    conditions = "conditions"  # ish sharoiti, mol-mulk
+    other = "other"
+
+
+HR_INQUIRY_CATEGORY_LABELS: dict[str, str] = {
+    HrInquiryCategory.salary.value: "Oylik va to'lovlar",
+    HrInquiryCategory.vacation.value: "Ta'til va sababli kun",
+    HrInquiryCategory.documents.value: "Hujjatlar",
+    HrInquiryCategory.schedule.value: "Ish jadvali",
+    HrInquiryCategory.conditions.value: "Ish sharoiti",
+    HrInquiryCategory.other.value: "Boshqa",
+}
+
+
+class HrInquiryStatus(str, enum.Enum):
+    open = "open"  # javob kutilmoqda
+    answered = "answered"
+    closed = "closed"  # javobsiz yopilgan (takroriy, ahamiyatsiz)
+
+
+class HrInquiry(Base):
+    """Xodimning HR ga murojaati (yangi TZ 3.29 / S-28).
+
+    NEGA JURNAL: xodimlar bir xil savolni qayta-qayta so'raydi va
+    javoblar HR ning shaxsiy yozishmalarida qoladi. Kim nima so'raganini
+    ham, qanday javob berilganini ham keyin topib bo'lmaydi — natijada
+    ikki xodimga ikki xil javob berilishi mumkin.
+
+    Jurnal S-29 uchun ham asos: takrorlanuvchi savollar bilim bazasiga
+    ko'chiriladi va bot o'zi javob beradi.
+
+    ⚠️ Xodim FAQAT o'z murojaatlarini ko'radi (TZ qabul mezoni) — bu
+    ko'pincha shaxsiy savol (oylik, oilaviy sharoit)."""
+
+    __tablename__ = "hr_inquiries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(
+        String(16), default=HrInquiryCategory.other.value, index=True
+    )
+    #  Toifa AI tomonidan taxmin qilinganmi. HR uni o'zgartirsa `False`
+    #  bo'ladi — S-29 hisobotida «AI qanchalik to'g'ri tasniflayapti»
+    #  degan savolga javob shundan chiqadi.
+    category_auto: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(
+        String(12), default=HrInquiryStatus.open.value, index=True
+    )
+    answered_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #  S-29: shu javob bilim bazasiga ko'chirilganmi.
+    knowledge_entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
