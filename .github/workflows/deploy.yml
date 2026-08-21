@@ -135,17 +135,24 @@ jobs:
           set -euo pipefail
           # Faqat `requirements.txt` o'zgargan bo'lsa — har deployда
           # `pip install` cPanel'da sekin va kerak emas.
-          ssh deploy-target "bash -lc '
-            set -euo pipefail
-            cd ~/hodimlar-tizimi
-            PY=~/virtualenv/hodimlar-tizimi/3.11/bin/python
-            if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q \"requirements.txt\"; then
-              echo \"requirements.txt o'zgardi — o'rnatilmoqda\"
-              \$PY -m pip install -q -r deploy/cpanel/requirements.txt
-            else
-              echo \"requirements.txt o'zgarmagan — o'tkazib yuborildi\"
-            fi
-          '"
+          # ⚠️ Skript SSH'ga heredoc orqali (stdin) beriladi, `bash -lc '...'`
+          # bilan EMAS. Sabab (2026-08-21 da deploy shu yerda yiqilgan):
+          # o'zbekcha matndagi APOSTROF (`o'zgardi`) tashqi bitta tirnoqni
+          # yopib qo'yadi va masofadagi bash `unexpected EOF` beradi. Qolgan
+          # qadamlarda apostrof yo'q, shuning uchun ular ishlab kelgan.
+          # `<<'REMOTE'` — tirnoqli chegara: mahalliy shell hech narsani
+          # kengaytirmaydi, apostrof ham, `$` ham xavfsiz.
+          ssh deploy-target 'bash -l -s' <<'REMOTE'
+          set -euo pipefail
+          cd ~/hodimlar-tizimi
+          PY=~/virtualenv/hodimlar-tizimi/3.11/bin/python
+          if git diff --name-only HEAD@{1} HEAD 2>/dev/null | grep -q "requirements.txt"; then
+            echo "requirements.txt o'zgardi — o'rnatilmoqda"
+            $PY -m pip install -q -r deploy/cpanel/requirements.txt
+          else
+            echo "requirements.txt o'zgarmagan — o'tkazib yuborildi"
+          fi
+          REMOTE
 
       - name: Migratsiya
         run: |
