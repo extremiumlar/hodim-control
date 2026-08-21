@@ -178,18 +178,23 @@ jobs:
       - name: Web va botni qayta ishga tushirish
         run: |
           set -euo pipefail
-          ssh deploy-target "bash -lc '
-            set -euo pipefail
-            cd ~/hodimlar-tizimi
-            mkdir -p tmp
-            touch tmp/restart.txt
-            echo \"Passenger qayta ishga tushirildi\"
-            # Bot polling rejimida alohida jarayonda ishlaydi va YANGI kodni
-            # o'zi olmaydi. To\x27xtatamiz — keepalive cron (har 3 daqiqa)
-            # uni yangi kod bilan ko\x27taradi.
-            pkill -f \"bot\\.main\" || echo \"bot ishlamayotgan edi\"
-            bash deploy/cpanel/keepalive_bot.sh || true
-          '"
+          # Heredoc — `bash -lc '...'` EMAS. Sabab yuqoridagi qadamda
+          # tushuntirilgan: apostrof tashqi tirnoqni yopib qo'yadi. Bu yerda
+          # u IZOH ichida edi (`o'zi olmaydi`) va deploy 2026-08-21 da shu
+          # satrda «syntax error near unexpected token `(`» bilan to'xtadi —
+          # ya'ni izoh ham xavfsiz emas.
+          ssh deploy-target 'bash -l -s' <<'REMOTE'
+          set -euo pipefail
+          cd ~/hodimlar-tizimi
+          mkdir -p tmp
+          touch tmp/restart.txt
+          echo "Passenger qayta ishga tushirildi"
+          # Bot polling rejimida alohida jarayonda ishlaydi va YANGI kodni
+          # o'zi olmaydi. To'xtatamiz — keepalive cron (har 3 daqiqa) uni
+          # yangi kod bilan ko'taradi.
+          pkill -f "bot\.main" || echo "bot ishlamayotgan edi"
+          bash deploy/cpanel/keepalive_bot.sh || true
+          REMOTE
 
       - name: Tekshirish
         run: |
