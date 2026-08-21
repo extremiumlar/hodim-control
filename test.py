@@ -59,6 +59,15 @@ def check(name: str, cond: bool, extra: str = "") -> None:
         print(line.encode(enc, "replace").decode(enc, "replace"))
 
 
+def _fail_print(line: str) -> None:
+    """Konsol kodlashiga chidamli chop etish (`check` dagi bilan bir xil)."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "utf-8"
+        print(line.encode(enc, "replace").decode(enc, "replace"))
+
+
 def db() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
 
@@ -4223,12 +4232,12 @@ def test_payroll_api() -> None:
             # ── SalaryRate ──
             r = client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
                 "user_id": emp_uid, "amount": 2_500_000, "pay_basis": "monthly",
-                "effective_from": "2020-01-01",
+                "effective_from": "2020-01-01", "reason": "hire",
             })
             check("stavka yaratildi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
             r2 = client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
                 "user_id": emp_uid, "amount": 2_600_000, "pay_basis": "monthly",
-                "effective_from": "2020-01-01",
+                "effective_from": "2020-01-01", "reason": "periodic",
             })
             check("bir xil sanaga dublikat stavka -> 400", r2.status_code == 400, f"kod={r2.status_code}")
 
@@ -4604,7 +4613,7 @@ def test_admin_override() -> None:
             if mgr_t:
                 client.post(f"{API_BASE}/payroll/rates", headers=auth(mgr_t), json={
                     "user_id": emp_uid, "amount": 1_800_000, "pay_basis": "monthly",
-                    "effective_from": "2020-01-01",
+                    "effective_from": "2020-01-01", "reason": "hire",
                 })
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={"user_ids": [emp_uid]})
                 check("payroll navbatga qo'yildi -> 202", r.status_code == 202, f"kod={r.status_code}")
@@ -6742,7 +6751,7 @@ def test_kpi_in_payroll() -> None:
                 "effective_from": PERIOD + "-01", "note": "T-kpipay"})
             c.post("/payroll/rates", headers=auth(mgr_t), json={
                 "user_id": uid, "amount": 1000000, "pay_basis": "monthly",
-                "effective_from": PERIOD + "-01"})
+                "effective_from": PERIOD + "-01", "reason": "hire"})
 
             # (a) huquqlar
             r = c.post("/bonuses/recalculate", headers=auth(emp_t), json={"period": PERIOD})
@@ -11676,6 +11685,191 @@ def test_probation_list() -> None:
         conn.close()
 
 
+def test_salary_reason() -> None:
+    """S-25 (TZ 3.25) — ish haqi o'zgarishi sababi.
+
+    Qabul mezonlari (TZ):
+      • SABABSIZ stavka kiritib bo'lmaydi (400);
+      • eski qatorlarda `reason` NULL — «kiritilmagan» deb ko'rsatiladi;
+      • xodim BOSHQASINIKINI ko'ra olmaydi.
+
+    NEGA MAJBURIY: stavka tarixi bor edi, lekin «nega?» degan savolga
+    javob yo'q edi. Bir yildan keyin «bu odamga nega 20% qo'shgan
+    edik?» degan savol javobsiz qolardi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-25: ISH HAQI O'ZGARISHI SABABI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Sr%'")
+        conn.commit()
+        for n, tg in enumerate((999702501, 999702502)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, f"T-Sr Xodim{n}"))
+            ids[f"u{n}"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999702503,'T-Sr Rop','rop',0,1,datetime('now'))")
+        ids["rop"] = cur.lastrowid
+        conn.commit()
+        t0 = token_for(ids["u0"], "employee")
+        t1 = token_for(ids["u1"], "employee")
+        rop_t = token_for(ids["rop"], "rop")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── Sabab ro'yxati YAGONA manbadan ──
+            r = c.get("/payroll/rates/reasons", headers=auth(mgr_t))
+            sabablar = {x["value"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-25: sabab ro'yxatida TZ dagi turlar bor",
+                  {"periodic", "position", "performance", "market", "other"} <= sabablar,
+                  "=" + str(sorted(sabablar)))
+
+            # ── ⚠️ SABABSIZ KIRITIB BO'LMAYDI ──
+            r = c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "amount": 5000000, "pay_basis": "monthly",
+                "effective_from": "2026-01-01"})
+            check("S-25: sababsiz stavka rad etildi -> 422 (maydon yo'q)",
+                  r.status_code == 422, "kod=" + str(r.status_code))
+            r = c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "amount": 5000000, "pay_basis": "monthly",
+                "effective_from": "2026-01-01", "reason": ""})
+            check("S-25: bo'sh sabab rad etildi -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            r = c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "amount": 5000000, "pay_basis": "monthly",
+                "effective_from": "2026-01-01", "reason": "yolgon_sabab"})
+            check("S-25: noma'lum sabab rad etildi -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+            check("S-25: xato xabari MUMKIN BO'LGAN sabablarni sanaydi",
+                  r.status_code == 400 and "Davriy oshirish" in r.text, r.text[:160])
+            soni = cur.execute(
+                "select count(*) from salary_rates where user_id=?",
+                (ids["u0"],)).fetchone()[0]
+            check("S-25: rad etilgan urinishlardan qator YARATILMADI", soni == 0,
+                  "=" + str(soni))
+
+            # ── TO'G'RI kiritish ──
+            r = c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "amount": 5000000, "pay_basis": "monthly",
+                "effective_from": "2026-01-01", "reason": "hire",
+                "note": "T-Sr dastlabki"})
+            check("S-25: sabab bilan stavka kiritildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:140])
+            check("S-25: javobda sabab qaytdi",
+                  r.status_code == 200 and r.json().get("reason") == "hire",
+                  "=" + r.text[:130])
+
+            r = c.post("/payroll/rates", headers=auth(mgr_t), json={
+                "user_id": ids["u0"], "amount": 6500000, "pay_basis": "monthly",
+                "effective_from": "2026-06-01", "reason": "performance"})
+            check("S-25: ikkinchi stavka (natija bo'yicha) kiritildi",
+                  r.status_code == 200 and r.json().get("reason") == "performance",
+                  "kod=" + str(r.status_code))
+
+            bazada = cur.execute(
+                "select reason from salary_rates where user_id=? order by effective_from",
+                (ids["u0"],)).fetchall()
+            check("S-25: sabab BAZAGA yozildi",
+                  bazada == [("hire",), ("performance",)], "=" + str(bazada))
+
+            # ── ESKI qator NULL qoladi ──
+            cur.execute(
+                "insert into salary_rates (user_id, amount, pay_basis, effective_from,"
+                " changed_by, created_at) values (?,?,'monthly','2025-01-01',?,"
+                "datetime('now'))", (ids["u0"], 4000000, mgr[0]))
+            conn.commit()
+            r = c.get("/payroll/rates", headers=auth(mgr_t),
+                      params={"user_id": ids["u0"]})
+            qatorlar = r.json() if r.status_code == 200 else []
+            eski = [x for x in qatorlar if x["effective_from"] == "2025-01-01"]
+            check("S-25: eski qatorda `reason` NULL qaytdi (kiritilmagan)",
+                  len(eski) == 1 and eski[0]["reason"] is None, "=" + str(eski))
+            check("S-25: migratsiya eski qatorni TAXMIN bilan to'ldirmadi",
+                  cur.execute(
+                      "select count(*) from salary_rates where reason is null"
+                  ).fetchone()[0] >= 1, "hammasi to'ldirilgan")
+
+            # ── XODIM O'Z tarixini ko'radi ──
+            r = c.get("/payroll/rates/me", headers=auth(t0))
+            meniki = r.json() if r.status_code == 200 else []
+            check("S-25: xodim o'z tarixini ko'radi (3 qator)",
+                  r.status_code == 200 and len(meniki) == 3,
+                  f"kod={r.status_code} soni={len(meniki)}")
+            check("S-25: tarix eng yangisidan boshlanadi",
+                  meniki and meniki[0]["effective_from"] == "2026-06-01",
+                  "=" + str([x["effective_from"] for x in meniki]))
+            check("S-25: xodim javobida sabab ham bor",
+                  meniki and meniki[0]["reason"] == "performance",
+                  "=" + str(meniki[0].get("reason") if meniki else None))
+
+            # ── BOSHQASINIKINI ko'ra olmaydi ──
+            r = c.get("/payroll/rates/me", headers=auth(t1))
+            check("S-25: boshqa xodimda o'z tarixi BO'SH (begonaniki emas)",
+                  r.status_code == 200 and r.json() == [], "=" + r.text[:80])
+            r = c.get("/payroll/rates", headers=auth(t0),
+                      params={"user_id": ids["u0"]})
+            check("S-25: xodim umumiy endpointdan foydalana olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── ROP KO'RMAYDI ──
+            r = c.get("/payroll/rates", headers=auth(rop_t),
+                      params={"user_id": ids["u0"]})
+            check("S-25: ROP begona tarixni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.post("/payroll/rates", headers=auth(rop_t), json={
+                "user_id": ids["u0"], "amount": 9000000, "pay_basis": "monthly",
+                "effective_from": "2027-01-01", "reason": "market"})
+            check("S-25: ROP stavka kirita olmaydi -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+
+            # ── S-16 zanjiri buzilmadi: taklifdan kelgan stavkada sabab bor ──
+            pos = cur.execute("select id from positions limit 1").fetchone()
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Sr Nomzod", "position_id": pos[0],
+                "salary": 7000000})
+            offer_id = r.json().get("id") if r.status_code == 201 else None
+            r = c.post(f"/offers/{offer_id}/hire", headers=auth(mgr_t))
+            yangi_uid = r.json().get("user_id") if r.status_code == 200 else None
+            check("S-25: taklifdan xodim yaratish hamon ishlaydi",
+                  r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:120])
+            if yangi_uid:
+                ids["nomzod"] = yangi_uid
+                sabab = cur.execute(
+                    "select reason from salary_rates where user_id=?",
+                    (yangi_uid,)).fetchone()
+                check("S-25: taklifdan kelgan stavkada sabab «ishga qabul»",
+                      sabab == ("hire",), "=" + str(sabab))
+    except Exception:
+        check("S-25 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from salary_rates where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            cur.execute("delete from offers where candidate_name like 'T-Sr%'")
+            cur.execute("delete from users where full_name like 'T-Sr%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -11870,6 +12064,11 @@ def main() -> None:
         print("S-24 sinov muddati testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_salary_reason()
+    except Exception:
+        print("S-25 ish haqi sababi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         test_payroll_api()
     except Exception:
         print("Payroll API testida kutilmagan xato:\n" + traceback.format_exc())
@@ -12052,7 +12251,11 @@ def main() -> None:
     print("\n" + "=" * 60)
     print(f"NATIJA: {len(passed)} OK, {len(failed)} FAIL")
     for name in failed:
-        print(f"  FAIL: {name}")
+        #  ⚠️ `check()` dagi bilan BIR XIL qo'riqchi. Bu yerda u yo'q edi va
+        #  tekshiruv nomida ⭐ kabi belgi bo'lsa xulosa `UnicodeEncodeError`
+        #  bilan yiqilardi — ya'ni FAIL RO'YXATI UMUMAN KO'RINMASDI va
+        #  yiqilgan test yashirin qolardi.
+        _fail_print(f"  FAIL: {name}")
     print("=" * 60)
     sys.exit(1 if failed else 0)
 
@@ -15155,13 +15358,82 @@ def test_advance_hr_panel() -> None:
             r = client.post(f"{API_BASE}/payroll/advance-announce", headers=auth(rop_t),
                             json={"advance_date": BUGUN.isoformat()})
             check("e'lon qilish: ROP -> 403", r.status_code == 403, f"kod={r.status_code}")
-            # Ommaviy tasdiqlash — HR ham qila olmaydi (pul qarori Boshliqniki)
+            # Ommaviy tasdiqlash — HR ham qila oladi (2026-08-21 qarori),
+            # lekin ROP va xodim yo'q.
             r = client.post(f"{API_BASE}/payroll/advances/bulk-decide", headers=auth(hr_t),
-                            json={"ids": [1], "approve": True})
-            check("ommaviy tasdiqlash: HR -> 403 (pul qarori Boshliqniki)",
-                  r.status_code == 403, f"kod={r.status_code}")
+                            json={"ids": [999999], "approve": True})
+            check("ommaviy tasdiqlash: HR -> 200 (HR ham tasdiqlaydi)",
+                  r.status_code == 200, f"kod={r.status_code}")
+            for nom, tok in (("ROP", rop_t), ("xodim", emp_t)):
+                r = client.post(f"{API_BASE}/payroll/advances/bulk-decide", headers=auth(tok),
+                                json={"ids": [999999], "approve": True})
+                check(f"ommaviy tasdiqlash: {nom} -> 403", r.status_code == 403,
+                      f"kod={r.status_code}")
     except Exception:
         check("D-04 rol matritsasi testi", False, traceback.format_exc(limit=3).strip())
+
+    # ── Vazifalar ajratimi: HR O'ZI kiritganini tasdiqlay olmaydi ──
+    async def _self_approve():
+        """HR botdan kelgan so'rovni tasdiqlay OLADI (xodim yaratgan),
+        lekin o'zi kiritganini tasdiqlay OLMAYDI — bir odam pulni ham
+        kiritib, ham tasdiqlab yubormasin."""
+        from api.schemas import AdvanceDecision, AdvanceIn
+        sent: list = []
+
+        async def _fake_notify(_db, _user, _cat, _text, **_kw):
+            sent.append(_text)
+
+        orig = pay_router.notify_user
+        pay_router.notify_user = _fake_notify
+        try:
+            async with async_session() as s:
+                hr = await s.get(_User, hr_row[0])
+                emp = await s.get(_User, emp_uid)
+                # (a) HR o'zi kiritadi
+                own = await pay_router.create_advance(
+                    AdvanceIn(user_id=emp_uid, period=PERIOD, amount=150_000,
+                              reason="T-Hr HR kiritgani", confirm_duplicate=True),
+                    hr, s)
+                try:
+                    await pay_router.decide_advance(
+                        own.id, AdvanceDecision(approve=True), hr, s)
+                    ozi = "o'tib ketdi"
+                except Exception as e:
+                    ozi = f"{getattr(e,'status_code','?')}: {getattr(e,'detail',e)}"
+                # (b) Boshliq esa o'sha yozuvni tasdiqlay oladi
+                boss = await s.get(_User, boss_row[0])
+                await pay_router.decide_advance(
+                    own.id, AdvanceDecision(approve=True), boss, s)
+                boshliq = (await s.get(_Adj, own.id)).status
+
+                # (c) Botdan kelgan so'rovni HR tasdiqlaydi
+                bot_adj = await ab.submit(s, emp, PERIOD, 320_000)
+                row = await s.scalar(_sel(_Adj).where(
+                    _Adj.user_id == emp_uid, _Adj.source == _Src.bot.value,
+                    _Adj.status == _AStatus.pending.value))
+                await pay_router.decide_advance(
+                    row.id, AdvanceDecision(approve=True), hr, s)
+                botniki = (await s.get(_Adj, row.id)).status
+
+                # Bu blok yaratgan yozuvlarni olib tashlaymiz — keyingi
+                # D-02 yig'indisi faqat O'Z so'rovlarini sanashi kerak.
+                await s.execute(
+                    _upd(_Resp).where(_Resp.user_id == emp_uid).values(adjustment_id=None))
+                await s.execute(_del(_Adj).where(_Adj.id.in_([own.id, row.id])))
+                await s.commit()
+                return ozi, boshliq, botniki
+        finally:
+            pay_router.notify_user = orig
+
+    try:
+        ozi, boshliq, botniki = _asyncio.run(_self_approve())
+        check("⭐ HR O'ZI kiritgan avansni tasdiqlay OLMAYDI -> 403",
+              "403" in str(ozi), str(ozi)[:140])
+        check("o'sha yozuvni Boshliq tasdiqlay oladi", boshliq == "approved", str(boshliq))
+        check("⭐ botdan kelgan so'rovni HR tasdiqlaydi (asosiy oqim)",
+              botniki == "approved", str(botniki))
+    except Exception:
+        check("vazifalar ajratimi testi", False, traceback.format_exc(limit=3).strip())
 
     # ── D-02: yig'indi va ommaviy tasdiqlash ──
     async def _make_requests():
@@ -15215,9 +15487,13 @@ def test_advance_hr_panel() -> None:
 
     try:
         acts = _asyncio.run(_audits())
-        check("ommaviy tasdiqdagi HAR BIRI auditga tushdi",
-              sum(1 for a, b in acts if a == "advance_approved") == 2
-              and any(b for _, b in acts), str(acts)[:200])
+        # Ommaviy amal 1 tasini hal qildi (ikkinchisi allaqachon
+        # tasdiqlangan edi) — demak `bulk` belgili audit AYNAN 1 ta.
+        # Belgisizlari — alohida tasdiqlar (yuqoridagi bloklardan).
+        check("ommaviy tasdiqdagi HAR BIRI auditga tushdi (`bulk` belgisi bilan)",
+              sum(1 for a, b in acts if a == "advance_approved" and b) == 1
+              and sum(1 for a, b in acts if a == "advance_approved") >= 2,
+              str(acts)[:220])
     except Exception:
         check("audit testi", False, traceback.format_exc(limit=2).strip())
 

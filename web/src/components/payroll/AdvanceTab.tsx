@@ -60,9 +60,15 @@ import { fmtMoney } from "@/lib/utils";
 
 export default function AdvanceTab() {
   const { user } = useAuth();
-  // Tasdiqlash — FAQAT Boshliq/Dasturchi (backend ham 403 beradi). HR bu
-  // tugmalarni umuman ko'rmaydi: ko'rinib turib bosilmaydigan tugma yomon UX.
-  const canDecide = !!user && ["boss", "dasturchi"].includes(user.role);
+  // Tasdiqlash — HR ham qila oladi (2026-08-21, egasining qarori):
+  // xodim botdan o'zi so'rov yuboradi, HR uni ko'rib tasdiqlaydi.
+  // ⚠️ Vazifalar ajratimi saqlanadi: HR O'ZI KIRITGAN avansni
+  // tasdiqlay olmaydi (backend 403 beradi) — quyida tugma ham
+  // ko'rsatilmaydi, chunki bosilmaydigan tugma yomon UX.
+  const canDecide = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
+  const isBoss = !!user && ["boss", "dasturchi"].includes(user.role);
+  /** Shu qatorni shu odam tasdiqlay oladimi. */
+  const mayDecide = (row: PayrollAdjustment) => isBoss || row.created_by !== user?.id;
   // Avans kunini e'lon qilish (D-01) — HR ham qila oladi: bu pul
   // qarori emas, xabar. Backend ham `_require_manage` bilan yopiq.
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
@@ -114,7 +120,9 @@ export default function AdvanceTab() {
   const streakByUser = new Map(
     (summary?.streaks ?? []).filter((s) => s.flagged).map((s) => [s.user_id, s])
   );
-  const selectedRows = rows.filter((r) => selected.has(r.id) && r.status === "pending");
+  const selectedRows = rows.filter(
+    (r) => selected.has(r.id) && r.status === "pending" && mayDecide(r)
+  );
   const selectedTotal = selectedRows.reduce((sum, r) => sum + r.amount, 0);
   const pendingTotal = rows
     .filter((a) => a.status === "pending")
@@ -223,7 +231,7 @@ export default function AdvanceTab() {
             id: "select",
             header: "",
             cell: ({ row }: { row: { original: PayrollAdjustment } }) =>
-              row.original.status === "pending" ? (
+              row.original.status === "pending" && mayDecide(row.original) ? (
                 <input
                   type="checkbox"
                   className="h-4 w-4"
@@ -355,7 +363,9 @@ export default function AdvanceTab() {
             </div>
           );
         }
-        if (!canDecide || row.original.status !== "pending") return del || null;
+        if (!canDecide || row.original.status !== "pending" || !mayDecide(row.original)) {
+          return del || null;
+        }
         return (
           <div className="flex gap-1">
             <Button

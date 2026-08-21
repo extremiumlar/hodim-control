@@ -129,9 +129,35 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 
 PAYROLL_MANAGE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 PAYROLL_VIEW_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
-# YAKUNIY tasdiq (davrni qulflash) va AVANSNI tasdiqlash — HR emas.
-# Vazifalar ajratimi: pulni HR kiritadi, Boshliq tasdiqlaydi.
+# YAKUNIY tasdiq (davrni QULFLASH) — HR emas. Bu oylikning butun
+# oyini yopadi va qaytarib bo'lmaydi.
 PAYROLL_FINAL_APPROVE_ROLES = (Role.boss.value, Role.dasturchi.value)
+
+# AVANSNI tasdiqlash — HR ham qila oladi (egasining qarori, 2026-08-21).
+# Sabab: xodim botdan o'zi so'rov yuboradi, HR uni ko'rib tasdiqlaydi —
+# Boshliqni har bir mayda avans uchun kutish oqimni to'xtatib qo'yardi.
+#
+# ⚠️ VAZIFALAR AJRATIMI SAQLANADI: `_can_decide_advance` quyida —
+# HR O'ZI KIRITGAN avansni tasdiqlay OLMAYDI. Aks holda bir odam pulni
+# ham kiritib, ham tasdiqlab yuborardi va ikkinchi ko'z yo'qolardi.
+# Botdan kelgan so'rovni xodimning o'zi yaratgani uchun HR uni bemalol
+# tasdiqlaydi — aynan egasidan so'ralgan oqim shu.
+ADVANCE_DECIDE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
+
+
+def _can_decide_advance(actor: User, adj: PayrollAdjustment) -> tuple[bool, str]:
+    """Shu odam shu avansni tasdiqlay/rad eta oladimi.
+
+    Qaytadi: (mumkinmi, sabab). Boshliq/Dasturchi — har doim; HR — o'zi
+    kiritmagan bo'lsa."""
+    if actor.role in PAYROLL_FINAL_APPROVE_ROLES:
+        return True, ""
+    if adj.created_by == actor.id:
+        return False, (
+            "O'zingiz kiritgan avansni o'zingiz tasdiqlay olmaysiz — "
+            "buni Boshliq yoki boshqa rahbar qiladi."
+        )
+    return True, ""
 
 
 def can_view_payroll(actor: User, target: User) -> bool:
@@ -465,6 +491,40 @@ async def delete_policy(
     return {"deleted": True}
 
 
+@router.get("/rates/reasons")
+async def salary_reasons(_user: User = Depends(get_current_user)) -> list[dict]:
+    """Sabab ro'yxati (yangi TZ 3.25 / S-25).
+
+    Xodimga ham ochiq: u o'z tarixida sababni MATN bilan ko'radi va HR
+    panelidagi tanlagich ham shu ro'yxatdan quriladi — ikkita nusxa
+    bo'lmasin."""
+    from db.models import SALARY_CHANGE_REASON_LABELS
+
+    return [{"value": k, "label": v} for k, v in SALARY_CHANGE_REASON_LABELS.items()]
+
+
+@router.get("/rates/me", response_model=list[SalaryRateOut])
+async def my_salary_history(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[SalaryRate]:
+    """Xodim O'Z ish haqi tarixini ko'radi (yangi TZ 3.25 / S-25).
+
+    ⚠️ FAQAT O'ZINIKI: so'rov `user.id` bilan qat'iy cheklangan va
+    parametr umuman yo'q — boshqa xodimning tarixini so'rash imkoniyati
+    ham qolmaydi.
+
+    ⚠️ ROP KO'RMAYDI (TZ talabi). Boshqa xodim tarixiga yo'l —
+    `/payroll/rates?user_id=`, u `PAYROLL_MANAGE_ROLES` bilan
+    himoyalangan va u yerda ROP yo'q."""
+    return list(
+        await db.scalars(
+            select(SalaryRate)
+            .where(SalaryRate.user_id == user.id, SalaryRate.deleted_at.is_(None))
+            .order_by(SalaryRate.effective_from.desc())
+        )
+    )
+
+
 @router.get("/rates", response_model=list[SalaryRateOut])
 async def list_rates(
     user_id: int, _actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
@@ -484,9 +544,19 @@ async def list_rates(
 async def create_rate(
     payload: SalaryRateIn, actor: User = Depends(_require_manage), db: AsyncSession = Depends(get_db)
 ) -> SalaryRate:
+    from db.models import SALARY_CHANGE_REASON_LABELS
+
     target = await db.get(User, payload.user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
+    # ⚠️ SABAB MAJBURIY (yangi TZ 3.25 / S-25). Ro'yxat YOPIQ: erkin
+    # matn bo'lsa har kim boshqacha yozib, «natija bo'yicha nechta
+    # oshirdik?» degan savolga javob berib bo'lmasdi.
+    if payload.reason not in SALARY_CHANGE_REASON_LABELS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Sababni tanlang: " + ", ".join(SALARY_CHANGE_REASON_LABELS.values()),
+        )
     # UNIQUE(user_id, effective_from) YUMSHOQ o'chirilganlarni ham hisobga
     # oladi (baza darajasida) — shuning uchun bu yerdagi tekshiruv ham xuddi
     # shunday, `deleted_at`dan qat'i nazar. Xato sanani tuzatish uchun
@@ -507,6 +577,7 @@ async def create_rate(
         amount=payload.amount,
         pay_basis=payload.pay_basis,
         effective_from=payload.effective_from,
+        reason=payload.reason,
         note=payload.note,
         changed_by=actor.id,
     )
@@ -521,6 +592,7 @@ async def create_rate(
                 "amount": payload.amount,
                 "pay_basis": payload.pay_basis,
                 "effective_from": payload.effective_from.isoformat(),
+                "reason": payload.reason,
             },
         )
     )
@@ -1506,7 +1578,7 @@ async def advance_summary(
 @router.post("/advances/bulk-decide")
 async def bulk_decide_advances(
     payload: AdvanceBulkDecide,
-    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    actor: User = Depends(require_roles(*ADVANCE_DECIDE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Bir nechta avansni birdan tasdiqlash/rad etish (D-02).
@@ -1529,6 +1601,12 @@ async def bulk_decide_advances(
             skipped += 1
             continue
         if adj.status != PayrollAdjustmentStatus.pending.value:
+            skipped += 1
+            continue
+        # O'zi kiritgan avansni HR tasdiqlay olmaydi — ommaviy amalda
+        # ham shu qoida. Butun so'rov yiqilmaydi: bunday qatorlar
+        # o'tkazib yuboriladi va natijada sanaladi.
+        if not _can_decide_advance(actor, adj)[0]:
             skipped += 1
             continue
 
@@ -1711,8 +1789,8 @@ async def create_advance(
             f"Davr: {payload.period}\n"
             f"Sabab: {payload.reason}\n\n"
             f"Kiritdi: {actor.full_name}\n"
-            # A-04: pul HALI berilmagan — Boshliq buni bilib qaror qilsin.
-            f"<i>Pul hali berilmagan — siz tasdiqlagach kassa to'laydi.</i>",
+            # A-04: pul HALI berilmagan — tasdiqlovchi buni bilib qaror qilsin.
+            f"<i>Pul hali berilmagan — tasdiqlangach kassa to'laydi.</i>",
             data={"path": "/payroll"},
         )
     return await _adjustment_out(db, adj)
@@ -1722,12 +1800,14 @@ async def create_advance(
 async def decide_advance(
     adjustment_id: int,
     payload: AdvanceDecision,
-    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    actor: User = Depends(require_roles(*ADVANCE_DECIDE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> PayrollAdjustmentOut:
-    """Boshliq qarori. Tasdiqlangach avans oylikdan ayiriladi va XODIMGA
-    xabar boradi (egasining qarori: xodim ko'rsin — oy oxirida "nega kam?"
-    degan savol chiqmasin)."""
+    """Avans qarori — HR yoki Boshliq (2026-08-21 dan HR ham).
+
+    Tasdiqlangach avans oylikdan ayiriladi va XODIMGA xabar boradi
+    (egasining qarori: xodim ko'rsin — oy oxirida "nega kam?" degan
+    savol chiqmasin)."""
     adj = await db.get(PayrollAdjustment, adjustment_id)
     if adj is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Yozuv topilmadi")
@@ -1735,6 +1815,9 @@ async def decide_advance(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu yozuv avans emas")
     if adj.status != PayrollAdjustmentStatus.pending.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu avans bo'yicha qaror allaqachon qabul qilingan")
+    mumkin, sabab = _can_decide_advance(actor, adj)
+    if not mumkin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, sabab)
 
     before = row_to_dict(adj, exclude=("created_at",))
     adj.status = (
