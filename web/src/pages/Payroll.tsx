@@ -279,10 +279,12 @@ function PayrollTable({
 }) {
   const { user } = useAuth();
   const canManage = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
-  // YAKUNIY tasdiq — faqat Boshliq/Dasturchi (2026-08-08, vazifalar
-  // ajratildi). HR bu tugmani KO'RMAYDI: backend ham 403 qaytaradi, lekin
-  // ko'rinib turib bosilmaydigan tugma yomon UX bo'lardi.
-  const canFinalApprove = !!user && ["boss", "dasturchi"].includes(user.role);
+  // YAKUNIY tasdiq (davrni QULFLASH) — HR ham qila oladi
+  // (2026-08-21, egasining qarori: oylik Boshliqni kutib o'tirmasin).
+  // Ilgari «HR tayyor deydi -> Boshliq qulflaydi» ajratimi bor edi;
+  // undan voz kechildi, lekin IZ qoladi: kim hisoblagan, kim tekshirgan
+  // va kim qulflagani saqlanadi va har xodimga shaxsiy xabar boradi.
+  const canFinalApprove = !!user && ["hr", "boss", "dasturchi"].includes(user.role);
 
   const [detailUserId, setDetailUserId] = useState<number | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
@@ -459,15 +461,19 @@ function PayrollTable({
                   ? `Hisoblanmoqda ${calcQuery.data?.progress ?? 0}/${calcQuery.data?.total ?? 0}`
                   : "Hisoblash"}
             </Button>
-            {/* 1-bosqich: HR "tekshirdim, tayyor" — qulflamaydi. */}
+            {/* «Tekshirdim — tayyor» IXTIYORIY qoldi: u qulflamaydi va
+                faqat «kim ko'rib chiqdi» izini yozadi. Kimdir avval
+                ko'rib chiqib, keyin boshqasi qulflashini xohlasa
+                ishlatiladi; aks holda to'g'ridan-to'g'ri tasdiqlanadi
+                (o'shanda iz avtomatik to'ldiriladi). */}
             {rows.length > 0 && !isApproved && !isHrApproved && (
               <Button variant="outline" size="sm" onClick={() => setConfirmHrApprove(true)}>
                 <CheckCircle2 className="mr-2 h-4 w-4" />
                 Tekshirdim — tayyor
               </Button>
             )}
-            {/* 2-bosqich: yakuniy tasdiq va QULF — faqat Boshliq/Dasturchi. */}
-            {rows.length > 0 && isHrApproved && canFinalApprove && (
+            {/* Yakuniy tasdiq va QULF. HR bosqichi endi SHART EMAS. */}
+            {rows.length > 0 && !isApproved && canFinalApprove && (
               <Button size="sm" onClick={() => setConfirmApprove(true)}>
                 <Lock className="mr-2 h-4 w-4" />
                 Yakuniy tasdiqlash
@@ -475,7 +481,7 @@ function PayrollTable({
             )}
             {isHrApproved && !canFinalApprove && (
               <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-sm text-amber-800">
-                Boshliq tasdig'i kutilmoqda
+                Tasdiq kutilmoqda
               </span>
             )}
             {isApproved && (

@@ -4342,27 +4342,22 @@ def test_payroll_api() -> None:
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(rop_t))
             check("ROP tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
 
-            # 2026-08-08: tasdiq IKKI BOSQICHLI bo'ldi (vazifalar ajratildi).
-            # Avval HR "tayyor" deyishi, keyin FAQAT Boshliq/Dasturchi
-            # yakuniy tasdiqlashi kerak.
-            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
-            check("HR bosqichisiz yakuniy tasdiq -> 409", r.status_code == 409,
-                  f"kod={r.status_code} {r.text[:120]}")
-
+            # 2026-08-21 (egasining qarori): oylikni HR ham tasdiqlaydi —
+            # «HR tayyor deydi -> Boshliq qulflaydi» ajratimidan voz
+            # kechildi, chunki u oylikni kechiktirardi. «Tayyor» qadami
+            # IXTIYORIY bo'lib qoldi (faqat «kim ko'rib chiqdi» izi).
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/hr-approve", headers=auth(mgr_t))
             check("HR «tayyor» dedi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
 
-            # Yakuniy tasdiq faqat boss/dasturchi — `find_manager_id` HR
-            # qaytargan bo'lishi mumkin, shuning uchun ALOHIDA boss tokeni.
             _c = db()
             _boss = _c.execute(
                 "select id, role from users where role in ('boss','dasturchi') and is_active=1 limit 1"
             ).fetchone()
             _c.close()
             boss_t = token_for(_boss[0], _boss[1]) if _boss else mgr_t
-            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(boss_t))
-            check("Boshliq yakuniy tasdiqlaydi -> 200", r.status_code == 200,
-                  f"kod={r.status_code} {r.text[:150]}")
+            r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
+            check("HR yakuniy tasdiqlaydi -> 200 (Boshliq kerak emas)",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:150]}")
 
             r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
             check("tasdiqlangan (qulflangan) davrni qayta hisoblash -> 409", r.status_code == 409,
@@ -4619,18 +4614,21 @@ def test_admin_override() -> None:
                 check("payroll navbatga qo'yildi -> 202", r.status_code == 202, f"kod={r.status_code}")
                 tick = payroll_tick(client, PERIOD)
                 check("payroll hisoblandi (cron)", bool(tick) and tick.get("ok") is True, f"={tick}")
-                # Ikki bosqichli tasdiq (9a02004): HR «tayyor» demaguncha
-                # Boshliq qulflay OLMAYDI — aks holda bir odam butun pul
-                # jarayonini yakunlab qo'yardi.
+                # 2026-08-21: «tayyor» qadami IXTIYORIY — HR to'g'ridan
+                # to'g'ri tasdiqlay oladi va iz avtomatik to'ldiriladi.
+                # Bu yerda ATAYLAB o'tkazib yuboramiz: aynan shu yo'l
+                # sinalmasa, «iz avtomatik to'ladi» qoidasi tekshirilmay
+                # qolardi.
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
-                check("HR bosqichisiz yakuniy tasdiq -> 409", r.status_code == 409,
-                      f"kod={r.status_code}")
+                check("«tayyor»siz ham tasdiqlanadi (qulflandi) -> 200",
+                      r.status_code == 200, f"kod={r.status_code}")
 
-                r = client.post(f"{API_BASE}/payroll/{PERIOD}/hr-approve", headers=auth(mgr_t))
-                check("HR «tekshirdim, tayyor» -> 200", r.status_code == 200, f"kod={r.status_code}")
-
-                r = client.post(f"{API_BASE}/payroll/{PERIOD}/approve", headers=auth(mgr_t))
-                check("payroll tasdiqlandi (qulflandi) -> 200", r.status_code == 200, f"kod={r.status_code}")
+                r = client.get(f"{API_BASE}/payroll/periods", headers=auth(mgr_t))
+                if r.status_code == 200:
+                    row = next((x for x in r.json() if x["period"] == PERIOD), None)
+                    check("«tayyor»siz tasdiqda ham kim tekshirgani yozildi",
+                          bool(row and row.get("hr_approved_name")),
+                          f"hr_approved_name={row.get('hr_approved_name') if row else None}")
 
                 r = client.post(f"{API_BASE}/payroll/{PERIOD}/calculate", headers=auth(mgr_t), json={})
                 check("qulflangan davrni HR qayta hisoblay OLMAYDI -> 409", r.status_code == 409,
@@ -6313,17 +6311,20 @@ def test_payroll_approval_segregation() -> None:
     """Oylik tasdig'i ikki bosqichga ajratildi (2026-08-08, egasining talabi
     "hr uni belgilaydi, boss boshliq uni tasdiqlaydi").
 
-    ILGARI: HR o'zi hisoblab, o'zi tasdiqlab, davrni QULFLAB qo'yardi —
-    bitta odam butun pul jarayonini yakunlardi (sinovda tasdiqlangan edi:
-    HR tokeni bilan calculate va approve ketma-ket 200 qaytargan).
+    2026-08-21 (egasining qarori): oylikni HR ham TASDIQLAY OLADI —
+    «bossga borib o'tirmasin». Ilgari «HR tayyor deydi -> Boshliq
+    qulflaydi» ajratimi bor edi va u oylikni kechiktirardi.
 
-    ENDI: calculated -> hr_approved (HR) -> approved+locked (Boshliq).
+    AJRATIM O'RNIGA IZ: kim hisoblagan, kim tekshirgan va kim
+    qulflagani saqlanadi; har xodimga shaxsiy xabar boradi.
+
+    ROP va XODIM baribir tasdiqlay olmaydi — bu tekshiruv saqlanadi.
 
     Tekshiriladi:
-      (a) HR yakuniy tasdiqlay OLMAYDI (403);
-      (b) Boshliq HR bosqichisiz tasdiqlay OLMAYDI (409);
+      (a) ROP/xodim yakuniy tasdiqlay OLMAYDI (403);
+      (b) HR bosqichisiz ham tasdiqlash MUMKIN va iz avtomatik to'ladi;
       (c) HR "tayyor" deydi -> status hr_approved, kim tekshirgani ko'rinadi;
-      (d) Boshliq tasdiqlaydi -> locked;
+      (d) HR yakuniy tasdiqlaydi -> locked;
       (e) qulflangach qayta hisoblash 409.
     """
     import httpx
@@ -6350,6 +6351,12 @@ def test_payroll_approval_segregation() -> None:
             " values (?,?,1,0,datetime('now'))", ("T-Approve", "employee"))
         uid = cur.lastrowid
         conn.commit()
+        # Tasdiqlay OLMAYDIGAN rollar — oylik tasdig'i HR ga ochilgach ham
+        # ular yopiq qolishi kerak.
+        emp_t = token_for(uid, "employee")
+        rop_row = cur.execute(
+            "select id from users where role='rop' and is_active=1 limit 1").fetchone()
+        rop_t = token_for(rop_row[0], "rop") if rop_row else None
 
         with httpx.Client(base_url=API_BASE, timeout=60) as c:
             r = c.post(f"/payroll/{period}/calculate", headers=auth(hr_t), json={"user_ids": [uid]})
@@ -6358,12 +6365,13 @@ def test_payroll_approval_segregation() -> None:
             tick = payroll_tick(c, period)
             check("cron HR so'rovini bajardi", bool(tick) and tick.get("ok") is True, f"={tick}")
 
-            r = c.post(f"/payroll/{period}/approve", headers=auth(hr_t))
-            check("HR YAKUNIY tasdiqlay OLMAYDI -> 403", r.status_code == 403, f"kod={r.status_code}")
-
-            r = c.post(f"/payroll/{period}/approve", headers=auth(boss_t))
-            check("Boshliq HR bosqichisiz tasdiqlay olmaydi -> 409",
-                  r.status_code == 409, f"kod={r.status_code} {r.text[:120]}")
+            # (a) ROP va xodim baribir tasdiqlay olmaydi
+            for nom, tok in (("ROP", rop_t), ("xodim", emp_t)):
+                if not tok:
+                    continue
+                r = c.post(f"/payroll/{period}/approve", headers=auth(tok))
+                check(f"{nom} YAKUNIY tasdiqlay OLMAYDI -> 403",
+                      r.status_code == 403, f"kod={r.status_code}")
 
             r = c.post(f"/payroll/{period}/hr-approve", headers=auth(hr_t))
             check("HR «tayyor» dedi -> 200", r.status_code == 200, f"kod={r.status_code} {r.text[:120]}")
@@ -6378,8 +6386,10 @@ def test_payroll_approval_segregation() -> None:
                       bool(row and row.get("hr_approved_name")),
                       f"hr_approved_name={row.get('hr_approved_name') if row else None}")
 
-            r = c.post(f"/payroll/{period}/approve", headers=auth(boss_t))
-            check("Boshliq yakuniy tasdiqladi -> 200", r.status_code == 200, f"kod={r.status_code}")
+            # (d) HR o'zi yakuniy tasdiqlaydi — Boshliq kerak emas
+            r = c.post(f"/payroll/{period}/approve", headers=auth(hr_t))
+            check("⭐ HR yakuniy tasdiqladi -> 200 (Boshliq kerak emas)",
+                  r.status_code == 200, f"kod={r.status_code} {r.text[:140]}")
 
             r = c.post(f"/payroll/{period}/calculate", headers=auth(hr_t), json={"user_ids": [uid]})
             check("qulflangach qayta hisoblash -> 409", r.status_code == 409, f"kod={r.status_code}")

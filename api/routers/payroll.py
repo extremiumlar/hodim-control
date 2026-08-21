@@ -129,9 +129,24 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 
 PAYROLL_MANAGE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 PAYROLL_VIEW_ROLES = (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value)
-# YAKUNIY tasdiq (davrni QULFLASH) — HR emas. Bu oylikning butun
-# oyini yopadi va qaytarib bo'lmaydi.
+# ISTISNO amallar — faqat Boshliq/Dasturchi. Bular kundalik oqim EMAS,
+# balki qoidadan chetga chiqish: avans chegarasidan oshiq kiritish va
+# tasdiqlangan/to'langan pul yozuvini o'chirish. Ular ataylab tor
+# qoladi — aks holda «istisno» degan tushuncha ma'nosini yo'qotadi.
 PAYROLL_FINAL_APPROVE_ROLES = (Role.boss.value, Role.dasturchi.value)
+
+# OYLIKNI TASDIQLASH (davrni qulflash) — HR ham qila oladi
+# (egasining qarori, 2026-08-21: «bossga borib o'tirmasin»).
+#
+# NEGA ILGARI IKKI BOSQICH EDI: HR hisoblab, HR tasdiqlab, HR qulflab
+# qo'yardi — bitta odam butun pul jarayonini yakunlardi. Shuning uchun
+# «HR tayyor deydi -> Boshliq qulflaydi» ajratimi qo'yilgan edi.
+#
+# EGASI BU AJRATIMDAN VOZ KECHDI: amalda Boshliqni kutish oylikni
+# kechiktirardi. Ajratim o'rniga IZ qoladi — kim hisoblagan, kim
+# tekshirgan va kim qulflagani `payroll_periods` da va auditda yoziladi,
+# har xodimga esa shaxsiy xabar boradi (ular ham ko'rib turadi).
+PAYROLL_PERIOD_APPROVE_ROLES = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 
 # AVANSNI tasdiqlash — HR ham qila oladi (egasining qarori, 2026-08-21).
 # Sabab: xodim botdan o'zi so'rov yuboradi, HR uni ko'rib tasdiqlaydi —
@@ -2430,32 +2445,38 @@ async def hr_approve_period(
 @router.post("/{period}/approve")
 async def approve_period(
     period: str,
-    actor: User = Depends(require_roles(*PAYROLL_FINAL_APPROVE_ROLES)),
+    actor: User = Depends(require_roles(*PAYROLL_PERIOD_APPROVE_ROLES)),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """YAKUNIY tasdiq — davrni QULFLAYDI (`locked=True`). Faqat Boshliq/
-    Dasturchi. Shu nuqtadan keyin `calculate` 409 qaytaradi (avval Dasturchi
-    `reopen` qilishi kerak, Bosqich 3.5). Har bir xodimga shaxsiy DM boradi
-    (guruhga EMAS — maxfiylik, 8.6-band).
+    """YAKUNIY tasdiq — davrni QULFLAYDI (`locked=True`).
 
-    AVVAL HR BOSQICHI O'TISHI SHART: aks holda ajratishning ma'nosi
-    qolmasdi — Boshliq HR tekshirmagan raqamni qulflab qo'yardi."""
+    HR, Boshliq yoki Dasturchi (2026-08-21 dan HR ham — egasining
+    qarori: oylik Boshliqni kutib turmasin). Shu nuqtadan keyin
+    `calculate` 409 qaytaradi (avval Dasturchi `reopen` qilishi kerak).
+    Har bir xodimga shaxsiy DM boradi (guruhga EMAS — maxfiylik).
+
+    HR BOSQICHI ENDI MAJBURIY EMAS: ilgari «HR tayyor deydi -> Boshliq
+    qulflaydi» ajratimi bor edi va bu qadam o'tmasa 409 qaytarardi.
+    Bitta odam ikkala tugmani bosadigan bo'lgach, u shunchaki ortiqcha
+    bosish bo'lib qolardi. Belgilanmagan bo'lsa — shu yerda AVTOMATIK
+    to'ldiriladi, ya'ni «kim tekshirdi» izi baribir qoladi."""
     period_row = await db.scalar(select(PayrollPeriod).where(PayrollPeriod.period == period))
     if period_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Bu davr uchun hali hisoblanmagan")
     if period_row.locked:
         raise HTTPException(status.HTTP_409_CONFLICT, "Bu davr allaqachon tasdiqlangan")
-    if period_row.status != PayrollPeriodStatus.hr_approved.value:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Avval HR tekshirib «tayyor» deb belgilashi kerak",
-        )
 
     payslips = list(await db.scalars(select(Payslip).where(Payslip.period == period)))
     if not payslips:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu davr uchun payslip yo'q — avval hisoblang")
 
     now = datetime.utcnow()
+    if period_row.status != PayrollPeriodStatus.hr_approved.value:
+        # HR bosqichi o'tkazib yuborilgan — izni SHU odam nomiga
+        # yozamiz. Bo'sh qoldirilsa hisobotda «kim tekshirdi?» degan
+        # savolga javob yo'qolardi.
+        period_row.hr_approved_by = actor.id
+        period_row.hr_approved_at = now
     for p in payslips:
         p.status = "approved"
         p.approved_by = actor.id
