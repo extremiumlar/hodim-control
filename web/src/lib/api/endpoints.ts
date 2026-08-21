@@ -14,7 +14,9 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  MyProfile,
   ProbationItem,
+  ProfileChange,
   StaffItem,
   StaffSummary,
   AssetHistoryItem,
@@ -182,6 +184,26 @@ export const api = {
   // ── E'lonlar va «Tanishdim» (TZ 3.12 / S-20, S-21) ──
   // ── Shtat jadvali (TZ 3.20 / S-23) ──
   // ── Sinov muddati (TZ 3.24 / S-24) ──
+  // ── Profil o'zgartirish so'rovlari (TZ 3.26 / S-26) ──
+  profileFields: () =>
+    apiFetch<{ value: string; label: string; sensitive: boolean }[]>(
+      "/profile-changes/fields"
+    ),
+  myProfile: () => apiFetch<MyProfile>("/profile-changes/me/profile"),
+  myProfileChanges: () => apiFetch<ProfileChange[]>("/profile-changes/me"),
+  requestProfileChange: (body: { field: string; new_value: string }) =>
+    apiFetch<ProfileChange>("/profile-changes/me", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  profileChanges: (pendingOnly: boolean) =>
+    apiFetch<ProfileChange[]>(`/profile-changes?pending_only=${pendingOnly}`),
+  decideProfileChange: (body: { id: number; approve: boolean; note: string | null }) =>
+    apiFetch<ProfileChange>(`/profile-changes/${body.id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ approve: body.approve, note: body.note }),
+    }),
+
   probation: () => apiFetch<ProbationItem[]>("/probation"),
   probationSummary: () =>
     apiFetch<{

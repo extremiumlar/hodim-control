@@ -354,6 +354,13 @@ class User(Base):
     #  turadi — tug'ilgan kunni bilmasdan tabriklab bo'lmaydi va
     #  «kim tug'ilgan kunini kiritmagan» degan ro'yxat HR ishi.
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    #  ── Shaxsiy ma'lumotlar (yangi TZ 3.26 / S-26) ──
+    #  Bularni xodim O'ZI to'g'ridan-to'g'ri o'zgartira OLMAYDI: so'rov
+    #  yuboradi, HR tasdiqlaydi, shundan keyin shu yerga yoziladi.
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    marital_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    emergency_contact: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped["Team | None"] = relationship(back_populates="users", foreign_keys=[team_id])
@@ -3245,3 +3252,69 @@ class StaffPosition(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProfileFieldKind(str, enum.Enum):
+    """Xodim o'zgartirishni SO'RAY oladigan maydonlar (yangi TZ 3.26).
+
+    ⚠️ OQ RO'YXAT. Ro'yxatdan tashqari maydon so'rovi rad etiladi:
+    aks holda xodim `role`, `salary` yoki `is_active` ni «so'rab»
+    yuborishi mumkin bo'lardi va HR e'tiborsiz tasdiqlab qo'yishi
+    mumkin edi."""
+
+    phone = "phone"
+    address = "address"
+    marital_status = "marital_status"
+    emergency_contact = "emergency_contact"
+    #  ⚠️ Bular OGOHLANTIRISH bilan (TZ 3-band): hujjatga ta'sir qiladi,
+    #  shuning uchun HR ga tasdiqlashdan oldin eslatiladi.
+    full_name = "full_name"
+
+
+PROFILE_FIELD_LABELS: dict[str, str] = {
+    ProfileFieldKind.phone.value: "Telefon",
+    ProfileFieldKind.address.value: "Manzil",
+    ProfileFieldKind.marital_status.value: "Oilaviy holat",
+    ProfileFieldKind.emergency_contact.value: "Favqulodda aloqa",
+    ProfileFieldKind.full_name.value: "F.I.Sh.",
+}
+
+#  Tasdiqlashdan oldin HR ga ogohlantirish ko'rsatiladigan maydonlar.
+PROFILE_FIELDS_SENSITIVE: frozenset[str] = frozenset({ProfileFieldKind.full_name.value})
+
+
+class ProfileChangeStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class ProfileChangeRequest(Base):
+    """Xodimning shaxsiy ma'lumotini o'zgartirish so'rovi (TZ 3.26 / S-26).
+
+    NEGA SO'ROV, TO'G'RIDAN-TO'G'RI EMAS: telefon va manzil kadr
+    hujjatlariga tushadi. Xodim ularni o'zi o'zgartira olsa, hujjatdagi
+    va bazadagi ma'lumot bir-biriga mos kelmay qoladi va buni hech kim
+    payqamaydi. HR tasdiqlashi — bu nomuvofiqlikni oldini oladigan
+    yagona nuqta.
+
+    ⚠️ ESKI QIYMAT SAQLANADI (`old_value`) va tasdiqlanganda AUDITGA
+    ham yoziladi (TZ qabul mezoni): «bu odam telefonini qachon
+    o'zgartirgan edi?» degan savolga javob kerak bo'ladi."""
+
+    __tablename__ = "profile_change_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    field: Mapped[str] = mapped_column(String(24), index=True)
+    #  So'rov YUBORILGAN paytdagi qiymat. Tasdiqlashda qaytadan
+    #  o'qilmaydi — HR aynan nimani ko'rib tasdiqlagani qolishi kerak.
+    old_value: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    new_value: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(
+        String(12), default=ProfileChangeStatus.pending.value, index=True
+    )
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

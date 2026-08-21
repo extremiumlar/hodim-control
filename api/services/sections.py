@@ -166,6 +166,8 @@ _MANAGER: list[Section] = [
             "Ma'muriyat", visible=lambda c: c.is_manager),
     Section("probation", "Sinov muddati", "/probation", "UserCheck", 163, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    Section("profile-changes", "Ma'lumot so'rovlari", "/profile-changes", "PencilLine",
+            164, "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
@@ -219,6 +221,7 @@ _EMPLOYEE: list[Section] = [
     #  ko'rinmagani kabi bu ham unga keraksiz.
     Section("my-salary-history", "Ish haqim tarixi", "/me/salary-history",
             "TrendingUp", 129, "employee", visible=lambda c: c.role != "boss"),
+    Section("my-profile", "Ma'lumotlarim", "/me/profile", "UserCheck", 131, "employee"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

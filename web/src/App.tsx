@@ -59,6 +59,8 @@ const MeSalaryHistory = lazy(() => import("./pages/me/SalaryHistory"));
 const Announcements = lazy(() => import("./pages/Announcements"));
 const Staff = lazy(() => import("./pages/Staff"));
 const Probation = lazy(() => import("./pages/Probation"));
+const ProfileChanges = lazy(() => import("./pages/ProfileChanges"));
+const MeProfile = lazy(() => import("./pages/me/Profile"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
 // Payroll sozlash/hisoblash — ROP'da yo'q (9-bo'lim, savol 8, QAROR):
@@ -213,6 +215,7 @@ export default function App() {
           <Route path="me/assets" element={<MeAssets />} />
           <Route path="me/announcements" element={<MeAnnouncements />} />
           <Route path="me/salary-history" element={<MeSalaryHistory />} />
+          <Route path="me/profile" element={<MeProfile />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
@@ -224,6 +227,7 @@ export default function App() {
           <Route path="announcements" element={<ManagerRoute><Announcements /></ManagerRoute>} />
           <Route path="staff" element={<ManagerRoute><Staff /></ManagerRoute>} />
           <Route path="probation" element={<ManagerRoute><Probation /></ManagerRoute>} />
+          <Route path="profile-changes" element={<ManagerRoute><ProfileChanges /></ManagerRoute>} />
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />
           <Route path="norms" element={<ManagerRoute><Norms /></ManagerRoute>} />
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />

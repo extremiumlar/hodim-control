@@ -1720,3 +1720,30 @@ export type ProbationItem = {
   acks_pending: number;
   review: string | null;
 };
+
+/** Profil o'zgartirish so'rovi (TZ 3.26 / S-26). Tasdiqlanmaguncha
+ *  baza O'ZGARMAYDI. */
+export type ProfileChange = {
+  id: number;
+  user_id: number;
+  user_name: string;
+  field: string;
+  field_label: string;
+  old_value: string | null;
+  new_value: string;
+  status: string;
+  /** `true` — hujjatlarga ta'sir qiladi (F.I.Sh. kabi). */
+  sensitive: boolean;
+  decision_note: string | null;
+  created_at: string;
+  decided_at: string | null;
+};
+
+export type MyProfile = {
+  full_name: string;
+  phone: string | null;
+  address: string | null;
+  marital_status: string | null;
+  emergency_contact: string | null;
+  pending_fields: string[];
+};

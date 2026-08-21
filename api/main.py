@@ -77,6 +77,7 @@ from api.routers import (
     holidays,
     offers,
     probation,
+    profile_changes,
     staff,
     hourly_plan,
     idle_watch,
@@ -182,6 +183,7 @@ app.include_router(employee_documents.router)
 app.include_router(holidays.router)
 app.include_router(offers.router)
 app.include_router(probation.router)
+app.include_router(profile_changes.router)
 app.include_router(staff.router)
 app.include_router(work_schedule.router)
 app.include_router(work_log.router)

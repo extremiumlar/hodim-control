@@ -11880,6 +11880,191 @@ def test_salary_reason() -> None:
         conn.close()
 
 
+def test_profile_changes() -> None:
+    """S-26 (TZ 3.26) — xodim o'z ma'lumotini yangilash so'rovi.
+
+    Qabul mezonlari (TZ):
+      • TO'G'RIDAN-TO'G'RI o'zgartirish YO'Q;
+      • oq ro'yxatdan tashqari maydon so'rovi RAD etiladi;
+      • tasdiqlangach ESKI QIYMAT auditda qoladi.
+
+    Oq ro'yxat serverda: aks holda xodim `role` yoki `is_active` ni
+    «so'rab» yuborishi mumkin bo'lardi va HR e'tiborsiz tasdiqlab
+    qo'yishi mumkin edi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-26: PROFIL O'ZGARTIRISH SO'ROVLARI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Pc%'")
+        conn.commit()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " phone, created_at) values (999702601,'T-Pc Xodim','employee',0,1,"
+            "'+998900000000',datetime('now'))")
+        ids["emp"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999702602,'T-Pc Rop','rop',0,1,datetime('now'))")
+        ids["rop"] = cur.lastrowid
+        conn.commit()
+        emp_t = token_for(ids["emp"], "employee")
+        rop_t = token_for(ids["rop"], "rop")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── Maydonlar ro'yxati YAGONA manbadan ──
+            r = c.get("/profile-changes/fields", headers=auth(emp_t))
+            maydonlar = {x["value"] for x in r.json()} if r.status_code == 200 else set()
+            check("S-26: oq ro'yxatda TZ dagi maydonlar bor",
+                  {"phone", "address", "marital_status", "emergency_contact"} <= maydonlar,
+                  "=" + str(sorted(maydonlar)))
+            nozik = {x["value"] for x in r.json() if x.get("sensitive")}
+            check("S-26: F.I.Sh. «ogohlantirish bilan» deb belgilangan",
+                  nozik == {"full_name"}, "=" + str(nozik))
+
+            # ── ⚠️ OQ RO'YXATDAN TASHQARI maydon RAD etiladi ──
+            for yomon in ("role", "is_active", "hire_date", "salary"):
+                r = c.post("/profile-changes/me", headers=auth(emp_t),
+                           json={"field": yomon, "new_value": "boss"})
+                check(f"S-26: «{yomon}» so'rovi rad etildi -> 400",
+                      r.status_code == 400, "kod=" + str(r.status_code))
+            rol = cur.execute("select role from users where id=?",
+                              (ids["emp"],)).fetchone()
+            check("S-26: rad etilgan urinishlar bazaga TEGMADI",
+                  rol == ("employee",), "=" + str(rol))
+
+            # ── SO'ROV yuborish ──
+            r = c.post("/profile-changes/me", headers=auth(emp_t),
+                       json={"field": "phone", "new_value": "+998911111111"})
+            check("S-26: telefon so'rovi qabul qilindi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code) + " " + r.text[:130])
+            req_id = r.json().get("id") if r.status_code == 201 else None
+            check("S-26: so'rovda ESKI qiymat saqlandi",
+                  r.status_code == 201 and r.json().get("old_value") == "+998900000000",
+                  "=" + str(r.json().get("old_value") if r.status_code == 201 else None))
+
+            # ── ⚠️ TO'G'RIDAN-TO'G'RI O'ZGARTIRISH YO'Q ──
+            hozir = cur.execute("select phone from users where id=?",
+                                (ids["emp"],)).fetchone()
+            check("S-26: so'rovdan keyin baza HALI o'zgarmadi",
+                  hozir == ("+998900000000",), "=" + str(hozir))
+
+            # Bir maydonga ikkinchi ochiq so'rov
+            r = c.post("/profile-changes/me", headers=auth(emp_t),
+                       json={"field": "phone", "new_value": "+998922222222"})
+            check("S-26: bir maydonga ikkinchi ochiq so'rov -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code))
+            # Bir xil qiymat
+            r = c.post("/profile-changes/me", headers=auth(emp_t),
+                       json={"field": "address", "new_value": ""})
+            check("S-26: bo'sh qiymat -> 422", r.status_code == 422,
+                  "kod=" + str(r.status_code))
+
+            # ── XODIM o'z so'rovlarini ko'radi ──
+            r = c.get("/profile-changes/me", headers=auth(emp_t))
+            check("S-26: xodim o'z so'rovini ko'radi",
+                  r.status_code == 200 and len(r.json()) == 1, "=" + r.text[:100])
+            r = c.get("/profile-changes/me/profile", headers=auth(emp_t))
+            check("S-26: kutilayotgan maydon belgilangan",
+                  r.status_code == 200 and r.json().get("pending_fields") == ["phone"],
+                  "=" + r.text[:130])
+
+            # ── RUXSAT ──
+            r = c.get("/profile-changes", headers=auth(emp_t))
+            check("S-26: oddiy xodim umumiy ro'yxatni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.get("/profile-changes", headers=auth(rop_t))
+            check("S-26: ROP ham ko'rmaydi (shaxsiy ma'lumot) -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+            r = c.post(f"/profile-changes/{req_id}/decide", headers=auth(rop_t),
+                       json={"approve": True})
+            check("S-26: ROP tasdiqlay olmaydi -> 403", r.status_code == 403,
+                  "kod=" + str(r.status_code))
+
+            # ── HR TASDIG'I -> baza o'zgaradi ──
+            r = c.get("/profile-changes", headers=auth(mgr_t))
+            bizniki = [x for x in r.json() if x["id"] == req_id]
+            check("S-26: HR kutilayotgan so'rovni ko'radi", len(bizniki) == 1,
+                  "=" + str(len(r.json())))
+            check("S-26: HR javobida eski va yangi qiymat yonma-yon",
+                  bizniki and bizniki[0]["old_value"] == "+998900000000"
+                  and bizniki[0]["new_value"] == "+998911111111", "=" + str(bizniki))
+
+            r = c.post(f"/profile-changes/{req_id}/decide", headers=auth(mgr_t),
+                       json={"approve": True, "note": "Tekshirildi"})
+            check("S-26: HR tasdiqladi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            yangi = cur.execute("select phone from users where id=?",
+                                (ids["emp"],)).fetchone()
+            check("S-26: TASDIQDAN KEYIN baza o'zgardi",
+                  yangi == ("+998911111111",), "=" + str(yangi))
+
+            # ── ⚠️ ESKI QIYMAT AUDITDA ──
+            audit = cur.execute(
+                "select action, before, after from audit_logs"
+                " where target_user_id=? and action='profile_change_approved'"
+                " order by id desc limit 1", (ids["emp"],)).fetchone()
+            check("S-26: tasdiq auditga yozildi", audit is not None,
+                  "=" + str(audit))
+            check("S-26: auditda ESKI qiymat saqlandi",
+                  audit and "+998900000000" in (audit[1] or ""),
+                  "=" + str(audit[1] if audit else None))
+            check("S-26: auditda yangi qiymat ham bor",
+                  audit and "+998911111111" in (audit[2] or ""),
+                  "=" + str(audit[2] if audit else None))
+
+            # ── Ikkinchi marta hal qilib bo'lmaydi ──
+            r = c.post(f"/profile-changes/{req_id}/decide", headers=auth(mgr_t),
+                       json={"approve": False})
+            check("S-26: hal qilingan so'rovni qayta hal qilish -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            # ── RAD ETISH bazani o'zgartirmaydi ──
+            r = c.post("/profile-changes/me", headers=auth(emp_t),
+                       json={"field": "address", "new_value": "T-Pc yangi manzil"})
+            req2 = r.json().get("id") if r.status_code == 201 else None
+            r = c.post(f"/profile-changes/{req2}/decide", headers=auth(mgr_t),
+                       json={"approve": False, "note": "Hujjat kerak"})
+            check("S-26: rad etish -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            manzil = cur.execute("select address from users where id=?",
+                                 (ids["emp"],)).fetchone()
+            check("S-26: rad etilgach baza O'ZGARMADI", manzil == (None,),
+                  "=" + str(manzil))
+            r = c.get("/profile-changes/me/profile", headers=auth(emp_t))
+            check("S-26: rad etilgach maydon qayta so'ralishi mumkin",
+                  r.status_code == 200 and r.json().get("pending_fields") == [],
+                  "=" + r.text[:130])
+    except Exception:
+        check("S-26 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(
+                    f"delete from profile_change_requests where user_id in ({belgi})",
+                    tuple(ids.values()))
+                cur.execute(f"delete from audit_logs where target_user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})", tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -12248,6 +12433,11 @@ def main() -> None:
         test_salary_reason()
     except Exception:
         print("S-25 ish haqi sababi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_profile_changes()
+    except Exception:
+        print("S-26 profil so'rovlari testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

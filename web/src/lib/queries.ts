@@ -36,6 +36,10 @@ export const qk = {
   salaryReasons: ["payroll", "rate-reasons"] as const,
   mySalaryHistory: ["payroll", "rates", "me"] as const,
   probation: ["probation"] as const,
+  profileFields: ["profile-changes", "fields"] as const,
+  myProfile: ["profile-changes", "me", "profile"] as const,
+  myProfileChanges: ["profile-changes", "me"] as const,
+  profileChanges: (p: boolean) => ["profile-changes", "list", p] as const,
   probationSummary: ["probation", "summary"] as const,
   staffSummary: ["staff", "summary"] as const,
   announcements: ["announcements"] as const,
@@ -296,6 +300,33 @@ export const useSalaryReasons = () =>
 /** Xodim O'Z tarixi — boshqasiniki bu yerdan chiqmaydi. */
 export const useMySalaryHistory = () =>
   useQuery({ queryKey: qk.mySalaryHistory, queryFn: api.mySalaryHistory });
+
+// ─── Profil o'zgartirish so'rovlari (TZ 3.26 / S-26) ───
+export const useProfileFields = () =>
+  useQuery({
+    queryKey: qk.profileFields,
+    queryFn: api.profileFields,
+    staleTime: 60 * 60 * 1000,
+  });
+
+export const useMyProfile = () =>
+  useQuery({ queryKey: qk.myProfile, queryFn: api.myProfile });
+
+export const useMyProfileChanges = () =>
+  useQuery({ queryKey: qk.myProfileChanges, queryFn: api.myProfileChanges });
+
+export const useProfileChanges = (pendingOnly: boolean) =>
+  useQuery({
+    queryKey: qk.profileChanges(pendingOnly),
+    queryFn: () => api.profileChanges(pendingOnly),
+  });
+
+export const useRequestProfileChange = () =>
+  useApiMutation(api.requestProfileChange, [["profile-changes"]]);
+
+/** Tasdiqlansa `users` ham o'zgaradi — foydalanuvchi ro'yxatini ham yangilaymiz. */
+export const useDecideProfileChange = () =>
+  useApiMutation(api.decideProfileChange, [["profile-changes"], ["users"]]);
 
 // ─── Sinov muddati (TZ 3.24 / S-24) ───
 export const useProbation = () =>
