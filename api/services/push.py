@@ -191,7 +191,8 @@ async def should_skip_telegram(db: AsyncSession, user: User, category: str, sent
 
 
 async def send_login_code(db: AsyncSession, user: User, code: str) -> int:
-    """Saytga kirish juftlik kodini xodimning barcha faol qurilmalariga yuboradi.
+    """Saytga kirish juftlik kodini xodimning YAQINDA ISHLATILGAN qurilmalariga
+    yuboradi.
 
     `send_push`dan farqi — toifa sozlamalari va tinch soatlar ATAYLAB chetlab
     o'tiladi: bu odatiy bildirishnoma emas, autentifikatsiya bosqichi.
@@ -199,10 +200,26 @@ async def send_login_code(db: AsyncSession, user: User, code: str) -> int:
     umuman yakunlanmaydi, shuning uchun uni sozlama bilan o'chirib bo'lmasligi
     kerak.
 
-    `login_code` kanali eski APK'larda yaratilmagan — Android bunday xabarni
-    standart (fallback) kanalga tashlaydi, xabar baribir ko'rinadi.
+    ⚠️ ESKI QURILMA CHETLAB O'TILADI (2026-08-21, jonli muammo). FCM
+    ro'yxatdan chiqmagan tokenga HTTP 200 qaytaradi — ya'ni «yuborildi»
+    degani «yetib bordi» degani EMAS. Ilova o'chirilgan yoki uzoq vaqt
+    ochilmagan telefonda kod ko'rinmasdi, bot esa «yuborildi» deb turardi
+    va foydalanuvchi saytga umuman kira olmasdi.
+
+    Shuning uchun bu yerda `has_active_device` bilan BIR XIL o'lchov:
+    `ACTIVE_DEVICE_DAYS` kun ichida ilova tokenni tasdiqlagan bo'lishi
+    kerak. Aks holda 0 qaytadi va chaqiruvchi kodni SAYTDA ko'rsatadi.
+
+    `login_code` kanali eski APK'larda yaratilmagan bo'lishi mumkin —
+    Android 8+ da bunday xabar TASHLAB YUBORILADI (standart kanalga
+    tushmaydi). Bu ham «200, lekin ko'rinmadi» holatining sababi.
     """
-    tokens = await active_tokens(db, user.id)
+    cutoff = datetime.utcnow() - timedelta(days=ACTIVE_DEVICE_DAYS)
+    tokens = [
+        t
+        for t in await active_tokens(db, user.id)
+        if t.last_seen_at is not None and t.last_seen_at >= cutoff
+    ]
     if not tokens:
         return 0
 

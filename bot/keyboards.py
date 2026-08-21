@@ -44,6 +44,9 @@ BTN_ANKETA = "📝 Anketa"
 BTN_KNOWLEDGE = "📚 Bilim bazasi"
 BTN_SALES_AI = "🤖 Sotuv AI"
 BTN_CANCEL = "❌ Bekor qilish"
+# Saytga kirishda: push kelmasa kodni sayt sahifasida ko'rsatishga
+# o'tish (api/routers/auth.py: app_login_use_screen).
+BTN_CODE_NOT_RECEIVED = "📵 Kod kelmadi"
 # UX2-W4 (C1): xodim davomatga botdan bir bosishda yetsin — ilgari bot
 # «Keldim»ni bosing» der, lekin bosadigan joy BERMASdi.
 BTN_CHECKIN = "✅ Keldim / Ketdim"
@@ -99,3 +102,14 @@ def menu_for_user(user: dict | None) -> ReplyKeyboardMarkup:
 
 def cancel_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=BTN_CANCEL)]], resize_keyboard=True)
+
+
+def app_login_menu(show_not_received: bool) -> ReplyKeyboardMarkup:
+    """Saytga kirish paytidagi klaviatura.
+
+    «Kod kelmadi» FAQAT push yo'lida ko'rsatiladi — kod allaqachon
+    ekranda bo'lsa bu tugma chalkashtirardi."""
+    rows = [[KeyboardButton(text=BTN_CANCEL)]]
+    if show_not_received:
+        rows.insert(0, [KeyboardButton(text=BTN_CODE_NOT_RECEIVED)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)

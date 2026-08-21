@@ -1,5 +1,7 @@
 import logging
 
+import httpx
+
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -8,7 +10,13 @@ from aiogram.types import Message
 
 from bot import api_client, group_registry
 from bot.commands import ROLE_LABELS, sync_group_member, sync_private
-from bot.keyboards import BTN_CANCEL, cancel_menu, menu_for_user
+from bot.keyboards import (
+    BTN_CANCEL,
+    BTN_CODE_NOT_RECEIVED,
+    app_login_menu,
+    cancel_menu,
+    menu_for_user,
+)
 
 router = Router(name="start")
 logger = logging.getLogger(__name__)
@@ -67,7 +75,8 @@ async def _handle_app_login(message: Message, login_token: str, state: FSMContex
         where_line = (
             "📲 <b>4 raqamli kod mobil ilovangizga yuborildi</b> — "
             "bildirishnomani ochib, undagi kodni shu yerga yozing.\n"
-            "Kod kelmasa, sayt sahifasidagi «Qaytadan» tugmasini bosing."
+            "Kelmasa — pastdagi «📵 Kod kelmadi» tugmasini bosing, "
+            "kod sayt sahifasida ochiladi."
         )
     elif status == "screen_fallback":
         where_line = (
@@ -88,8 +97,48 @@ async def _handle_app_login(message: Message, login_token: str, state: FSMContex
         "⚠️ Agar siz o'zingiz kirishni boshlamagan bo'lsangiz, bu havolani "
         "kimdir sizga yuborgan bo'lishi mumkin. Unday holda <b>hech narsa "
         "yozmang</b> va «Bekor qilish»ni bosing.",
-        reply_markup=cancel_menu(),
+        # «Kod kelmadi» faqat push yo'lida kerak — qolgan holatlarda kod
+        # allaqachon ekranda va tugma chalkashtirardi.
+        reply_markup=app_login_menu(status == "sent"),
     )
+
+
+@router.message(StateFilter(AppLoginFSM.waiting_code), F.text == BTN_CODE_NOT_RECEIVED)
+async def app_login_code_not_received(message: Message, state: FSMContext) -> None:
+    """Push kelmadi — kodni sayt sahifasida ko'rsatishga o'tamiz.
+
+    NEGA KERAK (2026-08-21): FCM «yuborildi» (HTTP 200) desa ham xabar
+    telefonga yetib bormasligi mumkin — ilova o'chirilgan, bildirishnoma
+    ruxsati yo'q, batareya cheklovi yoki eski APK'da kanal yo'q. Ilgari
+    bunday holatda chiqish yo'li YO'Q edi: bot kodni kutardi, kod esa
+    hech qayerda ko'rinmasdi."""
+    data = await state.get_data()
+    login_token = data.get("app_login_token")
+    if not login_token:
+        await message.answer("Kirish sessiyasi topilmadi. Saytda qaytadan boshlang.")
+        return
+
+    try:
+        result = await api_client.app_login_use_screen(login_token, message.from_user.id)
+    except httpx.HTTPError:
+        logger.exception("Kodni ekranga o'tkazishda xatolik")
+        await message.answer(
+            "Hozir bajara olmadim — birozdan keyin qayta urinib ko'ring."
+        )
+        return
+
+    if result.get("status") == "screen_fallback":
+        await message.answer(
+            "✅ Kod endi <b>sayt sahifasida</b> ko'rsatiladi.\n\n"
+            "Brauzerdagi kirish oynasiga qarang — bir necha soniyada "
+            "4 raqamli kod paydo bo'ladi. O'shani shu yerga yozing.",
+            reply_markup=app_login_menu(False),
+        )
+    else:
+        await message.answer(
+            "Kirish havolasi eskirgan. Saytda qaytadan boshlang.",
+            reply_markup=cancel_menu(),
+        )
 
 
 @router.message(StateFilter(AppLoginFSM.waiting_code), F.text == BTN_CANCEL)

@@ -12841,6 +12841,11 @@ def main() -> None:
         print("Avans HR paneli testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
+        test_app_login_code_delivery()
+    except Exception:
+        print("Saytga kirish kodi testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
         cleanup_orphans()
     except Exception:
         print("Egasiz qatorlarni tozalashda xato:\n" + traceback.format_exc())
@@ -16174,6 +16179,188 @@ def test_advance_hr_panel() -> None:
         check("D-04 payslip testi", False, traceback.format_exc(limit=3).strip())
 
     cleanup_hr()
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
+def test_app_login_code_delivery() -> None:
+    """Saytga kirish kodini yetkazish (2026-08-21 jonli muammo).
+
+    MUAMMO: sayt -> bot -> «kod mobil ilovangizga yuborildi» -> kod
+    KELMAYDI. Sabab: FCM ro'yxatdan chiqmagan tokenga HTTP 200
+    qaytaradi, ya'ni «yuborildi» «yetib bordi» degani EMAS. Ilova
+    o'chirilgan / bildirishnoma ruxsati olib qo'yilgan / batareya
+    cheklovi / eski APK'da kanal yo'q bo'lsa xabar ko'rinmaydi.
+    Bot esa kodni kutardi va CHIQISH YO'LI YO'Q edi.
+
+    Tekshiriladi:
+      1. ESKI qurilma (last_seen eski) push uchun HISOBGA OLINMAYDI
+      2. YANGI qurilma hisobga olinadi
+      3. Qurilmasi yo'q xodim -> `screen_fallback` (eski xatti-harakat)
+      4. ⭐ «Kod kelmadi» -> `code_delivery` «screen» ga o'tadi va
+         sayt kodni ko'rsata boshlaydi
+      5. O'tgach kod bilan kirish ISHLAYDI
+      6. Begona/eskirgan token -> `invalid`
+      7. Amal auditga tushadi
+    """
+    print("\n=== SAYTGA KIRISH: kod yetkazish (2026-08-21) ===")
+    import asyncio as _asyncio
+    import httpx
+    from datetime import datetime as _dt, timedelta as _td
+
+    from api.services import push as _push
+    from db.base import async_session
+    from db.models import (
+        AppLoginStatus,
+        AppLoginToken,
+        AuditLog as _Audit,
+        PushToken,
+        User as _User,
+    )
+    from sqlalchemy import delete as _del, select as _sel
+
+    conn = db()
+    cur = conn.cursor()
+    cur.execute("select id from users where full_name like 'T-Log-%'")
+    stale = [r[0] for r in cur.fetchall()]
+    if stale:
+        qm = ",".join("?" * len(stale))
+        cur.execute(f"delete from push_tokens where user_id in ({qm})", stale)
+        cur.execute(f"delete from audit_logs where target_user_id in ({qm})", stale)
+        cur.execute(f"delete from users where id in ({qm})", stale)
+    TG = 999609401
+    cur.execute(
+        "insert into users (telegram_id, full_name, role, bot_started, is_active, created_at)"
+        " values (?, 'T-Log-Hr','hr',1,1,datetime('now'))", (TG,))
+    uid = cur.lastrowid
+    conn.commit()
+
+    def cleanup_log():
+        try:
+            c2 = db()
+            c2.execute("delete from push_tokens where user_id=?", (uid,))
+            c2.execute("delete from app_login_tokens where token like 'T-Log-%'")
+            c2.execute("delete from audit_logs where target_user_id=?", (uid,))
+            c2.execute("delete from users where id=?", (uid,))
+            c2.commit()
+            c2.close()
+        except Exception:
+            print("  login testi tozalash xatosi:\n" + traceback.format_exc(limit=1).strip())
+
+    # ── 1-2. Eski/yangi qurilma filtri (FCM'ga CHIQMAYDI: patch) ──
+    async def _device_filter():
+        yuborilgan: list = []
+
+        async def _fake_send_one(token, category, title, body, data, quiet):
+            yuborilgan.append(token)
+            return "ok"
+
+        orig = _push._send_one
+        _push._send_one = _fake_send_one
+        try:
+            out = {}
+            async with async_session() as s:
+                u = await s.get(_User, uid)
+                # Qurilma umuman yo'q
+                out["no_device"] = await _push.send_login_code(s, u, "1234")
+                # ESKI qurilma — chegaradan tashqarida
+                eski = _dt.utcnow() - _td(days=_push.ACTIVE_DEVICE_DAYS + 3)
+                s.add(PushToken(user_id=uid, token="T-Log-eski", platform="android",
+                                is_active=True, last_seen_at=eski))
+                await s.commit()
+                yuborilgan.clear()
+                out["stale"] = await _push.send_login_code(s, u, "1234")
+                # YANGI qurilma
+                s.add(PushToken(user_id=uid, token="T-Log-yangi", platform="android",
+                                is_active=True, last_seen_at=_dt.utcnow()))
+                await s.commit()
+                yuborilgan.clear()
+                out["fresh"] = await _push.send_login_code(s, u, "1234")
+                out["fresh_tokens"] = list(yuborilgan)
+                return out
+        finally:
+            _push._send_one = orig
+
+    try:
+        d = _asyncio.run(_device_filter())
+        check("qurilmasi yo'q xodimga push yuborilmaydi", d["no_device"] == 0, str(d["no_device"]))
+        check("⭐ ESKI qurilma push uchun hisobga OLINMAYDI",
+              d["stale"] == 0, f"={d['stale']} (0 bo'lishi kerak)")
+        check("yangi qurilma hisobga olinadi va FAQAT u",
+              d["fresh"] == 1 and d["fresh_tokens"] == ["T-Log-yangi"],
+              f"={d['fresh']}, tokenlar={d['fresh_tokens']}")
+    except Exception:
+        check("qurilma filtri testi", False, traceback.format_exc(limit=3).strip())
+        cleanup_log()
+        return
+
+    # ── 3-7. «Kod kelmadi» yo'li ──
+    async def _make_token(delivery="push"):
+        async with async_session() as s:
+            await s.execute(_del(AppLoginToken).where(AppLoginToken.token.like("T-Log-%")))
+            row = AppLoginToken(
+                token="T-Log-token1", status=AppLoginStatus.pending.value,
+                pairing_code="4321", code_delivery=delivery,
+                expires_at=_dt.utcnow() + _td(minutes=5),
+            )
+            s.add(row)
+            await s.commit()
+
+    try:
+        _asyncio.run(_make_token())
+        with httpx.Client(timeout=20) as c:
+            # 4. «Kod kelmadi»
+            r = c.post(f"{API_BASE}/auth/app-login/use-screen", headers=bot_secret_hdr(),
+                       json={"login_token": "T-Log-token1", "telegram_id": TG})
+            check("⭐ «Kod kelmadi» -> screen_fallback",
+                  r.status_code == 200 and r.json().get("status") == "screen_fallback",
+                  f"kod={r.status_code} {r.text[:120]}")
+
+            # Sayt endi kodni ko'rsatishi kerak
+            # Poll — POST (sayt bir necha soniyada chaqirib turadi).
+            r = c.post(f"{API_BASE}/auth/app-login/poll",
+                       json={"login_token": "T-Log-token1"})
+            check("⭐ sayt poll'da `code_delivery=screen` ko'radi (kodni ochadi)",
+                  r.status_code == 200 and r.json().get("code_delivery") == "screen",
+                  f"kod={r.status_code} {r.text[:140]}")
+
+            # 5. Kod bilan kirish ishlaydi
+            r = c.post(f"{API_BASE}/auth/app-login/confirm", headers=bot_secret_hdr(),
+                       json={"login_token": "T-Log-token1", "telegram_id": TG,
+                             "pairing_code": "4321"})
+            check("screen'ga o'tgach kod bilan kirish ISHLAYDI",
+                  r.status_code == 200 and r.json().get("status") == "ok",
+                  f"kod={r.status_code} {r.text[:140]}")
+
+            # 6. Begona token
+            r = c.post(f"{API_BASE}/auth/app-login/use-screen", headers=bot_secret_hdr(),
+                       json={"login_token": "T-Log-yoq", "telegram_id": TG})
+            check("mavjud bo'lmagan token -> invalid",
+                  r.json().get("status") == "invalid", str(r.json())[:120])
+
+            # Bot siri bo'lmasa
+            r = c.post(f"{API_BASE}/auth/app-login/use-screen",
+                       json={"login_token": "T-Log-token1", "telegram_id": TG})
+            check("bot siri bo'lmasa -> 401/403",
+                  r.status_code in (401, 403), f"kod={r.status_code}")
+    except Exception:
+        check("«Kod kelmadi» testi", False, traceback.format_exc(limit=3).strip())
+
+    # 7. Audit
+    async def _audit():
+        async with async_session() as s:
+            return [a.action for a in await s.scalars(
+                _sel(_Audit).where(_Audit.target_user_id == uid))]
+
+    try:
+        acts = _asyncio.run(_audit())
+        check("amal auditga tushdi", "app_login_switched_to_screen" in acts, str(acts)[:140])
+    except Exception:
+        check("login audit testi", False, traceback.format_exc(limit=2).strip())
+
+    cleanup_log()
     try:
         conn.close()
     except Exception:

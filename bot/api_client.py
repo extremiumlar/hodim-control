@@ -51,6 +51,19 @@ async def telegram_start(telegram_id: int, invite_token: str | None) -> dict:
     return resp.json()
 
 
+async def app_login_use_screen(login_token: str, telegram_id: int) -> dict:
+    """«Kod kelmadi» — kodni sayt sahifasida ko'rsatishga o'tish.
+
+    Push FCM tomonidan qabul qilinib (HTTP 200), telefonga yetib
+    bormasligi mumkin. Bunda foydalanuvchi chiqish yo'lisiz qolardi."""
+    resp = await _get_client().post(
+        "/auth/app-login/use-screen",
+        json={"login_token": login_token, "telegram_id": telegram_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def request_app_login_code(login_token: str, telegram_id: int) -> dict:
     """Deep-link ochilgan zahoti kod yetkazishni so'raydi. Sayt oqimida server
     kodni foydalanuvchining MOBIL ILOVASIGA push bilan yuboradi; qurilma

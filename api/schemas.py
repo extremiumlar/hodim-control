@@ -250,6 +250,19 @@ class AppLoginRequestCodeOut(BaseModel):
     status: str
 
 
+class AppLoginUseScreenIn(BaseModel):
+    """«Kod kelmadi» — kodni SAYT sahifasida ko'rsatishga o'tish (bot).
+
+    Xavfsizlik: bu yo'l allaqachon mavjud (`screen_fallback` — qurilma
+    topilmaganda avtomatik ishlaydi). Bu yerda faqat uni foydalanuvchining
+    o'zi boshlashi mumkin bo'ladi. Chaqiruvchi BOT (X-Bot-Secret) va
+    `telegram_id` serverda tekshiriladi, ya'ni boshqa birov begona
+    tokenni «screen»ga o'tkaza olmaydi."""
+
+    login_token: str
+    telegram_id: int
+
+
 class AppLoginConfirmRequest(BaseModel):
     login_token: str
     telegram_id: int

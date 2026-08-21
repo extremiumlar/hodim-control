@@ -17,6 +17,7 @@ from api.schemas import (
     AppLoginPollOut,
     AppLoginPollRequest,
     AppLoginRequestCodeIn,
+    AppLoginUseScreenIn,
     AppLoginRequestCodeOut,
     AppLoginStartOut,
     AppLoginStartRequest,
@@ -26,7 +27,15 @@ from api.schemas import (
 )
 from api.services.push import send_login_code
 from api.security import create_access_token, verify_telegram_login
-from db.models import AppLoginStatus, AppLoginToken, LoginAttempt, Role, User, UsedTelegramLoginHash
+from db.models import (
+    AppLoginStatus,
+    AppLoginToken,
+    AuditLog,
+    LoginAttempt,
+    Role,
+    User,
+    UsedTelegramLoginHash,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -214,6 +223,50 @@ async def app_login_request_code(
         return AppLoginRequestCodeOut(status="sent")
 
     row.code_delivery = "screen"
+    await db.commit()
+    return AppLoginRequestCodeOut(status="screen_fallback")
+
+
+@router.post(
+    "/app-login/use-screen",
+    response_model=AppLoginRequestCodeOut,
+    dependencies=[Depends(verify_bot_secret)],
+)
+async def app_login_use_screen(
+    payload: AppLoginUseScreenIn, db: AsyncSession = Depends(get_db)
+) -> AppLoginRequestCodeOut:
+    """«Kod kelmadi» — kodni sayt sahifasida ko'rsatishga o'tish.
+
+    NEGA KERAK (2026-08-21, jonli muammo): push FCM tomonidan qabul
+    qilinib (HTTP 200), telefonga YETIB BORMASLIGI mumkin — ilova
+    o'chirilgan, bildirishnoma ruxsati olib qo'yilgan, batareya
+    cheklovi yoki eski APK'da kanal yo'q. Bunday holda bot «yuborildi»
+    deb turardi, kod esa hech qayerda ko'rinmasdi va foydalanuvchi
+    saytga UMUMAN kira olmasdi — chiqish yo'li yo'q edi.
+
+    Xavfsizlik darajasi O'ZGARMAYDI: bu aynan `screen_fallback` yo'li,
+    u qurilma topilmaganda allaqachon avtomatik ishlaydi. Farqi —
+    endi uni foydalanuvchi o'zi ham boshlay oladi. Kodni ko'rish uchun
+    login boshlangan BRAUZER sessiyasi kerak, tasdiqlash uchun esa
+    Telegram — ikki omil o'z joyida qoladi."""
+    row = await db.scalar(select(AppLoginToken).where(AppLoginToken.token == payload.login_token))
+    if not row or row.status != AppLoginStatus.pending.value or row.expires_at < datetime.utcnow():
+        return AppLoginRequestCodeOut(status="invalid")
+
+    user = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if not user or not user.is_active or user.role not in SITE_ROLES:
+        return AppLoginRequestCodeOut(status="no_account")
+
+    row.code_delivery = "screen"
+    db.add(
+        AuditLog(
+            actor_id=user.id,
+            action="app_login_switched_to_screen",
+            target_user_id=user.id,
+            before={"code_delivery": "push"},
+            after={"code_delivery": "screen", "izoh": "foydalanuvchi «kod kelmadi» dedi"},
+        )
+    )
     await db.commit()
     return AppLoginRequestCodeOut(status="screen_fallback")
 
