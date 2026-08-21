@@ -215,6 +215,10 @@ _EMPLOYEE: list[Section] = [
     Section("my-assets", "Menga biriktirilgan", "/me/assets", "Package", 127, "employee"),
     Section("my-announcements", "E'lonlar", "/me/announcements", "Megaphone", 128,
             "employee"),
+    #  Ish haqi tarixi — faqat O'ZINIKI. Boshliqda «Mening oyligim»
+    #  ko'rinmagani kabi bu ham unga keraksiz.
+    Section("my-salary-history", "Ish haqim tarixi", "/me/salary-history",
+            "TrendingUp", 129, "employee", visible=lambda c: c.role != "boss"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
@@ -351,3 +355,158 @@ def bot_menu_rows(user: User) -> list[list[str]]:
                 rows.append([BTN_CELEBRATION])
 
     return rows
+
+
+# ─────────────────────────────────────────────────────────────
+# BOT SLASH-BUYRUQLARI (Telegram «/» menyusi + ruxsat nazorati)
+# ─────────────────────────────────────────────────────────────
+# Bo'limlar (yuqorida) bilan AYNI TAMOYIL: «kim qaysi buyruqni ko'radi va
+# ishlata oladi» qoidasi SHU YERDA, bitta joyda. Bot faqat chizadi va
+# tayyor javobga qarab to'sadi — o'zi rol hisoblamaydi.
+#
+# NEGA KERAK EDI: ilgari har handler o'z tekshiruvini o'zi yozardi va
+# ko'pchiligi RUXSAT YO'Q holatida JIMGINA `return` qilardi (masalan
+# `/guruhlar`, `/norm_set`, `/att_fix`) — xodim buyruqni bosardi, bot esa
+# umuman javob bermasdi. Telegram «/» menyusi esa atigi 4 ta buyruqni
+# ko'rsatardi, ya'ni qolgani faqat hujjatdan bilinardi.
+#
+# `scopes` — buyruq QAYERDA ishlaydi. Bu ruxsatdan ALOHIDA: Dasturchi
+# `/guruh_biriktir` ni shaxsiy chatda yozsa, u «ruxsat yo'q» emas, «bu
+# buyruq guruh ichida ishlaydi» degan javob olishi kerak.
+
+PRIVATE = "private"
+GROUP = "group"
+
+@dataclass(frozen=True)
+class BotCmd:
+    """Bitta slash-buyruq: nomi, izohi, qayerda ishlashi va kim ishlata olishi."""
+
+    name: str  # slashsiz: "statistika"
+    description: str  # Telegram «/» menyusidagi qisqa izoh (≤256 belgi)
+    scopes: frozenset[str]
+    order: int
+    #  Kim ishlata oladi. `SectionCtx` — bo'limlar bilan AYNI kontekst.
+    visible: Callable[[SectionCtx], bool] = field(default=lambda c: True)
+    #  Xato matnida: «bu buyruq {audience} uchun».
+    audience: str = "hamma xodim"
+    #  Guruhda: faqat shu maqsadga biriktirilgan guruhlarda ishlaydi
+    #  (`/guruh_biriktir` bilan belgilangan). Bo'sh — istalgan guruhda.
+    group_purposes: frozenset[str] = frozenset()
+
+
+def _har_kim(_c: SectionCtx) -> bool:
+    return True
+
+
+def _rahbar(c: SectionCtx) -> bool:
+    return c.is_manager
+
+
+def _boshliq(c: SectionCtx) -> bool:
+    return c.role in {"boss", "dasturchi"}
+
+
+def _dasturchi(c: SectionCtx) -> bool:
+    return c.is_dasturchi
+
+
+def _sotuv(c: SectionCtx) -> bool:
+    """`bot_menu_rows` dagi «🤖 Sotuv AI» tugmasi bilan AYNI shart:
+    sotuv ko'rsatkichi bor xodim yoki ROP/Boshliq/Dasturchi."""
+    return c.has_sales_metric or c.role in {"rop", "boss", "dasturchi"}
+
+
+_RAHBAR_L = "rahbarlar (HR / ROP / Boshliq)"
+_BOSHLIQ_L = "Boshliq va Dasturchi"
+_DASTURCHI_L = "faqat Dasturchi"
+_SOTUV_L = "sotuv xodimlari va rahbarlar"
+
+ALL_COMMANDS: list[BotCmd] = [
+    BotCmd("start", "Botni ishga tushirish va bosh menyu",
+           frozenset({PRIVATE}), 10),
+    BotCmd("buyruqlar", "Menga ruxsat etilgan buyruqlar ro'yxati",
+           frozenset({PRIVATE, GROUP}), 20),
+
+    # ── Statistika va hisobotlar ──
+    BotCmd("statistika", "Kunlik hisobotni shu guruhga yuborish",
+           frozenset({GROUP}), 30, _rahbar, _RAHBAR_L,
+           group_purposes=frozenset({"main", "stats"})),
+    BotCmd("statistika_vaqt", "Kunlik hisobot vaqtini ko'rish/o'zgartirish",
+           frozenset({PRIVATE, GROUP}), 40, _boshliq, _BOSHLIQ_L),
+    BotCmd("oylik", "Oylik yakuniy hisobot",
+           frozenset({PRIVATE, GROUP}), 50, _rahbar, _RAHBAR_L),
+    BotCmd("davomat_vaqt", "Davomat hisoboti vaqti (ko'rish/sozlash)",
+           frozenset({PRIVATE}), 60, _rahbar, _RAHBAR_L),
+    BotCmd("reja", "Xodimning bugungi soatlik ish rejasi",
+           frozenset({PRIVATE, GROUP}), 70, _rahbar, _RAHBAR_L),
+    BotCmd("norma_ozgartir", "Xodimga norma belgilash",
+           frozenset({PRIVATE}), 80, _rahbar, _RAHBAR_L),
+
+    # ── Sotuv AI ──
+    BotCmd("ai_sozlama", "Operator AI kuzatuvi sozlamalari",
+           frozenset({PRIVATE}), 90, _rahbar, _RAHBAR_L),
+    BotCmd("ai_markazi", "Sotuv AI boshqaruv markazi",
+           frozenset({PRIVATE}), 100, _boshliq, _BOSHLIQ_L),
+    BotCmd("bilim", "Sotuv bilim bazasi",
+           frozenset({PRIVATE}), 110, _boshliq, _BOSHLIQ_L),
+    BotCmd("playbook", "Sotuv playbook (vaziyat → texnika)",
+           frozenset({PRIVATE}), 120, _boshliq, _BOSHLIQ_L),
+    BotCmd("sotuv_ai", "Mijoz savoliga AI javobi",
+           frozenset({PRIVATE}), 130, _sotuv, _SOTUV_L),
+
+    # ── Dasturchi ──
+    BotCmd("anketa", "Xodimlar anketasini boshqarish",
+           frozenset({PRIVATE}), 140, _dasturchi, _DASTURCHI_L),
+    BotCmd("guruhlar", "Bot biriktirilgan guruhlar ro'yxati",
+           frozenset({PRIVATE}), 150, _dasturchi, _DASTURCHI_L),
+    BotCmd("guruh_biriktir", "Shu guruhni maqsadga biriktirish",
+           frozenset({GROUP}), 160, _dasturchi, _DASTURCHI_L),
+    BotCmd("guruh_ochir", "Shu guruhni maqsaddan olib tashlash",
+           frozenset({GROUP}), 170, _dasturchi, _DASTURCHI_L),
+    BotCmd("norm_set", "Normani cheklovsiz belgilash",
+           frozenset({PRIVATE}), 180, _dasturchi, _DASTURCHI_L),
+    BotCmd("norm_del", "Norma yozuvlarini o'chirish",
+           frozenset({PRIVATE}), 190, _dasturchi, _DASTURCHI_L),
+    BotCmd("att_fix", "Davomat vaqtini qo'lda tuzatish",
+           frozenset({PRIVATE}), 200, _dasturchi, _DASTURCHI_L),
+    BotCmd("unlock", "Qulflangan oylik davrni ochish",
+           frozenset({PRIVATE}), 210, _dasturchi, _DASTURCHI_L),
+    BotCmd("undo", "O'chirilgan norma yozuvini tiklash",
+           frozenset({PRIVATE}), 220, _dasturchi, _DASTURCHI_L),
+]
+
+COMMANDS_BY_NAME: dict[str, BotCmd] = {c.name: c for c in ALL_COMMANDS}
+
+
+def commands_for(user: User, chat_type: str) -> list[BotCmd]:
+    """Shu xodim SHU turdagi chatda ishlata oladigan buyruqlar, tartibi bilan."""
+    ctx = build_ctx(user)
+    scope = PRIVATE if chat_type == PRIVATE else GROUP
+    return sorted(
+        (c for c in ALL_COMMANDS if scope in c.scopes and c.visible(ctx)),
+        key=lambda c: c.order,
+    )
+
+
+def bot_commands_payload(user: User) -> list[dict]:
+    """`UserOut.bot_commands` — botga beriladigan TO'LIQ ro'yxat.
+
+    ATAYLAB to'liq (faqat ruxsat etilganlari emas): bot ikkala ish uchun
+    ham shu bitta javobdan foydalanadi —
+      · «/» menyusini chizish → `allowed=True` bo'lganlari;
+      · ruxsati yo'q buyruq bosilganda ANIQ sabab aytish → qolganlari
+        (`audience` va `scopes` bilan).
+    Aks holda bot rol shartlarini o'zi takrorlashi kerak bo'lardi — bu esa
+    aynan `sections.py` bartaraf etgan ikkinchi manba muammosi."""
+    ctx = build_ctx(user)
+    return [
+        {
+            "command": c.name,
+            "description": c.description,
+            "scopes": sorted(c.scopes),
+            "allowed": c.visible(ctx),
+            "audience": c.audience,
+            "group_purposes": sorted(c.group_purposes),
+        }
+        for c in sorted(ALL_COMMANDS, key=lambda c: c.order)
+    ]

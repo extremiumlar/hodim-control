@@ -116,6 +116,11 @@ class UserOut(BaseModel):
     # bo'lsa har xabarda qo'shimcha tarmoq sayohati bo'lardi; keshlansa esa
     # rol o'zgarganda eski menyu qolib ketardi (TZ ogohlantirgan tuzoq).
     bot_menu: list[list[str]] | None = None
+    # Slash-buyruqlar — `sections.bot_commands_payload` qurgan TO'LIQ ro'yxat
+    # (`allowed` bayrog'i bilan). Bot shundan «/» menyusini chizadi VA ruxsati
+    # yo'q buyruq bosilganda aniq sabab aytadi. `bot_menu` bilan bir xil
+    # sababdan aynan shu javobda: qo'shimcha so'rov ham, kesh eskirishi ham yo'q.
+    bot_commands: list[dict] | None = None
     # Ishga kirgan sana — `created_at` (tizimga qo'shilgan payt) bilan
     # ADASHTIRMANG. Ta'til staji/balansi shundan hisoblanadi.
     hire_date: dt.date | None = None
@@ -1094,6 +1099,10 @@ class SalaryRateIn(BaseModel):
     amount: float = Field(gt=0)
     pay_basis: str = "monthly"
     effective_from: dt.date
+    # ⚠️ MAJBURIY (yangi TZ 3.25 / S-25). Sababsiz stavka kiritib
+    # bo'lmaydi: bir yildan keyin «bu odamga nega 20% qo'shgan edik?»
+    # degan savol javobsiz qolardi.
+    reason: str
     note: str | None = Field(default=None, max_length=500)
 
     @field_validator("pay_basis")
@@ -1188,6 +1197,9 @@ class SalaryRateOut(BaseModel):
     pay_basis: str
     effective_from: dt.date
     changed_by: int
+    # `None` — S-25 dan OLDIN kiritilgan qator; interfeys uni
+    # «kiritilmagan» deb ko'rsatadi (TZ qabul mezoni).
+    reason: str | None = None
     note: str | None
     created_at: datetime
 

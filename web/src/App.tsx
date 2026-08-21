@@ -55,6 +55,7 @@ const Certificates = lazy(() => import("./pages/Certificates"));
 const Assets = lazy(() => import("./pages/Assets"));
 const MeAssets = lazy(() => import("./pages/me/Assets"));
 const MeAnnouncements = lazy(() => import("./pages/me/Announcements"));
+const MeSalaryHistory = lazy(() => import("./pages/me/SalaryHistory"));
 const Announcements = lazy(() => import("./pages/Announcements"));
 const Staff = lazy(() => import("./pages/Staff"));
 const Probation = lazy(() => import("./pages/Probation"));
@@ -211,6 +212,7 @@ export default function App() {
           <Route path="me/documents" element={<MeDocuments />} />
           <Route path="me/assets" element={<MeAssets />} />
           <Route path="me/announcements" element={<MeAnnouncements />} />
+          <Route path="me/salary-history" element={<MeSalaryHistory />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

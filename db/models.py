@@ -1639,6 +1639,33 @@ class OperatorBusyPeriod(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class SalaryChangeReason(str, enum.Enum):
+    """Ish haqi nega o'zgargani (yangi TZ 3.25 / S-25).
+
+    NEGA MAJBURIY: stavka tarixi bor edi, lekin «nega?» degan savolga
+    javob yo'q edi. Bir yildan keyin «bu odamga nega 20% qo'shgan
+    edik?» degan savol javobsiz qolardi va keyingi qaror ham asossiz
+    bo'lardi. Ro'yxat YOPIQ — erkin matn bo'lsa har kim boshqacha
+    yozib, guruhlash va tahlil qilish imkonsiz bo'lardi."""
+
+    periodic = "periodic"  # davriy oshirish
+    position = "position"  # lavozim o'zgardi
+    performance = "performance"  # natija bo'yicha
+    market = "market"  # bozorga moslash
+    hire = "hire"  # ishga qabul (dastlabki stavka)
+    other = "other"  # boshqa — izohda tushuntiriladi
+
+
+SALARY_CHANGE_REASON_LABELS: dict[str, str] = {
+    SalaryChangeReason.periodic.value: "Davriy oshirish",
+    SalaryChangeReason.position.value: "Lavozim o'zgardi",
+    SalaryChangeReason.performance.value: "Natija bo'yicha",
+    SalaryChangeReason.market.value: "Bozorga moslash",
+    SalaryChangeReason.hire.value: "Ishga qabul",
+    SalaryChangeReason.other.value: "Boshqa",
+}
+
+
 class SalaryRate(Base):
     """Xodimning oylik stavkasi — TARIXIY (`Norm` bilan bir xil naqsh:
     `effective_from`, hech qachon UPDATE qilinmaydi, faqat yangi qator
@@ -1655,6 +1682,12 @@ class SalaryRate(Base):
     pay_basis: Mapped[str] = mapped_column(String(20), default=PayBasis.monthly.value)
     effective_from: Mapped[date] = mapped_column(Date, index=True)
     changed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    #  ⚠️ NEGA o'zgardi (yangi TZ 3.25 / S-25). Yangi qatorlarda
+    #  MAJBURIY (API tekshiradi). ESKI qatorlarda NULL qoladi va
+    #  interfeysda «kiritilmagan» deb ko'rsatiladi — migratsiya ularni
+    #  taxmin bilan to'ldirmaydi, chunki noto'g'ri sabab yo'q sababdan
+    #  yomonroq (u tahlilni buzadi).
+    reason: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # Bosqich 3.5 — `Norm` bilan bir xil yumshoq o'chirish naqshi.

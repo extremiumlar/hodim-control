@@ -33,6 +33,8 @@ export const qk = {
   myAssets: ["assets", "me"] as const,
   myAnnouncements: ["announcements", "me"] as const,
   staff: ["staff"] as const,
+  salaryReasons: ["payroll", "rate-reasons"] as const,
+  mySalaryHistory: ["payroll", "rates", "me"] as const,
   probation: ["probation"] as const,
   probationSummary: ["probation", "summary"] as const,
   staffSummary: ["staff", "summary"] as const,
@@ -282,6 +284,18 @@ export const useAssetChecklist = (userId: number | null) =>
     queryFn: () => api.assetChecklist(userId as number),
     enabled: userId !== null,
   });
+
+// ─── Ish haqi o'zgarishi sababi (TZ 3.25 / S-25) ───
+export const useSalaryReasons = () =>
+  useQuery({
+    queryKey: qk.salaryReasons,
+    queryFn: api.salaryReasons,
+    staleTime: 60 * 60 * 1000,
+  });
+
+/** Xodim O'Z tarixi — boshqasiniki bu yerdan chiqmaydi. */
+export const useMySalaryHistory = () =>
+  useQuery({ queryKey: qk.mySalaryHistory, queryFn: api.mySalaryHistory });
 
 // ─── Sinov muddati (TZ 3.24 / S-24) ───
 export const useProbation = () =>

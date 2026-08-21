@@ -11914,6 +11914,172 @@ def cleanup_orphans() -> None:
         print(f"\n[tozalash] egasiz {jami} ta qator o'chirildi")
 
 
+def test_bot_commands_by_role() -> None:
+    """Slash-buyruqlar: «/» menyusi lavozimga qarab + ruxsatsizga XATO.
+
+    Nima qo'riqlanadi:
+      (a) HAR bir handlerdagi `Command(...)` reestrda bor — yangi buyruq
+          qo'shilib, ruxsat qoidasi unutilsa shu yerda ushlanadi;
+      (b) rollar bo'yicha ro'yxat OLTIN NAMUNA bilan bir xil (qo'lda
+          yozilgan — reestrdan MUSTAQIL, aks holda test o'zini tasdiqlardi);
+      (c) ruxsati yo'q buyruq JIM qolmaydi, aniq sabab qaytadi;
+      (d) noto'g'ri joyda (guruh/shaxsiy) yozilgan buyruq ham sabab qaytaradi.
+
+    Tarix: ilgari `/guruhlar`, `/guruh_biriktir`, `/statistika` ruxsat yoki
+    joy mos kelmasa JIMGINA e'tiborsiz qolardi (handler filtri yutib
+    yuborardi), «/» menyusi esa hammaga bir xil 4 ta buyruqni ko'rsatardi.
+    """
+    import pathlib
+    import re
+
+    from api.services.sections import (
+        ALL_COMMANDS,
+        COMMANDS_BY_NAME,
+        bot_commands_payload,
+        commands_for,
+    )
+    from bot.commands import (
+        GROUP,
+        NO_ACCESS,
+        OK,
+        PRIVATE,
+        UNKNOWN,
+        WRONG_SCOPE,
+        check_access,
+        extract_command,
+        visible_commands,
+    )
+
+    print("\n" + "=" * 60)
+    print("BOT SLASH-BUYRUQLARI — LAVOZIM BO'YICHA")
+    print("=" * 60)
+
+    class _Pos:
+        def __init__(self, flags, metrics):
+            self.menu_flags = flags
+            self.metrics = metrics
+
+    class _U:
+        def __init__(self, role, flags=None, metrics=None):
+            self.role = role
+            self.position = None if (flags is None and metrics is None) else _Pos(flags, metrics)
+            self.can_edit_fine_policy = False
+            self.can_edit_attendance = False
+
+    # ── (a) HAR bir handler buyrug'i reestrda bormi ──
+    handlers_dir = pathlib.Path(__file__).parent / "bot" / "handlers"
+    found: set[str] = set()
+    for path in handlers_dir.glob("*.py"):
+        found |= set(re.findall(r'Command\("([a-z_]+)"\)', path.read_text(encoding="utf-8")))
+    # `/ai_vaqt` ATAYLAB reestrda yo'q: u eskirgan, faqat tushuntirish
+    # beradi va hammaga ochiq qolishi kerak (menyuda ko'rinmasin).
+    kutilmagan = {"ai_vaqt"}
+    yetishmayotgan = sorted(found - kutilmagan - set(COMMANDS_BY_NAME))
+    check("har bir handler buyrug'i reestrda bor (ruxsat qoidasi unutilmagan)",
+          not yetishmayotgan, f"reestrsiz: {yetishmayotgan}")
+    check("/start va /buyruqlar reestrda",
+          {"start", "buyruqlar"} <= set(COMMANDS_BY_NAME))
+
+    # ── (b) OLTIN NAMUNA: rol bo'yicha ro'yxat ──
+    # Qo'lda yozilgan. O'ZGARSA — ATAYLABMI? Yangi buyruq qo'shilganda shu
+    # ro'yxat ham yangilanadi va commit izohida ko'rsatiladi.
+    kutilgan_shaxsiy = {
+        "employee": ["start", "buyruqlar", "sotuv_ai"],
+        "rop": ["start", "buyruqlar", "oylik", "davomat_vaqt", "reja",
+                "norma_ozgartir", "ai_sozlama", "sotuv_ai"],
+        "boss": ["start", "buyruqlar", "statistika_vaqt", "oylik", "davomat_vaqt",
+                 "reja", "norma_ozgartir", "ai_sozlama", "ai_markazi", "bilim",
+                 "playbook", "sotuv_ai"],
+    }
+    for role, kutilgan in kutilgan_shaxsiy.items():
+        haqiqiy = [c.name for c in commands_for(_U(role), PRIVATE)]
+        check(f"{role}: shaxsiy chat buyruqlari oltin namuna bilan bir xil",
+              haqiqiy == kutilgan, f"={haqiqiy}")
+
+    dev_priv = [c.name for c in commands_for(_U("dasturchi"), PRIVATE)]
+    check("dasturchi: shaxsiy chatda eng ko'p buyruq", len(dev_priv) == 19, f"={len(dev_priv)}")
+    check("employee: guruhda faqat /buyruqlar",
+          [c.name for c in commands_for(_U("employee"), GROUP)] == ["buyruqlar"])
+    check("⭐ oddiy xodim guruh-boshqaruv buyruqlarini KO'RMAYDI",
+          not ({"guruh_biriktir", "guruh_ochir"}
+               & {c.name for c in commands_for(_U("employee"), GROUP)}))
+    # Bugalter kabi lavozim: metrikasi ATAYLAB bo'sh → sotuv AI ham yo'q.
+    bugalter = [c.name for c in commands_for(_U("employee", {}, []), PRIVATE)]
+    check("metrikasiz lavozimda /sotuv_ai ko'rinmaydi", "sotuv_ai" not in bugalter,
+          f"={bugalter}")
+
+    # ── «/» menyusi serverdan kelgan javobdan quriladi ──
+    specs_emp = bot_commands_payload(_U("employee"))
+    specs_dev = bot_commands_payload(_U("dasturchi"))
+    check("payload TO'LIQ ro'yxat qaytaradi (sabab aytish uchun)",
+          len(specs_emp) == len(ALL_COMMANDS) == len(specs_dev), f"={len(specs_emp)}")
+    menyu_emp = [c.command for c in visible_commands(specs_emp, PRIVATE)]
+    check("xodim «/» menyusida faqat o'ziga tegishlisi",
+          menyu_emp == ["start", "buyruqlar", "sotuv_ai"], f"={menyu_emp}")
+    check("xodim uchun guruh «/» menyusi qisqa",
+          [c.command for c in visible_commands(specs_emp, GROUP)] == ["buyruqlar"])
+
+    # ── (c) RUXSAT: ruxsati yo'q buyruq to'siladi ──
+    verdict, spec = check_access(specs_emp, "guruhlar", PRIVATE)
+    check("⭐ xodim /guruhlar bossa — RAD ETILADI (jimlik emas)", verdict == NO_ACCESS,
+          f"={verdict}")
+    check("rad javobida kimga mo'ljallangani aytiladi",
+          bool(spec and spec.get("audience")), f"={spec and spec.get('audience')}")
+    check("xodim /norm_set (dasturchi buyrug'i) — rad etiladi",
+          check_access(specs_emp, "norm_set", PRIVATE)[0] == NO_ACCESS)
+    check("xodim /statistika (rahbar buyrug'i) — rad etiladi",
+          check_access(specs_emp, "statistika", GROUP)[0] == NO_ACCESS)
+    check("dasturchi /guruhlar — ruxsat", check_access(specs_dev, "guruhlar", PRIVATE)[0] == OK)
+
+    # ROP — rahbar, lekin Boshliq buyrug'iga ruxsati yo'q.
+    specs_rop = bot_commands_payload(_U("rop"))
+    check("⭐ ROP /statistika_vaqt (Boshliq buyrug'i) — rad etiladi",
+          check_access(specs_rop, "statistika_vaqt", PRIVATE)[0] == NO_ACCESS)
+    check("ROP /norma_ozgartir — ruxsat",
+          check_access(specs_rop, "norma_ozgartir", PRIVATE)[0] == OK)
+
+    # ── (d) JOY: to'g'ri buyruq, noto'g'ri chat turi ──
+    check("⭐ dasturchi /guruh_biriktir SHAXSIY chatda — «bu yerda emas» deydi",
+          check_access(specs_dev, "guruh_biriktir", PRIVATE)[0] == WRONG_SCOPE)
+    check("dasturchi /guruh_biriktir guruhda — ruxsat",
+          check_access(specs_dev, "guruh_biriktir", GROUP)[0] == OK)
+    check("dasturchi /guruhlar GURUHDA — «bu yerda emas» deydi",
+          check_access(specs_dev, "guruhlar", GROUP)[0] == WRONG_SCOPE)
+    check("⭐ joy xatosi ruxsat xatosidan OLDIN tekshiriladi",
+          check_access(specs_emp, "guruh_biriktir", PRIVATE)[0] == WRONG_SCOPE)
+
+    # ── Reestrda yo'q buyruq — eski xatti-harakat (handler hal qiladi) ──
+    check("eskirgan /ai_vaqt to'silmaydi (handler tushuntiradi)",
+          check_access(specs_dev, "ai_vaqt", PRIVATE)[0] == UNKNOWN)
+    check("umuman noma'lum buyruq to'silmaydi",
+          check_access(specs_dev, "yoq_bunday", PRIVATE)[0] == UNKNOWN)
+
+    # ── /statistika faqat biriktirilgan guruhda ──
+    stat = COMMANDS_BY_NAME["statistika"]
+    check("/statistika faqat main/stats guruhida ishlaydi",
+          stat.group_purposes == frozenset({"main", "stats"}), f"={stat.group_purposes}")
+    check("boshqa buyruqlarda guruh-maqsad cheklovi yo'q",
+          all(not c.group_purposes for c in ALL_COMMANDS if c.name != "statistika"))
+
+    # ── Buyruq matnini ajratish ──
+    check("«/reja 5» -> reja", extract_command("/reja 5") == "reja")
+    check("guruhda «/reja@bot» -> reja",
+          extract_command("/reja@Hodimlar_bot", "Hodimlar_bot") == "reja")
+    check("⭐ boshqa botga yo'llangan buyruq O'ZLASHTIRILMAYDI",
+          extract_command("/reja@boshqa_bot", "Hodimlar_bot") is None)
+    check("oddiy matn buyruq emas", extract_command("salom") is None)
+    check("bo'sh «/» buyruq emas", extract_command("/") is None)
+    check("katta harf ham taniladi", extract_command("/REJA") == "reja")
+
+    # ── Telegram cheklovlari ──
+    check("buyruq nomlari Telegram formatiga mos (a-z, _, <=32)",
+          all(re.fullmatch(r"[a-z0-9_]{1,32}", c.name) for c in ALL_COMMANDS))
+    check("izohlar <=256 belgi va bo'sh emas",
+          all(0 < len(c.description) <= 256 for c in ALL_COMMANDS))
+    check("har bir buyruqda kamida bitta qamrov bor",
+          all(c.scopes for c in ALL_COMMANDS))
+
+
 def main() -> None:
     print("=" * 60)
     print("DAVOMAT TIZIMI — DB YOZUVI DEBUG TESTI")
@@ -11967,6 +12133,11 @@ def main() -> None:
         test_bot_menu_from_server()
     except Exception:
         print("S-05b bot menyu testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_bot_commands_by_role()
+    except Exception:
+        print("Bot buyruqlari testida kutilmagan xato:" + traceback.format_exc())
 
     try:
         test_view_scope()

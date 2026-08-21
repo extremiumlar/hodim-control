@@ -21,6 +21,17 @@ import { useState, type FormEvent } from "react";
 import { format, startOfMonth } from "date-fns";
 import { Pencil } from "lucide-react";
 import { toast } from "sonner";
+
+//  Jadvalda ko'rsatish uchun — server ro'yxati bilan bir xil
+//  kalitlar (`/payroll/rates/reasons`).
+const SABAB_NOMLARI: Record<string, string> = {
+  periodic: "Davriy oshirish",
+  position: "Lavozim o'zgardi",
+  performance: "Natija bo'yicha",
+  market: "Bozorga moslash",
+  hire: "Ishga qabul",
+  other: "Boshqa",
+};
 import { type ColumnDef } from "@tanstack/react-table";
 
 import DataTable from "@/components/DataTable";
@@ -48,6 +59,7 @@ import {
   useCreateSalaryRate,
   usePayrollPreflight,
   useSalaryRates,
+  useSalaryReasons,
   useUpdateSalaryRate,
   useUsers,
 } from "@/lib/queries";
@@ -208,6 +220,11 @@ export default function SalaryRateTab({ period }: { period: string }) {
   // HR 14-avgustda stavka kiritganda avgust oyligi ~13/26 ulushga bo'linib,
   // xodim yarim oylik oladi. Oy boshi esa to'liq oylik beradi.
   const [effectiveFrom, setEffectiveFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
+  //  ⚠️ SABAB MAJBURIY (TZ 3.25 / S-25) — backend sababsiz stavkani rad
+  //  etadi. Ro'yxat serverdan olinadi: HR paneli va API'da ikkita
+  //  nusxa bo'lmasin.
+  const [reason, setReason] = useState("");
+  const { data: reasons } = useSalaryReasons();
   const [note, setNote] = useState("");
   // Oy boshidan keyingi sana — prorata ogohlantirishi (jim qolmasin)
   const rateLateStart = effectiveFrom > format(startOfMonth(new Date()), "yyyy-MM-dd");
@@ -223,6 +240,16 @@ export default function SalaryRateTab({ period }: { period: string }) {
       accessorKey: "pay_basis",
       header: "Asos",
       cell: ({ row }) => BASIS_LABELS[row.original.pay_basis] ?? row.original.pay_basis,
+    },
+    {
+      accessorKey: "reason",
+      header: "Sabab",
+      //  S-25 dan OLDINGI qatorlarda `reason` yo'q — «kiritilmagan» deb
+      //  ko'rsatiladi (TZ qabul mezoni), taxmin bilan to'ldirilmaydi.
+      cell: ({ row }) =>
+        row.original.reason
+          ? SABAB_NOMLARI[row.original.reason] ?? row.original.reason
+          : "kiritilmagan",
     },
     { accessorKey: "note", header: "Izoh", cell: ({ row }) => row.original.note ?? "—" },
     {
@@ -252,13 +279,25 @@ export default function SalaryRateTab({ period }: { period: string }) {
       toast.error("Summa musbat son bo'lishi kerak");
       return;
     }
+    if (!reason) {
+      toast.error("O'zgarish sababini tanlang");
+      return;
+    }
     createRate.mutate(
-      { user_id: userId, amount: n, pay_basis: payBasis, effective_from: effectiveFrom, note: note || null },
+      {
+        user_id: userId,
+        amount: n,
+        pay_basis: payBasis,
+        effective_from: effectiveFrom,
+        reason,
+        note: note || null,
+      },
       {
         onSuccess: () => {
           const nomi = (usersQuery.data ?? []).find((u) => u.id === userId)?.full_name ?? "";
           toast.success(nomi ? `${nomi} — stavka qo'shildi` : "Stavka qo'shildi");
           setAmount("");
+          setReason("");
           setNote("");
           // Xodim tanlovi ham TOZALANADI. Ilgari tanlangan xodim qolib
           // ketardi va HR ketma-ket bir necha kishiga stavka kiritayotganda
@@ -368,6 +407,25 @@ export default function SalaryRateTab({ period }: { period: string }) {
                   Odatda oy boshi qo'yiladi — shunda oylik to'liq hisoblanadi.
                 </p>
               )}
+            </div>
+            <div>
+              <Label htmlFor="sr-reason">O'zgarish sababi</Label>
+              <Select value={reason} onValueChange={setReason}>
+                <SelectTrigger id="sr-reason">
+                  <SelectValue placeholder="Tanlang" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(reasons ?? []).map((r) => (
+                    <SelectItem key={r.value} value={r.value}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-slate-500">
+                Bir yildan keyin «nega oshirgan edik?» degan savolga javob
+                shu yerda qoladi.
+              </p>
             </div>
             <div>
               <Label htmlFor="sr-note">Izoh (ixtiyoriy)</Label>

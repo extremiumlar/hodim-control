@@ -201,7 +201,7 @@ async def _hire_from_offer(db: AsyncSession, o: Offer, actor: User) -> tuple[Use
 
     Qaytaradi: (xodim, YANGI yaratildimi)."""
     from api.timeutil import today_local
-    from db.models import PayBasis, SalaryRate
+    from db.models import PayBasis, SalaryChangeReason, SalaryRate
 
     if o.user_id:
         mavjud = await db.get(User, o.user_id)
@@ -228,6 +228,9 @@ async def _hire_from_offer(db: AsyncSession, o: Offer, actor: User) -> tuple[Use
             amount=o.salary,
             pay_basis=PayBasis.monthly.value,
             effective_from=sana,
+            #  S-25: sabab majburiy. Taklifdan kelgan dastlabki stavka —
+            #  «ishga qabul», bu oshirish emas.
+            reason=SalaryChangeReason.hire.value,
             changed_by=actor.id,
             note=f"Ish taklifi #{o.id} asosida",
         )

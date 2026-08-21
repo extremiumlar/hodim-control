@@ -963,6 +963,9 @@ export interface SalaryRate {
   pay_basis: "monthly" | "daily" | "hourly";
   effective_from: string;
   changed_by: number;
+  /** Nega o'zgardi (TZ 3.25 / S-25). `null` — S-25 dan OLDINGI qator,
+   *  interfeys uni «kiritilmagan» deb ko'rsatadi. */
+  reason: string | null;
   note: string | null;
   created_at: string;
 }

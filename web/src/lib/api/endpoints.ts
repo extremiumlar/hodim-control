@@ -612,7 +612,12 @@ export const api = {
   deleteFinePolicy: (policyId: number) =>
     apiFetch<{ deleted: boolean }>(`/payroll/policies/${policyId}`, { method: "DELETE" }),
   listSalaryRates: (userId: number) => apiFetch<SalaryRate[]>(`/payroll/rates?user_id=${userId}`),
-  createSalaryRate: (data: { user_id: number; amount: number; pay_basis: string; effective_from: string; note?: string | null }) =>
+  //  `reason` MAJBURIY (TZ 3.25 / S-25) — backend sababsiz stavkani rad
+  //  etadi. Ro'yxat `/payroll/rates/reasons` dan olinadi.
+  salaryReasons: () =>
+    apiFetch<{ value: string; label: string }[]>("/payroll/rates/reasons"),
+  mySalaryHistory: () => apiFetch<SalaryRate[]>("/payroll/rates/me"),
+  createSalaryRate: (data: { user_id: number; amount: number; pay_basis: string; effective_from: string; reason: string; note?: string | null }) =>
     apiFetch<SalaryRate>("/payroll/rates", { method: "POST", body: JSON.stringify(data) }),
   // PATCH — faqat YUBORILGAN maydon o'zgaradi. `note: null` yuborish izohni
   // tozalaydi, shuning uchun uni "yubormaslik"dan farqlash kerak.
