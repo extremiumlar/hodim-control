@@ -1418,3 +1418,20 @@ async def answer_inquiry(telegram_id: int, inquiry_id: int, answer: str) -> dict
     )
     resp.raise_for_status()
     return resp.json()
+
+
+async def resolve_suggestion(
+    telegram_id: int, inquiry_id: int, entry_id: int, accepted: bool
+) -> dict:
+    """Xodim bilim bazasidagi taklifni qabul qildi yoki rad etdi (S-29)."""
+    resp = await _get_client().post(
+        "/hr-inquiries/bot/suggestion",
+        json={
+            "telegram_id": telegram_id,
+            "inquiry_id": inquiry_id,
+            "entry_id": entry_id,
+            "accepted": accepted,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()

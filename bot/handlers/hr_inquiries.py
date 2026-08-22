@@ -102,6 +102,33 @@ async def receive_question(message: Message, state: FSMContext) -> None:
         return
 
     await state.clear()
+
+    #  ── S-29: bilim bazasida tayyor javob topildimi? ──
+    taklif = res.get("suggestion")
+    if taklif:
+        #  ⚠️ Javob TAKLIF sifatida beriladi, yakuniy javob sifatida EMAS.
+        #  Solishtirish o'zbekcha erkin matnda xato qilishi mumkin, shuning
+        #  uchun oxirgi so'z xodimda: u tasdiqlamasa savol HR ga boradi.
+        matn_t = (
+            "💡 <b>Shu savolga tayyor javob bor</b>\n\n"
+            f"<i>{taklif['question'][:200]}</i>\n\n"
+            f"{taklif['answer'][:1500]}\n\n"
+            "Shu javob sizga to'g'ri keldimi?"
+        )
+        tugmalar = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="✅ Ha, rahmat",
+                callback_data=f"hrq:sug:1:{res['id']}:{taklif['entry_id']}",
+            ),
+            InlineKeyboardButton(
+                text="❌ Yo'q, HR ga yuboring",
+                callback_data=f"hrq:sug:0:{res['id']}:{taklif['entry_id']}",
+            ),
+        ]])
+        await message.answer(matn_t, reply_markup=tugmalar)
+        await message.answer("—", reply_markup=menu_for_user(user))
+        return
+
     xabar = (
         "✅ Savolingiz HR ga yuborildi.\n"
         f"Toifa: <b>{res.get('category_label', '—')}</b>\n\n"
@@ -120,6 +147,45 @@ async def wrong_question(message: Message) -> None:
     """Matn kutilyapti, boshqa narsa keldi (rasm, stiker) — FSM ni
     buzmasdan eslatamiz."""
     await message.answer("Savolni matn ko'rinishida yozing (yoki «❌ Bekor qilish»).")
+
+
+@router.callback_query(F.data.startswith("hrq:sug:"))
+async def suggestion_reply(callback: CallbackQuery) -> None:
+    """Xodim taklif qilingan javobga javob berdi (S-29).
+
+    `hrq:sug:<1|0>:<murojaat_id>:<yozuv_id>`"""
+    try:
+        _, _, qabul, inq_id, entry_id = callback.data.split(":")
+        qabul_b = qabul == "1"
+        inq_i, entry_i = int(inq_id), int(entry_id)
+    except (IndexError, ValueError):
+        await callback.answer()
+        return
+    try:
+        res = await api_client.resolve_suggestion(
+            callback.from_user.id, inq_i, entry_i, qabul_b
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Taklif javobini yuborishda xato")
+        await callback.answer("Hozir bo'lmadi — keyinroq urinib ko'ring", show_alert=True)
+        return
+
+    #  Tugmalar olib tashlanadi — ikki marta bosib bo'lmasin.
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001 — xabar eskirgan bo'lsa muhim emas
+        pass
+
+    if res.get("resolved"):
+        await callback.message.answer(
+            "✅ Yaxshi! Savolingiz yopildi — HR bezovta qilinmadi."
+        )
+    else:
+        matn = "✍️ Savolingiz HR ga yuborildi."
+        if not res.get("notified"):
+            matn += "\n⚠️ Hozir HR xodimi tizimda ko'rinmadi — javob kechikishi mumkin."
+        await callback.message.answer(matn)
+    await callback.answer()
 
 
 # ─────────────────────────────────────────────────────────────

@@ -60,7 +60,14 @@ async def build_context(db: AsyncSession) -> tuple[str, str, int, int]:
     entries = list(
         await db.scalars(
             select(KnowledgeEntry)
-            .where(KnowledgeEntry.status == KnowledgeStatus.verified.value)
+            .where(
+                KnowledgeEntry.status == KnowledgeStatus.verified.value,
+                #  ⚠️ FAQAT SOTUV yozuvlari. Bu prompt MIJOZGA javob
+                #  yozish uchun ishlatiladi — ichki HR javoblari (oylik,
+                #  jarima, intizom) bu yerga tushsa, ular mijozga
+                #  aytilishi mumkin bo'lgan fakt sifatida qabul qilinardi.
+                KnowledgeEntry.audience == "sales",
+            )
             .order_by(KnowledgeEntry.category, KnowledgeEntry.id)
         )
     )

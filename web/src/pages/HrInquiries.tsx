@@ -10,7 +10,15 @@
  * javoblar tagida ko'milib ketardi (S-28 qabul mezoni).
  */
 import { useState } from "react";
-import { CheckCircle2, Clock, MessageSquare, XCircle } from "lucide-react";
+import {
+  BookOpenCheck,
+  CheckCircle2,
+  Clock,
+  MessageSquare,
+  Repeat2,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import PageHeader from "@/components/PageHeader";
@@ -28,9 +36,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useAnswerInquiry,
   useCloseInquiry,
+  useHrFrequent,
   useHrInquiries,
   useHrInquiryStats,
   useInquiryCategories,
+  useInquiryToKnowledge,
   useSetInquiryCategory,
 } from "@/lib/queries";
 
@@ -57,6 +67,15 @@ export default function HrInquiries() {
   const answer = useAnswerInquiry();
   const setCat = useSetInquiryCategory();
   const close = useCloseInquiry();
+  const { data: report } = useHrFrequent(10);
+  const toKb = useInquiryToKnowledge();
+
+  async function bazagaYubor(id: number) {
+    const res = await toKb.mutateAsync(id);
+    toast.success(
+      `Bilim bazasiga qo'shildi — endi bot shu savolga o'zi javob beradi (#${res.entry_id})`
+    );
+  }
 
   //  Qaysi murojaatga javob yozilyapti va matni.
   const [openId, setOpenId] = useState<number | null>(null);
@@ -80,6 +99,66 @@ export default function HrInquiries() {
   return (
     <div className="space-y-4">
       <PageHeader title="Murojaatlar" />
+
+      {/* ── S-29: takrorlanuvchi savollar ── */}
+      {!!report?.questions?.length && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Repeat2 className="h-4 w-4" />
+              Eng ko'p beriladigan savollar
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-1.5">
+              {(report.categories ?? []).map((c) => (
+                <span
+                  key={c.category}
+                  className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700"
+                >
+                  {c.label}: <b>{c.count}</b>
+                </span>
+              ))}
+            </div>
+            <ul className="divide-y">
+              {report.questions.map((q, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+                  <span className="w-8 shrink-0 text-center font-semibold text-slate-500">
+                    {q.count}×
+                  </span>
+                  <span className="min-w-[180px] flex-1 truncate">{q.sample}</span>
+                  <span className="text-xs text-slate-600">{q.category_label}</span>
+                  {q.in_knowledge ? (
+                    <span className="flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900">
+                      <BookOpenCheck className="h-3.5 w-3.5" />
+                      bazada
+                    </span>
+                  ) : q.answered_id ? (
+                    /*  Javob bor, lekin bazada yo'q — aynan shu holat
+                        uchun bir bosishli tugma. */
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      onClick={() => bazagaYubor(q.answered_id as number)}
+                      disabled={toKb.isPending}
+                    >
+                      <Sparkles className="mr-1 h-3.5 w-3.5" />
+                      Bilim bazasiga
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-amber-700">javob yo'q</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-slate-500">
+              Bazaga qo'shilgan savolga bot keyingi safar o'zi javob beradi —
+              lekin xodim «to'g'ri keldimi?» deb tasdiqlagandan keyin.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2 pb-3">
@@ -173,7 +252,13 @@ export default function HrInquiries() {
 
                     {q.answer && (
                       <p className="mt-1.5 rounded bg-emerald-50 p-2 text-xs text-emerald-900">
-                        <b>{q.answered_by_name ?? "HR"}:</b> {q.answer}
+                        <b>
+                          {q.auto_answered
+                            ? "🤖 Bilim bazasi"
+                            : (q.answered_by_name ?? "HR")}
+                          :
+                        </b>{" "}
+                        {q.answer}
                       </p>
                     )}
 
@@ -217,6 +302,23 @@ export default function HrInquiries() {
                         >
                           {q.answer ? "Javobni tahrirlash" : "Javob berish"}
                         </Button>
+                        {q.answer && !q.knowledge_entry_id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => bazagaYubor(q.id)}
+                            disabled={toKb.isPending}
+                          >
+                            <Sparkles className="mr-1 h-3.5 w-3.5" />
+                            Bilim bazasiga
+                          </Button>
+                        )}
+                        {q.knowledge_entry_id && (
+                          <span className="flex items-center gap-1 self-center text-xs text-emerald-700">
+                            <BookOpenCheck className="h-3.5 w-3.5" />
+                            bilim bazasida
+                          </span>
+                        )}
                         {ochiq && (
                           <Button
                             size="sm"

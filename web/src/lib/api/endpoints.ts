@@ -14,7 +14,9 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  HrFrequentReport,
   HrInquiryItem,
+  HrSuggestion,
   MyProfile,
   ProbationItem,
   ProfileChange,
@@ -1167,9 +1169,33 @@ export const api = {
   // ── Xodim murojaatlari (TZ 3.29 / S-28) ──
   myInquiries: () => apiFetch<HrInquiryItem[]>("/hr-inquiries/me"),
   askHr: (question: string) =>
-    apiFetch<{ id: number; category: string; category_label: string; notified: number }>(
-      "/hr-inquiries/me",
-      { method: "POST", body: JSON.stringify({ question }) }
+    apiFetch<{
+      id: number;
+      category: string;
+      category_label: string;
+      notified: number;
+      //  S-29: bilim bazasida tayyor javob topilsa shu to'ladi va
+      //  HR ga xabar YUBORILMAYDI — xodim avval tasdiqlashi kerak.
+      suggestion?: HrSuggestion;
+    }>("/hr-inquiries/me", { method: "POST", body: JSON.stringify({ question }) }),
+  resolveSuggestion: (inquiryId: number, entryId: number, accepted: boolean) =>
+    apiFetch<{ ok: boolean; resolved: boolean; notified?: number }>(
+      "/hr-inquiries/me/suggestion",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          inquiry_id: inquiryId,
+          entry_id: entryId,
+          accepted,
+        }),
+      }
+    ),
+  hrFrequent: (limit = 10) =>
+    apiFetch<HrFrequentReport>(`/hr-inquiries/frequent?limit=${limit}`),
+  inquiryToKnowledge: (id: number) =>
+    apiFetch<{ ok: boolean; entry_id: number; audience: string }>(
+      `/hr-inquiries/${id}/to-knowledge`,
+      { method: "POST" }
     ),
   inquiryCategories: () =>
     apiFetch<{ value: string; label: string }[]>("/hr-inquiries/categories"),

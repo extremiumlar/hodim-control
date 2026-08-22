@@ -48,6 +48,7 @@ export const qk = {
   myInquiries: ["hr-inquiries", "me"] as const,
   inquiryCategories: ["hr-inquiries", "categories"] as const,
   hrInquiryStats: ["hr-inquiries", "stats"] as const,
+  hrFrequent: (limit: number) => ["hr-inquiries", "frequent", limit] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
   ackReaders: (t: string, id: number, v?: number) =>
@@ -1502,3 +1503,23 @@ export const useSetInquiryCategory = () =>
 
 export const useCloseInquiry = () =>
   useApiMutation((id: number) => api.closeInquiry(id), INQUIRY_KEYS);
+
+export const useHrFrequent = (limit = 10) =>
+  useQuery({ queryKey: qk.hrFrequent(limit), queryFn: () => api.hrFrequent(limit) });
+
+export const useAskHrSuggestion = () =>
+  useApiMutation(
+    ({
+      inquiryId,
+      entryId,
+      accepted,
+    }: {
+      inquiryId: number;
+      entryId: number;
+      accepted: boolean;
+    }) => api.resolveSuggestion(inquiryId, entryId, accepted),
+    INQUIRY_KEYS
+  );
+
+export const useInquiryToKnowledge = () =>
+  useApiMutation((id: number) => api.inquiryToKnowledge(id), INQUIRY_KEYS);

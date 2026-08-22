@@ -578,7 +578,12 @@ async def process_batch(db: AsyncSession, max_ai_calls: int = 3) -> dict:
 
 async def stale_check(db: AsyncSession) -> dict:
     """Verified + sana-sezgir yozuvlar STALE_DAYS'dan eskirsa needs_recheck
-    belgilaydi va rahbarlarga BIR MARTA eslatma yuboradi."""
+    belgilaydi va rahbarlarga BIR MARTA eslatma yuboradi.
+
+    ⚠️ Bu yagona joy `audience` bo'yicha FILTRLANMAYDI va bu ATAYLAB:
+    eskirgan HR javobi (masalan o'zgargan jarima summasi) ham qayta
+    ko'rilishi kerak. Qolgan hamma joyda `audience == "sales"` filtri
+    bor — u yerlar mijozga ko'rinadi (S-29)."""
     threshold = datetime.utcnow() - timedelta(days=STALE_DAYS)
     stale = list(
         await db.scalars(

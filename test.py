@@ -12512,6 +12512,278 @@ def test_hr_inquiries() -> None:
         conn.close()
 
 
+
+def test_hr_knowledge_loop() -> None:
+    """S-29 (TZ 3.29) — murojaatlar → bilim bazasi halqasi.
+
+    Qabul mezonlari (TZ):
+      • «Eng ko'p beriladigan 10 savol» ro'yxati;
+      • bir bosishda bilim bazasiga o'tadi;
+      • bilim bazasida javob bo'lsa bot avval o'zi javob beradi.
+
+    ⚠️ ENG MUHIM TEKSHIRUV — SIZISH: HR javobi Sotuv AI promptiga va
+    TASHQI chatbot datasetiga TUSHMASLIGI kerak. Ichki qoida (oylik,
+    jarima) mijozga ketsa, bu eng jiddiy xato bo'lardi.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-29: MUROJAATLAR -> BILIM BAZASI HALQASI")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    kb_ids: list[int] = []
+    try:
+        cur.execute("delete from users where full_name like 'T-Kb%'")
+        cur.execute("delete from knowledge_entries where source='hr_inquiry'")
+        conn.commit()
+        for nom, tg in (("T-Kb Aziz", 999702901), ("T-Kb Bobur", 999702902)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        aziz_t = token_for(ids["T-Kb Aziz"], "employee")
+        bobur_t = token_for(ids["T-Kb Bobur"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── SOLISHTIRGICH: o'lchangan xulq buzilmasin ──
+            from api.services.hr_inquiries import (
+                _GROUP_MATCH, _SUGGEST_MATCH, _similarity, _tokens,
+            )
+            bir_xil = [
+                ("Oylik qachon beriladi?", "Oylikni qachon berasiz"),
+                ("Ta'tilga qachon chiqsam bo'ladi", "Tatilga qachon chiqaman"),
+                ("Ma'lumotnoma kerak edi", "Malumotnoma qanday olinadi"),
+            ]
+            boshqa = [
+                ("Oylik qachon beriladi?", "Ta'til qancha kun"),
+                ("Ish jadvalim qanday", "Oylik qancha"),
+                ("Ma'lumotnoma kerak", "Noutbuk kerak"),
+            ]
+            topildi = sum(
+                1 for a, b in bir_xil
+                if _similarity(_tokens(a), _tokens(b)) >= _SUGGEST_MATCH)
+            check("S-29: qo'shimchali shakllar bir xil deb topiladi",
+                  topildi == 3, f"{topildi}/3")
+            yolgon = sum(
+                1 for a, b in boshqa
+                if _similarity(_tokens(a), _tokens(b)) >= _GROUP_MATCH)
+            check("S-29: boshqa-boshqa savollar BIRLASHTIRILMAYDI",
+                  yolgon == 0, f"noto'g'ri birlashgan={yolgon}")
+
+            # ── SAVOL VA JAVOB ──
+            r = c.post("/hr-inquiries/me", headers=auth(aziz_t),
+                       json={"question": "Ta'tilga qachon chiqsam bo'ladi?"})
+            savol = r.json() if r.status_code == 201 else {}
+            check("S-29: baza bo'sh — taklif YO'Q, HR ga ketdi",
+                  savol.get("suggestion") is None and savol.get("notified", 0) >= 1,
+                  "=" + str(savol))
+            r = c.post(f"/hr-inquiries/{savol['id']}/answer", headers=auth(mgr_t),
+                       json={"answer": "Yillik ta'til 12 oy ishlagandan keyin."})
+            check("S-29: javob yozildi", r.status_code == 200, "kod=" + str(r.status_code))
+
+            # ── BIR BOSISHDA BILIM BAZASIGA ──
+            r = c.post(f"/hr-inquiries/{savol['id']}/to-knowledge", headers=auth(mgr_t))
+            check("S-29: bir bosishda bilim bazasiga -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            kb = r.json() if r.status_code == 200 else {}
+            if kb.get("entry_id"):
+                kb_ids.append(kb["entry_id"])
+            check("S-29: yozuv `hr` qamrovida (mijozga ko'rinmaydi)",
+                  kb.get("audience") == "hr", "=" + str(kb))
+            qator = cur.execute(
+                "select status, audience, source from knowledge_entries where id=?",
+                (kb.get("entry_id", 0),)).fetchone()
+            check("S-29: darhol `verified` (HR o'zi yozgan va o'zi bosgan)",
+                  qator == ("verified", "hr", "hr_inquiry"), "=" + str(qator))
+
+            # Ikkinchi bosish DUBLIKAT yaratmaydi
+            r = c.post(f"/hr-inquiries/{savol['id']}/to-knowledge", headers=auth(mgr_t))
+            soni = cur.execute(
+                "select count(*) from knowledge_entries where source='hr_inquiry'"
+            ).fetchone()[0]
+            check("S-29: tugma qayta bosilsa dublikat yo'q",
+                  soni == 1 and r.json().get("entry_id") == kb.get("entry_id"),
+                  f"soni={soni}")
+
+            # Javobsizni ko'chirib bo'lmaydi
+            r = c.post("/hr-inquiries/me", headers=auth(bobur_t),
+                       json={"question": "Yangi kreslo qachon keladi?"})
+            javobsiz = r.json()
+            r = c.post(f"/hr-inquiries/{javobsiz['id']}/to-knowledge", headers=auth(mgr_t))
+            check("S-29: javobsiz murojaat bazaga ketmaydi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ SIZISH TEKSHIRUVI
+            #
+            # ⚠️ Bo'sh baza ustida tekshirish HECH NARSANI isbotlamaydi
+            # («yo'q» matn bo'sh matnda ham topilmaydi). Shuning uchun
+            # avval HAQIQIY sotuv yozuvi qo'yiladi: u promptda BO'LISHI,
+            # HR yozuvi esa BO'LMASLIGI kerak.
+            # ══════════════════════════════════════════════
+            cur.execute(
+                "insert into knowledge_entries (kind, audience, category, question,"
+                " answer, status, date_sensitive, needs_recheck, source, ai_attempts,"
+                " created_at, updated_at) values ('single','sales','narx',"
+                "'Kvartira narxi qancha?','T-KB-SOTUV-MAYOQ narx 500 mln',"
+                "'verified',0,0,'hr_inquiry',0,datetime('now'),datetime('now'))")
+            conn.commit()
+
+            async def _kontekst():
+                from api.services.sales_ai import build_context
+                async with async_session() as s2:
+                    return await build_context(s2)
+
+            kb_text, _pb, kb_soni, _p2 = asyncio.run(_kontekst())
+            check("S-29: sotuv yozuvi promptda BOR (tekshiruv haqiqiy)",
+                  "T-KB-SOTUV-MAYOQ" in kb_text, "prompt=" + kb_text[:200])
+            check("S-29: ⚠️ HR javobi Sotuv AI promptiga TUSHMADI",
+                  "Yillik ta'til 12 oy" not in kb_text, "prompt=" + kb_text[:300])
+
+            async def _dataset():
+                from api.routers.knowledge import build_dataset
+                async with async_session() as s2:
+                    return await build_dataset(s2)
+
+            ds = asyncio.run(_dataset())
+            ds_matn = str(ds)
+            check("S-29: sotuv yozuvi datasetda BOR (tekshiruv haqiqiy)",
+                  "T-KB-SOTUV-MAYOQ" in ds_matn, "dataset=" + ds_matn[:200])
+            check("S-29: ⚠️ HR javobi TASHQI chatbot datasetiga TUSHMADI",
+                  "Yillik ta'til 12 oy" not in ds_matn, "dataset=" + ds_matn[:300])
+
+            # ── BOT O'ZI JAVOB BERADI (TAKLIF) ──
+            r = c.post("/hr-inquiries/me", headers=auth(bobur_t),
+                       json={"question": "Tatilga qachon chiqaman?"})
+            check("S-29: o'xshash savol -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code))
+            yangi = r.json() if r.status_code == 201 else {}
+            tak = yangi.get("suggestion")
+            check("S-29: bilim bazasidan TAKLIF chiqdi", tak is not None,
+                  "=" + str(yangi))
+            check("S-29: taklif matni HR yozgan javob",
+                  bool(tak) and "Yillik ta'til 12 oy" in tak.get("answer", ""),
+                  "=" + str(tak))
+            check("S-29: taklif chiqqanda HR BEZOVTA QILINMADI",
+                  yangi.get("notified") == 0, "notified=" + str(yangi.get("notified")))
+
+            # ── XODIM TASDIQLADI ──
+            r = c.post("/hr-inquiries/me/suggestion", headers=auth(bobur_t),
+                       json={"inquiry_id": yangi["id"],
+                             "entry_id": tak["entry_id"], "accepted": True})
+            check("S-29: taklif qabul qilindi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            check("S-29: murojaat yopildi, HR ga bormadi",
+                  r.json().get("resolved") is True, "=" + str(r.json()))
+            qator = cur.execute(
+                "select status, auto_answered, answered_by, knowledge_entry_id"
+                " from hr_inquiries where id=?", (yangi["id"],)).fetchone()
+            check("S-29: `auto_answered` belgilandi, `answered_by` BO'SH",
+                  qator is not None and qator[0] == "answered" and qator[1] == 1
+                  and qator[2] is None and qator[3] == kb.get("entry_id"),
+                  "=" + str(qator))
+
+            # ── XODIM RAD ETDI -> HR ga boradi ──
+            r = c.post("/hr-inquiries/me", headers=auth(bobur_t),
+                       json={"question": "Tatilga qachon chiqaman, ayting?"})
+            rad = r.json()
+            if rad.get("suggestion"):
+                r = c.post("/hr-inquiries/me/suggestion", headers=auth(bobur_t),
+                           json={"inquiry_id": rad["id"],
+                                 "entry_id": rad["suggestion"]["entry_id"],
+                                 "accepted": False})
+                check("S-29: «bu javob emas» -> HR ga yuborildi",
+                      r.status_code == 200 and r.json().get("resolved") is False
+                      and r.json().get("notified", 0) >= 1, "=" + str(r.json()))
+                holat = cur.execute(
+                    "select status, auto_answered from hr_inquiries where id=?",
+                    (rad["id"],)).fetchone()
+                check("S-29: rad etilgan murojaat OCHIQ qoladi",
+                      holat == ("open", 0), "=" + str(holat))
+            else:
+                check("S-29: rad etish oqimi uchun taklif chiqdi", False,
+                      "taklif chiqmadi: " + str(rad))
+
+            # ── O'ZGANING murojaatiga taklif javobi berib bo'lmaydi ──
+            r = c.post("/hr-inquiries/me", headers=auth(bobur_t),
+                       json={"question": "Tatilga qachon chiqaman, javob bering?"})
+            begona = r.json()
+            if begona.get("suggestion"):
+                r = c.post("/hr-inquiries/me/suggestion", headers=auth(aziz_t),
+                           json={"inquiry_id": begona["id"],
+                                 "entry_id": begona["suggestion"]["entry_id"],
+                                 "accepted": True})
+                check("S-29: ⚠️ o'zganing murojaatini yopib bo'lmaydi -> 403",
+                      r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── TAKRORLANUVCHI SAVOLLAR HISOBOTI ──
+            r = c.get("/hr-inquiries/frequent?limit=10", headers=auth(mgr_t))
+            check("S-29: hisobot -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            hisobot = r.json() if r.status_code == 200 else {}
+            check("S-29: toifalar kesimi bor",
+                  bool(hisobot.get("categories")), "=" + str(hisobot.get("categories")))
+            savollar = hisobot.get("questions", [])
+            check("S-29: TOP savollar ro'yxati bor", len(savollar) >= 1,
+                  "soni=" + str(len(savollar)))
+            check("S-29: ro'yxat limitdan oshmaydi", len(savollar) <= 10,
+                  "soni=" + str(len(savollar)))
+            tatil = [q for q in savollar if "atil" in q["sample"]]
+            check("S-29: o'xshash ta'til savollari BITTA qatorga yig'ildi",
+                  bool(tatil) and tatil[0]["count"] >= 2,
+                  "=" + str(tatil[:1]))
+            check("S-29: bazadagi savol «bazada» deb belgilangan",
+                  bool(tatil) and tatil[0]["in_knowledge"] is True,
+                  "=" + str(tatil[:1]))
+
+            # Xodim hisobotni ko'rmaydi
+            r = c.get("/hr-inquiries/frequent", headers=auth(aziz_t))
+            check("S-29: xodim hisobotga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── ESKIRGAN YOZUV TAKLIF QILINMAYDI ──
+            cur.execute("update knowledge_entries set needs_recheck=1 where id=?",
+                        (kb.get("entry_id", 0),))
+            conn.commit()
+            r = c.post("/hr-inquiries/me", headers=auth(aziz_t),
+                       json={"question": "Tatilga qachon chiqaman?"})
+            check("S-29: qayta ko'rish kutayotgan yozuv TAKLIF QILINMAYDI",
+                  r.json().get("suggestion") is None, "=" + str(r.json()))
+            cur.execute("update knowledge_entries set needs_recheck=0 where id=?",
+                        (kb.get("entry_id", 0),))
+            conn.commit()
+    except Exception:
+        check("S-29 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from hr_inquiries where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            cur.execute("delete from knowledge_entries where source='hr_inquiry'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -12895,6 +13167,12 @@ def main() -> None:
         test_hr_inquiries()
     except Exception:
         print("S-28 murojaatlar testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_hr_knowledge_loop()
+    except Exception:
+        print("S-29 bilim bazasi halqasi testida kutilmagan xato:\n"
+              + traceback.format_exc())
 
     try:
         test_payroll_api()

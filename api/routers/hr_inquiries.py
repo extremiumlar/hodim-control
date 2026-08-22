@@ -29,6 +29,7 @@ from db.models import (
     HrInquiry,
     HrInquiryCategory,
     HrInquiryStatus,
+    KnowledgeEntry,
     Role,
     User,
 )
@@ -59,6 +60,9 @@ class InquiryOut(BaseModel):
     answered_by_name: str | None = None
     answered_at: datetime | None
     created_at: datetime
+    #  S-29: javobni odam emas, bilim bazasi berganmi.
+    auto_answered: bool = False
+    knowledge_entry_id: int | None = None
 
 
 class AskIn(BaseModel):
@@ -89,6 +93,8 @@ def _out(row: HrInquiry, ismlar: dict[int, str]) -> InquiryOut:
         answered_by_name=ismlar.get(row.answered_by) if row.answered_by else None,
         answered_at=row.answered_at,
         created_at=row.created_at,
+        auto_answered=row.auto_answered,
+        knowledge_entry_id=row.knowledge_entry_id,
     )
 
 
@@ -123,11 +129,34 @@ async def _ask(db: AsyncSession, user: User, question: str) -> dict:
     """Savolni yozadi va HR ga xabar beradi.
 
     Sayt ham, bot ham SHU funksiyani chaqiradi — aks holda ikki joyda
-    ikki xil xabar matni va ikki xil xatolik ishlovi paydo bo'lardi."""
+    ikki xil xabar matni va ikki xil xatolik ishlovi paydo bo'lardi.
+
+    ⚠️ S-29: bilim bazasida mos javob bo'lsa HR GA XABAR YUBORILMAYDI.
+    Javob xodimga TAKLIF sifatida qaytadi; u tasdiqlasa murojaat
+    yopiladi, «bu javob emas» desa HR ga boradi. Aks holda halqaning
+    butun ma'nosi yo'qolardi: bot javob berib turib, HR ni baribir
+    bezovta qilaverardi."""
     try:
         row = await svc.create(db, user_id=user.id, question=question)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+    taklif, ball = await svc.suggest(db, question)
+    if taklif is not None:
+        javob = {
+            "id": row.id,
+            "category": row.category,
+            "category_label": svc.category_label(row.category),
+            "notified": 0,
+            "suggestion": {
+                "entry_id": taklif.id,
+                "question": taklif.question,
+                "answer": taklif.answer,
+                "score": round(ball, 2),
+            },
+        }
+        await db.commit()
+        return javob
 
     #  ⚠️ Qiymatlarni commitdan OLDIN olamiz: `commit()` obyektni
     #  eskirtiradi va keyingi atribut o'qish async kontekstda
@@ -240,6 +269,80 @@ async def _answer(db: AsyncSession, row: HrInquiry, text: str, actor_id: int) ->
     return {"ok": True, "delivered": yuborildi}
 
 
+class SuggestionIn(BaseModel):
+    inquiry_id: int
+    entry_id: int
+    accepted: bool
+
+
+async def _resolve_suggestion(
+    db: AsyncSession, user: User, payload: SuggestionIn
+) -> dict:
+    """Xodimning taklifga javobi. Sayt ham, bot ham shu yerdan."""
+    row = await _get(db, payload.inquiry_id)
+    #  ⚠️ O'ZGANING murojaatiga javob berib bo'lmaydi — id taxmin
+    #  qilinishi mumkin, tekshiruv SHART.
+    if row.user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sizning murojaatingiz emas")
+    if row.status != HrInquiryStatus.open.value:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Murojaat allaqachon yakunlangan")
+
+    if payload.accepted:
+        entry = await db.get(KnowledgeEntry, payload.entry_id)
+        if entry is None or entry.audience != "hr":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Javob topilmadi")
+        await svc.accept_suggestion(db, inquiry=row, entry=entry)
+        await db.commit()
+        return {"ok": True, "resolved": True}
+
+    #  «Bu javob emas» — savol odamga boradi.
+    matn = row.question
+    kimdan = user.full_name
+    toifa = svc.category_label(row.category)
+    inq_id = row.id
+    await db.commit()
+    hrlar = await svc.hr_recipients(db)
+    tugma = {
+        "inline_keyboard": [
+            [{"text": "✍️ Javob berish", "callback_data": f"hrq:ans:{inq_id}"}]
+        ]
+    }
+    for hr in hrlar:
+        await notify_user(
+            db,
+            hr,
+            Category.APPROVALS,
+            f"❓ <b>Yangi murojaat</b> — {kimdan}\n"
+            f"Toifa: {toifa}\n"
+            f"<i>(bilim bazasidagi javob to'g'ri kelmadi)</i>\n\n{matn[:300]}",
+            title="Yangi murojaat",
+            reply_markup=tugma,
+            force_telegram=True,
+            data={"path": "/hr-inquiries"},
+        )
+    await db.commit()
+    return {"ok": True, "resolved": False, "notified": len(hrlar)}
+
+
+@router.post("/me/suggestion")
+async def resolve_suggestion(
+    payload: SuggestionIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _resolve_suggestion(db, user, payload)
+
+
+@router.get("/frequent")
+async def frequent(
+    limit: int = 10,
+    _actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """«Eng ko'p beriladigan 10 savol» (TZ qabul mezoni)."""
+    return await svc.frequent(db, limit=max(1, min(limit, 50)))
+
+
 # ─────────────────────────────────────────────────────────────
 # BOT
 #
@@ -330,6 +433,23 @@ async def set_category(
     return {"ok": True, "category": payload.category}
 
 
+@router.post("/{inquiry_id}/to-knowledge")
+async def to_knowledge(
+    inquiry_id: int,
+    actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Javobni bir bosishda bilim bazasiga (TZ 2-band)."""
+    row = await _get(db, inquiry_id)
+    try:
+        entry = await svc.to_knowledge(db, inquiry=row, actor_id=actor.id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    natija = {"ok": True, "entry_id": entry.id, "audience": entry.audience}
+    await db.commit()
+    return natija
+
+
 @router.post("/{inquiry_id}/close")
 async def close(
     inquiry_id: int,
@@ -345,3 +465,25 @@ async def close(
     await db.commit()
     return {"ok": True}
 
+
+class BotSuggestionIn(BaseModel):
+    telegram_id: int
+    inquiry_id: int
+    entry_id: int
+    accepted: bool
+
+
+@router.post("/bot/suggestion")
+async def bot_suggestion(
+    payload: BotSuggestionIn, db: AsyncSession = Depends(get_db)
+) -> dict:
+    actor = await _bot_actor(db, payload.telegram_id)
+    return await _resolve_suggestion(
+        db,
+        actor,
+        SuggestionIn(
+            inquiry_id=payload.inquiry_id,
+            entry_id=payload.entry_id,
+            accepted=payload.accepted,
+        ),
+    )

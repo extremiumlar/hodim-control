@@ -141,7 +141,13 @@ async def review_next(
         statuses = REVIEW_STATUSES
     entry = await db.scalar(
         select(KnowledgeEntry)
-        .where(KnowledgeEntry.status.in_(statuses), KnowledgeEntry.id > after_id)
+        .where(
+            KnowledgeEntry.status.in_(statuses),
+            KnowledgeEntry.id > after_id,
+            #  HR yozuvlari bu navbatga tushmaydi: ular allaqachon HR
+            #  tomonidan tasdiqlangan va o'z panelida boshqariladi.
+            KnowledgeEntry.audience == "sales",
+        )
         .order_by(KnowledgeEntry.id)
         .limit(1)
     )
@@ -326,7 +332,13 @@ async def build_dataset(db: AsyncSession) -> dict:
     entries = list(
         await db.scalars(
             select(KnowledgeEntry)
-            .where(KnowledgeEntry.status == KnowledgeStatus.verified.value)
+            .where(
+                KnowledgeEntry.status == KnowledgeStatus.verified.value,
+                #  ⚠️ Bu dataset TASHQI chatbotga beriladi. Ichki HR
+                #  javoblari bu yerga tushsa, kompaniyadan TASHQARIGA
+                #  chiqib ketardi — eng jiddiy sizish yo'li shu.
+                KnowledgeEntry.audience == "sales",
+            )
             .order_by(KnowledgeEntry.category, KnowledgeEntry.id)
         )
     )

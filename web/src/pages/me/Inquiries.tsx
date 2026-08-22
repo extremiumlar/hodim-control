@@ -6,7 +6,7 @@
  * shuning uchun chegara serverda ham qat'iy (`/hr-inquiries/me`).
  */
 import { useState } from "react";
-import { CheckCircle2, Clock, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Lightbulb, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import PageHeader from "@/components/PageHeader";
@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { useAskHr, useMyInquiries } from "@/lib/queries";
+import { useAskHr, useAskHrSuggestion, useMyInquiries } from "@/lib/queries";
 
 function sana(s: string): string {
   return new Date(s).toLocaleString("ru-RU", {
@@ -28,7 +28,33 @@ function sana(s: string): string {
 export default function MyInquiries() {
   const { data, isLoading } = useMyInquiries();
   const ask = useAskHr();
+  const resolve = useAskHrSuggestion();
   const [text, setText] = useState("");
+  //  ── S-29: bilim bazasidan chiqqan taklif ──
+  //  ⚠️ Taklif YAKUNIY javob emas. Solishtirish o'zbekcha erkin matnda
+  //  xato qilishi mumkin, shuning uchun oxirgi so'z xodimda: tasdiqlamasa
+  //  savol HR ga boradi.
+  const [suggestion, setSuggestion] = useState<{
+    inquiryId: number;
+    entryId: number;
+    question: string;
+    answer: string;
+  } | null>(null);
+
+  async function taklifgaJavob(accepted: boolean) {
+    if (!suggestion) return;
+    const res = await resolve.mutateAsync({
+      inquiryId: suggestion.inquiryId,
+      entryId: suggestion.entryId,
+      accepted,
+    });
+    setSuggestion(null);
+    toast.success(
+      res.resolved
+        ? "Savolingiz yopildi — HR bezovta qilinmadi"
+        : "Savolingiz HR ga yuborildi"
+    );
+  }
 
   async function yubor() {
     const matn = text.trim();
@@ -38,6 +64,15 @@ export default function MyInquiries() {
     }
     const res = await ask.mutateAsync(matn);
     setText("");
+    if (res.suggestion) {
+      setSuggestion({
+        inquiryId: res.id,
+        entryId: res.suggestion.entry_id,
+        question: res.suggestion.question,
+        answer: res.suggestion.answer,
+      });
+      return;
+    }
     toast.success(
       res.notified
         ? `Yuborildi — toifa: ${res.category_label}`
@@ -65,6 +100,36 @@ export default function MyInquiries() {
           </Button>
         </CardContent>
       </Card>
+
+      {suggestion && (
+        <Card className="border-amber-300 bg-amber-50/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Lightbulb className="h-4 w-4 text-amber-600" />
+              Shu savolga tayyor javob bor
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="italic text-slate-600">{suggestion.question}</p>
+            <p className="whitespace-pre-wrap rounded bg-white p-3">
+              {suggestion.answer}
+            </p>
+            <p className="text-sm font-medium">Shu javob sizga to'g'ri keldimi?</p>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => taklifgaJavob(true)} disabled={resolve.isPending}>
+                Ha, rahmat
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => taklifgaJavob(false)}
+                disabled={resolve.isPending}
+              >
+                Yo'q, HR ga yuboring
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -96,7 +161,13 @@ export default function MyInquiries() {
                   <p className="mt-1 whitespace-pre-wrap">{q.question}</p>
                   {q.answer && (
                     <p className="mt-1.5 rounded bg-emerald-50 p-2 text-xs text-emerald-900">
-                      <b>{q.answered_by_name ?? "HR"}:</b> {q.answer}
+                      <b>
+                        {q.auto_answered
+                          ? "🤖 Bilim bazasi"
+                          : (q.answered_by_name ?? "HR")}
+                        :
+                      </b>{" "}
+                      {q.answer}
                     </p>
                   )}
                 </li>

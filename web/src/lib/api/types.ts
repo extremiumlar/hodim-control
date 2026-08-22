@@ -1765,4 +1765,31 @@ export type HrInquiryItem = {
   answered_by_name: string | null;
   answered_at: string | null;
   created_at: string;
+  /** S-29: javobni odam emas, bilim bazasi berdi. */
+  auto_answered: boolean;
+  knowledge_entry_id: number | null;
+};
+
+/** Takrorlanuvchi savollar hisoboti (TZ 3.29 / S-29). Guruhlash
+ *  SERVERDA — o'xshash savollar bir qatorga yig'iladi. */
+export type HrFrequentReport = {
+  categories: { category: string; label: string; count: number }[];
+  questions: {
+    sample: string;
+    count: number;
+    category: string;
+    category_label: string;
+    answer: string | null;
+    answered_id: number | null;
+    in_knowledge: boolean;
+  }[];
+  total: number;
+};
+
+/** Savol berilganda bilim bazasidan chiqqan taklif (S-29). */
+export type HrSuggestion = {
+  entry_id: number;
+  question: string;
+  answer: string;
+  score: number;
 };

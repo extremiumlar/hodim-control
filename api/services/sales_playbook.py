@@ -357,6 +357,7 @@ async def _step_synthesis(db: AsyncSession, build: PlaybookBuild) -> int:
             .where(
                 KnowledgeEntry.status == KnowledgeStatus.verified.value,
                 KnowledgeEntry.category.in_(["etiroz", "asosiy"]),
+                KnowledgeEntry.audience == "sales",
             )
             .limit(20)
         )

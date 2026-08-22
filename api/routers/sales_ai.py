@@ -38,7 +38,10 @@ async def overview(telegram_id: int, db: AsyncSession = Depends(get_db)) -> dict
     await _require_user(db, telegram_id)
     kb = await db.scalar(
         select(func.count()).select_from(KnowledgeEntry).where(
-            KnowledgeEntry.status == KnowledgeStatus.verified.value
+            KnowledgeEntry.status == KnowledgeStatus.verified.value,
+            #  Sotuv AI qancha fakt bilan ishlayotganini ko'rsatadi —
+            #  HR yozuvlari unga bormaydi, demak sanalmaydi ham.
+            KnowledgeEntry.audience == "sales",
         )
     )
     pb = await db.scalar(
