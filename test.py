@@ -14763,6 +14763,238 @@ def test_courses_end_to_end() -> None:
         conn.close()
 
 
+
+def test_org_structure() -> None:
+    """S-39 (TZ 3.16) — tashkiliy tuzilma modeli va ierarxiya.
+
+    Qabul mezonlari (TZ):
+      • ierarxiya HALQA hosil qilmaydi;
+      • yo'riqnoma tahriri YANGI VERSIYA yaratadi, eskisi qoladi;
+      • versiya zanjiri testi.
+    """
+    import asyncio
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    print("\n" + "=" * 60)
+    print("S-39: TASHKILIY TUZILMA")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    conn = db()
+    cur = conn.cursor()
+    try:
+        cur.execute("delete from positions where name like 'T-Org%'")
+        conn.commit()
+
+        async def _oqim():
+            from sqlalchemy import select as _sel
+
+            from api.services import org as O
+            from db.models import JobDescription, Position
+            out = {}
+            async with async_session() as s2:
+                #  Uch bosqichli ierarxiya: Direktor -> Bo'lim -> Xodim
+                p1 = Position(name="T-Org Direktor", is_active=True)
+                p2 = Position(name="T-Org Bo'lim boshlig'i", is_active=True)
+                p3 = Position(name="T-Org Mutaxassis", is_active=True)
+                s2.add_all([p1, p2, p3])
+                await s2.commit()
+                out["ids"] = [p1.id, p2.id, p3.id]
+
+                await O.set_parent(s2, position=p2, parent_id=p1.id)
+                await O.set_parent(s2, position=p3, parent_id=p2.id)
+                await s2.commit()
+                out["ierarxiya"] = [
+                    (p.id, p.parent_position_id)
+                    for p in await s2.scalars(
+                        _sel(Position).where(Position.id.in_(out["ids"]))
+                        .order_by(Position.id))
+                ]
+
+                # ── ⚠️ HALQA TEKSHIRUVLARI ──
+                #  1) O'ziga bo'ysunish
+                try:
+                    await O.set_parent(s2, position=p1, parent_id=p1.id)
+                    out["ozi"] = "RUXSAT (xato)"
+                except ValueError as e:
+                    out["ozi"] = str(e)
+                #  2) UZUN halqa: Direktor -> Mutaxassisga bo'ysunsin
+                #     (p1 -> p3 -> p2 -> p1 aylanasi)
+                try:
+                    await O.set_parent(s2, position=p1, parent_id=p3.id)
+                    out["uzun"] = "RUXSAT (xato)"
+                except ValueError as e:
+                    out["uzun"] = str(e)
+                #  3) Mavjud bo'lmagan ota
+                try:
+                    await O.set_parent(s2, position=p3, parent_id=999999)
+                    out["yoq_ota"] = "RUXSAT (xato)"
+                except ValueError as e:
+                    out["yoq_ota"] = str(e)
+                #  4) `None` — eng yuqori bo'g'in, RUXSAT
+                await O.set_parent(s2, position=p1, parent_id=None)
+                await s2.commit()
+                out["ildiz"] = p1.parent_position_id
+
+                # ── YO'RIQNOMA VERSIYALARI ──
+                v1 = await O.add_version(
+                    s2, position_id=p3.id, purpose="Birinchi maqsad",
+                    duties=["Vazifa A", "Vazifa B"], rights=["Huquq A"],
+                    responsibility=["Javobgarlik A"], requirements=["Talab A"],
+                    effective_from=_date.today() - _td(days=10))
+                await s2.commit()
+                out["v1"] = (v1.version, v1.purpose, list(v1.duties))
+
+                v2 = await O.add_version(
+                    s2, position_id=p3.id, purpose="Ikkinchi maqsad",
+                    duties=["Vazifa A", "Vazifa B", "Vazifa C"],
+                    rights=["Huquq A", "Huquq B"],
+                    responsibility=["Javobgarlik A"], requirements=["Talab A"],
+                    effective_from=_date.today())
+                await s2.commit()
+                out["v2"] = (v2.version, v2.purpose)
+
+                #  ⚠️ ESKI VERSIYA O'Z HOLICHA QOLDIMI
+                eski = await s2.scalar(
+                    _sel(JobDescription).where(JobDescription.id == v1.id))
+                out["eski_saqlandi"] = (
+                    eski is not None and eski.purpose == "Birinchi maqsad"
+                    and len(eski.duties) == 2)
+
+                #  Joriy versiya — bugungi kunda kuchda bo'lgani
+                joriy = await O.current_description(s2, p3.id)
+                out["joriy"] = (joriy.version, joriy.purpose) if joriy else None
+
+                #  ⚠️ KELAJAKDAGI versiya HALI kuchga kirmagan
+                v3 = await O.add_version(
+                    s2, position_id=p3.id, purpose="Kelajakdagi maqsad",
+                    duties=["Vazifa D"], rights=[], responsibility=[],
+                    requirements=[],
+                    effective_from=_date.today() + _td(days=30))
+                await s2.commit()
+                joriy2 = await O.current_description(s2, p3.id)
+                out["kelajak"] = (v3.version, joriy2.version if joriy2 else None)
+                #  ⚠️ Zanjir UCHALA versiya yaratilgandan KEYIN o'qiladi —
+                #  ilgari u v3 dan oldin olinib, test o'zi yiqilgan edi.
+                out["zanjir"] = [
+                    (j.version, j.purpose) for j in await O.versions(s2, p3.id)]
+
+                # ── SXEMA VA BO'SHLIQLAR ──
+                sxema = await O.chart(s2)
+                bizniki = [n for n in sxema["nodes"] if n["id"] in out["ids"]]
+                out["tugunlar"] = sorted(
+                    (n["id"], n["parent_id"], n["has_description"]) for n in bizniki)
+                out["yoriqnomasiz"] = any(
+                    g["id"] == p2.id for g in sxema["gaps"]["without_description"])
+
+                # ── KOMPANIYA PROFILI ──
+                prof = await O.update_profile(
+                    s2, mission="Sifatli uy-joy qurish",
+                    values=["Halollik", "Sifat"], goals=["2027: 1000 kvartira"])
+                await s2.commit()
+                out["profil"] = (prof.mission, list(prof.values), list(prof.goals))
+                prof2 = await O.get_profile(s2)
+                out["profil_yagona"] = prof2.id
+                return out
+
+        r = asyncio.run(_oqim())
+        p1, p2, p3 = r["ids"]
+
+        check("S-39: uch bosqichli ierarxiya qurildi",
+              r["ierarxiya"] == [(p1, None), (p2, p1), (p3, p2)],
+              "=" + str(r["ierarxiya"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ HALQA HOSIL QILMAYDI
+        # ══════════════════════════════════════════════
+        check("S-39: ⚠️ lavozim O'ZIGA bo'ysuna olmaydi",
+              "o'ziga" in r["ozi"].lower(), "=" + str(r["ozi"]))
+        check("S-39: ⚠️ UZUN halqa ham to'siladi (A->B->C->A)",
+              "halqa" in r["uzun"].lower(), "=" + str(r["uzun"]))
+        check("S-39: mavjud bo'lmagan ota rad etiladi",
+              "topilmadi" in r["yoq_ota"].lower(), "=" + str(r["yoq_ota"]))
+        check("S-39: `None` ota — eng yuqori bo'g'in, RUXSAT",
+              r["ildiz"] is None, "=" + str(r["ildiz"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ YO'RIQNOMA: TAHRIR EMAS, YANGI VERSIYA
+        # ══════════════════════════════════════════════
+        check("S-39: birinchi versiya 1-raqam bilan yaratildi",
+              r["v1"][0] == 1, "=" + str(r["v1"]))
+        check("S-39: ikkinchi tahrir YANGI versiya yaratdi (2)",
+              r["v2"] == (2, "Ikkinchi maqsad"), "=" + str(r["v2"]))
+        check("S-39: ⚠️ ESKI versiya O'ZGARMAGAN holda qoldi",
+              r["eski_saqlandi"] is True, "=" + str(r["eski_saqlandi"]))
+        check("S-39: ⚠️ VERSIYA ZANJIRI to'liq saqlanadi",
+              [v for v, _ in r["zanjir"]] == [3, 2, 1],
+              "=" + str(r["zanjir"]))
+        check("S-39: joriy versiya — bugun kuchda bo'lgani",
+              r["joriy"] == (2, "Ikkinchi maqsad"), "=" + str(r["joriy"]))
+        check("S-39: ⚠️ KELAJAKDAGI versiya hali kuchga KIRMAGAN",
+              r["kelajak"] == (3, 2), "=" + str(r["kelajak"]))
+
+        #  ⚠️ Bazada ham dublikat versiya bo'lmasin
+        try:
+            cur.execute(
+                "insert into job_descriptions (position_id, version, effective_from,"
+                " created_at) values (?,1,date('now'),datetime('now'))", (p3,))
+            conn.commit()
+            check("S-39: baza dublikat versiyani to'sadi", False,
+                  "INSERT o'tib ketdi")
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            check("S-39: baza dublikat versiyani to'sadi (unique)",
+                  "unique" in str(e).lower(), "=" + str(e)[:80])
+
+        # ══════════════════════════════════════════════
+        # SXEMA — server faqat MA'LUMOT beradi
+        # ══════════════════════════════════════════════
+        check("S-39: sxema tugunlari ota-bola bog'lanishi bilan keldi",
+              r["tugunlar"] == sorted([(p1, None, False), (p2, p1, False),
+                                       (p3, p2, True)]),
+              "=" + str(r["tugunlar"]))
+        check("S-39: «yo'riqnomasiz lavozimlar» ro'yxati ishlaydi",
+              r["yoriqnomasiz"] is True, "=" + str(r["yoriqnomasiz"]))
+
+        # ══════════════════════════════════════════════
+        # KOMPANIYA PROFILI
+        # ══════════════════════════════════════════════
+        check("S-39: kompaniya profili saqlandi",
+              r["profil"] == ("Sifatli uy-joy qurish", ["Halollik", "Sifat"],
+                              ["2027: 1000 kvartira"]),
+              "=" + str(r["profil"]))
+        check("S-39: profil YAGONA qator (id=1)",
+              r["profil_yagona"] == 1, "=" + str(r["profil_yagona"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ `UPDATE` FUNKSIYASI UMUMAN YO'Q
+        #
+        # Yo'riqnomani tahrirlaydigan funksiya ATAYLAB yozilmagan —
+        # bo'lsa, kimdir uni ishlatib eski versiyani yo'q qilardi.
+        # ══════════════════════════════════════════════
+        from api.services import org as _O
+        taqiqlangan = [n for n in dir(_O)
+                       if n.startswith("update_") and "description" in n]
+        check("S-39: ⚠️ yo'riqnomani TAHRIRLAYDIGAN funksiya yo'q",
+              not taqiqlangan, "=" + str(taqiqlangan))
+    except Exception:
+        check("S-39 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from job_descriptions where position_id in"
+                " (select id from positions where name like 'T-Org%')")
+            cur.execute("update positions set parent_position_id=null"
+                        " where name like 'T-Org%'")
+            cur.execute("delete from positions where name like 'T-Org%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -15199,6 +15431,12 @@ def main() -> None:
         test_courses_end_to_end()
     except Exception:
         print("S-38 uchdan-uchgacha testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_org_structure()
+    except Exception:
+        print("S-39 tuzilma testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:
