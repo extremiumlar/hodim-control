@@ -1027,3 +1027,98 @@ async def appeals_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
         escalated += 1
 
     return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}
+
+
+async def course_report_tick(db: AsyncSession) -> dict:
+    """Kurs yig'ma raqamlarini qayta hisoblaydi va MAJBURIY kursning
+    muddati o'tayotganini `deadlines` ga yozadi (yangi TZ 3.1 / S-37).
+
+    ⚠️ OG'IR ISH SHU YERDA, sahifada emas (S-07 naqshi). Ro'yxat
+    sahifasi tayyor `course_stats` qatorini o'qiydi — cPanel'da
+    konkurentlik = 1, ya'ni bitta sekin sahifa BUTUN saytni kutdiradi.
+
+    ⚠️ YANGI XABAR YO'LI QURILMAYDI: muddat `deadlines` (S-12) ga
+    yoziladi, eslatmani `deadline_tick` (S-13) yuboradi — u
+    takrorlanishni to'sadi va bir kunlik bandlarni birlashtiradi.
+
+    ⚠️ FAQAT MAJBURIY kurs uchun muddat yaratiladi. Ixtiyoriy kurs —
+    taklif, uni o'tmagani uchun xodimni bezovta qilish noto'g'ri.
+
+    ⚠️ TZ QOIDASI: kurs tugatmaslik PULGA TA'SIR QILMAYDI. Bu tick
+    hech qanday ushlanma/bonus yozmaydi — faqat hisobot va eslatma.
+    """
+    from sqlalchemy import select
+
+    from api.services import courses as csvc
+    from api.timeutil import today_local
+    from db.models import (
+        CourseAssignmentStatus,
+        Deadline,
+        DeadlineKind,
+        DeadlineStatus,
+    )
+
+    bugun = today_local()
+    hisob = await csvc.recompute_stats(db, bugun)
+
+    #  ── Majburiy kurs muddati ──
+    ochiq = {
+        (d.user_id, d.source_id): d
+        for d in await db.scalars(
+            select(Deadline).where(
+                Deadline.kind == DeadlineKind.course.value,
+                Deadline.status == DeadlineStatus.open.value,
+            )
+        )
+    }
+    yaratildi = yopildi = 0
+    for kurs in await csvc.list_courses(db, published_only=True):
+        if not kurs.is_mandatory:
+            continue
+        tayinlashlar = await csvc.assignments_for_course(db, kurs.id)
+        natijalar = await csvc.latest_results(db, [a.id for a in tayinlashlar])
+        for a in tayinlashlar:
+            r = natijalar.get(a.id)
+            otildi = bool(r and r.passed)
+            kalit = (a.user_id, kurs.id)
+            mavjud = ochiq.get(kalit)
+            if otildi:
+                #  O'tgach muddat AVTOMATIK yopiladi.
+                if mavjud is not None:
+                    mavjud.status = DeadlineStatus.done.value
+                    yopildi += 1
+                continue
+            if a.due_date is None or mavjud is not None:
+                continue
+            #  Muddat YETIB KELGANDA (yoki o'tganda) yoziladi —
+            #  oldindan emas, aks holda xodim hali vaqti borligida
+            #  bezovta qilinardi.
+            if a.due_date > bugun:
+                continue
+            #  ⚠️ `deadlines.create()` ISHLATILMAYDI: u har qator uchun
+            #  ALOHIDA commit qiladi va bu tsiklda o'nlab tranzaksiya
+            #  ochardi. Hisoblanadigan muddatlar S-27 dagi kabi
+            #  to'g'ridan-to'g'ri quriladi va oxirida BITTA commit.
+            #
+            #  ⚠️ `source_kind` ATAYLAB bo'sh qoldiriladi. Bazadagi
+            #  qisman unique indeks `(user_id, kind, source_kind,
+            #  source_id)` ustida va HOLATGA qaramaydi — `source_kind`
+            #  to'ldirilsa, yopilgan eski muddat slotni band qilib,
+            #  kurs qayta tayinlanganda (yillik qayta o'qitish) yangi
+            #  muddat yozib bo'lmasdi. Takrorlanishni yuqoridagi
+            #  `ochiq` lug'ati to'sadi — S-27 bilan bir xil yechim.
+            db.add(
+                Deadline(
+                    user_id=a.user_id,
+                    kind=DeadlineKind.course.value,
+                    due_date=a.due_date,
+                    source_id=kurs.id,
+                    note=f"Majburiy kurs o'tilmagan: {kurs.title}",
+                    status=DeadlineStatus.open.value,
+                )
+            )
+            #  Shu aylanishda ikkinchi marta yozilmasin.
+            ochiq[kalit] = True
+            yaratildi += 1
+    await db.commit()
+    return {**hisob, "deadlines_created": yaratildi, "deadlines_closed": yopildi}

@@ -14253,6 +14253,279 @@ def test_courses_cabinet() -> None:
         conn.close()
 
 
+
+def test_courses_report() -> None:
+    """S-37 (TZ 3.1) — o'quv paneli HR hisoboti va cron.
+
+    Qabul mezonlari (TZ):
+      • ro'yxat sahifasi TEZ (og'ir so'rov yo'q);
+      • batafsil hisobot FON ishida;
+      • ⚠️ KURS TUGATMASLIK PULGA TA'SIR QILMAYDI.
+    """
+    import asyncio
+    import ast as _ast
+    import pathlib as _pl
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-37: O'QUV PANELI — HISOBOT VA CRON")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        # ══════════════════════════════════════════════
+        # ⚠️ ENG MUHIM: KURS PULGA TA'SIR QILMAYDI
+        #
+        # Struktura darajasida tekshiramiz: ish haqi modullari kurs
+        # modellariga UMUMAN tegmasligi kerak. Matn emas, AST —
+        # izohdagi so'z yolg'on ogohlantirish bermasin (S-34 saboqi).
+        # ══════════════════════════════════════════════
+        ildiz = _pl.Path(__file__).parent
+        kurs_nomlari = {
+            "Course", "CourseMaterial", "CourseQuestion", "CourseAssignment",
+            "CourseResult", "CourseStat",
+        }
+        pul_fayllari = [
+            ildiz / "api" / "services" / "payroll.py",
+            ildiz / "api" / "services" / "payroll_jobs.py",
+            ildiz / "api" / "routers" / "payroll.py",
+            ildiz / "api" / "services" / "bonus.py",
+            ildiz / "api" / "services" / "kpi_rates.py",
+        ]
+        buzuvchilar = []
+        for fayl in pul_fayllari:
+            if not fayl.exists():
+                continue
+            try:
+                daraxt = _ast.parse(fayl.read_text(encoding="utf-8", errors="ignore"))
+            except SyntaxError:
+                continue
+            for tugun in _ast.walk(daraxt):
+                #  `from db.models import Course...`
+                if isinstance(tugun, _ast.ImportFrom):
+                    for a in tugun.names:
+                        if a.name in kurs_nomlari:
+                            buzuvchilar.append(
+                                f"{fayl.name}:{tugun.lineno} import {a.name}")
+                #  `courses` servisini chaqirish
+                if isinstance(tugun, _ast.Import):
+                    for a in tugun.names:
+                        if "courses" in a.name:
+                            buzuvchilar.append(
+                                f"{fayl.name}:{tugun.lineno} import {a.name}")
+                if isinstance(tugun, _ast.ImportFrom) and tugun.module:
+                    if tugun.module.endswith("services.courses"):
+                        buzuvchilar.append(
+                            f"{fayl.name}:{tugun.lineno} from {tugun.module}")
+                #  Nom sifatida ishlatilishi
+                if isinstance(tugun, _ast.Name) and tugun.id in kurs_nomlari:
+                    buzuvchilar.append(f"{fayl.name}:{tugun.lineno} {tugun.id}")
+        check("S-37: ⚠️ KURS TUGATMASLIK PULGA TA'SIR QILMAYDI "
+              "(ish haqi modullari kursga tegmaydi)",
+              not buzuvchilar, " | ".join(buzuvchilar[:5]))
+
+        # ── Ma'lumot tayyorlash ──
+        cur.execute("delete from users where full_name like 'T-Cr7%'")
+        conn.commit()
+        for nom, tg in (("T-Cr7 Otgan", 999703401), ("T-Cr7 Yiqilgan", 999703402),
+                        ("T-Cr7 Boshlamagan", 999703403)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        kecha = (_date.today() - _td(days=1)).isoformat()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Cr7 Majburiy kurs", "description": None,
+                "pass_percent": 60, "max_attempts": 0, "is_mandatory": True})
+            kurs_id = r.json()["id"]
+            c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Savol?", "options": ["A", "B"], "correct_index": 0,
+                "points": 1})
+            c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t), json={
+                "audience": "users",
+                "scope_ids": [ids["T-Cr7 Otgan"], ids["T-Cr7 Yiqilgan"],
+                              ids["T-Cr7 Boshlamagan"]],
+                "due_date": kecha})
+
+            #  Biri o'tadi, biri yiqiladi, biri boshlamaydi
+            for tg, javob in ((999703401, 0), (999703402, 1)):
+                r = c.get("/courses/bot/my", params={"telegram_id": tg})
+                aid = r.json()[0]["assignment_id"]
+                c.post("/courses/bot/answer",
+                       json={"telegram_id": tg, "assignment_id": aid, "choice": javob})
+                c.post("/courses/bot/finish",
+                       json={"telegram_id": tg, "assignment_id": aid})
+
+            # ══════════════════════════════════════════════
+            # ⚠️ RO'YXAT SAHIFASI: hisob CRON'DA, sahifada emas
+            # ══════════════════════════════════════════════
+            r = c.get("/courses", headers=auth(mgr_t))
+            oldin = [x for x in r.json() if x["id"] == kurs_id][0]
+            check("S-37: cron ishlamaguncha raqamlar BO'SH (`stats_at=None`)",
+                  oldin["stats_at"] is None and oldin["assigned_count"] == 0,
+                  "=" + str({k: oldin[k] for k in ("stats_at", "assigned_count")}))
+
+            # ── CRON tick ──
+            async def _tick():
+                from api.services import cron_jobs as cj
+                async with async_session() as s2:
+                    return await cj.course_report_tick(s2)
+
+            res = asyncio.run(_tick())
+            check("S-37: cron tick raqamlarni hisobladi",
+                  res.get("updated", 0) >= 1, "=" + str(res))
+
+            r = c.get("/courses", headers=auth(mgr_t))
+            keyin = [x for x in r.json() if x["id"] == kurs_id][0]
+            check("S-37: ⚠️ ro'yxat sahifasi TAYYOR raqamlarni oldi",
+                  keyin["stats_at"] is not None and keyin["assigned_count"] == 3,
+                  "=" + str({k: keyin[k] for k in ("stats_at", "assigned_count")}))
+            check("S-37: o'tgan/yiqilgan/boshlamagan to'g'ri sanaldi",
+                  (keyin["passed"], keyin["failed"], keyin["not_started"]) == (1, 1, 1),
+                  "=" + str({k: keyin[k] for k in
+                             ("passed", "failed", "not_started", "finished")}))
+            check("S-37: muddati o'tgan va o'tilmaganlar sanaldi (2 ta)",
+                  keyin["overdue"] == 2, "overdue=" + str(keyin["overdue"]))
+
+            # ══════════════════════════════════════════════
+            # UMUMIY HISOBOT
+            # ══════════════════════════════════════════════
+            r = c.get("/courses/report", headers=auth(mgr_t))
+            check("S-37: hisobot -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            h = r.json() if r.status_code == 200 else {}
+            check("S-37: hisobotda majburiy kurs tugatish foizi bor",
+                  h.get("mandatory_assigned") == 3 and h.get("mandatory_passed") == 1
+                  and h.get("mandatory_percent") == 33, "=" + str(h))
+            check("S-37: hisobot raqamlari QACHONLIGI ko'rsatiladi",
+                  h.get("computed_at") is not None, "=" + str(h.get("computed_at")))
+
+            r = c.get("/courses/report", headers=auth(token_for(
+                ids["T-Cr7 Otgan"], "employee")))
+            check("S-37: xodim hisobotni ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # MAJBURIY KURS MUDDATI -> `deadlines` (S-12)
+            # ══════════════════════════════════════════════
+            check("S-37: muddat o'tgan majburiy kurs uchun MUDDAT yaratildi",
+                  res.get("deadlines_created") == 2,
+                  "=" + str(res.get("deadlines_created")))
+            qatorlar = cur.execute(
+                "select user_id, note from deadlines where kind='course'"
+                " and source_id=?", (kurs_id,)).fetchall()
+            check("S-37: muddat faqat O'TMAGANLARGA yozildi",
+                  len(qatorlar) == 2
+                  and ids["T-Cr7 Otgan"] not in [q[0] for q in qatorlar],
+                  "=" + str(qatorlar))
+            check("S-37: muddat izohida kurs nomi bor",
+                  qatorlar and "T-Cr7 Majburiy kurs" in (qatorlar[0][1] or ""),
+                  "=" + str(qatorlar[:1]))
+
+            #  ⚠️ TAKRORLANMAYDI
+            res2 = asyncio.run(_tick())
+            soni = cur.execute(
+                "select count(*) from deadlines where kind='course' and source_id=?",
+                (kurs_id,)).fetchone()[0]
+            check("S-37: ikkinchi tick MUDDATNI TAKRORLAMADI",
+                  soni == 2 and res2.get("deadlines_created") == 0,
+                  f"soni={soni}, {res2}")
+
+            #  ── O'tgach muddat yopiladi ──
+            r = c.get("/courses/bot/my", params={"telegram_id": 999703402})
+            aid2 = r.json()[0]["assignment_id"]
+            c.post("/courses/bot/retry",
+                   json={"telegram_id": 999703402, "assignment_id": aid2})
+            c.post("/courses/bot/answer",
+                   json={"telegram_id": 999703402, "assignment_id": aid2, "choice": 0})
+            c.post("/courses/bot/finish",
+                   json={"telegram_id": 999703402, "assignment_id": aid2})
+            res3 = asyncio.run(_tick())
+            holat = cur.execute(
+                "select status from deadlines where kind='course' and source_id=?"
+                " and user_id=?", (kurs_id, ids["T-Cr7 Yiqilgan"])).fetchone()
+            check("S-37: kurs o'tilgach muddat AVTOMATIK yopildi",
+                  holat == ("done",) and res3.get("deadlines_closed") == 1,
+                  f"={holat}, {res3}")
+
+            # ── IXTIYORIY kurs uchun muddat YO'Q ──
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Cr7 Ixtiyoriy", "description": None,
+                "pass_percent": 60, "max_attempts": 0, "is_mandatory": False})
+            k2 = r.json()["id"]
+            c.post(f"/courses/{k2}/questions", headers=auth(mgr_t), json={
+                "text": "Savol?", "options": ["A", "B"], "correct_index": 0,
+                "points": 1})
+            c.post(f"/courses/{k2}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{k2}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["T-Cr7 Boshlamagan"]],
+                "due_date": kecha})
+            res4 = asyncio.run(_tick())
+            soni2 = cur.execute(
+                "select count(*) from deadlines where kind='course' and source_id=?",
+                (k2,)).fetchone()[0]
+            check("S-37: ⚠️ IXTIYORIY kurs uchun muddat YARATILMAYDI",
+                  soni2 == 0, "soni=" + str(soni2))
+
+            # ── O'chirilgan kursning keshi tozalanadi ──
+            c.delete(f"/courses/{k2}", headers=auth(mgr_t))
+            res5 = asyncio.run(_tick())
+            qoldi = cur.execute(
+                "select count(*) from course_stats where course_id=?",
+                (k2,)).fetchone()[0]
+            check("S-37: o'chirilgan kursning keshi tozalandi",
+                  qoldi == 0 and res5.get("removed") == 1,
+                  f"qoldi={qoldi}, {res5}")
+    except Exception:
+        check("S-37 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from deadlines where user_id in ({belgi})",
+                            tuple(ids.values()))
+            cur.execute(
+                "delete from course_stats where course_id in"
+                " (select id from courses where title like 'T-Cr7%')")
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-Cr7%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-Cr7%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-Cr7%')")
+            cur.execute("delete from courses where title like 'T-Cr7%'")
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -14677,6 +14950,12 @@ def main() -> None:
         test_courses_cabinet()
     except Exception:
         print("S-36 kabinet testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_report()
+    except Exception:
+        print("S-37 kurs hisoboti testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:

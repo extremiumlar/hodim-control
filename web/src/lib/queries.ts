@@ -1532,6 +1532,9 @@ export const useInquiryToKnowledge = () =>
 
 // ── O'quv paneli (TZ 3.1 / S-34) ──
 
+export const useCourseReport = () =>
+  useQuery({ queryKey: [...qk.courses, "report"], queryFn: api.courseReport });
+
 export const useCourses = () =>
   useQuery({ queryKey: qk.courses, queryFn: api.courses });
 

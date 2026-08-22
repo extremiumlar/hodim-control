@@ -45,6 +45,7 @@ import {
   useCourseAudiences,
   useCourseDetail,
   useCourseMaterialKinds,
+  useCourseReport,
   useCourses,
   useCreateCourse,
   useDeleteCourse,
@@ -65,6 +66,7 @@ const ROLLAR = [
 
 export default function Courses() {
   const { data: courses, isLoading } = useCourses();
+  const { data: report } = useCourseReport();
   const { data: kinds } = useCourseMaterialKinds();
   const { data: audiences } = useCourseAudiences();
   const { data: users } = useUsers();
@@ -196,6 +198,63 @@ export default function Courses() {
     <div className="space-y-4">
       <PageHeader title="O'quv paneli" />
 
+      {/* ── S-37: umumiy hisobot ──
+          ⚠️ Raqamlar CRON'da hisoblanadi, bu sahifa faqat o'qiydi.
+          Shuning uchun ular bir necha daqiqa eskirishi mumkin — sana
+          ataylab ko'rsatiladi. */}
+      {!!report?.assigned && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ListChecks className="h-4 w-4" />
+              Umumiy holat
+              {report.computed_at && (
+                <span className="text-xs font-normal text-slate-500">
+                  · {new Date(report.computed_at).toLocaleString("ru-RU", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })} holatiga
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded bg-slate-100 px-2 py-1">
+              Tayinlangan: <b>{report.assigned}</b>
+            </span>
+            <span className="rounded bg-slate-100 px-2 py-1">
+              Boshlamagan: <b>{report.not_started}</b>
+            </span>
+            <span className="rounded bg-slate-100 px-2 py-1">
+              Jarayonda: <b>{report.in_progress}</b>
+            </span>
+            <span className="rounded bg-emerald-100 px-2 py-1 text-emerald-900">
+              O'tgan: <b>{report.passed}</b>
+            </span>
+            <span className="rounded bg-rose-100 px-2 py-1 text-rose-900">
+              O'tmagan: <b>{report.failed}</b>
+            </span>
+            {report.pending_review > 0 && (
+              <span className="rounded bg-amber-100 px-2 py-1 text-amber-900">
+                Baholanmagan: <b>{report.pending_review}</b>
+              </span>
+            )}
+            {report.overdue > 0 && (
+              <span className="rounded bg-rose-100 px-2 py-1 text-rose-900">
+                Muddati o'tgan: <b>{report.overdue}</b>
+              </span>
+            )}
+            {report.mandatory_percent !== null && (
+              <span className="rounded bg-slate-800 px-2 py-1 text-white">
+                Majburiy kurs tugatish: <b>{report.mandatory_percent}%</b>
+              </span>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Yangi kurs ── */}
       <Card>
         <CardHeader className="pb-3">
@@ -275,6 +334,24 @@ export default function Courses() {
                       {c.material_count} material · {c.question_count} savol ·{" "}
                       {c.assigned_count} xodim · o'tish {c.pass_percent}%
                     </span>
+                    {c.assigned_count > 0 && (
+                      <span className="text-xs">
+                        <span className="text-emerald-700">{c.passed} o'tdi</span>
+                        {c.failed > 0 && (
+                          <span className="text-rose-700"> · {c.failed} o'tmadi</span>
+                        )}
+                        {c.not_started > 0 && (
+                          <span className="text-slate-600">
+                            {" "}· {c.not_started} boshlamagan
+                          </span>
+                        )}
+                        {c.overdue > 0 && (
+                          <span className="text-rose-700">
+                            {" "}· {c.overdue} muddati o'tgan
+                          </span>
+                        )}
+                      </span>
+                    )}
                     {c.is_published ? (
                       <span className="flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 text-xs text-emerald-900">
                         <CheckCircle2 className="h-3.5 w-3.5" />

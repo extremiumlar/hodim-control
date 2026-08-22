@@ -19,6 +19,7 @@ import type {
   CourseResultOut,
   CourseDetail,
   CourseItem,
+  CourseReport,
   MyCourseItem,
   HrFrequentReport,
   HrInquiryItem,
@@ -1227,6 +1228,7 @@ export const api = {
     apiFetch<{ ok: boolean }>(`/hr-inquiries/${id}/close`, { method: "POST" }),
   // ── O'quv paneli (TZ 3.1 / S-34) ──
   courses: () => apiFetch<CourseItem[]>("/courses"),
+  courseReport: () => apiFetch<CourseReport>("/courses/report"),
   courseDetail: (id: number) => apiFetch<CourseDetail>(`/courses/${id}`),
   courseMaterialKinds: () =>
     apiFetch<{ value: string; label: string }[]>("/courses/material-kinds"),

@@ -38,6 +38,7 @@ from db.models import (
     CourseMaterial,
     CourseQuestion,
     CourseResult,
+    CourseStat,
 )
 
 #  `alive()` qo'llaydigan modellar. Yangi kurs jadvali qo'shilsa shu
@@ -632,3 +633,101 @@ async def latest_results(db: AsyncSession, assignment_ids: list[int]) -> dict:
     for r in rows:
         out[r.assignment_id] = r  # tartiblangan — oxirgisi qoladi
     return out
+
+
+# ═════════════════════════════════════════════════════════════
+# S-37 · HISOBOT (TZ 3.1)
+#
+# ⚠️ OG'IR HISOB CRON'DA (S-07 naqshi). Ro'yxat sahifasi tayyor
+# `course_stats` qatorini o'qiydi — S-34 da kiritilgan N+1 (har kurs
+# uchun uchta alohida so'rov) shu bilan yo'q qilinadi. cPanel'da
+# konkurentlik = 1, ya'ni bitta sekin sahifa BUTUN saytni kutdiradi.
+#
+# ⚠️ TZ QOIDASI: KURS TUGATMASLIK PULGA TA'SIR QILMAYDI. Bu yerda
+# hisoblanadigan raqamlar FAQAT hisobot uchun — ular hech qanday
+# ushlanma, bonus yoki KPI hisobiga kirmaydi. Test buni struktura
+# darajasida qo'riqlaydi (payroll modullari kurs modellariga
+# umuman tegmasligi tekshiriladi).
+# ═════════════════════════════════════════════════════════════
+
+
+async def compute_stats(db: AsyncSession, course_id: int, today=None) -> dict:
+    """Bitta kurs bo'yicha yig'ma raqamlar (hisoblash, YOZMAYDI)."""
+    from api.timeutil import today_local
+
+    kun = today or today_local()
+    mats = await materials(db, course_id)
+    savollar = await questions(db, course_id)
+    tayinlashlar = await assignments_for_course(db, course_id)
+    natijalar = await latest_results(db, [a.id for a in tayinlashlar])
+
+    hisob = {
+        "material_count": len(mats),
+        "question_count": len(savollar),
+        "assigned_count": len(tayinlashlar),
+        "not_started": 0,
+        "in_progress": 0,
+        "finished": 0,
+        "passed": 0,
+        "failed": 0,
+        "pending_review": 0,
+        "overdue": 0,
+    }
+    for a in tayinlashlar:
+        if a.status == CourseAssignmentStatus.assigned.value:
+            hisob["not_started"] += 1
+        elif a.status == CourseAssignmentStatus.in_progress.value:
+            hisob["in_progress"] += 1
+        else:
+            hisob["finished"] += 1
+        r = natijalar.get(a.id)
+        if r is not None:
+            if r.pending_review:
+                hisob["pending_review"] += 1
+            elif r.passed:
+                hisob["passed"] += 1
+            else:
+                hisob["failed"] += 1
+        #  ⚠️ «Muddati o'tgan» = muddat bor, o'tib ketgan VA hali
+        #  o'tilmagan. Yakunlangan-u yiqilgan xodim ham shu yerga
+        #  kiradi: kurs baribir o'tilmagan.
+        otildi = bool(r and r.passed)
+        if a.due_date and a.due_date < kun and not otildi:
+            hisob["overdue"] += 1
+    return hisob
+
+
+async def recompute_stats(db: AsyncSession, today=None) -> dict:
+    """BARCHA tirik kurslar uchun yig'ma raqamlarni qayta hisoblaydi.
+
+    Cron'dan chaqiriladi. Kurs o'chirilgan bo'lsa qatori ham
+    o'chiriladi — kesh eskirib qolmasin."""
+    kurslar = await list_courses(db)
+    tirik = {c.id for c in kurslar}
+    mavjud = {
+        r.course_id: r for r in await db.scalars(select(CourseStat))
+    }
+    yangilandi = 0
+    for c in kurslar:
+        hisob = await compute_stats(db, c.id, today)
+        qator = mavjud.get(c.id)
+        if qator is None:
+            qator = CourseStat(course_id=c.id)
+            db.add(qator)
+        for k, v in hisob.items():
+            setattr(qator, k, v)
+        qator.computed_at = datetime.utcnow()
+        yangilandi += 1
+    #  O'chirilgan kurslarning keshini tozalaymiz.
+    olib_tashlandi = 0
+    for cid, qator in mavjud.items():
+        if cid not in tirik:
+            await db.delete(qator)
+            olib_tashlandi += 1
+    await db.flush()
+    return {"updated": yangilandi, "removed": olib_tashlandi}
+
+
+async def stats_map(db: AsyncSession) -> dict:
+    """Tayyor raqamlar — ro'yxat sahifasi uchun BITTA so'rov."""
+    return {r.course_id: r for r in await db.scalars(select(CourseStat))}

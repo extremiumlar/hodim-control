@@ -57,6 +57,17 @@ class CourseOut(BaseModel):
     material_count: int = 0
     question_count: int = 0
     assigned_count: int = 0
+    #  ── S-37 hisoboti (cron'da hisoblanadi) ──
+    not_started: int = 0
+    in_progress: int = 0
+    finished: int = 0
+    passed: int = 0
+    failed: int = 0
+    pending_review: int = 0
+    overdue: int = 0
+    #  Raqamlar qachon hisoblangani. `None` — hali hisoblanmagan
+    #  (kurs yangi yaratilgan va cron hali ishlamagan).
+    stats_at: datetime | None = None
 
 
 class MaterialOut(BaseModel):
@@ -126,8 +137,10 @@ class AssignIn(BaseModel):
     due_date: date | None = None
 
 
-def _course_out(c, *, materials=0, questions=0, assigned=0) -> CourseOut:
-    return CourseOut(
+def _course_out(c, *, materials=0, questions=0, assigned=0, stat=None) -> CourseOut:
+    """`stat` — `course_stats` qatori (S-37). Berilsa raqamlar
+    SHUNDAN olinadi; berilmasa chaqiruvchi o'zi sanagan qiymatlar."""
+    out = CourseOut(
         id=c.id,
         title=c.title,
         description=c.description,
@@ -140,6 +153,19 @@ def _course_out(c, *, materials=0, questions=0, assigned=0) -> CourseOut:
         question_count=questions,
         assigned_count=assigned,
     )
+    if stat is not None:
+        out.material_count = stat.material_count
+        out.question_count = stat.question_count
+        out.assigned_count = stat.assigned_count
+        out.not_started = stat.not_started
+        out.in_progress = stat.in_progress
+        out.finished = stat.finished
+        out.passed = stat.passed
+        out.failed = stat.failed
+        out.pending_review = stat.pending_review
+        out.overdue = stat.overdue
+        out.stats_at = stat.computed_at
+    return out
 
 
 def _material_out(m) -> MaterialOut:
@@ -192,22 +218,73 @@ async def audiences(_actor: User = Depends(require_roles(*_HR))) -> list[dict]:
     ]
 
 
+@router.get("/report")
+async def course_report(
+    _actor: User = Depends(require_roles(*_HR)), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Umumiy hisobot — TAYYOR raqamlardan (S-37).
+
+    ⚠️ Bu yerda hech narsa HISOBLANMAYDI: cron `course_report_tick`
+    da hisoblab qo'ygan qatorlar yig'iladi. Ma'lumot bir necha daqiqa
+    eskirishi mumkin — bu hisobot, real vaqt emas."""
+    rows = await svc.list_courses(db)
+    stats = await svc.stats_map(db)
+    jami = {
+        "courses": len(rows),
+        "mandatory": sum(1 for c in rows if c.is_mandatory),
+        "published": sum(1 for c in rows if c.is_published),
+        "assigned": 0,
+        "not_started": 0,
+        "in_progress": 0,
+        "finished": 0,
+        "passed": 0,
+        "failed": 0,
+        "pending_review": 0,
+        "overdue": 0,
+    }
+    eng_eski = None
+    for c in rows:
+        st = stats.get(c.id)
+        if st is None:
+            continue
+        jami["assigned"] += st.assigned_count
+        for k in ("not_started", "in_progress", "finished", "passed",
+                  "failed", "pending_review", "overdue"):
+            jami[k] += getattr(st, k)
+        if eng_eski is None or st.computed_at < eng_eski:
+            eng_eski = st.computed_at
+    #  Majburiy kurs tugatish foizi (TZ 3.31 uchun ham kerak bo'ladi).
+    majburiy_tayinlangan = sum(
+        stats[c.id].assigned_count for c in rows
+        if c.is_mandatory and c.id in stats
+    )
+    majburiy_otgan = sum(
+        stats[c.id].passed for c in rows if c.is_mandatory and c.id in stats
+    )
+    jami["mandatory_assigned"] = majburiy_tayinlangan
+    jami["mandatory_passed"] = majburiy_otgan
+    jami["mandatory_percent"] = (
+        round(majburiy_otgan * 100 / majburiy_tayinlangan)
+        if majburiy_tayinlangan
+        else None
+    )
+    #  Raqamlar qachonlik — HR eskirganini bilsin.
+    jami["computed_at"] = eng_eski
+    return jami
+
+
 @router.get("", response_model=list[CourseOut])
 async def list_courses(
     _actor: User = Depends(require_roles(*_HR)), db: AsyncSession = Depends(get_db)
 ) -> list[CourseOut]:
+    #  ⚠️ ILGARI bu yerda N+1 bor edi: har kurs uchun material, savol
+    #  va tayinlash ALOHIDA so'rov bilan sanalardi (S-34). cPanel'da
+    #  konkurentlik = 1 — bitta sekin sahifa BUTUN saytni kutdiradi.
+    #  Endi raqamlar cron'da hisoblanadi (S-37) va bu yerda BITTA
+    #  qo'shimcha so'rov bo'ladi.
     rows = await svc.list_courses(db)
-    out = []
-    for c in rows:
-        out.append(
-            _course_out(
-                c,
-                materials=len(await svc.materials(db, c.id)),
-                questions=len(await svc.questions(db, c.id)),
-                assigned=len(await svc.assignments_for_course(db, c.id)),
-            )
-        )
-    return out
+    stats = await svc.stats_map(db)
+    return [_course_out(c, stat=stats.get(c.id)) for c in rows]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=CourseOut)

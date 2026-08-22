@@ -1807,6 +1807,35 @@ export type CourseItem = {
   material_count: number;
   question_count: number;
   assigned_count: number;
+  /** S-37: cron'da hisoblangan raqamlar. `stats_at` null bo'lsa
+   *  hali hisoblanmagan (kurs yangi, cron ishlamagan). */
+  not_started: number;
+  in_progress: number;
+  finished: number;
+  passed: number;
+  failed: number;
+  pending_review: number;
+  overdue: number;
+  stats_at: string | null;
+};
+
+/** Umumiy hisobot (TZ 3.1 / S-37). */
+export type CourseReport = {
+  courses: number;
+  mandatory: number;
+  published: number;
+  assigned: number;
+  not_started: number;
+  in_progress: number;
+  finished: number;
+  passed: number;
+  failed: number;
+  pending_review: number;
+  overdue: number;
+  mandatory_assigned: number;
+  mandatory_passed: number;
+  mandatory_percent: number | null;
+  computed_at: string | null;
 };
 
 export type CourseMaterialItem = {

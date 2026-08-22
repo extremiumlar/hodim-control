@@ -646,6 +646,14 @@ async def main() -> None:
         await _run_misc_inprocess(
             now, "shartnoma ro'yxati", "contract_registration_tick"
         )
+    # Kurs hisoboti (S-37) — 8:50 da yig'ma raqamlarni qayta hisoblaydi
+    # va majburiy kurs muddatini `deadlines` ga yozadi. `deadline_tick`
+    # (9:00) dan OLDIN: muddat avval yaratilsin, keyin xabar ketsin.
+    #
+    # ⚠️ OG'IR ISH SHU YERDA, sahifada emas (S-07). Ro'yxat sahifasi
+    # tayyor `course_stats` qatorini o'qiydi.
+    if now.hour == 8 and now.minute == 50:
+        await _run_misc_inprocess(now, "kurs hisoboti", "course_report_tick")
     # Muddat eslatmalari (S-13) — HAR KUNI ertalab soat 9:00.
     # Kuniga bir marta: `reminded_at` takrorlanishni o'zi to'sadi, ya'ni
     # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.
