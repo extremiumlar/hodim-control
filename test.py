@@ -13049,6 +13049,205 @@ def test_b_block_visibility_audit() -> None:
         conn.close()
 
 
+
+def test_courses_model() -> None:
+    """S-32 (TZ 3.1) — o'quv paneli: inventarizatsiya va model.
+
+    Qabul mezonlari (TZ):
+      • anketa bilan umumiy qism HUJJATLASHTIRILGAN;
+      • uch jadval migratsiyasi IKKALA DIALEKTDA ishlaydi;
+      • `deleted_at` bor va BARCHA o'qish shu bilan filtrlanadi.
+    """
+    import asyncio
+    import re as _re
+
+    print("\n" + "=" * 60)
+    print("S-32: O'QUV PANELI — MODEL")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    conn = db()
+    cur = conn.cursor()
+    kurs_id = None
+    try:
+        # ══════════════════════════════════════════════
+        # 1) UCH JADVAL VA `deleted_at`
+        # ══════════════════════════════════════════════
+        for jadval in ("courses", "course_materials", "course_questions"):
+            ustunlar = [r[1] for r in cur.execute(f"PRAGMA table_info({jadval})")]
+            check(f"S-32: `{jadval}` jadvali bor va `deleted_at` ustuni mavjud",
+                  bool(ustunlar) and "deleted_at" in ustunlar,
+                  "ustunlar=" + str(ustunlar[:6]))
+
+        # ══════════════════════════════════════════════
+        # 2) IKKALA DIALEKT
+        #
+        # Postgres'da `BOOLEAN DEFAULT 0` XATO beradi (butun son
+        # boolean ustunga tushmaydi). SQLite esa `false` ni bilmaydi.
+        # `sa.false()` ikkovini to'g'ri render qiladi — shuni
+        # TEKSHIRAMIZ, ishonch bilan qoldirmaymiz.
+        # ══════════════════════════════════════════════
+        import os as _os
+        import subprocess as _sp
+        muhit = dict(_os.environ)
+        muhit["DATABASE_URL"] = "postgresql+asyncpg://u:p@localhost/db"
+        try:
+            ddl = _sp.run(
+                [sys.executable, "-m", "alembic", "-c", "db/alembic.ini",
+                 "upgrade", "kb01e1f2a3b4:cr02f2a3b4c5", "--sql"],
+                capture_output=True, text=True, env=muhit, timeout=120,
+            ).stdout
+            check("S-32: migratsiya Postgres dialektida renderlanadi",
+                  "CREATE TABLE courses" in ddl, "uzunlik=" + str(len(ddl)))
+            check("S-32: Postgres'da `BOOLEAN DEFAULT false` (0 EMAS)",
+                  "BOOLEAN DEFAULT false" in ddl and "BOOLEAN DEFAULT (0)" not in ddl,
+                  [l.strip() for l in ddl.splitlines() if "BOOLEAN" in l][:2])
+            check("S-32: Postgres'da `options` ustuni JSON",
+                  _re.search(r"options JSON", ddl) is not None,
+                  [l.strip() for l in ddl.splitlines() if "options" in l][:2])
+        except Exception as e:
+            check("S-32: Postgres dialekti tekshiruvi", False, str(e)[:120])
+
+        # ══════════════════════════════════════════════
+        # 3) BARCHA O'QISH `deleted_at` NI FILTRLAYDI
+        #
+        # ⚠️ ENG MUHIM TEKSHIRUV. Buni «esda tutishga» qoldirib
+        # bo'lmaydi — o'chirilgan kurs xodimga ko'rinsa, u bekor
+        # qilingan yo'riqnomani o'qib noto'g'ri qoidani o'rganardi.
+        # Shuning uchun kurs modellaridan TO'G'RIDAN-TO'G'RI o'qish
+        # `courses.py` dan TASHQARIDA taqiqlanadi: yagona kirish
+        # nuqtasi `alive()`.
+        # ══════════════════════════════════════════════
+        import pathlib as _pl
+        ildiz = _pl.Path(__file__).parent
+        buzuvchilar = []
+        naqsh = _re.compile(r"select\(\s*(Course|CourseMaterial|CourseQuestion)\b")
+        for fayl in list((ildiz / "api").rglob("*.py")) + list((ildiz / "bot").rglob("*.py")):
+            if fayl.name == "courses.py" and fayl.parent.name == "services":
+                continue  # yagona ruxsat etilgan joy
+            matn = fayl.read_text(encoding="utf-8", errors="ignore")
+            for m in naqsh.finditer(matn):
+                qator = matn[:m.start()].count(chr(10)) + 1
+                buzuvchilar.append(f"{fayl.relative_to(ildiz)}:{qator} {m.group(1)}")
+        check("S-32: kurs modellari `alive()` dan TASHQARIDA o'qilmaydi",
+              not buzuvchilar, " | ".join(buzuvchilar[:5]))
+
+        # ── `alive()` haqiqatan filtrlaydimi (xulq tekshiruvi) ──
+        async def _oqim():
+            from sqlalchemy import select as _sel
+
+            from api.services import courses as C
+            from db.models import CourseMaterial, CourseQuestion, User
+            async with async_session() as s2:
+                u = await s2.scalar(_sel(User).limit(1))
+                c1 = await C.create_course(
+                    s2, title="T-Kurs S32", description=None,
+                    pass_percent=70, max_attempts=0, actor_id=u.id)
+                await C.add_material(s2, course_id=c1.id, kind="text",
+                                     title="T-material-1", body="matn")
+                m2 = await C.add_material(s2, course_id=c1.id, kind="video",
+                                          title="T-material-2", file_id="T-FID")
+                q1 = await C.add_question(s2, course_id=c1.id, text="2+2?",
+                                          options=["3", "4"], correct_index=1)
+                q2 = await C.add_question(s2, course_id=c1.id, text="Fikringiz?")
+                await s2.commit()
+                natija = {
+                    "kurs_id": c1.id,
+                    "tartib": [m.position for m in await C.materials(s2, c1.id)],
+                    "ochiq_savol": (q2.options, q2.correct_index),
+                    "test_savol": (q1.options, q1.correct_index),
+                }
+                #  Materialni yumshoq o'chiramiz
+                await C.soft_delete(s2, m2)
+                await s2.commit()
+                natija["ochirilgach_material"] = [
+                    m.title for m in await C.materials(s2, c1.id)]
+                #  Kursni yumshoq o'chiramiz
+                await C.soft_delete(s2, c1)
+                await s2.commit()
+                natija["ochirilgach_kurs"] = await C.get_course(s2, c1.id)
+                natija["royxatda"] = [
+                    x.id for x in await C.list_courses(s2) if x.id == c1.id]
+                #  Bazada qator TURIBDI (qattiq o'chirilmagan)
+                natija["bazada_bor"] = await s2.scalar(
+                    _sel(CourseMaterial.id).where(CourseMaterial.id == m2.id)) is not None
+                return natija
+
+        r = asyncio.run(_oqim())
+        kurs_id = r["kurs_id"]
+        check("S-32: tartib 10 qadam bilan beriladi (oraga qo'shish uchun joy)",
+              r["tartib"] == [10, 20], "=" + str(r["tartib"]))
+        check("S-32: ochiq savol AVTOMAT baholanmaydi (`correct_index=None`)",
+              r["ochiq_savol"] == ([], None), "=" + str(r["ochiq_savol"]))
+        check("S-32: test savolida to'g'ri javob saqlanadi",
+              r["test_savol"] == (["3", "4"], 1), "=" + str(r["test_savol"]))
+        check("S-32: o'chirilgan material ro'yxatdan CHIQADI",
+              r["ochirilgach_material"] == ["T-material-1"],
+              "=" + str(r["ochirilgach_material"]))
+        check("S-32: o'chirilgan kurs `get_course` da YO'Q",
+              r["ochirilgach_kurs"] is None, "=" + str(r["ochirilgach_kurs"]))
+        check("S-32: o'chirilgan kurs ro'yxatda YO'Q",
+              not r["royxatda"], "=" + str(r["royxatda"]))
+        check("S-32: o'chirish YUMSHOQ — qator bazada qoladi (tarix yo'qolmaydi)",
+              r["bazada_bor"] is True, "=" + str(r["bazada_bor"]))
+
+        # ══════════════════════════════════════════════
+        # 4) ANKETA MEXANIZMI QAYTA ISHLATILADI
+        # ══════════════════════════════════════════════
+        import inspect as _insp
+
+        from api.services import courses as _C
+        manba = _insp.getsource(_C)
+        check("S-32: `.docx` ajratgichi anketanikidan olinadi (ikkinchisi yozilmagan)",
+              "from api.services.docx_parse import parse_questions" in manba,
+              "import topilmadi")
+        modellar_manbasi = (ildiz / "db" / "models.py").read_text(encoding="utf-8")
+        check("S-32: anketa bilan umumiy qism HUJJATLASHTIRILGAN",
+              "O'QUV PANELI" in modellar_manbasi
+              and "AnketaAssignment.current_q" in modellar_manbasi
+              and "docx_parse" in modellar_manbasi,
+              "models.py dagi hujjat bloki topilmadi")
+
+        #  Ajratgich haqiqatan ishlaydimi — `.txt` bilan sinaymiz
+        async def _import():
+            from sqlalchemy import select as _sel
+
+            from db.models import User
+            async with async_session() as s2:
+                u = await s2.scalar(_sel(User).limit(1))
+                c2 = await _C.create_course(
+                    s2, title="T-Kurs import", description=None,
+                    pass_percent=70, max_attempts=0, actor_id=u.id)
+                matn = "1. Birinchi savol?\n2. Ikkinchi savol?\n3. Uchinchi savol?\n"
+                res = await _C.import_questions_from_file(
+                    s2, course_id=c2.id, data=matn.encode("utf-8"),
+                    filename="savollar.txt")
+                await s2.commit()
+                return res, [q.text for q in await _C.questions(s2, c2.id)]
+
+        res, savollar = asyncio.run(_import())
+        check("S-32: fayldan savollar yuklandi (anketa ajratgichi bilan)",
+              res.get("added", 0) >= 3, "=" + str(res))
+        check("S-32: yuklangan savollar OCHIQ javobli (ajratgich variant bilmaydi)",
+              len(savollar) >= 3, "=" + str(savollar[:3]))
+    except Exception:
+        check("S-32 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-Kurs%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-Kurs%')")
+            cur.execute("delete from courses where title like 'T-Kurs%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -13443,6 +13642,12 @@ def main() -> None:
         test_b_block_visibility_audit()
     except Exception:
         print("S-30 ko'rinish auditi testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_model()
+    except Exception:
+        print("S-32 o'quv paneli testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:
