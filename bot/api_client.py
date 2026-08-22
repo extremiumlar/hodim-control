@@ -1435,3 +1435,81 @@ async def resolve_suggestion(
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ── O'quv paneli (yangi TZ 3.1 / S-35) ──
+
+
+async def my_courses(telegram_id: int) -> list[dict]:
+    resp = await _get_client().get("/courses/bot/my", params={"telegram_id": telegram_id})
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_progress(telegram_id: int, assignment_id: int) -> dict:
+    resp = await _get_client().post(
+        "/courses/bot/progress",
+        json={"telegram_id": telegram_id, "assignment_id": assignment_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_next_material(telegram_id: int, assignment_id: int) -> dict:
+    resp = await _get_client().post(
+        "/courses/bot/next-material",
+        json={"telegram_id": telegram_id, "assignment_id": assignment_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_answer(
+    telegram_id: int, assignment_id: int, *, choice: int | None = None,
+    text: str | None = None,
+) -> dict:
+    resp = await _get_client().post(
+        "/courses/bot/answer",
+        json={
+            "telegram_id": telegram_id,
+            "assignment_id": assignment_id,
+            "choice": choice,
+            "text": text,
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_finish(telegram_id: int, assignment_id: int) -> dict:
+    resp = await _get_client().post(
+        "/courses/bot/finish",
+        json={"telegram_id": telegram_id, "assignment_id": assignment_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_retry(telegram_id: int, assignment_id: int) -> dict:
+    resp = await _get_client().post(
+        "/courses/bot/retry",
+        json={"telegram_id": telegram_id, "assignment_id": assignment_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def course_answer_text(telegram_id: int, text: str) -> dict:
+    """Erkin matn ochiq savolga javobmi — BAZADAN aniqlanadi.
+
+    `{"handled": false}` bo'lsa bot xabarni keyingi oqimlarga
+    o'tkazadi (anketa protokoli)."""
+    resp = await _get_client().post(
+        "/courses/bot/answer-text",
+        json={"telegram_id": telegram_id, "text": text},
+    )
+    if resp.status_code >= 400:
+        return {"handled": False}
+    return resp.json()

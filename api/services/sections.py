@@ -232,6 +232,8 @@ _EMPLOYEE: list[Section] = [
     Section("my-profile", "Ma'lumotlarim", "/me/profile", "UserCheck", 131, "employee"),
     Section("my-inquiries", "HR ga savol", "/me/inquiries", "MessageSquare", 132,
             "employee", bot_button="❓ HR ga savol"),
+    Section("my-courses", "Darsliklarim", "/me/courses", "GraduationCap", 133,
+            "employee", bot_button="📚 Darsliklarim"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
@@ -298,6 +300,7 @@ BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 BTN_SALES_AI = "🤖 Sotuv AI"
 BTN_CHECKIN = "✅ Keldim / Ketdim"
 BTN_HR_ASK = "❓ HR ga savol"
+BTN_MY_COURSES = "📚 Darsliklarim"
 
 
 def bot_menu_rows(user: User) -> list[list[str]]:
@@ -337,6 +340,8 @@ def bot_menu_rows(user: User) -> list[list[str]]:
     #  «HR ga savol» — HAR QANDAY xodimda, rahbarda ham: rahbar ham
     #  o'z oyligi yoki hujjati bo'yicha savol berishi mumkin.
     rows.append([BTN_HR_ASK])
+    #  Darsliklar ham hammada: kurs rahbarga ham tayinlanishi mumkin.
+    rows.append([BTN_MY_COURSES])
     rows.append([BTN_SCHEDULE])
     if c.flags.get("payroll") and c.role != "boss":
         rows.append([BTN_PAYROLL])

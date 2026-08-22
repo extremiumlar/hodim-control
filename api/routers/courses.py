@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles
 from api.services import courses as svc
 from api.services.announcements import audience_user_ids
 from db.models import (
@@ -243,6 +243,347 @@ async def _get(db: AsyncSession, course_id: int):
     if c is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Kurs topilmadi")
     return c
+
+
+# ═════════════════════════════════════════════════════════════
+# XODIM TOMONI (S-35 bot · S-36 kabinet)
+#
+# ⚠️ IKKALASI BITTA HOLATNI o'qiydi (S-36 qabul mezoni): quyidagi
+# `_me_*` funksiyalari YAGONA mantiq, ustidan ikkita yupqa adapter —
+# JWT (sayt/kabinet) va `telegram_id` (bot). Ikki nusxa yozilsa,
+# xodim botda bir joyda, saytda boshqa joyda turardi.
+#
+# ⚠️ HOLAT FSM DA EMAS, BAZADA. Bot restart bo'lsa ham xodim qolgan
+# joyidan davom etadi (S-35 qabul mezoni) — `current_material` va
+# `current_q` bazada.
+#
+# ⚠️ Bu marshrutlar `/{course_id}` dan OLDIN e'lon qilinadi: aks holda
+# «me» so'zi kurs raqami deb o'qilib 422 qaytarardi (S-28 tuzog'i).
+# ═════════════════════════════════════════════════════════════
+
+
+class AnswerIn(BaseModel):
+    text: str | None = None
+    choice: int | None = None
+
+
+def _progress_out(p: dict, assignment) -> dict:
+    """Xodimga ko'rsatiladigan holat. Joriy band turiga qarab
+    boshqacha maydonlar qaytadi."""
+    joriy = p.get("current")
+    band = None
+    if joriy is not None and p["stage"] == "material":
+        band = {
+            "id": joriy.id,
+            "kind": joriy.kind,
+            "kind_label": COURSE_MATERIAL_KIND_LABELS.get(joriy.kind, joriy.kind),
+            "title": joriy.title,
+            "body": joriy.body,
+            "file_id": joriy.file_id,
+            "url": joriy.url,
+        }
+    elif joriy is not None and p["stage"] == "savol":
+        band = {
+            "id": joriy.id,
+            "text": joriy.text,
+            "options": joriy.options or [],
+            "points": joriy.points,
+            #  ⚠️ To'g'ri javob XODIMGA YUBORILMAYDI — aks holda uni
+            #  brauzer/bot javobidan o'qib olish mumkin bo'lardi.
+            "is_open": not (joriy.options or []),
+        }
+    return {
+        "assignment_id": assignment.id,
+        "course_id": assignment.course_id,
+        "status": assignment.status,
+        "stage": p["stage"],
+        "item": band,
+        "material_index": p["material_index"],
+        "material_total": p["material_total"],
+        "question_index": p["question_index"],
+        "question_total": p["question_total"],
+        "attempt_no": p["attempt_no"],
+    }
+
+
+async def _my_assignment(db: AsyncSession, user: User, assignment_id: int):
+    """Tayinlashni oladi va EGALIGINI tekshiradi.
+
+    ⚠️ Begona tayinlash uchun 404 (403 emas) — id ketma-ket son, 403
+    uning mavjudligini tasdiqlardi (S-06 qoidasi)."""
+    from db.models import CourseAssignment
+
+    row = await db.scalar(
+        svc.alive(CourseAssignment).where(CourseAssignment.id == assignment_id)
+    )
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Topilmadi")
+    return row
+
+
+async def _me_list(db: AsyncSession, user: User) -> list[dict]:
+    """Menga tayinlangan kurslar.
+
+    ⚠️ FAQAT o'zimniki (S-36 qabul mezoni). Nashrdan olingan kurs ham
+    ko'rinadi — xodim uni boshlagan bo'lishi mumkin va yarim yo'lda
+    yo'qolib qolmasin."""
+    rows = await svc.my_assignments(db, user.id)
+    natijalar = await svc.latest_results(db, [a.id for a in rows])
+    out = []
+    for a in rows:
+        kurs = await svc.get_course(db, a.course_id)
+        if kurs is None:
+            continue  # kurs o'chirilgan
+        r = natijalar.get(a.id)
+        out.append(
+            {
+                "assignment_id": a.id,
+                "course_id": kurs.id,
+                "title": kurs.title,
+                "description": kurs.description,
+                "is_mandatory": kurs.is_mandatory,
+                "pass_percent": kurs.pass_percent,
+                "status": a.status,
+                "attempt_no": a.attempt_no,
+                "due_date": a.due_date,
+                "percent": r.percent if r else None,
+                "passed": r.passed if r else None,
+                "pending_review": r.pending_review if r else None,
+            }
+        )
+    return out
+
+
+async def _me_progress(db: AsyncSession, user: User, assignment_id: int) -> dict:
+    a = await _my_assignment(db, user, assignment_id)
+    return _progress_out(await svc.progress(db, a), a)
+
+
+async def _me_next_material(db: AsyncSession, user: User, assignment_id: int) -> dict:
+    a = await _my_assignment(db, user, assignment_id)
+    try:
+        p = await svc.next_material(db, a)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    out = _progress_out(p, a)
+    await db.commit()
+    return out
+
+
+async def _me_answer(
+    db: AsyncSession, user: User, assignment_id: int, payload: AnswerIn
+) -> dict:
+    a = await _my_assignment(db, user, assignment_id)
+    try:
+        res = await svc.submit_answer(db, assignment=a, text=payload.text,
+                                      choice=payload.choice)
+    except ValueError as e:
+        #  «Avval materiallarni ko'rib chiqing» — 409: bu holat xatosi,
+        #  noto'g'ri so'rov emas (S-35 qabul mezoni: test material
+        #  ko'rilmaguncha ochilmaydi).
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    togri = res.pop("correct", None)
+    out = {**_progress_out(res, a), "correct": togri}
+    await db.commit()
+    return out
+
+
+async def _me_finish(db: AsyncSession, user: User, assignment_id: int) -> dict:
+    a = await _my_assignment(db, user, assignment_id)
+    try:
+        r = await svc.finish(db, a)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    kurs = await svc.get_course(db, a.course_id)
+    out = {
+        "score": r.score,
+        "max_score": r.max_score,
+        "percent": r.percent,
+        "passed": r.passed,
+        "pending_review": r.pending_review,
+        "attempt_no": r.attempt_no,
+        "pass_percent": kurs.pass_percent if kurs else None,
+        #  Qayta urinish MUMKINmi — bot/kabinet tugmani shunga qarab
+        #  ko'rsatadi. Mantiq `retry()` bilan bir xil bo'lishi uchun
+        #  shu yerda hisoblanadi, mijozda emas.
+        "can_retry": (
+            not r.passed
+            and not r.pending_review
+            and (not kurs or not kurs.max_attempts
+                 or r.attempt_no < kurs.max_attempts)
+        ),
+    }
+    await db.commit()
+    return out
+
+
+async def _me_retry(db: AsyncSession, user: User, assignment_id: int) -> dict:
+    a = await _my_assignment(db, user, assignment_id)
+    try:
+        await svc.retry(db, a)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
+    out = _progress_out(await svc.progress(db, a), a)
+    await db.commit()
+    return out
+
+
+# ── JWT adapteri (sayt / kabinet) ──
+
+
+@router.get("/me/assignments")
+async def my_courses(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    return await _me_list(db, user)
+
+
+@router.get("/me/{assignment_id}/progress")
+async def my_progress(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_progress(db, user, assignment_id)
+
+
+@router.post("/me/{assignment_id}/next-material")
+async def my_next_material(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_next_material(db, user, assignment_id)
+
+
+@router.post("/me/{assignment_id}/answer")
+async def my_answer(
+    assignment_id: int,
+    payload: AnswerIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_answer(db, user, assignment_id, payload)
+
+
+@router.post("/me/{assignment_id}/finish")
+async def my_finish(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_finish(db, user, assignment_id)
+
+
+@router.post("/me/{assignment_id}/retry")
+async def my_retry(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_retry(db, user, assignment_id)
+
+
+# ── Bot adapteri (`telegram_id`) ──
+
+
+async def _bot_user(db: AsyncSession, telegram_id: int) -> User:
+    u = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if u is None or not u.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return u
+
+
+class BotIdIn(BaseModel):
+    telegram_id: int
+    assignment_id: int
+
+
+class BotAnswerIn(BotIdIn):
+    text: str | None = None
+    choice: int | None = None
+
+
+class BotTextIn(BaseModel):
+    telegram_id: int
+    text: str
+
+
+@router.get("/bot/my")
+async def bot_my_courses(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    return await _me_list(db, await _bot_user(db, telegram_id))
+
+
+@router.post("/bot/progress")
+async def bot_progress(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
+    u = await _bot_user(db, payload.telegram_id)
+    return await _me_progress(db, u, payload.assignment_id)
+
+
+@router.post("/bot/next-material")
+async def bot_next_material(
+    payload: BotIdIn, db: AsyncSession = Depends(get_db)
+) -> dict:
+    u = await _bot_user(db, payload.telegram_id)
+    return await _me_next_material(db, u, payload.assignment_id)
+
+
+@router.post("/bot/answer")
+async def bot_answer(payload: BotAnswerIn, db: AsyncSession = Depends(get_db)) -> dict:
+    u = await _bot_user(db, payload.telegram_id)
+    return await _me_answer(
+        db, u, payload.assignment_id, AnswerIn(text=payload.text, choice=payload.choice)
+    )
+
+
+@router.post("/bot/finish")
+async def bot_finish(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
+    u = await _bot_user(db, payload.telegram_id)
+    return await _me_finish(db, u, payload.assignment_id)
+
+
+@router.post("/bot/retry")
+async def bot_retry(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
+    u = await _bot_user(db, payload.telegram_id)
+    return await _me_retry(db, u, payload.assignment_id)
+
+
+@router.post("/bot/answer-text")
+async def bot_answer_text(payload: BotTextIn, db: AsyncSession = Depends(get_db)) -> dict:
+    """Xodimning ERKIN MATNI — OCHIQ savolga javobmi?
+
+    ⚠️ ANKETA PROTOKOLI (`/anketa/answer` naqshi): botda FSM saqlanmaydi,
+    javob kutilayotgani BAZADAN aniqlanadi. Mos holat bo'lmasa
+    `{"handled": false}` qaytadi va bot xabarni keyingi oqimlarga
+    (AI sabab va h.k.) o'tkazib yuboradi. Aks holda kurs oqimi
+    boshqa modullarning matnlarini o'g'irlab qolardi."""
+    matn = (payload.text or "").strip()
+    if not matn:
+        return {"handled": False}
+    u = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if u is None or not u.is_active:
+        return {"handled": False}
+
+    from db.models import CourseAssignmentStatus
+
+    for a in await svc.my_assignments(db, u.id):
+        #  ⚠️ `in_progress` YETARLI EMAS. Materialsiz kurs to'g'ridan-
+        #  to'g'ri savoldan boshlanadi va holat `assigned` bo'lib qoladi
+        #  (`in_progress` ga o'tkazadigan `next_material` chaqirilmaydi).
+        #  Faqat `in_progress` tekshirilsa, bunday kursning ochiq savoli
+        #  UMUMAN javob ololmasdi — testda aynan shu ushlandi.
+        if a.status == CourseAssignmentStatus.finished.value:
+            continue
+        p = await svc.progress(db, a)
+        #  Faqat OCHIQ savol kutilayotgan bo'lsa ushlaymiz. Variantli
+        #  savol tugma bilan javob beriladi va matn unga tegishli emas.
+        if p["stage"] != "savol" or (p["current"].options or []):
+            continue
+        res = await _me_answer(db, u, a.id, AnswerIn(text=matn))
+        return {"handled": True, **res}
+    return {"handled": False}
 
 
 @router.get("/{course_id}", response_model=CourseDetailOut)

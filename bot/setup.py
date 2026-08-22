@@ -21,6 +21,7 @@ from bot.handlers import (
     assign_task,
     attendance_stats,
     celebration,
+    courses,
     busy_period,
     documents,
     knowledge,
@@ -128,6 +129,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(celebration.router)
     dp.include_router(documents.router)
     dp.include_router(hr_inquiries.router)
+    dp.include_router(courses.router)
     # ENG OXIRIDA UCH "erkin matn" ushlagichi, tartib muhim:
     # 1) avans summasi — API'da summa kutilmayotgan bo'lsa SkipHandler;
     #    BIRINCHI, chunki bu holat qisqa muddatli va xodim aynan shu
@@ -137,6 +139,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     # 3) AI sabab matni — yuqoridagi hech bir handler olmagan xabarlar.
     dp.include_router(advance.amount_router)
     dp.include_router(anketa.answer_router)
+    dp.include_router(courses.answer_text_router)
     dp.include_router(ai_watch.reason_text_router)
 
     @dp.error()

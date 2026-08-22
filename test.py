@@ -7853,7 +7853,8 @@ def test_bot_menu_from_server() -> None:
     # o'zgarish commit izohida ko'rsatiladi. Tasodifiy o'zgarish (masalan
     # `visible` shartini buzib qo'yish) shu yerda ushlanadi.
     # Tarix: S-11 da «📁 Hujjatlarim» qo'shildi (TZ 3.4);
-    #        S-28 da «❓ HR ga savol» qo'shildi (TZ 3.29).
+    #        S-28 da «❓ HR ga savol» qo'shildi (TZ 3.29);
+    #        S-35 da «📚 Darsliklarim» qo'shildi (TZ 3.1).
     kutilgan = [
         ["✅ Keldim / Ketdim"],
         ["📋 Vazifalarim"],
@@ -7862,6 +7863,7 @@ def test_bot_menu_from_server() -> None:
         ["📈 Statistikam", "🙋 Sababli kun so'rash"],
         ["📮 Murojaatlarim", "📁 Hujjatlarim"],
         ["❓ HR ga savol"],
+        ["📚 Darsliklarim"],
         ["🗓 Ish jadvali"],
         ["💵 Mening oyligim"],
         ["📋 Bugungi rejam"],
@@ -13797,6 +13799,264 @@ def test_courses_hr_api() -> None:
         conn.close()
 
 
+
+def test_courses_employee() -> None:
+    """S-35 (TZ 3.1) — o'quv paneli xodim tomoni (bot).
+
+    Qabul mezonlari (TZ):
+      • bot restart bo'lsa ham xodim QOLGAN JOYIDAN davom etadi;
+      • test BARCHA MATERIAL ko'rilmaguncha ochilmaydi;
+      • o'tmasa QAYTA URINISH beriladi (urinish soni yoziladi).
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-35: O'QUV PANELI — XODIM TOMONI (BOT)")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Ce%'")
+        conn.commit()
+        for nom, tg in (("T-Ce Xodim", 999703201), ("T-Ce Begona", 999703202)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["T-Ce Xodim"], "employee")
+        begona_t = token_for(ids["T-Ce Begona"], "employee")
+        TG = 999703201
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── HR kurs tayyorlaydi: 2 material + 2 test savoli ──
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Ce Yong'in xavfsizligi", "description": None,
+                "pass_percent": 80, "max_attempts": 2, "is_mandatory": True})
+            kurs_id = r.json()["id"]
+            for i in (1, 2):
+                c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                    "kind": "text", "title": f"{i}-dars", "body": f"{i}-dars matni"})
+            c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "O'chirgich qayerda?", "options": ["Bilmayman", "Chiqish yonida"],
+                "correct_index": 1, "points": 2})
+            c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Nechchiga qo'ng'iroq?", "options": ["101", "999"],
+                "correct_index": 0, "points": 1})
+            c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["T-Ce Xodim"]]})
+
+            # ══════════════════════════════════════════════
+            # BOT: kurslarim
+            # ══════════════════════════════════════════════
+            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            check("S-35: botda «Darsliklarim» -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            mine = r.json() if r.status_code == 200 else []
+            check("S-35: tayinlangan kurs ko'rindi",
+                  len(mine) == 1 and mine[0]["title"] == "T-Ce Yong'in xavfsizligi",
+                  "=" + str(mine[:1]))
+            check("S-35: «majburiy» belgisi keldi",
+                  mine and mine[0]["is_mandatory"] is True, "=" + str(mine[:1]))
+            aid = mine[0]["assignment_id"]
+
+            # ══════════════════════════════════════════════
+            # ⚠️ TEST MATERIAL KO'RILMAGUNCHA OCHILMAYDI
+            # ══════════════════════════════════════════════
+            r = c.post("/courses/bot/progress",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            p1 = r.json() if r.status_code == 200 else {}
+            check("S-35: boshlanishda MATERIAL bosqichi",
+                  p1.get("stage") == "material" and p1.get("material_index") == 0,
+                  "=" + str({k: p1.get(k) for k in ("stage", "material_index")}))
+            check("S-35: joriy material matni keldi",
+                  (p1.get("item") or {}).get("title") == "1-dars",
+                  "=" + str(p1.get("item")))
+
+            r = c.post("/courses/bot/answer",
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+            check("S-35: ⚠️ material tugamasdan TEST OCHILMAYDI -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code) + " " + r.text[:120])
+
+            #  Ikkala materialni ko'ramiz
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            check("S-35: 1-material ko'rildi -> 2-material",
+                  r.json().get("stage") == "material"
+                  and r.json().get("material_index") == 1,
+                  "=" + str(r.json().get("stage")))
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            p2 = r.json()
+            check("S-35: barcha material ko'rilgach TEST ochildi",
+                  p2.get("stage") == "savol", "=" + str(p2.get("stage")))
+            check("S-35: savolda TO'G'RI JAVOB yuborilmaydi (o'g'irlab bo'lmasin)",
+                  "correct_index" not in (p2.get("item") or {}),
+                  "=" + str(p2.get("item")))
+
+            #  Materiallar tugagach yana `next-material` MUMKIN EMAS
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            check("S-35: materiallar tugagach yana o'tib bo'lmaydi -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ RESTARTGA CHIDAMLILIK
+            #
+            # Bot «qayta ishga tushdi» deb faraz qilamiz: hech qanday
+            # xotira yo'q, faqat `telegram_id` bilan so'raymiz.
+            # ══════════════════════════════════════════════
+            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            qayta = r.json()[0]
+            r = c.post("/courses/bot/progress",
+                       json={"telegram_id": TG, "assignment_id": qayta["assignment_id"]})
+            check("S-35: ⚠️ RESTARTDAN keyin xodim QOLGAN JOYIDA (savol bosqichi)",
+                  r.json().get("stage") == "savol"
+                  and r.json().get("question_index") == 0,
+                  "=" + str({k: r.json().get(k) for k in ("stage", "question_index")}))
+
+            # ══════════════════════════════════════════════
+            # 1-urinish: bittasi noto'g'ri -> 2/3 = 67% < 80%
+            # ══════════════════════════════════════════════
+            r = c.post("/courses/bot/answer",
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+            check("S-35: 1-savol javobi qabul qilindi",
+                  r.status_code == 200 and r.json().get("correct") is True,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            r = c.post("/courses/bot/answer",
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+            check("S-35: 2-savol noto'g'ri deb belgilandi",
+                  r.json().get("correct") is False, "=" + str(r.json().get("correct")))
+            check("S-35: savollar tugagach bosqich «tugadi»",
+                  r.json().get("stage") == "tugadi", "=" + str(r.json().get("stage")))
+
+            r = c.post("/courses/bot/finish",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            res1 = r.json() if r.status_code == 200 else {}
+            check("S-35: natija DARHOL keldi (foiz va o'tdi/o'tmadi)",
+                  res1.get("percent") == 67 and res1.get("passed") is False,
+                  "=" + str(res1))
+            check("S-35: ⚠️ o'tmagach QAYTA URINISH beriladi",
+                  res1.get("can_retry") is True, "=" + str(res1))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ QAYTA URINISH — urinish soni yoziladi
+            # ══════════════════════════════════════════════
+            r = c.post("/courses/bot/retry",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            p3 = r.json() if r.status_code == 200 else {}
+            check("S-35: qayta urinish boshlandi, urinish raqami 2",
+                  p3.get("attempt_no") == 2 and p3.get("stage") == "savol",
+                  "=" + str({k: p3.get(k) for k in ("attempt_no", "stage")}))
+            check("S-35: qayta urinishda MATERIAL qayta ko'rsatilmaydi",
+                  p3.get("material_index") == p3.get("material_total"),
+                  "=" + str({k: p3.get(k) for k in ("material_index", "material_total")}))
+
+            c.post("/courses/bot/answer",
+                   json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+            c.post("/courses/bot/answer",
+                   json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+            r = c.post("/courses/bot/finish",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            res2 = r.json()
+            check("S-35: 2-urinish 100% -> o'tdi",
+                  res2.get("percent") == 100 and res2.get("passed") is True
+                  and res2.get("attempt_no") == 2, "=" + str(res2))
+            check("S-35: o'tilgach qayta urinish TAKLIF QILINMAYDI",
+                  res2.get("can_retry") is False, "=" + str(res2))
+
+            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            check("S-35: ro'yxatda natija va urinish soni ko'rinadi",
+                  r.json()[0]["percent"] == 100 and r.json()[0]["attempt_no"] == 2,
+                  "=" + str(r.json()[:1]))
+
+            # ══════════════════════════════════════════════
+            # BEGONA XODIM — 404 (403 emas)
+            # ══════════════════════════════════════════════
+            r = c.get(f"/courses/me/{aid}/progress", headers=auth(begona_t))
+            check("S-35: ⚠️ begona tayinlash -> 404 (mavjudligi oshkor bo'lmaydi)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+            r = c.get("/courses/me/assignments", headers=auth(begona_t))
+            check("S-35: begona xodimda kurs YO'Q",
+                  r.status_code == 200 and r.json() == [], "=" + str(r.json())[:80])
+
+            # ══════════════════════════════════════════════
+            # SAYT VA BOT BITTA HOLATNI O'QIYDI (S-36 uchun asos)
+            # ══════════════════════════════════════════════
+            r_jwt = c.get(f"/courses/me/{aid}/progress", headers=auth(xodim_t))
+            r_bot = c.post("/courses/bot/progress",
+                           json={"telegram_id": TG, "assignment_id": aid})
+            check("S-35: JWT va bot BIR XIL holatni qaytaradi",
+                  r_jwt.status_code == 200 and r_jwt.json() == r_bot.json(),
+                  f"jwt={r_jwt.json()} bot={r_bot.json()}")
+
+            # ══════════════════════════════════════════════
+            # OCHIQ SAVOL — anketa protokoli
+            # ══════════════════════════════════════════════
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Ce Ochiq kurs", "description": None,
+                "pass_percent": 50, "max_attempts": 0, "is_mandatory": False})
+            k2 = r.json()["id"]
+            c.post(f"/courses/{k2}/questions", headers=auth(mgr_t),
+                   json={"text": "Fikringiz?", "options": [], "correct_index": None,
+                         "points": 1})
+            c.post(f"/courses/{k2}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{k2}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["T-Ce Xodim"]]})
+
+            r = c.post("/courses/bot/answer-text",
+                       json={"telegram_id": TG, "text": "Mening fikrim shu."})
+            check("S-35: ochiq savol javobi ERKIN MATNDAN ushlandi",
+                  r.json().get("handled") is True, "=" + str(r.json())[:150])
+
+            #  ⚠️ Mos holat yo'q bo'lsa `handled: false` — xabar boshqa
+            #  oqimlarga o'tadi (anketa protokoli).
+            r = c.post("/courses/bot/answer-text",
+                       json={"telegram_id": TG, "text": "Yana bir matn"})
+            check("S-35: ⚠️ kutilmagan matn USHLANMAYDI (boshqa oqimga o'tadi)",
+                  r.json().get("handled") is False, "=" + str(r.json())[:120])
+            r = c.post("/courses/bot/answer-text",
+                       json={"telegram_id": 111222333, "text": "notanish"})
+            check("S-35: notanish foydalanuvchi matni ushlanmaydi",
+                  r.json().get("handled") is False, "=" + str(r.json())[:120])
+    except Exception:
+        check("S-35 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-Ce%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-Ce%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-Ce%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-Ce%')")
+            cur.execute("delete from courses where title like 'T-Ce%'")
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -14209,6 +14469,12 @@ def main() -> None:
         test_courses_hr_api()
     except Exception:
         print("S-34 o'quv paneli API testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_employee()
+    except Exception:
+        print("S-35 xodim tomoni testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:
