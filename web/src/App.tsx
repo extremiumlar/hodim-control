@@ -62,6 +62,7 @@ const Probation = lazy(() => import("./pages/Probation"));
 const ProfileChanges = lazy(() => import("./pages/ProfileChanges"));
 const HrInquiries = lazy(() => import("./pages/HrInquiries"));
 const Courses = lazy(() => import("./pages/Courses"));
+const MeCourses = lazy(() => import("./pages/me/Courses"));
 const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
 
@@ -220,6 +221,7 @@ export default function App() {
           <Route path="me/salary-history" element={<MeSalaryHistory />} />
           <Route path="me/profile" element={<MeProfile />} />
           <Route path="me/inquiries" element={<MeInquiries />} />
+          <Route path="me/courses" element={<MeCourses />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

@@ -1848,3 +1848,59 @@ export type CourseAssignmentRow = {
   passed: boolean | null;
   pending_review: boolean | null;
 };
+
+/** Menga tayinlangan kurs (TZ 3.1 / S-36). */
+export type MyCourseItem = {
+  assignment_id: number;
+  course_id: number;
+  title: string;
+  description: string | null;
+  is_mandatory: boolean;
+  pass_percent: number;
+  status: string;
+  attempt_no: number;
+  due_date: string | null;
+  percent: number | null;
+  passed: boolean | null;
+  pending_review: boolean | null;
+};
+
+/** Kursdagi joriy holat. `stage`: material | savol | tugadi.
+ *  ⚠️ Savolda `correct_index` YO'Q — to'g'ri javob xodimga
+ *  yuborilmaydi (uni javobdan o'qib olish mumkin bo'lardi). */
+export type CourseProgress = {
+  assignment_id: number;
+  course_id: number;
+  status: string;
+  stage: string;
+  item: {
+    id: number;
+    kind?: string;
+    kind_label?: string;
+    title?: string;
+    body?: string | null;
+    file_id?: string | null;
+    url?: string | null;
+    text?: string;
+    options?: string[];
+    points?: number;
+    is_open?: boolean;
+  } | null;
+  material_index: number;
+  material_total: number;
+  question_index: number;
+  question_total: number;
+  attempt_no: number;
+  correct?: boolean | null;
+};
+
+export type CourseResultOut = {
+  score: number;
+  max_score: number;
+  percent: number;
+  passed: boolean;
+  pending_review: boolean;
+  attempt_no: number;
+  pass_percent: number | null;
+  can_retry: boolean;
+};

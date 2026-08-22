@@ -53,6 +53,8 @@ export const qk = {
   courseDetail: (id: number) => ["courses", id] as const,
   courseAssignments: (id: number) => ["courses", id, "assignments"] as const,
   courseMeta: ["courses", "meta"] as const,
+  myCourses: ["courses", "me"] as const,
+  myCourseProgress: (id: number) => ["courses", "me", id] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
   ackReaders: (t: string, id: number, v?: number) =>
@@ -1620,3 +1622,40 @@ export const useAssignCourse = () =>
       api.assignCourse(id, body),
     COURSE_KEYS
   );
+
+// ── O'quv paneli: xodim kabineti (TZ 3.1 / S-36) ──
+
+export const useMyCourses = () =>
+  useQuery({ queryKey: qk.myCourses, queryFn: api.myCourses });
+
+/** `id` null bo'lsa so'rov yuborilmaydi — kurs ochilmagan. */
+export const useMyCourseProgress = (id: number | null) =>
+  useQuery({
+    queryKey: qk.myCourseProgress(id ?? 0),
+    queryFn: () => api.myCourseProgress(id as number),
+    enabled: id !== null,
+  });
+
+//  ⚠️ Har amal `courses` daraxtini eskirtiradi — bot bilan bitta
+//  holat o'qilgani uchun boshqa qurilmadagi o'zgarish ham shu
+//  yerda ko'rinishi kerak.
+const MY_COURSE_KEYS = [["courses"]] as const;
+
+export const useMyCourseNextMaterial = () =>
+  useApiMutation((id: number) => api.myCourseNextMaterial(id), MY_COURSE_KEYS);
+
+export const useMyCourseAnswer = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: { text?: string | null; choice?: number | null } }) =>
+      api.myCourseAnswer(id, body),
+    MY_COURSE_KEYS
+  );
+
+export const useMyCourseFinish = () =>
+  useApiMutation((id: number) => api.myCourseFinish(id), MY_COURSE_KEYS);
+
+export const useMyCourseRetry = () =>
+  useApiMutation((id: number) => api.myCourseRetry(id), MY_COURSE_KEYS);
+
+export const useMyCourseSendMaterial = () =>
+  useApiMutation((id: number) => api.myCourseSendMaterial(id), []);

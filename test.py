@@ -14057,6 +14057,202 @@ def test_courses_employee() -> None:
         conn.close()
 
 
+
+def test_courses_cabinet() -> None:
+    """S-36 (TZ 3.1) — o'quv paneli xodim kabineti.
+
+    Qabul mezonlari (TZ):
+      • BOTDA BOSHLAB, SAYTDA davom ettirish mumkin;
+      • ikkala joyda BIR XIL foiz ko'rinadi;
+      • xodim FAQAT o'ziga tayinlangan kursni ko'radi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-36: O'QUV PANELI — XODIM KABINETI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Cb%'")
+        conn.commit()
+        for nom, tg in (("T-Cb Xodim", 999703301), ("T-Cb Begona", 999703302)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["T-Cb Xodim"], "employee")
+        begona_t = token_for(ids["T-Cb Begona"], "employee")
+        TG = 999703301
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── HR: 2 material + 2 savol ──
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Cb Aralash kurs", "description": None,
+                "pass_percent": 50, "max_attempts": 0, "is_mandatory": False})
+            kurs_id = r.json()["id"]
+            for i in (1, 2):
+                c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                    "kind": "text", "title": f"{i}-dars", "body": f"{i}-matn"})
+            for t, opts, ci in (("Birinchi savol?", ["A", "B"], 0),
+                                ("Ikkinchi savol?", ["A", "B"], 1)):
+                c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                    "text": t, "options": opts, "correct_index": ci, "points": 1})
+            c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["T-Cb Xodim"]]})
+
+            # ══════════════════════════════════════════════
+            # ⚠️ XODIM FAQAT O'ZINIKINI KO'RADI
+            # ══════════════════════════════════════════════
+            r = c.get("/courses/me/assignments", headers=auth(xodim_t))
+            check("S-36: kabinetda kursim ko'rinadi -> 200",
+                  r.status_code == 200 and len(r.json()) == 1,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            aid = r.json()[0]["assignment_id"]
+            r = c.get("/courses/me/assignments", headers=auth(begona_t))
+            check("S-36: ⚠️ begona xodimda kurs YO'Q",
+                  r.status_code == 200 and r.json() == [], "=" + str(r.json())[:80])
+            r = c.get(f"/courses/me/{aid}/progress", headers=auth(begona_t))
+            check("S-36: begona kursning holatini ochib bo'lmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ BOTDA BOSHLAB, SAYTDA DAVOM ETTIRISH
+            #
+            # Har qadam NAVBATMA-NAVBAT: bot -> sayt -> bot -> sayt.
+            # Ikkita mustaqil progress bo'lsa, zanjir SHU YERDA uzilardi.
+            # ══════════════════════════════════════════════
+            #  1) BOTDA: 1-materialni ko'rdi
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            check("S-36: [bot] 1-material ko'rildi",
+                  r.status_code == 200 and r.json()["material_index"] == 1,
+                  "=" + str(r.json().get("material_index")))
+
+            #  2) SAYTDA: davom etadi — 2-materialda turibdi
+            r = c.get(f"/courses/me/{aid}/progress", headers=auth(xodim_t))
+            check("S-36: ⚠️ [sayt] BOTDAGI joydan davom etdi (2-material)",
+                  r.json()["stage"] == "material" and r.json()["material_index"] == 1,
+                  "=" + str({k: r.json().get(k) for k in ("stage", "material_index")}))
+            r = c.post(f"/courses/me/{aid}/next-material", headers=auth(xodim_t))
+            check("S-36: [sayt] 2-material ko'rildi -> savol bosqichi",
+                  r.json()["stage"] == "savol", "=" + str(r.json()["stage"]))
+
+            #  3) BOTDA: birinchi savolga javob
+            r = c.post("/courses/bot/answer",
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+            check("S-36: [bot] 1-savolga javob berildi",
+                  r.status_code == 200 and r.json()["question_index"] == 1,
+                  "=" + str(r.json().get("question_index")))
+
+            #  4) SAYTDA: ikkinchi savolda turibdi
+            r = c.get(f"/courses/me/{aid}/progress", headers=auth(xodim_t))
+            check("S-36: ⚠️ [sayt] BOTDAGI javobdan keyingi savolda",
+                  r.json()["stage"] == "savol" and r.json()["question_index"] == 1,
+                  "=" + str({k: r.json().get(k) for k in ("stage", "question_index")}))
+            r = c.post(f"/courses/me/{aid}/answer", headers=auth(xodim_t),
+                       json={"choice": 1})
+            check("S-36: [sayt] 2-savolga javob berildi -> tugadi",
+                  r.json()["stage"] == "tugadi", "=" + str(r.json()["stage"]))
+
+            #  5) SAYTDA yakunlash
+            r = c.post(f"/courses/me/{aid}/finish", headers=auth(xodim_t))
+            natija = r.json() if r.status_code == 200 else {}
+            check("S-36: [sayt] yakunlandi, 100% (ikkovi ham to'g'ri)",
+                  natija.get("percent") == 100 and natija.get("passed") is True,
+                  "=" + str(natija))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ IKKALA JOYDA BIR XIL FOIZ
+            # ══════════════════════════════════════════════
+            r_sayt = c.get("/courses/me/assignments", headers=auth(xodim_t))
+            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG})
+            check("S-36: ⚠️ sayt va bot ro'yxati AYNAN bir xil",
+                  r_sayt.status_code == 200 and r_sayt.json() == r_bot.json(),
+                  f"sayt={r_sayt.json()} bot={r_bot.json()}")
+            check("S-36: ⚠️ ikkala joyda bir xil foiz (100%)",
+                  r_sayt.json()[0]["percent"] == 100
+                  and r_bot.json()[0]["percent"] == 100,
+                  f"sayt={r_sayt.json()[0]['percent']} bot={r_bot.json()[0]['percent']}")
+
+            # ══════════════════════════════════════════════
+            # MATERIAL FAYLINI TELEGRAMGA YUBORISH
+            #
+            # Video/hujjat brauzerda ko'rsatilmaydi (`file_id` ni
+            # brauzer o'qiy olmaydi, serverdan oqizish esa Passenger'ni
+            # bloklardi) — fayl xodimning Telegramiga yuboriladi.
+            # ══════════════════════════════════════════════
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Cb Video kurs", "description": None,
+                "pass_percent": 50, "max_attempts": 0, "is_mandatory": False})
+            k2 = r.json()["id"]
+            c.post(f"/courses/{k2}/materials", headers=auth(mgr_t), json={
+                "kind": "video", "title": "Video dars", "file_id": "T-CB-VIDEO"})
+            c.post(f"/courses/{k2}/questions", headers=auth(mgr_t), json={
+                "text": "Savol?", "options": ["A", "B"], "correct_index": 0,
+                "points": 1})
+            c.post(f"/courses/{k2}/publish?value=true", headers=auth(mgr_t))
+            c.post(f"/courses/{k2}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["T-Cb Xodim"]]})
+            r = c.get("/courses/me/assignments", headers=auth(xodim_t))
+            a2 = [x for x in r.json() if x["course_id"] == k2][0]["assignment_id"]
+
+            r = c.post(f"/courses/me/{a2}/send-material", headers=auth(xodim_t))
+            check("S-36: material faylini Telegramga yuborish -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:120])
+            #  ⚠️ Sinov rejimida bildirishnomalar o'chiq — `delivered=False`
+            #  bo'lishi TO'G'RI xulq, xato emas.
+            check("S-36: sinov rejimida `delivered=False` (xabar yuborilmadi)",
+                  r.json().get("ok") is True and r.json().get("delivered") is False,
+                  "=" + str(r.json()))
+            r = c.post(f"/courses/me/{a2}/send-material", headers=auth(begona_t))
+            check("S-36: begona kursning faylini so'rab bo'lmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            #  Savol bosqichida fayl so'ralsa 409
+            c.post(f"/courses/me/{a2}/next-material", headers=auth(xodim_t))
+            r = c.post(f"/courses/me/{a2}/send-material", headers=auth(xodim_t))
+            check("S-36: savol bosqichida fayl so'ralsa -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-36 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-Cb%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-Cb%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-Cb%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-Cb%')")
+            cur.execute("delete from courses where title like 'T-Cb%'")
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -14475,6 +14671,12 @@ def main() -> None:
         test_courses_employee()
     except Exception:
         print("S-35 xodim tomoni testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_cabinet()
+    except Exception:
+        print("S-36 kabinet testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:

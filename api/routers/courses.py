@@ -484,6 +484,49 @@ async def my_retry(
     return await _me_retry(db, user, assignment_id)
 
 
+async def _me_send_material(db: AsyncSession, user: User, assignment_id: int) -> dict:
+    """Joriy materialning FAYLINI xodimning Telegramiga yuboradi.
+
+    ⚠️ NEGA SHUNDAY, brauzerda ko'rsatmasdan: material fayli Telegram
+    `file_id` sifatida saqlanadi (serverda fayl YO'Q) va `file_id` ni
+    brauzer o'qiy olmaydi. Faylni serverdan oqizib berish esa
+    Passenger'ni bloklardi — konkurentlik = 1, ya'ni bitta video
+    yuklanayotganda BUTUN sayt kutib turardi.
+
+    Shuning uchun kadr hujjatlaridagi naqsh takrorlanadi
+    (`employee_documents.bot_send_document`): fayl xodimning o'z
+    Telegramiga yuboriladi, sayt esa faqat so'rovni beradi."""
+    from api.telegram_notify import send_file_id
+
+    a = await _my_assignment(db, user, assignment_id)
+    p = await svc.progress(db, a)
+    if p["stage"] != "material":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Hozir material bosqichi emas")
+    m = p["current"]
+    if not m.file_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bu materialda fayl yo'q")
+    if not user.telegram_id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Telegram ulanmagan — faylni botdan oching",
+        )
+    resp = await send_file_id(
+        user.telegram_id, m.file_id, m.kind, caption=f"📖 {m.title}"
+    )
+    #  `resp is None` — bildirishnomalar o'chiq (test rejimi) yoki token
+    #  yo'q. Bu XATO emas, shuning uchun bayroq bilan qaytariladi.
+    return {"ok": True, "delivered": resp is not None}
+
+
+@router.post("/me/{assignment_id}/send-material")
+async def my_send_material(
+    assignment_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    return await _me_send_material(db, user, assignment_id)
+
+
 # ── Bot adapteri (`telegram_id`) ──
 
 

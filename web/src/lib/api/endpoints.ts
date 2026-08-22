@@ -15,8 +15,11 @@ import type {
   AckReader,
   AnnouncementItem,
   CourseAssignmentRow,
+  CourseProgress,
+  CourseResultOut,
   CourseDetail,
   CourseItem,
+  MyCourseItem,
   HrFrequentReport,
   HrInquiryItem,
   HrSuggestion,
@@ -1298,4 +1301,26 @@ export const api = {
     ),
   courseAssignments: (id: number) =>
     apiFetch<CourseAssignmentRow[]>(`/courses/${id}/assignments`),
+  // ── O'quv paneli: xodim tomoni (TZ 3.1 / S-36) ──
+  //  ⚠️ Bot bilan BITTA holatni o'qiydi — backend bir xil `_me_*`
+  //  funksiyalaridan chiqadi (S-35).
+  myCourses: () => apiFetch<MyCourseItem[]>("/courses/me/assignments"),
+  myCourseProgress: (id: number) =>
+    apiFetch<CourseProgress>(`/courses/me/${id}/progress`),
+  myCourseNextMaterial: (id: number) =>
+    apiFetch<CourseProgress>(`/courses/me/${id}/next-material`, { method: "POST" }),
+  myCourseAnswer: (id: number, body: { text?: string | null; choice?: number | null }) =>
+    apiFetch<CourseProgress>(`/courses/me/${id}/answer`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  myCourseFinish: (id: number) =>
+    apiFetch<CourseResultOut>(`/courses/me/${id}/finish`, { method: "POST" }),
+  myCourseRetry: (id: number) =>
+    apiFetch<CourseProgress>(`/courses/me/${id}/retry`, { method: "POST" }),
+  myCourseSendMaterial: (id: number) =>
+    apiFetch<{ ok: boolean; delivered: boolean }>(
+      `/courses/me/${id}/send-material`,
+      { method: "POST" }
+    ),
 };
