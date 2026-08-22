@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 18/22 (2026-08-21)
+## Holat: 19/22 (2026-08-22)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -375,9 +375,10 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-25 ish haqi o'zgarishi sababi | ✅ | `ad30892` |
 | S-26 xodim ma'lumotini yangilashi | ✅ | `cac6974` |
 | S-27 shartnomani ro'yxatga olish | ✅ | `d4dcf1b` |
-| S-28…S-31 | ⬜ | — |
+| S-28 murojaatlar jurnali — yadro | ✅ | `9db86ef` + `f09a4d8` |
+| S-29…S-31 | ⬜ | — |
 
-**Keyingisi: S-28** (xodim murojaatlari jurnali — yadro, 3.29).
+**Keyingisi: S-29** (murojaatlar → bilim bazasi halqasi, 3.29).
 
 ⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
 `test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
@@ -682,9 +683,9 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Toifa qo'lda yoki mavjud AI tasniflagichi bilan (**AI hukm chiqarmaydi** — faqat toifa).
 
 **Qabul mezoni**
-- [ ] Savol-javob saqlanadi
-- [ ] Xodim faqat o'z murojaatlarini ko'radi
-- [ ] Javobsiz murojaat HR panelida ajralib turadi
+- [x] Savol-javob saqlanadi
+- [x] Xodim faqat o'z murojaatlarini ko'radi
+- [x] Javobsiz murojaat HR panelida ajralib turadi
 
 ---
 
