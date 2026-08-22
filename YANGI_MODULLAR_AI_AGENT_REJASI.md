@@ -901,9 +901,14 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. ⚠️ **Yo'riqnoma UPDATE qilinmaydi** — yangi versiya qo'shiladi.
 
 **Qabul mezoni**
-- [ ] Ierarxiya halqa hosil qilmaydi (qo'riqchi: o'ziga bo'ysunish taqiqlanadi)
-- [ ] Yo'riqnoma tahriri yangi versiya yaratadi, eskisi qoladi
-- [ ] Test: versiya zanjiri
+- [x] Ierarxiya halqa hosil qilmaydi — qo'riqchi TZ so'raganidan
+      kengroq: o'ziga bo'ysunish HAM, A→B→C→A uzun halqa HAM
+      to'siladi (`org.assert_no_cycle`)
+- [x] Yo'riqnoma tahriri yangi versiya yaratadi, eskisi qoladi —
+      tahrirlash funksiyasi UMUMAN yozilmagan, bazada ham
+      `(position_id, version)` unique
+- [x] Test: versiya zanjiri (1→2→3) + «joriy versiya» kelajakdagi
+      versiyani hisobga olmasligi
 
 ---
 
