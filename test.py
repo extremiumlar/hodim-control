@@ -12728,8 +12728,10 @@ def test_hr_knowledge_loop() -> None:
                            json={"inquiry_id": begona["id"],
                                  "entry_id": begona["suggestion"]["entry_id"],
                                  "accepted": True})
-                check("S-29: ⚠️ o'zganing murojaatini yopib bo'lmaydi -> 403",
-                      r.status_code == 403, "kod=" + str(r.status_code))
+                #  404, 403 emas: 403 murojaat MAVJUDLIGINI tasdiqlardi
+                #  (S-06 qoidasi; S-30 auditida tuzatildi).
+                check("S-29: ⚠️ o'zganing murojaatini yopib bo'lmaydi -> 404",
+                      r.status_code == 404, "kod=" + str(r.status_code))
 
             # ── TAKRORLANUVCHI SAVOLLAR HISOBOTI ──
             r = c.get("/hr-inquiries/frequent?limit=10", headers=auth(mgr_t))
@@ -12778,6 +12780,269 @@ def test_hr_knowledge_loop() -> None:
                 cur.execute(f"delete from users where id in ({belgi})",
                             tuple(ids.values()))
             cur.execute("delete from knowledge_entries where source='hr_inquiry'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
+
+#  ── S-30: B blok rol matritsasi ──────────────────────────────
+#
+#  Har qator: (modul, metod, yo'l, {rol: kutilgan_kod}).
+#  Kutilgan kod `403` — rol bu modulni UMUMAN ochmaydi.
+#  `"ok"` — ruxsat bor (200/201/404/422 bo'lishi mumkin, lekin 403 EMAS).
+#
+#  ⚠️ Jadval QO'LDA yozilgan va routerdagi `_HR`/`_MANAGER` majmualaridan
+#  MUSTAQIL. Aks holda test kodni o'zidan olib, o'zini tasdiqlagan
+#  bo'lardi: qo'riqchi tasodifan kengaytirilsa ham «to'g'ri» derdi.
+B_BLOCK_MATRIX = [
+    # modul,               metod, yo'l,                       employee, rop,   hr
+    ("kadr hujjatlari",    "GET", "/employee-documents/unregistered", 403, 403, "ok"),
+    ("muddatlar",          "GET", "/deadlines",                       403, 403, "ok"),
+    ("hujjat shablonlari", "GET", "/document-templates",              403, 403, "ok"),
+    ("ish takliflari",     "GET", "/offers",                          403, 403, "ok"),
+    ("ma'lumotnomalar",    "GET", "/certificates",                    403, 403, "ok"),
+    ("mol-mulk",           "GET", "/assets",                          403, 403, "ok"),
+    ("sinov muddati",      "GET", "/probation",                       403, 403, "ok"),
+    ("ma'lumot so'rovlari","GET", "/profile-changes",                 403, 403, "ok"),
+    ("murojaatlar",        "GET", "/hr-inquiries",                    403, 403, "ok"),
+    ("murojaat hisoboti",  "GET", "/hr-inquiries/frequent",           403, 403, "ok"),
+    #  ── ROP ham ko'radigan modullar ──
+    ("e'lonlar (rahbar)",  "GET", "/announcements",                   403, "ok", "ok"),
+    ("shtat jadvali",      "GET", "/staff",                           403, "ok", "ok"),
+    #  ── Hamma ko'radigan (xodim tomoni) ──
+    ("bayramlar",          "GET", "/holidays?year=2026",             "ok", "ok", "ok"),
+    ("mening hujjatlarim", "GET", "/employee-documents/me",          "ok", "ok", "ok"),
+    ("menga biriktirilgan","GET", "/assets/me",                      "ok", "ok", "ok"),
+    ("mening e'lonlarim",  "GET", "/announcements/me",               "ok", "ok", "ok"),
+    ("mening murojaatim",  "GET", "/hr-inquiries/me",                "ok", "ok", "ok"),
+    ("tanishishlarim",     "GET", "/acks/me",                        "ok", "ok", "ok"),
+    ("ma'lumotlarim",      "GET", "/profile-changes/me",             "ok", "ok", "ok"),
+]
+
+#  Menyu bo'limi -> uni ochadigan endpoint. Menyu va backend
+#  KELISHMASA test yiqiladi (S-30 qabul mezoni: «menyuda ortiqcha
+#  bo'lim ko'rinmaydi» — va teskarisi: ochiq modul yashirin qolmasin).
+SECTION_TO_ENDPOINT = {
+    "employee-documents": "/employee-documents/unregistered",
+    "deadlines": "/deadlines",
+    "offers": "/offers",
+    "certificates": "/certificates",
+    "assets": "/assets",
+    "announcements": "/announcements",
+    "staff": "/staff",
+    "probation": "/probation",
+    "profile-changes": "/profile-changes",
+    "hr-inquiries": "/hr-inquiries",
+}
+
+
+def test_b_block_visibility_audit() -> None:
+    """S-30 — B blok ko'rinish auditi.
+
+    Qabul mezonlari (TZ):
+      • har yangi modul uchun ROL MATRITSASI testi;
+      • begona so'rov hamma joyda 404 (403 emas — mavjudligini
+        oshkor qilmaslik uchun, S-06 qoidasi);
+      • menyuda ortiqcha bo'lim ko'rinmaydi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-30: B BLOK KO'RINISH AUDITI")
+    print("=" * 60)
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Au%'")
+        conn.commit()
+        #  To'rt rol: xodim, ROP, HR. Boshliq mavjudini olamiz (uning
+        #  huquqi HR bilan bir xil, alohida yaratish shart emas).
+        for nom, tg, rol in (
+            ("T-Au Xodim", 999703001, "employee"),
+            ("T-Au ROP", 999703002, "rop"),
+            ("T-Au HR", 999703003, "hr"),
+            ("T-Au Boshliq", 999703005, "boss"),
+            ("T-Au Begona", 999703004, "employee"),
+        ):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,?,0,1,datetime('now'))",
+                (tg, nom, rol))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+
+        tok = {
+            "employee": token_for(ids["T-Au Xodim"], "employee"),
+            "rop": token_for(ids["T-Au ROP"], "rop"),
+            "hr": token_for(ids["T-Au HR"], "hr"),
+            "boss": token_for(ids["T-Au Boshliq"], "boss"),
+        }
+        begona_t = token_for(ids["T-Au Begona"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══════════════════════════════════════════════
+            # A) ROL MATRITSASI
+            # ══════════════════════════════════════════════
+            xato = []
+            for modul, metod, yol, kut_emp, kut_rop, kut_hr in B_BLOCK_MATRIX:
+                #  Boshliq ustuni ATAYLAB alohida yozilmagan: bu
+                #  modullarda uning huquqi HR bilan AYNAN bir xil
+                #  (`_HR`/`_VIEW` majmualarida ikkovi ham bor). Alohida
+                #  ustun yozilsa u nusxa bo'lib, birini yangilab
+                #  ikkinchisini unutish xavfi tug'ilardi.
+                for rol, kutilgan in (("employee", kut_emp), ("rop", kut_rop),
+                                      ("hr", kut_hr), ("boss", kut_hr)):
+                    r = c.request(metod, yol, headers=auth(tok[rol]))
+                    if kutilgan == "ok":
+                        yaxshi = r.status_code != 403
+                    else:
+                        yaxshi = r.status_code == kutilgan
+                    if not yaxshi:
+                        xato.append(f"{modul} [{rol}] {metod} {yol}: "
+                                    f"kutilgan={kutilgan} keldi={r.status_code}")
+            check(f"S-30: rol matritsasi ({len(B_BLOCK_MATRIX)} modul x 4 rol)",
+                  not xato, " | ".join(xato[:5]))
+
+            # ══════════════════════════════════════════════
+            # B) MENYU <-> BACKEND MUVOFIQLIGI
+            #
+            # ⚠️ ENG QIMMATLI TEKSHIRUV: menyu (`sections.py`) va
+            # qo'riqchi (`require_roles`) IKKI joyda yozilgan. Biri
+            # o'zgarib ikkinchisi qolsa: yo xodim bosib 403 oladi, yo
+            # ochiq modul menyuda ko'rinmay yashirin qoladi.
+            # ══════════════════════════════════════════════
+            nomuvofiq = []
+            for rol in ("employee", "rop", "hr", "boss"):
+                r = c.get("/me/sections", headers=auth(tok[rol]))
+                if r.status_code != 200:
+                    nomuvofiq.append(f"{rol}: /me/sections -> {r.status_code}")
+                    continue
+                korinadi = {x["key"] for x in r.json()}
+                for kalit, endpoint in SECTION_TO_ENDPOINT.items():
+                    menyuda = kalit in korinadi
+                    rr = c.request("GET", endpoint, headers=auth(tok[rol]))
+                    ochiq = rr.status_code != 403
+                    if menyuda != ochiq:
+                        nomuvofiq.append(
+                            f"{rol}/{kalit}: menyuda={menyuda} backend_ochiq={ochiq}")
+            check("S-30: menyu va backend qo'riqchisi MOS",
+                  not nomuvofiq, " | ".join(nomuvofiq[:5]))
+
+            #  B blokda qo'shilgan bo'limlar `/me/sections` ga UMUMAN
+            #  tushganmi (TZ 2-band). Yuqoridagi muvofiqlik tekshiruvi
+            #  buni HR uchun bilvosita ushlaydi, lekin xodim tomonidagi
+            #  bo'limlarni ushlamaydi — ular hech qayerda qo'riqchi
+            #  bilan taqqoslanmaydi.
+            r = c.get("/me/sections", headers=auth(tok["hr"]))
+            hr_bolimlar = {x["key"] for x in r.json()} if r.status_code == 200 else set()
+            kutilgan_hr = set(SECTION_TO_ENDPOINT)
+            check("S-30: B blok rahbar bo'limlari menyuda bor",
+                  kutilgan_hr <= hr_bolimlar,
+                  "yetishmaydi: " + str(sorted(kutilgan_hr - hr_bolimlar)))
+
+            r = c.get("/me/sections", headers=auth(tok["employee"]))
+            xodim_bolimlar = {x["key"] for x in r.json()} if r.status_code == 200 else set()
+            kutilgan_xodim = {
+                "documents", "my-assets", "my-announcements",
+                "my-inquiries", "my-profile", "my-salary-history",
+            }
+            check("S-30: B blok xodim bo'limlari kabinetda bor",
+                  kutilgan_xodim <= xodim_bolimlar,
+                  "yetishmaydi: " + str(sorted(kutilgan_xodim - xodim_bolimlar)))
+
+            #  ⚠️ Teskari yo'nalish: xodimga RAHBAR bo'limi tushib
+            #  qolmasin (TZ: «menyuda ortiqcha bo'lim ko'rinmaydi»).
+            ortiqcha = kutilgan_hr & xodim_bolimlar
+            check("S-30: xodim menyusida rahbar bo'limi YO'Q",
+                  not ortiqcha, "ortiqcha: " + str(sorted(ortiqcha)))
+
+            # ══════════════════════════════════════════════
+            # C) BEGONA SO'ROV -> 404 (403 EMAS)
+            # ══════════════════════════════════════════════
+            begona_xato = []
+
+            #  1) Boshqa xodimning kadr hujjatlari
+            r = c.get(f"/employee-documents/user/{ids['T-Au Begona']}",
+                      headers=auth(tok["employee"]))
+            if r.status_code != 404:
+                begona_xato.append(f"employee-documents/user: {r.status_code}")
+            #  ROP ham kadr hujjatlarida «begona» (TZ 3.4 maxfiy modul)
+            r = c.get(f"/employee-documents/user/{ids['T-Au Begona']}",
+                      headers=auth(tok["rop"]))
+            if r.status_code != 404:
+                begona_xato.append(f"employee-documents/user [rop]: {r.status_code}")
+            check("S-30: begona xodim hujjatlari -> 404 (403/200 emas)",
+                  not begona_xato, " | ".join(begona_xato))
+
+            #  2) Boshqa xodimning murojaati (S-29 taklifi orqali)
+            r = c.post("/hr-inquiries/me", headers=auth(begona_t),
+                       json={"question": "T-Au begona savol, oylik haqida"})
+            begona_id = r.json().get("id") if r.status_code == 201 else None
+            r = c.post("/hr-inquiries/me/suggestion", headers=auth(tok["employee"]),
+                       json={"inquiry_id": begona_id or 0, "entry_id": 1,
+                             "accepted": True})
+            #  ⚠️ 404 SHART, 403 emas — 403 murojaat mavjudligini
+            #  tasdiqlardi (S-06 qoidasi). Auditda aynan shu topildi:
+            #  S-29 kodi 403 qaytarardi.
+            check("S-30: begona murojaat -> 404 (403 emas!)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            #  3) Boshqa xodimga biriktirilgan buyumni «qabul qilish»
+            r = c.post("/assets/999999/accept", headers=auth(tok["employee"]))
+            check("S-30: begona buyumni qabul qilib bo'lmaydi -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # D) EKSPORT QAMROVI
+            #
+            # ⚠️ Qamrov IKKI marta yozilgan: `deps.scoped_user_ids` va
+            # `reports._visible_user_ids`. Ikkovi bir xil javob berishi
+            # SHART — biri o'zgarib ikkinchisi qolsa, ROP eksportda
+            # butun tashkilotni ko'rib qolardi (ilgari aynan shu xato
+            # bo'lgan, `reports.py` izohida yozilgan).
+            # ══════════════════════════════════════════════
+            r = c.get("/reports/export?date_from=2026-08-01&date_to=2026-08-02",
+                      headers=auth(tok["employee"]))
+            check("S-30: xodim Excel eksportga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+        #  Ikki qamrov amalga oshiruvchisi bir xil javob beradimi
+        import asyncio as _aio
+
+        from db.base import async_session
+
+        async def _qamrovlar():
+            from api.deps import scoped_user_ids
+            from api.routers.reports import _visible_user_ids
+            from db.models import User as _U
+            from sqlalchemy import select as _sel
+            from sqlalchemy.orm import selectinload as _sl
+            async with async_session() as s2:
+                rop = await s2.scalar(
+                    _sel(_U).options(_sl(_U.position))
+                    .where(_U.id == ids["T-Au ROP"]))
+                a = await scoped_user_ids(rop, s2)
+                b = await _visible_user_ids(s2, rop)
+                return a, b
+
+        a, b = _aio.run(_qamrovlar())
+        check("S-30: eksport qamrovi markaziy qamrov bilan BIR XIL",
+              (a is None and b is None) or (set(a or []) == set(b or [])),
+              f"deps={sorted(a) if a else a} reports={sorted(b) if b else b}")
+    except Exception:
+        check("S-30 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from hr_inquiries where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
             conn.commit()
         except Exception:
             pass
@@ -13172,6 +13437,12 @@ def main() -> None:
         test_hr_knowledge_loop()
     except Exception:
         print("S-29 bilim bazasi halqasi testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_b_block_visibility_audit()
+    except Exception:
+        print("S-30 ko'rinish auditi testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:

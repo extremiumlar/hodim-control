@@ -280,10 +280,15 @@ async def _resolve_suggestion(
 ) -> dict:
     """Xodimning taklifga javobi. Sayt ham, bot ham shu yerdan."""
     row = await _get(db, payload.inquiry_id)
-    #  ⚠️ O'ZGANING murojaatiga javob berib bo'lmaydi — id taxmin
-    #  qilinishi mumkin, tekshiruv SHART.
+    #  ⚠️ O'ZGANING murojaatiga javob berib bo'lmaydi — id ketma-ket
+    #  butun son, ya'ni taxmin qilinadi; tekshiruv SHART.
+    #
+    #  404, 403 EMAS (S-06 qoidasi): 403 «bunday murojaat bor, lekin
+    #  sizniki emas» deb tasdiqlardi va id larni birma-bir sinab,
+    #  kim qachon murojaat qilganini sanab chiqish mumkin bo'lardi.
+    #  404 hech narsani oshkor qilmaydi.
     if row.user_id != user.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu sizning murojaatingiz emas")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Murojaat topilmadi")
     if row.status != HrInquiryStatus.open.value:
         raise HTTPException(status.HTTP_409_CONFLICT, "Murojaat allaqachon yakunlangan")
 
