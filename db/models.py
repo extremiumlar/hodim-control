@@ -1412,6 +1412,12 @@ class KnowledgeEntry(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(10), default="single")  # single|common|open
+    #  ⚠️ QAMROV — MAXFIYLIK CHEGARASI, bezak emas (S-29).
+    #  `sales` yozuvlar MIJOZGA ko'rinadi: ular Sotuv AI promptiga va
+    #  TASHQI chatbot datasetiga (`build_dataset`) tushadi. `hr` yozuvlar
+    #  esa ichki (oylik, jarima, intizom) va u yerga TUSHMASLIGI SHART —
+    #  aks holda xodimga aytilgan ichki qoida mijozga ketardi.
+    audience: Mapped[str] = mapped_column(String(8), default="sales", index=True)
     group_key: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     category: Mapped[str] = mapped_column(String(30), default="umumiy")
     question: Mapped[str] = mapped_column(Text)
@@ -3401,4 +3407,10 @@ class HrInquiry(Base):
     answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     #  S-29: shu javob bilim bazasiga ko'chirilganmi.
     knowledge_entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #  Javobni ODAM emas, bilim bazasi bergan (S-29). Ajratib yuritiladi:
+    #  (a) HR avto-javoblar to'g'ri ishlayotganini ko'rishi kerak,
+    #  (b) takroriy savollar hisobotida avto-javob berilgani ham sanaladi
+    #      — aks holda «bu savol endi berilmayapti» degan noto'g'ri
+    #      xulosa chiqardi.
+    auto_answered: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
