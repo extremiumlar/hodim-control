@@ -861,9 +861,12 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Muddat o'tayotgan kurs → `deadlines` (S-12).
 
 **Qabul mezoni**
-- [ ] Ro'yxat sahifasi tez (og'ir so'rov yo'q)
-- [ ] Batafsil hisobot fon ishida
-- [ ] **Kurs tugatmaslik pulga ta'sir qilmaydi** (TZ qoidasi)
+- [x] Ro'yxat sahifasi tez — S-34 dagi N+1 olib tashlandi, raqamlar
+      `course_stats` dan BITTA so'rov bilan olinadi
+- [x] Batafsil hisobot fon ishida (`course_report_tick`, 8:50)
+- [x] **Kurs tugatmaslik pulga ta'sir qilmaydi** — test STRUKTURA
+      darajasida qo'riqlaydi (ish haqi modullari kurs modellariga
+      tegmasligi AST bilan tekshiriladi; qo'riqchi sinaldi)
 
 ---
 
