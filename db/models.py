@@ -260,6 +260,17 @@ class Position(Base):
     # ["rop"] yoki ["hr"] — qaysi rahbar rol shu lavozimga vazifa/norma belgilay oladi
     # (boss/dasturchi har doim hammani boshqaradi, ro'yxatga kiritish shart emas)
     managed_by_roles: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #  Tashkiliy sxemadagi OTA lavozim (yangi TZ 3.16 / S-39).
+    #  `NULL` — eng yuqori bo'g'in (masalan Direktor).
+    #
+    #  ⚠️ HALQA TAQIQLANADI. Faqat «o'ziga bo'ysunish» emas — A→B→C→A
+    #  kabi uzun halqa ham. Halqa bo'lsa sxema chizilganda cheksiz
+    #  rekursiyaga tushardi va `GET /org-chart` butun saytni osib
+    #  qo'yardi (Passenger'da konkurentlik = 1). Tekshiruv
+    #  `api/services/org.py::assert_no_cycle` da — YAGONA joyda.
+    parent_position_id: Mapped[int | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -3716,3 +3727,61 @@ class CourseStat(Base):
     #  Muddati o'tgan va hali yakunlanmagan.
     overdue: Mapped[int] = mapped_column(Integer, default=0)
     computed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+
+class JobDescription(Base):
+    """Lavozim yo'riqnomasi — VERSIYALANADI (yangi TZ 3.16 / S-39).
+
+    ⚠️ TAHRIRLANMAYDI, YANGI VERSIYA QO'SHILADI (TZ 4-band). Sabab:
+    yo'riqnoma — huquqiy hujjat. Xodim uni o'qib «tanishdim» degan
+    bo'lsa (S-20), keyin matn jimgina o'zgarsa, u AYNAN NIMAGA rozi
+    bo'lgani noma'lum bo'lib qolardi. Eski versiya o'z holicha qoladi
+    va tanishish yozuvi o'sha versiyaga bog'lanadi.
+
+    `version` — 1 dan boshlab o'sadi, `(position_id, version)` unique.
+    `effective_from` — qachondan kuchga kiradi; kelajakdagi sana bilan
+    oldindan tayyorlab qo'yish mumkin.
+
+    Matn maydonlari ATAYLAB alohida (bitta katta matn emas): TZ ular
+    ro'yxatini aniq beradi va sxemada har biri alohida ko'rsatiladi."""
+
+    __tablename__ = "job_descriptions"
+    __table_args__ = (
+        UniqueConstraint("position_id", "version", name="uq_job_description_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    position_id: Mapped[int] = mapped_column(
+        ForeignKey("positions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    #  Lavozim maqsadi — «bu lavozim nima uchun bor».
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #  Vazifalar ro'yxati: ["...", "..."].
+    duties: Mapped[list] = mapped_column(JSON, default=list)
+    rights: Mapped[list] = mapped_column(JSON, default=list)
+    responsibility: Mapped[list] = mapped_column(JSON, default=list)
+    requirements: Mapped[list] = mapped_column(JSON, default=list)
+    effective_from: Mapped[date] = mapped_column(Date)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CompanyProfile(Base):
+    """Kompaniya haqida — YAGONA qator (id=1).
+
+    Missiya, qadriyatlar va strategik maqsadlar (yangi TZ 3.16).
+    Yagona qator naqshi loyihada allaqachon bor (`AttendanceDigestConfig`,
+    `DeadlineConfig`) — sozlama jadvali emas, bitta hujjat."""
+
+    __tablename__ = "company_profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    mission: Mapped[str | None] = mapped_column(Text, nullable=True)
+    values: Mapped[list] = mapped_column(JSON, default=list)
+    goals: Mapped[list] = mapped_column(JSON, default=list)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
