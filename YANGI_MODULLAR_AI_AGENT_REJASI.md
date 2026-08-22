@@ -811,9 +811,12 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Savollar: qo'lda yoki `.docx` dan (mavjud `docx_parse.py`).
 
 **Qabul mezoni**
-- [ ] Kurs yaratish → material → savol zanjiri ishlaydi
-- [ ] `.docx` dan savol import qilinadi
-- [ ] O'tish chegarasi kursda saqlanadi
+- [x] Kurs yaratish → material → savol zanjiri ishlaydi (brauzerda
+      to'liq sinaldi: kurs → material → savol → nashr → 9 xodimga
+      tayinlash)
+- [x] `.docx` dan savol import qilinadi (anketa ajratgichi bilan;
+      kelgan savollar ochiq javobli)
+- [x] O'tish chegarasi kursda saqlanadi (`pass_percent`, test bilan)
 
 ---
 
