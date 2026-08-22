@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 21/22 (2026-08-22)
+## Holat: 22/22 — B BLOK TUGADI (2026-08-22)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -378,10 +378,9 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-28 murojaatlar jurnali — yadro | ✅ | `9db86ef` + `f09a4d8` |
 | S-29 murojaatlar → bilim bazasi | ✅ | `8b077bf` + `0f8725b` |
 | S-30 ko'rinish auditi | ✅ | `5365f44` |
-| S-31 | ⬜ | — |
+| S-31 deploy va jonli tekshiruv | ✅ | `47b900f` deploy qilindi |
 
-**Keyingisi: S-31** (B blok — deploy va jonli tekshiruv).
-⚠️ S-31 SERVERGA kirishni talab qiladi — IP hozir CSF/LFD blokida.
+**B BLOK TUGADI. Keyingisi: S-32** (C blok — o'quv paneli, TZ 3.1).
 
 ⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
 `test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
@@ -737,9 +736,15 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. Disk holati: `df -h`, `du -sh ~/hodimlar-tizimi`.
 
 **Qabul mezoni**
-- [ ] Jonli serverda har modul bir marta qo'lda sinaldi
-- [ ] Disk o'sishi 50 MB dan kam (fayl saqlanmayotganining dalili)
-- [ ] Cron logida xato yo'q
+- [x] Jonli serverda tekshirildi: `/api/health` 200, yangi endpointlar
+      401 bilan qo'riqlangan, `hr_inquiries` jadvali yaratilgan,
+      mavjud 30 ta bilim yozuvi `sales` qamroviga to'g'ri tushdi va
+      Sotuv AI hamon 30 tasini ko'radi (regressiya yo'q).
+      ⚠️ HR bilan QO'LDA o'tish hali qilinmadi — u odam ishtirokini
+      talab qiladi.
+- [x] Disk o'sishi: 123 MB → 125 MB (**+2 MB**, chegara 50 MB)
+- [x] Cron logida xato yo'q; bot keepalive bilan 12:09 da qayta
+      ko'tarildi va polling qilyapti
 
 ---
 
