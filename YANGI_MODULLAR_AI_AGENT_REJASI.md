@@ -879,9 +879,15 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Deploy + jonli tekshiruv.
 
 **Qabul mezoni**
-- [ ] Jonli serverda bitta haqiqiy kurs oxirigacha o'tildi
-- [ ] Disk o'smagan
-- [ ] Test: 12+ tekshiruv
+- [~] Jonli serverda bitta haqiqiy kurs oxirigacha o'tildi —
+      DEPLOY qilindi va HR allaqachon o'z kursini yarata boshlagan
+      («HR lik», 2026-08-22 12:20, qoralama). To'liq o'tish HR bilan
+      qilinadi: sinov kursi yaratilsa u HR ro'yxatida ko'rinib,
+      chalkashtirardi. Oqimning O'ZI `test_courses_end_to_end` da
+      uchdan-uchgacha sinalgan.
+- [x] Disk o'smagan — video/hujjat SERVERDA saqlanmaydi, faqat
+      Telegram `file_id` (test bilan tekshiriladi)
+- [x] Test: 17 ta tekshiruv (12+ so'ralgan)
 
 ---
 
