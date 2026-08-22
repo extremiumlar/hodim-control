@@ -792,9 +792,13 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. Servis: `assign()`, `progress()`, `submit_answer()`, `finish()`.
 
 **Qabul mezoni**
-- [ ] Bir xodimga bir kurs ikki marta tayinlanmaydi (unique yoki qo'riqchi)
-- [ ] Holat **bazada** (restartga chidamli, FSM emas)
-- [ ] Urinish raqami saqlanadi
+- [x] Bir xodimga bir kurs ikki marta tayinlanmaydi — IKKI qatlam:
+      kod qo'riqchisi + `uq_course_assignment_active` qisman unique
+      indeksi (test xom SQL bilan, servisni chetlab tekshiradi)
+- [x] Holat **bazada** — test YANGI SESSIYADA o'qib tasdiqlaydi
+      (restart taqlidi)
+- [x] Urinish raqami saqlanadi — har urinish `course_results` da
+      alohida qator, eskisi o'chirilmaydi
 
 ---
 
