@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 19/22 (2026-08-22)
+## Holat: 20/22 (2026-08-22)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -376,9 +376,10 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-26 xodim ma'lumotini yangilashi | ✅ | `cac6974` |
 | S-27 shartnomani ro'yxatga olish | ✅ | `d4dcf1b` |
 | S-28 murojaatlar jurnali — yadro | ✅ | `9db86ef` + `f09a4d8` |
-| S-29…S-31 | ⬜ | — |
+| S-29 murojaatlar → bilim bazasi | ✅ | `8b077bf` + `0f8725b` |
+| S-30…S-31 | ⬜ | — |
 
-**Keyingisi: S-29** (murojaatlar → bilim bazasi halqasi, 3.29).
+**Keyingisi: S-30** (B blok — ko'rinish auditi).
 
 ⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
 `test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
@@ -698,9 +699,11 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Shundan keyin bot o'zi javob beradi (mavjud Sotuv AI mexanizmi).
 
 **Qabul mezoni**
-- [ ] «Eng ko'p beriladigan 10 savol» ro'yxati
-- [ ] Bir bosishda bilim bazasiga o'tadi
-- [ ] Bilim bazasida javob bo'lsa bot avval o'zi javob beradi
+- [x] «Eng ko'p beriladigan 10 savol» ro'yxati
+- [x] Bir bosishda bilim bazasiga o'tadi
+- [x] Bilim bazasida javob bo'lsa bot avval o'zi javob beradi
+      (⚠️ JIMGINA emas — «to'g'ri keldimi?» deb TAKLIF qiladi;
+      sabab `api/services/hr_inquiries.py` izohida)
 
 ---
 
