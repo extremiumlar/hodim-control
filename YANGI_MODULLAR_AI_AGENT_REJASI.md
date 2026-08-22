@@ -845,9 +845,10 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 2. Bot va sayt **bitta holatni** o'qiydi — ikkita mustaqil progress bo'lmasin.
 
 **Qabul mezoni**
-- [ ] Botda boshlab, saytda davom ettirish mumkin
-- [ ] Ikkala joyda bir xil foiz ko'rinadi
-- [ ] Xodim faqat o'ziga tayinlangan kursni ko'radi
+- [x] Botda boshlab, saytda davom ettirish mumkin (test NAVBATMA-
+      NAVBAT tekshiradi: bot → sayt → bot → sayt)
+- [x] Ikkala joyda bir xil foiz — ro'yxat javoblari AYNAN teng
+- [x] Xodim faqat o'ziga tayinlangan kursni ko'radi (begonaga 404)
 
 ---
 
