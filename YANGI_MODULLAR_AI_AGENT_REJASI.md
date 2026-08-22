@@ -768,9 +768,15 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Model: `courses`, `course_materials`, `course_questions` (migratsiya).
 
 **Qabul mezoni**
-- [ ] Anketa bilan umumiy qism hujjatlashtirilgan (qайsi kod qayta ishlatiladi)
-- [ ] Uch jadval migratsiyasi ikkala dialektda ishlaydi
-- [ ] `deleted_at` bor va barcha o'qish shu bilan filtrlanadi
+- [x] Anketa bilan umumiy qism hujjatlashtirilgan — `db/models.py`
+      dagi «O'QUV PANELI» bloki (6 ta qayta ishlatiladigan qism +
+      anketadan farqi)
+- [x] Uch jadval migratsiyasi ikkala dialektda ishlaydi (Postgres
+      DDL renderi test bilan tekshiriladi: `BOOLEAN DEFAULT false`,
+      `options JSON`); downgrade ham sinaldi
+- [x] `deleted_at` bor va barcha o'qish shu bilan filtrlanadi —
+      yagona nuqta `courses.py::alive()`, tashqarida `select(Course)`
+      test bilan TAQIQLANGAN
 
 **Tuzoq:** Material `file_id` — video **serverda saqlanmaydi**. Disk 537/1024 MB.
 
