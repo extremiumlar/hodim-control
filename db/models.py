@@ -3503,6 +3503,10 @@ class Course(Base):
     #  Nashr qilinmagan kurs xodimga tayinlanmaydi — HR uni tinch
     #  to'ldirib, tayyor bo'lgach ochadi.
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    #  Majburiy kurs — o'tilmasa muddat eslatmasi (TZ 3.5) va HR
+    #  tahlilida «majburiy kurs tugatish %» (TZ 3.31) shundan hisoblanadi.
+    #  Ixtiyoriy kurs esa faqat taklif — u uchun eslatma yuborilmaydi.
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     #  ⚠️ YUMSHOQ o'chirish — o'tilgan kurs tarixi yo'qolmasin.
