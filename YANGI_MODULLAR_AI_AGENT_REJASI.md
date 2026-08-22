@@ -922,9 +922,13 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. «Yo'riqnomasiz lavozimlar» va «rahbari belgilanmagan xodimlar» ro'yxati.
 
 **Qabul mezoni**
-- [ ] Server faqat ma'lumot beradi
-- [ ] Mobil ekranda ro'yxat ko'rinishi (rahbarim → men → menga bo'ysunadiganlar)
-- [ ] Bo'shliqlar ro'yxati ishlaydi
+- [x] Server faqat ma'lumot beradi — rasm YARATILMAYDI, test javob
+      `application/json` ekanini tekshiradi
+- [x] Mobil ko'rinish — «Mening o'rnim» sahifasi (`/me/place`):
+      rahbarim → men → menga bo'ysunadiganlar; sxema esa ichma-ich
+      `<ul>` bo'lgani uchun kichik ekranda o'zi ro'yxatga aylanadi
+- [x] Bo'shliqlar ro'yxati ishlaydi (yo'riqnomasiz lavozimlar +
+      rahbari belgilanmagan xodimlar)
 
 ---
 
