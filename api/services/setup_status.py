@@ -117,6 +117,50 @@ async def _holidays(db: AsyncSession) -> bool:
     return await _bor(db, Holiday)
 
 
+async def _courses(db: AsyncSession) -> bool:
+    """O'quv paneli — TZ 3.1 / S-38.
+
+    «Sozlangan» degani: kamida bitta NASHR QILINGAN kurs bor va unda
+    material ham, savol ham bor. Nashr qilinmagan yoki bo'sh kurs
+    xodimga hech narsa bermaydi — shuning uchun u «sozlangan»
+    hisoblanmaydi.
+
+    ⚠️ Jadval hali yo'q bo'lsa (eski baza) modul «sozlanmagan» deb
+    ko'rsatiladi — bu to'g'ri holat, xato emas."""
+    try:
+        from db.models import Course, CourseMaterial, CourseQuestion
+    except ImportError:
+        return False
+    from sqlalchemy import select as _sel
+
+    try:
+        kurslar = list(
+            await db.scalars(
+                _sel(Course).where(
+                    Course.deleted_at.is_(None), Course.is_published.is_(True)
+                )
+            )
+        )
+    except Exception:  # noqa: BLE001 — jadval yo'q (migratsiya qo'llanmagan)
+        return False
+    for c in kurslar:
+        bor_material = await db.scalar(
+            _sel(CourseMaterial.id).where(
+                CourseMaterial.course_id == c.id,
+                CourseMaterial.deleted_at.is_(None),
+            )
+        )
+        bor_savol = await db.scalar(
+            _sel(CourseQuestion.id).where(
+                CourseQuestion.course_id == c.id,
+                CourseQuestion.deleted_at.is_(None),
+            )
+        )
+        if bor_material and bor_savol:
+            return True
+    return False
+
+
 _TEKSHIRUVLAR: list[_Tekshiruv] = [
     ("salary_rates", "Oylik stavkalar", _salary_rates,
      "Birorta xodimga oylik stavka kiritilmagan — ularga oylik hisoblanmaydi",
@@ -146,6 +190,10 @@ _TEKSHIRUVLAR: list[_Tekshiruv] = [
     ("ad_spend", "Reklama xarajati", _ad_spend,
      "Xarajat kiritilmagan — bitta lid va bitta sotuv qancha turgani (CPL/CAC) noma'lum",
      "/funnel", False),
+    ("courses", "O'quv paneli", _courses,
+     "Material va savoli bor nashr qilingan kurs yo'q — xodimga "
+     "«Darsliklarim» bo'sh ko'rinadi",
+     "/courses", False),
     ("holidays", "Bayramlar jadvali", _holidays,
      "Bayram kunlari kiritilmagan — ular ish kuni sifatida sanaladi",
      "/work-schedule", False),

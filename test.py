@@ -6188,7 +6188,17 @@ def test_attendance_reminder() -> None:
             check("Bosmagan xodim ro'yxatda BOR", forgot_uid in ids, f"planned={sorted(ids)}")
             check("Dam kunidagi YO'Q", dayoff_uid not in ids, f"planned={sorted(ids)}")
             check("Sababli kundagi YO'Q", excused_uid not in ids, f"planned={sorted(ids)}")
-            check("Allaqachon bosgan YO'Q", done_uid not in ids, f"planned={sorted(ids)}")
+            #  ⚠️ Tekshiruv KELISH eslatmasiga tegishli. Ilgari u
+            #  «ro'yxatda umuman yo'q» deb yozilgan edi va kun oxiriga
+            #  yaqin YIQILARDI: «Keldim» bosgan, lekin «Ketdim»
+            #  bosmagan xodimga KETISH eslatmasi TO'G'RI rejalashtiriladi
+            #  (`cron_jobs.attendance_reminder_tick`). Ya'ni kod to'g'ri
+            #  ishlagan, tekshiruv juda keng edi.
+            kelish = {p["user_id"] for p in planned
+                      if p["kind"].startswith("check_in")}
+            check("Allaqachon bosgan KELISH eslatmasida YO'Q",
+                  done_uid not in kelish,
+                  f"kelish={sorted(kelish)} barchasi={sorted(ids)}")
             # Ish boshlanishi hozir+10 daqiqa qilib qo'yilgan -> AYNAN 10
             # daqiqalik nuqta tushishi kerak (5 va 0 hali emas).
             mine = [p for p in planned if p["user_id"] == forgot_uid]
@@ -14526,6 +14536,233 @@ def test_courses_report() -> None:
         conn.close()
 
 
+
+def test_courses_end_to_end() -> None:
+    """S-38 (TZ 3.1) — o'quv paneli UCHDAN-UCHGACHA.
+
+    Bitta kursning butun yo'li: HR yaratadi → material va savol →
+    nashr → tayinlash → xodim BOTDA o'tadi → test → natija → HR
+    hisobotida ko'rinadi.
+
+    Qabul mezonlari (TZ):
+      • jonli serverda bitta haqiqiy kurs oxirigacha o'tiladi
+        (bu test o'sha yo'lni LOKAL takrorlaydi);
+      • disk o'smaydi (fayl saqlanmaydi — faqat `file_id`);
+      • 12+ tekshiruv.
+    """
+    import asyncio
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-38: O'QUV PANELI — UCHDAN-UCHGACHA")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-E2E%'")
+        conn.commit()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started,"
+            " is_active, created_at) values (999703501,'T-E2E Xodim','employee',"
+            "0,1,datetime('now'))")
+        ids["xodim"] = cur.lastrowid
+        conn.commit()
+        TG = 999703501
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── 1. HR kurs yaratadi ──
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-E2E Mehnat muhofazasi",
+                "description": "Yangi xodimlar uchun majburiy kurs",
+                "pass_percent": 60, "max_attempts": 2, "is_mandatory": True})
+            check("S-38/1: HR kurs yaratdi", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            kurs_id = r.json()["id"]
+
+            # ── 2. Material (matn + video `file_id`) ──
+            r = c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                "kind": "text", "title": "1-dars: qoidalar",
+                "body": "Obyektda kaska va jilet majburiy."})
+            ok1 = r.status_code == 201
+            r = c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                "kind": "video", "title": "2-dars: video",
+                "file_id": "T-E2E-VIDEO-FILEID"})
+            check("S-38/2: material qo'shildi (matn + video)",
+                  ok1 and r.status_code == 201, "kod=" + str(r.status_code))
+
+            # ── 3. Savollar: bittasi test, bittasi ochiq ──
+            r = c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Obyektda nima kiyish shart?",
+                "options": ["Hech narsa", "Kaska va jilet"],
+                "correct_index": 1, "points": 2})
+            ok2 = r.status_code == 201
+            r = c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Yana nima yaxshilash kerak?", "options": [],
+                "correct_index": None, "points": 1})
+            check("S-38/3: savollar qo'shildi (test + ochiq)",
+                  ok2 and r.status_code == 201, "kod=" + str(r.status_code))
+
+            # ── 4. Nashr va tayinlash ──
+            r = c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            ok3 = r.status_code == 200
+            r = c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t), json={
+                "audience": "users", "scope_ids": [ids["xodim"]]})
+            check("S-38/4: kurs nashr qilindi va tayinlandi",
+                  ok3 and r.status_code == 200 and r.json()["created"] == 1,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+
+            # ── 5. Xodim BOTDA kursni ko'radi ──
+            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            mine = r.json() if r.status_code == 200 else []
+            check("S-38/5: xodim botda kursni ko'rdi",
+                  len(mine) == 1 and mine[0]["is_mandatory"] is True,
+                  "=" + str(mine[:1]))
+            aid = mine[0]["assignment_id"]
+
+            # ── 6. Materiallarni ketma-ket ko'rish ──
+            r = c.post("/courses/bot/progress",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            bosqich1 = r.json().get("stage")
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            r = c.post("/courses/bot/next-material",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            check("S-38/6: ikkala material ko'rildi -> test ochildi",
+                  bosqich1 == "material" and r.json().get("stage") == "savol",
+                  f"{bosqich1} -> {r.json().get('stage')}")
+
+            # ── 7. Test savoliga javob ──
+            r = c.post("/courses/bot/answer",
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+            check("S-38/7: test savoliga to'g'ri javob berildi",
+                  r.json().get("correct") is True, "=" + str(r.json().get("correct")))
+
+            # ── 8. Ochiq savolga ERKIN MATN bilan javob ──
+            r = c.post("/courses/bot/answer-text",
+                       json={"telegram_id": TG, "text": "Belgilarni ko'paytirish kerak."})
+            check("S-38/8: ochiq savol erkin matndan ushlandi",
+                  r.json().get("handled") is True, "=" + str(r.json())[:120])
+
+            # ── 9. Yakunlash: ochiq savol bor -> baholanmagan ──
+            r = c.post("/courses/bot/finish",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            n1 = r.json() if r.status_code == 200 else {}
+            check("S-38/9: ochiq savol bor -> `pending_review`, `passed` EMAS",
+                  n1.get("pending_review") is True and n1.get("passed") is False,
+                  "=" + str(n1))
+
+            # ── 10. Sayt va bot BIR XIL holatni ko'rsatadi ──
+            xodim_t = token_for(ids["xodim"], "employee")
+            r_sayt = c.get("/courses/me/assignments", headers=auth(xodim_t))
+            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG})
+            check("S-38/10: sayt va bot AYNAN bir xil holat",
+                  r_sayt.json() == r_bot.json(),
+                  f"sayt={r_sayt.json()} bot={r_bot.json()}")
+
+            # ── 11. Cron hisobotni tayyorlaydi ──
+            async def _tick():
+                from api.services import cron_jobs as cj
+                async with async_session() as s2:
+                    return await cj.course_report_tick(s2)
+
+            asyncio.run(_tick())
+            r = c.get("/courses", headers=auth(mgr_t))
+            qator = [x for x in r.json() if x["id"] == kurs_id][0]
+            check("S-38/11: HR ro'yxatida yig'ma raqamlar paydo bo'ldi",
+                  qator["assigned_count"] == 1 and qator["pending_review"] == 1
+                  and qator["stats_at"] is not None,
+                  "=" + str({k: qator[k] for k in
+                             ("assigned_count", "pending_review", "stats_at")}))
+
+            # ── 12. Umumiy hisobotda ko'rinadi ──
+            r = c.get("/courses/report", headers=auth(mgr_t))
+            h = r.json() if r.status_code == 200 else {}
+            check("S-38/12: umumiy hisobotda kurs hisobga olindi",
+                  h.get("mandatory", 0) >= 1 and h.get("pending_review", 0) >= 1,
+                  "=" + str(h))
+
+            # ── 13. HR javoblarni ko'ra oladi (ochiq savolni baholash uchun) ──
+            javoblar = cur.execute(
+                "select answers from course_results where assignment_id=?",
+                (aid,)).fetchone()
+            check("S-38/13: ochiq javob MATNI natijada saqlangan",
+                  javoblar and "Belgilarni ko'paytirish" in (javoblar[0] or ""),
+                  "=" + str(javoblar)[:120])
+
+            # ── 14. «Sozlanmagan modullar» endi kursni SOZLANGAN deb biladi ──
+            async def _setup():
+                from api.services.setup_status import collect_setup_status
+                async with async_session() as s2:
+                    return {i.key: i.ready for i in await collect_setup_status(s2)}
+
+            holat = asyncio.run(_setup())
+            check("S-38/14: «Sozlanmagan modullar» kursni SOZLANGAN deb biladi",
+                  holat.get("courses") is True, "=" + str(holat.get("courses")))
+
+            # ── 15. ⚠️ DISK: fayl SERVERDA saqlanmaydi ──
+            #  Material `file_id` bilan yozildi; bazada fayl mazmuni YO'Q.
+            m = cur.execute(
+                "select file_id, body from course_materials where course_id=?"
+                " and kind='video'", (kurs_id,)).fetchone()
+            check("S-38/15: ⚠️ video SERVERDA saqlanmagan (faqat `file_id`)",
+                  m is not None and m[0] == "T-E2E-VIDEO-FILEID" and not m[1],
+                  "=" + str(m))
+
+            # ── 16. Qayta urinish: ochiq savol baholanmagani uchun MUMKIN EMAS ──
+            r = c.post("/courses/bot/retry",
+                       json={"telegram_id": TG, "assignment_id": aid})
+            check("S-38/16: baholanmagan urinishdan keyin qayta urinish YO'Q",
+                  n1.get("can_retry") is False, "can_retry=" + str(n1.get("can_retry")))
+
+            # ── 17. Kurs o'chirilsa xodimda ham ko'rinmaydi ──
+            c.delete(f"/courses/{kurs_id}", headers=auth(mgr_t))
+            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            check("S-38/17: o'chirilgan kurs xodimda ham ko'rinmaydi",
+                  r.status_code == 200 and r.json() == [], "=" + str(r.json())[:80])
+    except Exception:
+        check("S-38 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_stats where course_id in"
+                " (select id from courses where title like 'T-E2E%')")
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-E2E%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-E2E%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-E2E%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-E2E%')")
+            cur.execute("delete from courses where title like 'T-E2E%'")
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from deadlines where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -14956,6 +15193,12 @@ def main() -> None:
         test_courses_report()
     except Exception:
         print("S-37 kurs hisoboti testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_end_to_end()
+    except Exception:
+        print("S-38 uchdan-uchgacha testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:
