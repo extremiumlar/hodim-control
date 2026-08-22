@@ -3414,3 +3414,151 @@ class HrInquiry(Base):
     #      xulosa chiqardi.
     auto_answered: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ═════════════════════════════════════════════════════════════
+# O'QUV PANELI (yangi TZ 3.1 / S-32)
+#
+# ⚠️ BU YANGI MEXANIZM EMAS — ANKETA mexanizmining kengaytmasi.
+# Anketadan QAYTA ISHLATILADIGAN qismlar (S-32 qabul mezoni):
+#
+#   1. SAVOLLARNI MUZLATISH. `AnketaTemplate.questions` (JSON) naqshi:
+#      savollar shablonga nusxa qilinadi va fayl keyin o'zgarsa ham
+#      boshlangan sessiya savollari o'zgarmaydi. Bu yerda ham shunday —
+#      `CourseQuestion` kursga NUSXA qilinadi, material fayliga bog'liq
+#      emas.
+#   2. HOLAT BAZADA, FSM DA EMAS. `AnketaAssignment.current_q` naqshi:
+#      keyingi savolning 0-asosli indeksi bazada turadi. Sabab —
+#      cPanel Passenger jarayoni har so'rovda qayta ko'tariladi va
+#      xotiradagi holat yo'qoladi. S-33 dagi `course_assignments`
+#      AYNAN shu naqshni oladi.
+#   3. KETMA-KET SAVOL TICK'i. `/anketa/tick` (cron har daqiqa) vaqti
+#      kelgan sessiyalarni boshlaydi; `/anketa/answer` javobni yozib
+#      keyingi savolni qaytaradi va `{"handled": bool}` beradi — bot
+#      shu bayroq bo'yicha xabarni boshqa oqimlarga o'tkazadi. O'quv
+#      paneli shu protokolni takrorlaydi (S-35 da).
+#   4. `.docx` DAN SAVOL AJRATISH. `api/services/docx_parse.py::
+#      parse_questions` — yangi bog'liqliksiz (ZIP + XML). Kurs
+#      savollari ham shundan yuklanadi, ikkinchi ajratgich YOZILMAYDI.
+#   5. SAVOL MATNI NUSXASI. `AnketaAnswer.question_text` naqshi:
+#      javob paytidagi savol matni saqlanadi, keyin shablon o'zgarsa
+#      ham javob konteksti yo'qolmaydi (S-33 `course_results`).
+#   6. FAYL SERVERDA SAQLANMAYDI. Anketa `.docx` ni bazaga yozmaydi,
+#      faqat ajratilgan savollarni saqlaydi. Bu yerda ham material
+#      VIDEOSI Telegram `file_id` sifatida turadi — disk cheklangan
+#      (S-32 tuzog'i).
+#
+# ANKETADAN FARQI (nega alohida jadval kerak):
+#   • anketa — BIR martalik sessiya (hamma bir vaqtda), kurs esa
+#     xodimga ALOHIDA tayinlanadi va o'z tezligida o'tiladi;
+#   • anketada javob BAHOLANMAYDI (u bilim yig'ish), kursda esa
+#     to'g'ri javob va ball bor (S-33 `course_results`);
+#   • kursda MATERIAL (video/matn) bor — anketada faqat savol.
+#
+# ⚠️ O'CHIRISH YUMSHOQ: `deleted_at`. Anketa `is_active` ishlatadi,
+# lekin bu yerda TZ aniq `deleted_at` talab qiladi va u yaxshiroq —
+# QACHON o'chirilgani ham saqlanadi. HAR BIR o'qish uni filtrlashi
+# SHART, aks holda o'chirilgan kurs xodimga ko'rinib qolardi.
+# ═════════════════════════════════════════════════════════════
+
+
+class CourseMaterialKind(str, enum.Enum):
+    """Material turi. `file_id` — Telegram fayl identifikatori."""
+
+    video = "video"
+    document = "document"
+    photo = "photo"
+    text = "text"  # faqat matn, fayl yo'q
+    link = "link"
+
+
+COURSE_MATERIAL_KIND_LABELS: dict[str, str] = {
+    CourseMaterialKind.video.value: "Video",
+    CourseMaterialKind.document.value: "Hujjat",
+    CourseMaterialKind.photo.value: "Rasm",
+    CourseMaterialKind.text.value: "Matn",
+    CourseMaterialKind.link.value: "Havola",
+}
+
+
+class Course(Base):
+    """O'quv kursi (yangi TZ 3.1 / S-32).
+
+    Kurs = tartiblangan MATERIALLAR (video/matn) + ular oxiridagi
+    SAVOLLAR. Xodimga tayinlanadi (S-33) va u o'z tezligida o'tadi.
+
+    `pass_percent` — kursni o'tish uchun kerakli foiz. Kursda
+    saqlanadi, sozlamada emas: turli kurslarga turli talab qo'yiladi
+    (xavfsizlik yo'riqnomasi 100%, umumiy tanishtiruv 60%)."""
+
+    __tablename__ = "courses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #  Kursni o'tish uchun kerakli to'g'ri javob foizi (0-100).
+    pass_percent: Mapped[int] = mapped_column(Integer, default=70)
+    #  Nechta urinish beriladi. 0 — cheksiz.
+    max_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    #  Nashr qilinmagan kurs xodimga tayinlanmaydi — HR uni tinch
+    #  to'ldirib, tayyor bo'lgach ochadi.
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    #  ⚠️ YUMSHOQ o'chirish — o'tilgan kurs tarixi yo'qolmasin.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class CourseMaterial(Base):
+    """Kursning bitta materiali (video, hujjat yoki matn).
+
+    ⚠️ FAYL SERVERDA SAQLANMAYDI — Telegram `file_id` yoziladi
+    (anketa/kadr hujjatlari naqshi). Disk cheklangan, video esa eng
+    og'ir fayl turi."""
+
+    __tablename__ = "course_materials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    #  Ko'rsatish tartibi. Bo'shliq qoldirib beriladi (10, 20, 30) —
+    #  oraga material qo'shish uchun hammasini qayta raqamlash shart
+    #  bo'lmasin.
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    kind: Mapped[str] = mapped_column(String(12), default=CourseMaterialKind.text.value)
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class CourseQuestion(Base):
+    """Kurs savoli (test yoki ochiq javob).
+
+    ⚠️ Savollar kursga NUSXA qilinadi (`AnketaTemplate.questions`
+    naqshi): `.docx` fayl keyin o'zgarsa ham boshlangan kurs savollari
+    o'zgarmaydi — aks holda xodim yarim yo'lda boshqa savolni ko'rardi.
+
+    `options` — variantlar ro'yxati (`["A", "B", ...]`), bo'sh bo'lsa
+    savol OCHIQ javobli. `correct_index` — to'g'ri variant indeksi;
+    ochiq savolda `None` va u AVTOMAT baholanmaydi (odam ko'radi).
+    Bu chegara ataylab: ochiq javobni mashina baholasa, xodim noto'g'ri
+    sababdan kursdan yiqilardi."""
+
+    __tablename__ = "course_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    text: Mapped[str] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON, default=list)
+    correct_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #  Savol nechta ball beradi — muhim savolga ko'proq ball.
+    points: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
