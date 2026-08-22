@@ -353,7 +353,7 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 > TZ 1-bosqich: 23–34 dasturchi-kuni → **22 seans**.
 > Bu blokda har modul mustaqil — tartibni o'zgartirish mumkin, faqat 3.3 → 3.9 bog'liqligi saqlansin.
 
-## Holat: 20/22 (2026-08-22)
+## Holat: 21/22 (2026-08-22)
 
 | Bosqich | Holat | Commit |
 |---|---|---|
@@ -377,9 +377,11 @@ qo'shimcha ish koeffitsienti, bayramlar ro'yxati. Panellar tayyor, qiymat 0.
 | S-27 shartnomani ro'yxatga olish | ✅ | `d4dcf1b` |
 | S-28 murojaatlar jurnali — yadro | ✅ | `9db86ef` + `f09a4d8` |
 | S-29 murojaatlar → bilim bazasi | ✅ | `8b077bf` + `0f8725b` |
-| S-30…S-31 | ⬜ | — |
+| S-30 ko'rinish auditi | ✅ | `5365f44` |
+| S-31 | ⬜ | — |
 
-**Keyingisi: S-30** (B blok — ko'rinish auditi).
+**Keyingisi: S-31** (B blok — deploy va jonli tekshiruv).
+⚠️ S-31 SERVERGA kirishni talab qiladi — IP hozir CSF/LFD blokida.
 
 ⚠️ **PARALLEL SEANS** shu repoda «Avans TZ» ustida ishlayapti. `db/models.py`,
 `test.py` va web umumiy fayllari birga ishlatiladi — `git add -A` ISHLATMANG,
@@ -716,9 +718,12 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Excel eksport ham filtrdan o'tishi tekshiriladi.
 
 **Qabul mezoni**
-- [ ] Har yangi modul uchun rol matritsasi testi bor
-- [ ] Begona so'rov hamma joyda **404**
-- [ ] Menyuda ortiqcha bo'lim ko'rinmaydi
+- [x] Har yangi modul uchun rol matritsasi testi bor
+      (`test_b_block_visibility_audit`, 19 modul × 4 rol)
+- [x] Begona so'rov hamma joyda **404**
+      (auditda S-29 dagi bitta 403 topildi va tuzatildi)
+- [x] Menyuda ortiqcha bo'lim ko'rinmaydi
+      (menyu ↔ backend muvofiqligi avtomatik tekshiriladi)
 
 ---
 
