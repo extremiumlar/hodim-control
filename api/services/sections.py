@@ -172,6 +172,10 @@ _MANAGER: list[Section] = [
     #  (oylik, oilaviy sharoit) va jamoa rahbariga tegishli emas.
     Section("hr-inquiries", "Murojaatlar", "/hr-inquiries", "MessageSquare", 165,
             "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  O'quv paneli — kadr moduli, ROP ko'rmaydi (kim qanday ball
+    #  olgani kadr ma'lumoti, `can_view_hr_docs` bilan bir xil qamrov).
+    Section("courses", "O'quv paneli", "/courses", "GraduationCap", 166,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",

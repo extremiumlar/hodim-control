@@ -49,6 +49,10 @@ export const qk = {
   inquiryCategories: ["hr-inquiries", "categories"] as const,
   hrInquiryStats: ["hr-inquiries", "stats"] as const,
   hrFrequent: (limit: number) => ["hr-inquiries", "frequent", limit] as const,
+  courses: ["courses"] as const,
+  courseDetail: (id: number) => ["courses", id] as const,
+  courseAssignments: (id: number) => ["courses", id, "assignments"] as const,
+  courseMeta: ["courses", "meta"] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
   ackReaders: (t: string, id: number, v?: number) =>
@@ -1523,3 +1527,96 @@ export const useAskHrSuggestion = () =>
 
 export const useInquiryToKnowledge = () =>
   useApiMutation((id: number) => api.inquiryToKnowledge(id), INQUIRY_KEYS);
+
+// ── O'quv paneli (TZ 3.1 / S-34) ──
+
+export const useCourses = () =>
+  useQuery({ queryKey: qk.courses, queryFn: api.courses });
+
+/** `id` null bo'lsa so'rov yuborilmaydi — kurs tanlanmagan. */
+export const useCourseDetail = (id: number | null) =>
+  useQuery({
+    queryKey: qk.courseDetail(id ?? 0),
+    queryFn: () => api.courseDetail(id as number),
+    enabled: id !== null,
+  });
+
+export const useCourseAssignments = (id: number | null) =>
+  useQuery({
+    queryKey: qk.courseAssignments(id ?? 0),
+    queryFn: () => api.courseAssignments(id as number),
+    enabled: id !== null,
+  });
+
+export const useCourseMaterialKinds = () =>
+  useQuery({ queryKey: [...qk.courseMeta, "kinds"], queryFn: api.courseMaterialKinds });
+
+export const useCourseAudiences = () =>
+  useQuery({ queryKey: [...qk.courseMeta, "audiences"], queryFn: api.courseAudiences });
+
+//  Har o'zgarish butun `courses` daraxtini eskirtiradi: material
+//  qo'shilsa ro'yxatdagi hisoblagich ham o'zgaradi.
+const COURSE_KEYS = [["courses"]] as const;
+
+export const useCreateCourse = () =>
+  useApiMutation(
+    (body: Parameters<typeof api.createCourse>[0]) => api.createCourse(body),
+    COURSE_KEYS
+  );
+
+export const useUpdateCourse = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: Record<string, unknown> }) =>
+      api.updateCourse(id, body),
+    COURSE_KEYS
+  );
+
+export const usePublishCourse = () =>
+  useApiMutation(
+    ({ id, value }: { id: number; value: boolean }) => api.publishCourse(id, value),
+    COURSE_KEYS
+  );
+
+export const useDeleteCourse = () =>
+  useApiMutation((id: number) => api.deleteCourse(id), COURSE_KEYS);
+
+export const useAddCourseMaterial = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: Parameters<typeof api.addCourseMaterial>[1] }) =>
+      api.addCourseMaterial(id, body),
+    COURSE_KEYS
+  );
+
+export const useDeleteCourseMaterial = () =>
+  useApiMutation(
+    ({ id, materialId }: { id: number; materialId: number }) =>
+      api.deleteCourseMaterial(id, materialId),
+    COURSE_KEYS
+  );
+
+export const useAddCourseQuestion = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: Parameters<typeof api.addCourseQuestion>[1] }) =>
+      api.addCourseQuestion(id, body),
+    COURSE_KEYS
+  );
+
+export const useDeleteCourseQuestion = () =>
+  useApiMutation(
+    ({ id, questionId }: { id: number; questionId: number }) =>
+      api.deleteCourseQuestion(id, questionId),
+    COURSE_KEYS
+  );
+
+export const useImportCourseQuestions = () =>
+  useApiMutation(
+    ({ id, file }: { id: number; file: File }) => api.importCourseQuestions(id, file),
+    COURSE_KEYS
+  );
+
+export const useAssignCourse = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: Parameters<typeof api.assignCourse>[1] }) =>
+      api.assignCourse(id, body),
+    COURSE_KEYS
+  );

@@ -14,6 +14,9 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  CourseAssignmentRow,
+  CourseDetail,
+  CourseItem,
   HrFrequentReport,
   HrInquiryItem,
   HrSuggestion,
@@ -1219,4 +1222,80 @@ export const api = {
     }),
   closeInquiry: (id: number) =>
     apiFetch<{ ok: boolean }>(`/hr-inquiries/${id}/close`, { method: "POST" }),
+  // ── O'quv paneli (TZ 3.1 / S-34) ──
+  courses: () => apiFetch<CourseItem[]>("/courses"),
+  courseDetail: (id: number) => apiFetch<CourseDetail>(`/courses/${id}`),
+  courseMaterialKinds: () =>
+    apiFetch<{ value: string; label: string }[]>("/courses/material-kinds"),
+  courseAudiences: () =>
+    apiFetch<{ value: string; label: string }[]>("/courses/audiences"),
+  createCourse: (body: {
+    title: string;
+    description?: string | null;
+    pass_percent: number;
+    max_attempts: number;
+    is_mandatory: boolean;
+  }) => apiFetch<CourseItem>("/courses", { method: "POST", body: JSON.stringify(body) }),
+  updateCourse: (id: number, body: Record<string, unknown>) =>
+    apiFetch<CourseItem>(`/courses/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  publishCourse: (id: number, value: boolean) =>
+    apiFetch<{ ok: boolean; is_published: boolean }>(
+      `/courses/${id}/publish?value=${value}`,
+      { method: "POST" }
+    ),
+  deleteCourse: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/courses/${id}`, { method: "DELETE" }),
+  addCourseMaterial: (
+    id: number,
+    body: {
+      kind: string;
+      title: string;
+      body?: string | null;
+      file_id?: string | null;
+      url?: string | null;
+    }
+  ) =>
+    apiFetch<{ id: number; position: number }>(`/courses/${id}/materials`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteCourseMaterial: (id: number, materialId: number) =>
+    apiFetch<{ ok: boolean }>(`/courses/${id}/materials/${materialId}`, {
+      method: "DELETE",
+    }),
+  addCourseQuestion: (
+    id: number,
+    body: {
+      text: string;
+      options: string[];
+      correct_index: number | null;
+      points: number;
+    }
+  ) =>
+    apiFetch<{ id: number; position: number; is_open: boolean }>(
+      `/courses/${id}/questions`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  deleteCourseQuestion: (id: number, questionId: number) =>
+    apiFetch<{ ok: boolean }>(`/courses/${id}/questions/${questionId}`, {
+      method: "DELETE",
+    }),
+  importCourseQuestions: (id: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return apiUpload<{ added: number; title: string | null; fallback: boolean }>(
+      `/courses/${id}/questions/import`,
+      form
+    );
+  },
+  assignCourse: (
+    id: number,
+    body: { audience: string; scope_ids?: unknown[] | null; due_date?: string | null }
+  ) =>
+    apiFetch<{ created: number; skipped: number; audience_size: number }>(
+      `/courses/${id}/assign`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  courseAssignments: (id: number) =>
+    apiFetch<CourseAssignmentRow[]>(`/courses/${id}/assignments`),
 };

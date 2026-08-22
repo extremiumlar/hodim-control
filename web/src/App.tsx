@@ -61,6 +61,7 @@ const Staff = lazy(() => import("./pages/Staff"));
 const Probation = lazy(() => import("./pages/Probation"));
 const ProfileChanges = lazy(() => import("./pages/ProfileChanges"));
 const HrInquiries = lazy(() => import("./pages/HrInquiries"));
+const Courses = lazy(() => import("./pages/Courses"));
 const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
 
@@ -232,6 +233,7 @@ export default function App() {
           <Route path="probation" element={<ManagerRoute><Probation /></ManagerRoute>} />
           <Route path="profile-changes" element={<ManagerRoute><ProfileChanges /></ManagerRoute>} />
           <Route path="hr-inquiries" element={<ManagerRoute><HrInquiries /></ManagerRoute>} />
+          <Route path="courses" element={<ManagerRoute><Courses /></ManagerRoute>} />
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />
           <Route path="norms" element={<ManagerRoute><Norms /></ManagerRoute>} />
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />

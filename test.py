@@ -13119,17 +13119,35 @@ def test_courses_model() -> None:
         # `courses.py` dan TASHQARIDA taqiqlanadi: yagona kirish
         # nuqtasi `alive()`.
         # ══════════════════════════════════════════════
+        import ast as _ast
         import pathlib as _pl
         ildiz = _pl.Path(__file__).parent
         buzuvchilar = []
-        naqsh = _re.compile(r"select\(\s*(Course|CourseMaterial|CourseQuestion)\b")
+        taqiq = {"Course", "CourseMaterial", "CourseQuestion", "CourseAssignment"}
+
+        #  ⚠️ MATN bo'yicha emas, AST bo'yicha qidiramiz. Oddiy `re` izohlar
+        #  va hujjat satrlaridagi «select(Course...)» iborasini ham topib,
+        #  YOLG'ON ogohlantirish berardi — aynan shunday bo'ldi: S-34 da
+        #  routerning O'Z izohi testni yiqitdi. AST faqat HAQIQIY chaqiruvni
+        #  ko'radi va bo'shliq/qator ko'chishidan qat'i nazar ishlaydi.
         for fayl in list((ildiz / "api").rglob("*.py")) + list((ildiz / "bot").rglob("*.py")):
             if fayl.name == "courses.py" and fayl.parent.name == "services":
                 continue  # yagona ruxsat etilgan joy
-            matn = fayl.read_text(encoding="utf-8", errors="ignore")
-            for m in naqsh.finditer(matn):
-                qator = matn[:m.start()].count(chr(10)) + 1
-                buzuvchilar.append(f"{fayl.relative_to(ildiz)}:{qator} {m.group(1)}")
+            try:
+                daraxt = _ast.parse(fayl.read_text(encoding="utf-8", errors="ignore"))
+            except SyntaxError:
+                continue
+            for tugun in _ast.walk(daraxt):
+                if not isinstance(tugun, _ast.Call):
+                    continue
+                nom = getattr(tugun.func, "id", None) or getattr(tugun.func, "attr", None)
+                if nom != "select" or not tugun.args:
+                    continue
+                birinchi = tugun.args[0]
+                model = getattr(birinchi, "id", None) or getattr(birinchi, "attr", None)
+                if model in taqiq:
+                    buzuvchilar.append(
+                        f"{fayl.relative_to(ildiz)}:{tugun.lineno} {model}")
         check("S-32: kurs modellari `alive()` dan TASHQARIDA o'qilmaydi",
               not buzuvchilar, " | ".join(buzuvchilar[:5]))
 
@@ -13544,6 +13562,241 @@ def test_course_assignments() -> None:
         conn.close()
 
 
+
+def test_courses_hr_api() -> None:
+    """S-34 (TZ 3.1) — o'quv paneli HR sayt tomoni.
+
+    Qabul mezonlari (TZ):
+      • kurs yaratish -> material -> savol ZANJIRI ishlaydi;
+      • `.docx` dan savol IMPORT qilinadi;
+      • o'tish chegarasi KURSDA saqlanadi.
+    """
+    import io
+
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-34: O'QUV PANELI — HR API")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    kurs_id = None
+    try:
+        cur.execute("delete from users where full_name like 'T-Cu%'")
+        conn.commit()
+        for nom, tg, rol in (("T-Cu Xodim", 999703101, "employee"),
+                             ("T-Cu ROP", 999703102, "rop")):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,?,0,1,datetime('now'))",
+                (tg, nom, rol))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["T-Cu Xodim"], "employee")
+        rop_t = token_for(ids["T-Cu ROP"], "rop")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══════════════════════════════════════════════
+            # ROL QAMROVI — ROP ataylab KO'RMAYDI
+            # ══════════════════════════════════════════════
+            for rol, tok in (("xodim", xodim_t), ("ROP", rop_t)):
+                r = c.get("/courses", headers=auth(tok))
+                check(f"S-34: {rol} o'quv panelini ko'rmaydi -> 403",
+                      r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # 1) ZANJIR: kurs -> material -> savol
+            # ══════════════════════════════════════════════
+            r = c.post("/courses", headers=auth(mgr_t), json={
+                "title": "T-Cu Xavfsizlik yo'riqnomasi",
+                "description": "sinov kursi",
+                "pass_percent": 80, "max_attempts": 2, "is_mandatory": True})
+            check("S-34: kurs yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            kurs = r.json() if r.status_code == 201 else {}
+            kurs_id = kurs.get("id")
+
+            # ⚠️ O'TISH CHEGARASI KURSDA SAQLANADI (TZ qabul mezoni)
+            check("S-34: ⚠️ o'tish chegarasi KURSDA saqlandi",
+                  kurs.get("pass_percent") == 80, "=" + str(kurs))
+            check("S-34: «majburiy» bayrog'i saqlandi",
+                  kurs.get("is_mandatory") is True, "=" + str(kurs))
+            check("S-34: yangi kurs QORALAMA (nashr qilinmagan)",
+                  kurs.get("is_published") is False, "=" + str(kurs))
+
+            #  Savolsiz kursni nashr qilib bo'lmaydi
+            r = c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            check("S-34: savolsiz kurs NASHR QILINMAYDI -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + " " + r.text[:120])
+
+            #  Material
+            r = c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                "kind": "text", "title": "1-dars", "body": "Xavfsizlik qoidalari"})
+            check("S-34: matn material qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            r = c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                "kind": "video", "title": "2-dars", "file_id": "T-CU-FILEID"})
+            check("S-34: video material `file_id` bilan qo'shildi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code))
+            #  ⚠️ Faylsiz video RAD ETILADI — aks holda xodimga bo'sh
+            #  material ochilardi.
+            r = c.post(f"/courses/{kurs_id}/materials", headers=auth(mgr_t), json={
+                "kind": "video", "title": "3-dars"})
+            check("S-34: FAYLSIZ video material rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            #  Savol (test)
+            r = c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Kaska qachon kiyiladi?",
+                "options": ["Hech qachon", "Obyektda doim"],
+                "correct_index": 1, "points": 2})
+            check("S-34: test savoli qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            check("S-34: test savoli OCHIQ emas",
+                  r.json().get("is_open") is False, "=" + str(r.json()))
+            #  To'g'ri javobsiz test savoli rad etiladi
+            r = c.post(f"/courses/{kurs_id}/questions", headers=auth(mgr_t), json={
+                "text": "Variantli lekin javobsiz?", "options": ["A", "B"],
+                "correct_index": None, "points": 1})
+            check("S-34: to'g'ri javobsiz TEST savoli rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            #  Zanjir natijasi
+            r = c.get(f"/courses/{kurs_id}", headers=auth(mgr_t))
+            check("S-34: kurs tafsiloti -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            d = r.json() if r.status_code == 200 else {}
+            check("S-34: ⚠️ ZANJIR ishlaydi (kurs + 2 material + 1 savol)",
+                  d.get("course", {}).get("material_count") == 2
+                  and d.get("course", {}).get("question_count") == 1,
+                  "=" + str(d.get("course")))
+
+            # ══════════════════════════════════════════════
+            # 2) `.docx`/`.txt` DAN IMPORT
+            # ══════════════════════════════════════════════
+            matn = ("1. Yong'in chiqsa nima qilasiz?\n"
+                    "2. Birinchi yordam qutisi qayerda?\n"
+                    "3. Evakuatsiya yo'li qayerda?\n")
+            r = c.post(
+                f"/courses/{kurs_id}/questions/import", headers=auth(mgr_t),
+                files={"file": ("savollar.txt", io.BytesIO(matn.encode("utf-8")),
+                                "text/plain")})
+            check("S-34: ⚠️ fayldan savol IMPORT qilindi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:150])
+            imp = r.json() if r.status_code == 200 else {}
+            check("S-34: uchala savol yuklandi", imp.get("added") == 3,
+                  "=" + str(imp))
+            r = c.get(f"/courses/{kurs_id}", headers=auth(mgr_t))
+            savollar = r.json().get("questions", [])
+            check("S-34: import qilinganlar OCHIQ javobli (ajratgich variant bilmaydi)",
+                  sum(1 for q in savollar if q["is_open"]) == 3,
+                  "=" + str([(q["text"][:20], q["is_open"]) for q in savollar]))
+
+            #  Bo'sh fayl rad etiladi
+            r = c.post(
+                f"/courses/{kurs_id}/questions/import", headers=auth(mgr_t),
+                files={"file": ("bosh.txt", io.BytesIO(b""), "text/plain")})
+            check("S-34: bo'sh fayl rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # 3) NASHR VA TAYINLASH
+            # ══════════════════════════════════════════════
+            r = c.post(f"/courses/{kurs_id}/publish?value=true", headers=auth(mgr_t))
+            check("S-34: savol bor — kurs nashr qilindi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+
+            #  Bo'sh qamrov rad etiladi
+            r = c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t),
+                       json={"audience": "users", "scope_ids": []})
+            check("S-34: bo'sh qamrov rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            r = c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t),
+                       json={"audience": "users",
+                             "scope_ids": [ids["T-Cu Xodim"]],
+                             "due_date": "2026-12-31"})
+            check("S-34: kurs tayinlandi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            check("S-34: bitta xodimga tayinlandi",
+                  r.json().get("created") == 1, "=" + str(r.json()))
+            #  Ikkinchi marta — dublikat yo'q (S-33 qoidasi API orqali)
+            r = c.post(f"/courses/{kurs_id}/assign", headers=auth(mgr_t),
+                       json={"audience": "users", "scope_ids": [ids["T-Cu Xodim"]]})
+            check("S-34: qayta tayinlashda dublikat yaratilmadi",
+                  r.json().get("created") == 0 and r.json().get("skipped") == 1,
+                  "=" + str(r.json()))
+
+            r = c.get(f"/courses/{kurs_id}/assignments", headers=auth(mgr_t))
+            check("S-34: tayinlanganlar ro'yxati -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            qatorlar = r.json() if r.status_code == 200 else []
+            check("S-34: tayinlangan xodim ro'yxatda, muddat bilan",
+                  len(qatorlar) == 1 and qatorlar[0]["user_name"] == "T-Cu Xodim"
+                  and qatorlar[0]["due_date"] == "2026-12-31",
+                  "=" + str(qatorlar[:1]))
+            check("S-34: hali topshirmagan xodimda natija YO'Q",
+                  qatorlar and qatorlar[0]["percent"] is None,
+                  "=" + str(qatorlar[:1]))
+
+            # ══════════════════════════════════════════════
+            # 4) O'CHIRISH YUMSHOQ
+            # ══════════════════════════════════════════════
+            r = c.get(f"/courses/{kurs_id}", headers=auth(mgr_t))
+            mat_id = r.json()["materials"][0]["id"]
+            r = c.delete(f"/courses/{kurs_id}/materials/{mat_id}", headers=auth(mgr_t))
+            check("S-34: material o'chirildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            bazada = cur.execute(
+                "select deleted_at is not null from course_materials where id=?",
+                (mat_id,)).fetchone()
+            check("S-34: material YUMSHOQ o'chirildi (qator bazada qoldi)",
+                  bazada == (1,), "=" + str(bazada))
+            r = c.get(f"/courses/{kurs_id}", headers=auth(mgr_t))
+            check("S-34: o'chirilgan material tafsilotda YO'Q",
+                  r.json()["course"]["material_count"] == 1,
+                  "=" + str(r.json()["course"]))
+
+            #  Mavjud bo'lmagan kurs
+            r = c.get("/courses/999999", headers=auth(mgr_t))
+            check("S-34: mavjud bo'lmagan kurs -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-34 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-Cu%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-Cu%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-Cu%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-Cu%')")
+            cur.execute("delete from courses where title like 'T-Cu%'")
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -13950,6 +14203,12 @@ def main() -> None:
         test_course_assignments()
     except Exception:
         print("S-33 kurs tayinlash testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_courses_hr_api()
+    except Exception:
+        print("S-34 o'quv paneli API testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:

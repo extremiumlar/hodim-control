@@ -92,6 +92,7 @@ async def create_course(
     pass_percent: int,
     max_attempts: int,
     actor_id: int,
+    is_mandatory: bool = False,
 ) -> Course:
     nom = (title or "").strip()
     if not nom:
@@ -105,6 +106,7 @@ async def create_course(
         description=(description or "").strip() or None,
         pass_percent=pass_percent,
         max_attempts=max_attempts,
+        is_mandatory=is_mandatory,
         created_by=actor_id,
     )
     db.add(row)
@@ -526,3 +528,107 @@ async def retry(db: AsyncSession, assignment: CourseAssignment) -> CourseAssignm
     assignment.finished_at = None
     await db.flush()
     return assignment
+
+
+# ─────────────────────────────────────────────────────────────
+# S-34 · HR TOMONI: tahrirlash va o'chirish
+#
+# ⚠️ Router BU FUNKSIYALARDAN foydalanadi, `select(Course)` ni O'ZI
+# yozmaydi — `deleted_at` filtri unutilmasin (S-32 qoidasi, test
+# majburlaydi).
+# ─────────────────────────────────────────────────────────────
+
+
+async def update_course(db: AsyncSession, *, course: Course, **fields) -> Course:
+    """Kurs maydonlarini yangilaydi (faqat berilganlarini)."""
+    if "title" in fields:
+        nom = (fields["title"] or "").strip()
+        if not nom:
+            raise ValueError("Kurs nomi bo'sh")
+        course.title = nom[:200]
+    if "description" in fields:
+        course.description = (fields["description"] or "").strip() or None
+    if "pass_percent" in fields:
+        v = int(fields["pass_percent"])
+        if not 0 <= v <= 100:
+            raise ValueError("O'tish foizi 0 va 100 orasida bo'lishi kerak")
+        course.pass_percent = v
+    if "max_attempts" in fields:
+        v = int(fields["max_attempts"])
+        if v < 0:
+            raise ValueError("Urinishlar soni manfiy bo'la olmaydi")
+        course.max_attempts = v
+    if "is_mandatory" in fields:
+        course.is_mandatory = bool(fields["is_mandatory"])
+    await db.flush()
+    return course
+
+
+async def publish(db: AsyncSession, *, course: Course, value: bool) -> Course:
+    """Kursni ochish/yopish.
+
+    ⚠️ Savolsiz kursni ochib bo'lmaydi: xodim materialni ko'rib,
+    keyin «test yo'q» degan holatga tushardi va kurs hech qachon
+    yakunlanmasdi."""
+    if value:
+        savollar = await questions(db, course.id)
+        if not savollar:
+            raise ValueError("Kursda savol yo'q — avval savol qo'shing")
+    course.is_published = value
+    await db.flush()
+    return course
+
+
+async def get_material(
+    db: AsyncSession, *, course_id: int, material_id: int
+) -> CourseMaterial | None:
+    return await db.scalar(
+        alive(CourseMaterial).where(
+            CourseMaterial.id == material_id,
+            CourseMaterial.course_id == course_id,
+        )
+    )
+
+
+async def get_question(
+    db: AsyncSession, *, course_id: int, question_id: int
+) -> CourseQuestion | None:
+    return await db.scalar(
+        alive(CourseQuestion).where(
+            CourseQuestion.id == question_id,
+            CourseQuestion.course_id == course_id,
+        )
+    )
+
+
+async def assignments_for_course(
+    db: AsyncSession, course_id: int
+) -> list[CourseAssignment]:
+    return list(
+        await db.scalars(
+            alive(CourseAssignment)
+            .where(CourseAssignment.course_id == course_id)
+            .order_by(CourseAssignment.created_at.desc())
+        )
+    )
+
+
+async def latest_results(db: AsyncSession, assignment_ids: list[int]) -> dict:
+    """Har tayinlash uchun ENG SO'NGGI natija.
+
+    Urinishlar tarixi to'liq saqlanadi, lekin ro'yxatda oxirgisi
+    ko'rsatiladi — HR «hozir qanday holatda?» degan savolga javob
+    izlaydi."""
+    if not assignment_ids:
+        return {}
+    rows = list(
+        await db.scalars(
+            select(CourseResult)
+            .where(CourseResult.assignment_id.in_(assignment_ids))
+            .order_by(CourseResult.assignment_id, CourseResult.attempt_no)
+        )
+    )
+    out: dict[int, CourseResult] = {}
+    for r in rows:
+        out[r.assignment_id] = r  # tartiblangan — oxirgisi qoladi
+    return out

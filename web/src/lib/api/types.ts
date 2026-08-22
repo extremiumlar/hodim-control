@@ -1793,3 +1793,58 @@ export type HrSuggestion = {
   answer: string;
   score: number;
 };
+
+/** O'quv kursi (TZ 3.1 / S-34). */
+export type CourseItem = {
+  id: number;
+  title: string;
+  description: string | null;
+  pass_percent: number;
+  max_attempts: number;
+  is_published: boolean;
+  is_mandatory: boolean;
+  created_at: string;
+  material_count: number;
+  question_count: number;
+  assigned_count: number;
+};
+
+export type CourseMaterialItem = {
+  id: number;
+  position: number;
+  kind: string;
+  kind_label: string;
+  title: string;
+  body: string | null;
+  file_id: string | null;
+  url: string | null;
+};
+
+/** `is_open` — ochiq javobli savol; u AVTOMAT baholanmaydi. */
+export type CourseQuestionItem = {
+  id: number;
+  position: number;
+  text: string;
+  options: string[];
+  correct_index: number | null;
+  points: number;
+  is_open: boolean;
+};
+
+export type CourseDetail = {
+  course: CourseItem;
+  materials: CourseMaterialItem[];
+  questions: CourseQuestionItem[];
+};
+
+export type CourseAssignmentRow = {
+  id: number;
+  user_id: number;
+  user_name: string | null;
+  status: string;
+  attempt_no: number;
+  due_date: string | null;
+  percent: number | null;
+  passed: boolean | null;
+  pending_review: boolean | null;
+};
