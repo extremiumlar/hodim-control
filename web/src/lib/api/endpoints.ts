@@ -14,6 +14,7 @@ import type {
   AckPending,
   AckReader,
   AnnouncementItem,
+  HrInquiryItem,
   MyProfile,
   ProbationItem,
   ProfileChange,
@@ -1163,4 +1164,33 @@ export const api = {
       `/admin/users/${userId}/location-exempt`,
       { method: "POST", body: JSON.stringify({ granted, override_reason: reason }) }
     ),
+  // ── Xodim murojaatlari (TZ 3.29 / S-28) ──
+  myInquiries: () => apiFetch<HrInquiryItem[]>("/hr-inquiries/me"),
+  askHr: (question: string) =>
+    apiFetch<{ id: number; category: string; category_label: string; notified: number }>(
+      "/hr-inquiries/me",
+      { method: "POST", body: JSON.stringify({ question }) }
+    ),
+  inquiryCategories: () =>
+    apiFetch<{ value: string; label: string }[]>("/hr-inquiries/categories"),
+  hrInquiries: (params?: { status?: string; category?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set("status_filter", params.status);
+    if (params?.category) q.set("category", params.category);
+    const qs = q.toString();
+    return apiFetch<HrInquiryItem[]>(`/hr-inquiries${qs ? `?${qs}` : ""}`);
+  },
+  hrInquiryStats: () => apiFetch<{ open: number }>("/hr-inquiries/stats"),
+  answerInquiry: (id: number, answer: string) =>
+    apiFetch<{ ok: boolean; delivered: boolean }>(`/hr-inquiries/${id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ answer }),
+    }),
+  setInquiryCategory: (id: number, category: string) =>
+    apiFetch<{ ok: boolean; category: string }>(`/hr-inquiries/${id}/category`, {
+      method: "PUT",
+      body: JSON.stringify({ category }),
+    }),
+  closeInquiry: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/hr-inquiries/${id}/close`, { method: "POST" }),
 };

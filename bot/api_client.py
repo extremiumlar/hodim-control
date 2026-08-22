@@ -1375,3 +1375,46 @@ async def upload_document(
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ── Xodim murojaatlari (yangi TZ 3.29 / S-28) ──
+
+
+async def ask_hr(telegram_id: int, question: str) -> dict:
+    resp = await _get_client().post(
+        "/hr-inquiries/bot/ask",
+        json={"telegram_id": telegram_id, "question": question},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def my_inquiries(telegram_id: int) -> list[dict]:
+    resp = await _get_client().get(
+        "/hr-inquiries/bot/my", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def open_inquiries(telegram_id: int) -> list[dict]:
+    """HR uchun javobsizlar. Ruxsat yo'q bo'lsa bo'sh ro'yxat —
+    handler bunda tugmani umuman ko'rsatmaydi."""
+    resp = await _get_client().get(
+        "/hr-inquiries/bot/open", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code in (403, 404):
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def answer_inquiry(telegram_id: int, inquiry_id: int, answer: str) -> dict:
+    resp = await _get_client().post(
+        "/hr-inquiries/bot/answer",
+        json={"telegram_id": telegram_id, "inquiry_id": inquiry_id, "answer": answer},
+    )
+    resp.raise_for_status()
+    return resp.json()

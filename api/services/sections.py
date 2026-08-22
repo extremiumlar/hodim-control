@@ -168,6 +168,10 @@ _MANAGER: list[Section] = [
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("profile-changes", "Ma'lumot so'rovlari", "/profile-changes", "PencilLine",
             164, "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  Murojaatlar — HR/Boshliq. ROP ko'rmaydi: savollar shaxsiy
+    #  (oylik, oilaviy sharoit) va jamoa rahbariga tegishli emas.
+    Section("hr-inquiries", "Murojaatlar", "/hr-inquiries", "MessageSquare", 165,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
@@ -222,6 +226,8 @@ _EMPLOYEE: list[Section] = [
     Section("my-salary-history", "Ish haqim tarixi", "/me/salary-history",
             "TrendingUp", 129, "employee", visible=lambda c: c.role != "boss"),
     Section("my-profile", "Ma'lumotlarim", "/me/profile", "UserCheck", 131, "employee"),
+    Section("my-inquiries", "HR ga savol", "/me/inquiries", "MessageSquare", 132,
+            "employee", bot_button="❓ HR ga savol"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",
@@ -287,6 +293,7 @@ BTN_SET_BUSY = "⏸ Band qilish"
 BTN_MARK_EXCUSED = "🙋 Xodim uchun sababli kun"
 BTN_SALES_AI = "🤖 Sotuv AI"
 BTN_CHECKIN = "✅ Keldim / Ketdim"
+BTN_HR_ASK = "❓ HR ga savol"
 
 
 def bot_menu_rows(user: User) -> list[list[str]]:
@@ -323,6 +330,9 @@ def bot_menu_rows(user: User) -> list[list[str]]:
         rows.append([BTN_REQUESTS, BTN_MY_DOCS])
     else:
         rows.append([BTN_MY_DOCS])
+    #  «HR ga savol» — HAR QANDAY xodimda, rahbarda ham: rahbar ham
+    #  o'z oyligi yoki hujjati bo'yicha savol berishi mumkin.
+    rows.append([BTN_HR_ASK])
     rows.append([BTN_SCHEDULE])
     if c.flags.get("payroll") and c.role != "boss":
         rows.append([BTN_PAYROLL])

@@ -60,6 +60,8 @@ const Announcements = lazy(() => import("./pages/Announcements"));
 const Staff = lazy(() => import("./pages/Staff"));
 const Probation = lazy(() => import("./pages/Probation"));
 const ProfileChanges = lazy(() => import("./pages/ProfileChanges"));
+const HrInquiries = lazy(() => import("./pages/HrInquiries"));
+const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
 
 const MANAGER_ROLES = ["hr", "rop", "boss", "dasturchi"];
@@ -216,6 +218,7 @@ export default function App() {
           <Route path="me/announcements" element={<MeAnnouncements />} />
           <Route path="me/salary-history" element={<MeSalaryHistory />} />
           <Route path="me/profile" element={<MeProfile />} />
+          <Route path="me/inquiries" element={<MeInquiries />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
@@ -228,6 +231,7 @@ export default function App() {
           <Route path="staff" element={<ManagerRoute><Staff /></ManagerRoute>} />
           <Route path="probation" element={<ManagerRoute><Probation /></ManagerRoute>} />
           <Route path="profile-changes" element={<ManagerRoute><ProfileChanges /></ManagerRoute>} />
+          <Route path="hr-inquiries" element={<ManagerRoute><HrInquiries /></ManagerRoute>} />
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />
           <Route path="norms" element={<ManagerRoute><Norms /></ManagerRoute>} />
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />

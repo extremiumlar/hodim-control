@@ -43,6 +43,11 @@ export const qk = {
   probationSummary: ["probation", "summary"] as const,
   staffSummary: ["staff", "summary"] as const,
   announcements: ["announcements"] as const,
+  hrInquiries: (status?: string, category?: string) =>
+    ["hr-inquiries", status ?? "", category ?? ""] as const,
+  myInquiries: ["hr-inquiries", "me"] as const,
+  inquiryCategories: ["hr-inquiries", "categories"] as const,
+  hrInquiryStats: ["hr-inquiries", "stats"] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
   ackReaders: (t: string, id: number, v?: number) =>
@@ -1454,3 +1459,46 @@ export const useFunnelSettings = () =>
 // butun "funnel" shohobchasi invalidate qilinadi.
 export const useSaveFunnelSettings = () =>
   useApiMutation(api.saveFunnelSettings, [qk.funnelRules, ["funnel"] as const]);
+
+// ── Xodim murojaatlari (TZ 3.29 / S-28) ──
+
+export const useMyInquiries = () =>
+  useQuery({ queryKey: qk.myInquiries, queryFn: api.myInquiries });
+
+export const useHrInquiries = (status?: string, category?: string) =>
+  useQuery({
+    queryKey: qk.hrInquiries(status, category),
+    queryFn: () => api.hrInquiries({ status, category }),
+  });
+
+/** Toifa ro'yxati SERVERDAN — sayt o'z nusxasini yuritmaydi, aks holda
+ *  yangi toifa qo'shilganda sayt eskisini ko'rsatib turardi. */
+export const useInquiryCategories = () =>
+  useQuery({ queryKey: qk.inquiryCategories, queryFn: api.inquiryCategories });
+
+export const useHrInquiryStats = () =>
+  useQuery({ queryKey: qk.hrInquiryStats, queryFn: api.hrInquiryStats });
+
+//  Har bir o'zgarish butun `hr-inquiries` daraxtini eskirtiradi: savol
+//  berilsa HR ro'yxati ham, javob berilsa xodim ro'yxati ham o'zgaradi —
+//  ikkovini alohida sanab o'tirish xatoga olib kelardi.
+const INQUIRY_KEYS = [["hr-inquiries"]] as const;
+
+export const useAskHr = () =>
+  useApiMutation((question: string) => api.askHr(question), INQUIRY_KEYS);
+
+export const useAnswerInquiry = () =>
+  useApiMutation(
+    ({ id, answer }: { id: number; answer: string }) => api.answerInquiry(id, answer),
+    INQUIRY_KEYS
+  );
+
+export const useSetInquiryCategory = () =>
+  useApiMutation(
+    ({ id, category }: { id: number; category: string }) =>
+      api.setInquiryCategory(id, category),
+    INQUIRY_KEYS
+  );
+
+export const useCloseInquiry = () =>
+  useApiMutation((id: number) => api.closeInquiry(id), INQUIRY_KEYS);

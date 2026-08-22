@@ -7852,7 +7852,8 @@ def test_bot_menu_from_server() -> None:
     # ko'rinishi. U faqat yangi bo'lim ataylab qo'shilganda yangilanadi va
     # o'zgarish commit izohida ko'rsatiladi. Tasodifiy o'zgarish (masalan
     # `visible` shartini buzib qo'yish) shu yerda ushlanadi.
-    # Tarix: S-11 da «📁 Hujjatlarim» qo'shildi (TZ 3.4).
+    # Tarix: S-11 da «📁 Hujjatlarim» qo'shildi (TZ 3.4);
+    #        S-28 da «❓ HR ga savol» qo'shildi (TZ 3.29).
     kutilgan = [
         ["✅ Keldim / Ketdim"],
         ["📋 Vazifalarim"],
@@ -7860,6 +7861,7 @@ def test_bot_menu_from_server() -> None:
         ["📊 Bugungi normam", "💰 Oylik KPI'm"],
         ["📈 Statistikam", "🙋 Sababli kun so'rash"],
         ["📮 Murojaatlarim", "📁 Hujjatlarim"],
+        ["❓ HR ga savol"],
         ["🗓 Ish jadvali"],
         ["💵 Mening oyligim"],
         ["📋 Bugungi rejam"],
@@ -12286,6 +12288,230 @@ def test_contract_registration() -> None:
         conn.close()
 
 
+
+def test_hr_inquiries() -> None:
+    """S-28 (TZ 3.29) — xodim murojaatlari jurnali.
+
+    Qabul mezonlari (TZ):
+      • savol-javob SAQLANADI;
+      • xodim FAQAT o'z murojaatlarini ko'radi;
+      • javobsiz murojaat HR panelida AJRALIB turadi.
+
+    ⚠️ AI hukm chiqarmaydi — tasniflagich faqat TOIFANI qo'yadi,
+    javobni har doim odam yozadi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-28: XODIM MUROJAATLARI JURNALI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Hq%'")
+        conn.commit()
+        for nom, tg in (("T-Hq Aziz", 999702801), ("T-Hq Bobur", 999702802)):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        #  Rahbarning telegram_id si — bot yo'lini SINASH uchun. Botda
+        #  JWT yo'q, kirish `telegram_id` bo'yicha.
+        mgr_tg = cur.execute(
+            "select telegram_id from users where id=?", (mgr[0],)).fetchone()[0]
+        aziz_t = token_for(ids["T-Hq Aziz"], "employee")
+        bobur_t = token_for(ids["T-Hq Bobur"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── TASNIFLAGICH ──
+            r = c.post("/hr-inquiries/me", headers=auth(aziz_t),
+                       json={"question": "Oyligim nega kam tushdi?"})
+            check("S-28: savol yozildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            savol1 = r.json() if r.status_code == 201 else {}
+            check("S-28: toifa avtomatik aniqlandi (oylik)",
+                  savol1.get("category") == "salary", "=" + str(savol1))
+
+            r = c.post("/hr-inquiries/me", headers=auth(aziz_t),
+                       json={"question": "Ta'tilga qachon chiqsam bo'ladi?"})
+            savol2 = r.json() if r.status_code == 201 else {}
+            check("S-28: qo'shimchali so'z ham topildi (ta'tilga -> vacation)",
+                  savol2.get("category") == "vacation", "=" + str(savol2))
+
+            r = c.post("/hr-inquiries/me", headers=auth(bobur_t),
+                       json={"question": "Bugun ob-havo qanday bo'larkan?"})
+            savol3 = r.json() if r.status_code == 201 else {}
+            check("S-28: kalit so'z yo'q -> «other» (taxmin qilinmaydi)",
+                  savol3.get("category") == "other", "=" + str(savol3))
+
+            # ── XODIM FAQAT O'ZINIKINI KO'RADI ──
+            r = c.get("/hr-inquiries/me", headers=auth(aziz_t))
+            aziznikilar = r.json() if r.status_code == 200 else []
+            check("S-28: o'z murojaatlarim ko'rinadi", len(aziznikilar) == 2,
+                  "soni=" + str(len(aziznikilar)))
+            check("S-28: BOSHQA xodim murojaati ko'rinmaydi",
+                  all(x["user_id"] == ids["T-Hq Aziz"] for x in aziznikilar),
+                  "=" + str([x["user_id"] for x in aziznikilar]))
+
+            # Xodim HR ro'yxatini OCHA OLMAYDI
+            r = c.get("/hr-inquiries", headers=auth(aziz_t))
+            check("S-28: xodim HR ro'yxatiga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── HR RO'YXATI: JAVOBSIZLAR BIRINCHI ──
+            r = c.get("/hr-inquiries", headers=auth(mgr_t))
+            check("S-28: HR ro'yxati -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            hammasi = r.json() if r.status_code == 200 else []
+            meniki = [x for x in hammasi if x["id"] in
+                      (savol1.get("id"), savol2.get("id"), savol3.get("id"))]
+            check("S-28: uchala murojaat HR ga ko'rindi", len(meniki) == 3,
+                  "soni=" + str(len(meniki)))
+
+            r = c.get("/hr-inquiries/stats", headers=auth(mgr_t))
+            ochiq_oldin = r.json().get("open") if r.status_code == 200 else None
+
+            # ── JAVOB ──
+            r = c.post(f"/hr-inquiries/{savol1['id']}/answer", headers=auth(mgr_t),
+                       json={"answer": "Kechikish jarimasi ushlangan."})
+            check("S-28: javob yozildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+
+            r = c.get("/hr-inquiries/me", headers=auth(aziz_t))
+            javobli = [x for x in r.json() if x["id"] == savol1["id"]]
+            check("S-28: javob xodimga QAYTDI va saqlandi",
+                  bool(javobli) and javobli[0]["answer"] == "Kechikish jarimasi ushlangan."
+                  and javobli[0]["status"] == "answered",
+                  "=" + str(javobli[:1]))
+            check("S-28: javob bergan odam yozildi",
+                  bool(javobli) and javobli[0]["answered_by"] == mgr[0],
+                  "=" + str(javobli[0].get("answered_by") if javobli else None))
+
+            r = c.get("/hr-inquiries/stats", headers=auth(mgr_t))
+            check("S-28: javobsizlar soni kamaydi",
+                  r.json().get("open") == (ochiq_oldin or 0) - 1,
+                  f"oldin={ochiq_oldin}, keyin={r.json().get('open')}")
+
+            # ── SARALASH: javobsizlar tepada ──
+            r = c.get("/hr-inquiries", headers=auth(mgr_t))
+            tartib = [x["status"] for x in r.json()]
+            birinchi_javobli = next(
+                (i for i, v in enumerate(tartib) if v != "open"), len(tartib))
+            check("S-28: javobsizlar ro'yxat TEPASIDA",
+                  all(v == "open" for v in tartib[:birinchi_javobli])
+                  and all(v != "open" for v in tartib[birinchi_javobli:]),
+                  "=" + str(tartib[:8]))
+
+            # ── TOIFANI QO'LDA O'ZGARTIRISH ──
+            r = c.put(f"/hr-inquiries/{savol3['id']}/category", headers=auth(mgr_t),
+                      json={"category": "schedule"})
+            check("S-28: toifa o'zgartirildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            qator = cur.execute(
+                "select category, category_auto from hr_inquiries where id=?",
+                (savol3["id"],)).fetchone()
+            check("S-28: qo'lda o'zgartirilgach «avto» belgisi olindi",
+                  qator == ("schedule", 0), "=" + str(qator))
+
+            r = c.put(f"/hr-inquiries/{savol3['id']}/category", headers=auth(mgr_t),
+                      json={"category": "yolgon"})
+            check("S-28: noma'lum toifa rad etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            # ── FILTRLAR ──
+            r = c.get("/hr-inquiries?status_filter=open", headers=auth(mgr_t))
+            check("S-28: holat filtri ishlaydi",
+                  r.status_code == 200
+                  and all(x["status"] == "open" for x in r.json()),
+                  "kod=" + str(r.status_code))
+            r = c.get("/hr-inquiries?category=vacation", headers=auth(mgr_t))
+            check("S-28: toifa filtri ishlaydi",
+                  r.status_code == 200
+                  and all(x["category"] == "vacation" for x in r.json()),
+                  "kod=" + str(r.status_code))
+
+            # ── JAVOBSIZ YOPISH ──
+            r = c.post(f"/hr-inquiries/{savol3['id']}/close", headers=auth(mgr_t))
+            check("S-28: javobsiz yopildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            # Javob berilgan murojaatni yopib BO'LMAYDI
+            r = c.post(f"/hr-inquiries/{savol1['id']}/close", headers=auth(mgr_t))
+            check("S-28: javob berilgan murojaat yopilmaydi -> 409",
+                  r.status_code == 409, "kod=" + str(r.status_code))
+
+            # ── BOT YO'LI ──
+            r = c.post("/hr-inquiries/bot/ask",
+                       json={"telegram_id": 999702802,
+                             "question": "Ma'lumotnoma kerak edi"})
+            check("S-28: botdan savol -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            bot_savol = r.json() if r.status_code == 201 else {}
+            check("S-28: botdagi savol ham tasniflandi",
+                  bot_savol.get("category") == "documents", "=" + str(bot_savol))
+
+            # ⚠️ `POST /bot/answer` `POST /{inquiry_id}/answer` bilan bir xil
+            # SHAKLDA va bir xil METODDA — marshrut tartibi buzilsa «bot»
+            # so'zi murojaat raqami deb o'qilib, 422 qaytarardi.
+            r = c.post("/hr-inquiries/bot/answer",
+                       json={"telegram_id": mgr_tg,
+                             "inquiry_id": bot_savol.get("id", 0),
+                             "answer": "Ma'lumotnomani ertaga tayyorlaymiz."})
+            #  ⚠️ Bu tekshiruv MARSHRUT TARTIBINI qo'riqlaydi: `/bot/answer`
+            #  `/{inquiry_id}/answer` dan KEYIN e'lon qilinsa, «bot» so'zi
+            #  raqam deb o'qilib 422 kelardi va bot javob bera olmasdi.
+            check("S-28: botdan javob berildi -> 200 (marshrut almashmadi)",
+                  r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:150])
+            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802})
+            bot_javob = [x for x in r.json() if x["id"] == bot_savol.get("id")]
+            check("S-28: botdagi javob xodimga yetdi",
+                  bool(bot_javob) and bot_javob[0]["status"] == "answered",
+                  "=" + str(bot_javob[:1]))
+
+            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802})
+            check("S-28: botda o'z murojaatlarim ko'rinadi",
+                  r.status_code == 200
+                  and all(x["user_id"] == ids["T-Hq Bobur"] for x in r.json()),
+                  "kod=" + str(r.status_code))
+
+            r = c.get("/hr-inquiries/bot/open", params={"telegram_id": 999702801})
+            check("S-28: oddiy xodim botda javobsizlar ro'yxatini ko'rmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ── KIRITISHNI TEKSHIRISH ──
+            r = c.post("/hr-inquiries/me", headers=auth(aziz_t), json={"question": "ha"})
+            check("S-28: juda qisqa savol rad etildi -> 422",
+                  r.status_code == 422, "kod=" + str(r.status_code))
+            r = c.post("/hr-inquiries/999999/answer", headers=auth(mgr_t),
+                       json={"answer": "yo'q"})
+            check("S-28: mavjud bo'lmagan murojaat -> 404",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-28 (umumiy)", False, traceback.format_exc(limit=2).strip())
+    finally:
+        try:
+            if ids:
+                belgi = ",".join("?" * len(ids))
+                cur.execute(f"delete from hr_inquiries where user_id in ({belgi})",
+                            tuple(ids.values()))
+                cur.execute(f"delete from users where id in ({belgi})",
+                            tuple(ids.values()))
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -12664,6 +12890,11 @@ def main() -> None:
         test_contract_registration()
     except Exception:
         print("S-27 shartnoma royxati testida kutilmagan xato:\n" + traceback.format_exc())
+
+    try:
+        test_hr_inquiries()
+    except Exception:
+        print("S-28 murojaatlar testida kutilmagan xato:\n" + traceback.format_exc())
 
     try:
         test_payroll_api()

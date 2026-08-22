@@ -1747,3 +1747,22 @@ export type MyProfile = {
   emergency_contact: string | null;
   pending_fields: string[];
 };
+
+/** Xodim murojaati (TZ 3.29 / S-28). `category_auto` — toifani
+ *  tasniflagich qo'yganmi; HR o'zgartirsa `false` bo'ladi. */
+export type HrInquiryItem = {
+  id: number;
+  user_id: number;
+  user_name: string | null;
+  question: string;
+  answer: string | null;
+  category: string;
+  category_label: string;
+  category_auto: boolean;
+  status: string;
+  status_label: string;
+  answered_by: number | null;
+  answered_by_name: string | null;
+  answered_at: string | null;
+  created_at: string;
+};

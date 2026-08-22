@@ -50,6 +50,7 @@ BTN_CODE_NOT_RECEIVED = "📵 Kod kelmadi"
 # UX2-W4 (C1): xodim davomatga botdan bir bosishda yetsin — ilgari bot
 # «Keldim»ni bosing» der, lekin bosadigan joy BERMASdi.
 BTN_CHECKIN = "✅ Keldim / Ketdim"
+BTN_HR_ASK = "❓ HR ga savol"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 
@@ -63,7 +64,11 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
     BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL, BTN_REQUESTS,
-    BTN_CELEBRATION,
+    BTN_CELEBRATION, BTN_HR_ASK,
+    #  Hujjat tugmalari ro'yxatdan TUSHIB QOLGAN edi: FSM matn kutayotgan
+    #  paytda «📁 Hujjatlarim» bosilsa, tugma matni javob sifatida
+    #  yozilardi. Ro'yxatning butun mazmuni shu holatni to'sish.
+    BTN_MY_DOCS, BTN_DOC_UPLOAD,
 })
 
 
