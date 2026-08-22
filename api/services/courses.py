@@ -31,11 +31,18 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.services.docx_parse import parse_questions
-from db.models import Course, CourseMaterial, CourseQuestion
+from db.models import (
+    Course,
+    CourseAssignment,
+    CourseAssignmentStatus,
+    CourseMaterial,
+    CourseQuestion,
+    CourseResult,
+)
 
 #  `alive()` qo'llaydigan modellar. Yangi kurs jadvali qo'shilsa shu
 #  yerga ham qo'shing — aks holda u filtrsiz o'qiladi.
-_SOFT_DELETE_MODELS = (Course, CourseMaterial, CourseQuestion)
+_SOFT_DELETE_MODELS = (Course, CourseMaterial, CourseQuestion, CourseAssignment)
 
 
 def alive(model) -> Select:
@@ -253,3 +260,269 @@ async def import_questions_from_file(
         "title": natija.get("title"),
         "fallback": natija.get("fallback", False),
     }
+
+
+# ═════════════════════════════════════════════════════════════
+# S-33 · TAYINLASH VA NATIJA (TZ 3.1)
+#
+# ⚠️ HOLAT BAZADA. `progress()` har safar bazadan o'qiydi va
+# `submit_answer()` har javobdan keyin yozadi. Xotirada hech narsa
+# saqlanmaydi — Passenger jarayoni har so'rovda qayta ko'tarilishi
+# mumkin (anketa `current_q` naqshi).
+# ═════════════════════════════════════════════════════════════
+
+
+async def assign(
+    db: AsyncSession,
+    *,
+    course_id: int,
+    user_ids: list[int],
+    assigned_by: int | None,
+    due_date=None,
+) -> dict:
+    """Kursni xodimlarga tayinlaydi.
+
+    ⚠️ BIR XODIMGA BIR KURS IKKI MARTA TAYINLANMAYDI (S-33 qabul
+    mezoni). Ikki qatlam:
+      1. shu yerdagi qo'riqchi — mavjudlarini JIMGINA o'tkazib
+         yuboradi (HR «hammaga» tayinlab, keyin bittasini alohida
+         tayinlasa, amal xato bermasin);
+      2. `uq_course_assignment_active` qisman unique indeksi — kod
+         qo'riqchisi unutilsa ham baza dublikatni yozmaydi.
+
+    Qaytaradi: `{"created": n, "skipped": m}`."""
+    kurs = await get_course(db, course_id)
+    if kurs is None:
+        raise ValueError("Kurs topilmadi")
+    if not kurs.is_published:
+        #  Nashr qilinmagan kurs tayinlanmaydi: xodim ochganda yarim
+        #  to'ldirilgan materialni ko'rardi.
+        raise ValueError("Kurs hali nashr qilinmagan")
+
+    mavjud = {
+        a.user_id
+        for a in await db.scalars(
+            alive(CourseAssignment).where(CourseAssignment.course_id == course_id)
+        )
+    }
+    yaratildi = 0
+    for uid in dict.fromkeys(user_ids):  # takrorlarni tashlaymiz, tartib saqlanadi
+        if uid in mavjud:
+            continue
+        db.add(
+            CourseAssignment(
+                course_id=course_id,
+                user_id=uid,
+                assigned_by=assigned_by,
+                due_date=due_date,
+                status=CourseAssignmentStatus.assigned.value,
+            )
+        )
+        yaratildi += 1
+    await db.flush()
+    return {"created": yaratildi, "skipped": len(set(user_ids)) - yaratildi}
+
+
+async def assignment_for(
+    db: AsyncSession, *, course_id: int, user_id: int
+) -> CourseAssignment | None:
+    return await db.scalar(
+        alive(CourseAssignment).where(
+            CourseAssignment.course_id == course_id,
+            CourseAssignment.user_id == user_id,
+        )
+    )
+
+
+async def my_assignments(db: AsyncSession, user_id: int) -> list[CourseAssignment]:
+    return list(
+        await db.scalars(
+            alive(CourseAssignment)
+            .where(CourseAssignment.user_id == user_id)
+            .order_by(CourseAssignment.created_at.desc())
+        )
+    )
+
+
+async def progress(db: AsyncSession, assignment: CourseAssignment) -> dict:
+    """Xodim qayerda turibdi — HAR SAFAR BAZADAN.
+
+    Materiallar tugagach savollar boshlanadi. Indekslar TIRIK
+    ro'yxatga nisbatan: material o'chirilsa ro'yxat qisqaradi va
+    xodim keyingi bandga suriladi (indeks id emas)."""
+    mats = await materials(db, assignment.course_id)
+    savollar = await questions(db, assignment.course_id)
+    material_qoldi = max(0, len(mats) - assignment.current_material)
+    savol_qoldi = max(0, len(savollar) - assignment.current_q)
+    bosqich = (
+        "material"
+        if assignment.current_material < len(mats)
+        else ("savol" if assignment.current_q < len(savollar) else "tugadi")
+    )
+    joriy = None
+    if bosqich == "material":
+        joriy = mats[assignment.current_material]
+    elif bosqich == "savol":
+        joriy = savollar[assignment.current_q]
+    return {
+        "stage": bosqich,
+        "current": joriy,
+        "material_index": assignment.current_material,
+        "material_total": len(mats),
+        "question_index": assignment.current_q,
+        "question_total": len(savollar),
+        "material_left": material_qoldi,
+        "question_left": savol_qoldi,
+        "attempt_no": assignment.attempt_no,
+    }
+
+
+async def next_material(db: AsyncSession, assignment: CourseAssignment) -> dict:
+    """«Ko'rdim, keyingisi» — material bosqichini bir qadam suradi."""
+    if assignment.status == CourseAssignmentStatus.finished.value:
+        raise ValueError("Kurs allaqachon yakunlangan")
+    mats = await materials(db, assignment.course_id)
+    if assignment.current_material >= len(mats):
+        raise ValueError("Materiallar allaqachon tugagan")
+    if assignment.status == CourseAssignmentStatus.assigned.value:
+        assignment.status = CourseAssignmentStatus.in_progress.value
+        assignment.started_at = datetime.utcnow()
+    assignment.current_material += 1
+    await db.flush()
+    return await progress(db, assignment)
+
+
+async def submit_answer(
+    db: AsyncSession,
+    *,
+    assignment: CourseAssignment,
+    text: str | None = None,
+    choice: int | None = None,
+) -> dict:
+    """Bitta savolga javob.
+
+    ⚠️ Test savoli DARHOL baholanadi, OCHIQ savol esa `correct=None`
+    bilan yoziladi — uni odam ko'radi (S-32 qarori: mashina erkin
+    matnni baholasa, xodim noto'g'ri sababdan yiqilardi).
+
+    Javob `assignment.answers` ga yoziladi (joriy urinish), yakunda
+    `CourseResult.answers` ga nusxa qilinadi."""
+    if assignment.status == CourseAssignmentStatus.finished.value:
+        raise ValueError("Kurs allaqachon yakunlangan")
+    mats = await materials(db, assignment.course_id)
+    if assignment.current_material < len(mats):
+        raise ValueError("Avval materiallarni ko'rib chiqing")
+    savollar = await questions(db, assignment.course_id)
+    if assignment.current_q >= len(savollar):
+        raise ValueError("Savollar tugagan — kursni yakunlang")
+
+    q = savollar[assignment.current_q]
+    variantlar = q.options or []
+    if variantlar:
+        if choice is None:
+            raise ValueError("Variant tanlanmagan")
+        if not 0 <= choice < len(variantlar):
+            raise ValueError("Variant ro'yxatda yo'q")
+        togri = choice == q.correct_index
+    else:
+        if not (text or "").strip():
+            raise ValueError("Javob bo'sh")
+        togri = None  # ochiq javob — odam baholaydi
+
+    #  ⚠️ JSON ustunni JOYIDA o'zgartirish (`.append`) SQLAlchemy
+    #  tomonidan SEZILMAYDI — yangi ro'yxat tayinlaymiz, aks holda
+    #  javob jimgina yo'qolardi.
+    assignment.answers = list(assignment.answers or []) + [
+        {
+            "q": q.id,
+            "question": q.text,
+            "text": (text or "").strip() or None,
+            "choice": choice,
+            "correct": togri,
+            "points": q.points,
+        }
+    ]
+    if assignment.status == CourseAssignmentStatus.assigned.value:
+        assignment.status = CourseAssignmentStatus.in_progress.value
+        assignment.started_at = datetime.utcnow()
+    assignment.current_q += 1
+    await db.flush()
+    return {"correct": togri, **await progress(db, assignment)}
+
+
+async def finish(db: AsyncSession, assignment: CourseAssignment) -> CourseResult:
+    """Urinishni yakunlaydi va natija qatorini yozadi.
+
+    ⚠️ Ochiq savol bo'lsa natija `pending_review=True` bilan yopiladi
+    va `passed` BO'LMAYDI — ball hali to'liq emas, odam baholamagan.
+    Aks holda xodim baholanmagan javob bilan «o'tdi» bo'lib qolardi."""
+    if assignment.status == CourseAssignmentStatus.finished.value:
+        raise ValueError("Kurs allaqachon yakunlangan")
+    savollar = await questions(db, assignment.course_id)
+    if assignment.current_q < len(savollar):
+        raise ValueError("Hali javob berilmagan savollar bor")
+
+    kurs = await get_course(db, assignment.course_id)
+    javoblar = list(assignment.answers or [])
+    max_ball = sum(int(a.get("points") or 1) for a in javoblar)
+    ball = sum(
+        int(a.get("points") or 1) for a in javoblar if a.get("correct") is True
+    )
+    kutilmoqda = any(a.get("correct") is None for a in javoblar)
+    foiz = round(ball * 100 / max_ball) if max_ball else 0
+    otdi = (not kutilmoqda) and kurs is not None and foiz >= kurs.pass_percent
+
+    natija = CourseResult(
+        assignment_id=assignment.id,
+        attempt_no=assignment.attempt_no,
+        score=ball,
+        max_score=max_ball,
+        percent=foiz,
+        passed=otdi,
+        pending_review=kutilmoqda,
+        answers=javoblar,
+    )
+    db.add(natija)
+    assignment.status = CourseAssignmentStatus.finished.value
+    assignment.finished_at = datetime.utcnow()
+    await db.flush()
+    return natija
+
+
+async def results(db: AsyncSession, assignment_id: int) -> list[CourseResult]:
+    """Urinishlar tarixi — eskisi O'CHIRILMAYDI.
+
+    «Uch marta yiqilib, to'rtinchida o'tdi» degan ma'lumot kadr
+    bo'limiga kerak, faqat oxirgi natija emas."""
+    return list(
+        await db.scalars(
+            select(CourseResult)
+            .where(CourseResult.assignment_id == assignment_id)
+            .order_by(CourseResult.attempt_no)
+        )
+    )
+
+
+async def retry(db: AsyncSession, assignment: CourseAssignment) -> CourseAssignment:
+    """Yangi urinish boshlaydi.
+
+    Materiallar QAYTA ko'rsatilmaydi (`current_material` tegilmaydi) —
+    xodim ularni allaqachon ko'rgan, faqat test qayta topshiriladi.
+    Javoblar tozalanadi: ular oldingi urinish natijasiga nusxa
+    qilingan."""
+    if assignment.status != CourseAssignmentStatus.finished.value:
+        raise ValueError("Avval joriy urinishni yakunlang")
+    kurs = await get_course(db, assignment.course_id)
+    oldingilar = await results(db, assignment.id)
+    if any(r.passed for r in oldingilar):
+        raise ValueError("Kurs allaqachon o'tilgan")
+    if kurs is not None and kurs.max_attempts and len(oldingilar) >= kurs.max_attempts:
+        raise ValueError(f"Urinishlar tugadi ({kurs.max_attempts} ta)")
+
+    assignment.attempt_no += 1
+    assignment.current_q = 0
+    assignment.answers = []
+    assignment.status = CourseAssignmentStatus.in_progress.value
+    assignment.finished_at = None
+    await db.flush()
+    return assignment

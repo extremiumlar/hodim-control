@@ -13248,6 +13248,302 @@ def test_courses_model() -> None:
         conn.close()
 
 
+
+def test_course_assignments() -> None:
+    """S-33 (TZ 3.1) — kurs tayinlash va natija.
+
+    Qabul mezonlari (TZ):
+      • bir xodimga bir kurs IKKI MARTA tayinlanmaydi;
+      • holat BAZADA (restartga chidamli, FSM emas);
+      • urinish raqami saqlanadi.
+    """
+    import asyncio
+
+    print("\n" + "=" * 60)
+    print("S-33: KURS TAYINLASH VA NATIJA")
+    print("=" * 60)
+
+    from db.base import async_session
+
+    conn = db()
+    cur = conn.cursor()
+    try:
+        async def _oqim():
+            from sqlalchemy import select as _sel
+
+            from api.services import courses as C
+            from db.models import CourseAssignment, User
+            out = {}
+            async with async_session() as s2:
+                users = list(await s2.scalars(_sel(User).limit(2)))
+                u1, u2 = users[0], users[1]
+                out["u1"], out["u2"] = u1.id, u2.id
+
+                #  ⚠️ 80%: 1-urinish 67% bilan YIQILADI va qayta urinish
+                #  mazmunli bo'ladi (60% bo'lsa birinchi urinishdayoq
+                #  o'tib ketardi va `retry()` ni sinab bo'lmasdi).
+                c = await C.create_course(s2, title="T-S33 kurs", description=None,
+                                          pass_percent=80, max_attempts=2,
+                                          actor_id=u1.id)
+                await C.add_material(s2, course_id=c.id, kind="text",
+                                     title="T-Dars-1", body="matn")
+                await C.add_question(s2, course_id=c.id, text="2+2?",
+                                     options=["3", "4"], correct_index=1, points=2)
+                await C.add_question(s2, course_id=c.id, text="5+5?",
+                                     options=["10", "11"], correct_index=0, points=1)
+                await s2.commit()
+                out["course_id"] = c.id
+
+                c.is_published = True
+                await s2.commit()
+
+                # ── Tayinlash va DUBLIKAT ──
+                out["assign1"] = await C.assign(
+                    s2, course_id=c.id, user_ids=[u1.id, u2.id], assigned_by=u1.id)
+                await s2.commit()
+                out["assign2"] = await C.assign(
+                    s2, course_id=c.id, user_ids=[u1.id, u2.id], assigned_by=u1.id)
+                await s2.commit()
+                out["jami_tayinlash"] = len(list(await s2.scalars(
+                    C.alive(CourseAssignment).where(
+                        CourseAssignment.course_id == c.id))))
+
+                a = await C.assignment_for(s2, course_id=c.id, user_id=u1.id)
+                out["boshlangich"] = (a.status, a.attempt_no, a.current_material,
+                                      a.current_q)
+
+                p1 = await C.progress(s2, a)
+                out["bosqich_material"] = p1["stage"]
+                p2 = await C.next_material(s2, a)
+                await s2.commit()
+                out["bosqich_savol"] = p2["stage"]
+
+                # ── 1-urinish: bittasi noto'g'ri ──
+                r1 = await C.submit_answer(s2, assignment=a, choice=1)   # to'g'ri
+                r2 = await C.submit_answer(s2, assignment=a, choice=1)   # noto'g'ri
+                await s2.commit()
+                out["javob_togri"] = (r1["correct"], r2["correct"])
+                res = await C.finish(s2, a)
+                await s2.commit()
+                out["urinish1"] = (res.score, res.max_score, res.percent,
+                                   res.passed, res.attempt_no, res.pending_review)
+
+                # ⚠️ HOLAT BAZADA: yangi sessiyada o'qib ko'ramiz
+                out["assignment_id"] = a.id
+
+            #  ── YANGI SESSIYA (restart taqlidi) ──
+            async with async_session() as s3:
+                from api.services import courses as C2
+                from db.models import CourseAssignment as CA
+                a = await s3.scalar(C2.alive(CA).where(CA.id == out["assignment_id"]))
+                out["restartdan_keyin"] = (a.status, a.attempt_no,
+                                           len(a.answers or []))
+
+                # ── Qayta urinish ──
+                await C2.retry(s3, a)
+                await s3.commit()
+                out["retry"] = (a.attempt_no, a.answers == [], a.current_q,
+                                a.current_material)
+                await C2.submit_answer(s3, assignment=a, choice=1)
+                await C2.submit_answer(s3, assignment=a, choice=0)
+                await s3.commit()
+                res2 = await C2.finish(s3, a)
+                await s3.commit()
+                out["urinish2"] = (res2.percent, res2.passed, res2.attempt_no)
+                out["tarix"] = [(t.attempt_no, t.percent, t.passed)
+                                for t in await C2.results(s3, a.id)]
+
+
+            #  ── OCHIQ savolli kurs ──
+            async with async_session() as s4:
+                from api.services import courses as C3
+                c2 = await C3.create_course(s4, title="T-S33 ochiq", description=None,
+                                            pass_percent=50, max_attempts=0,
+                                            actor_id=out["u1"])
+                await C3.add_question(s4, course_id=c2.id, text="Fikringiz?")
+                c2.is_published = True
+                await s4.commit()
+                await C3.assign(s4, course_id=c2.id, user_ids=[out["u2"]],
+                                assigned_by=out["u1"])
+                await s4.commit()
+                a2 = await C3.assignment_for(s4, course_id=c2.id, user_id=out["u2"])
+                await C3.submit_answer(s4, assignment=a2, text="Mening fikrim...")
+                await s4.commit()
+                res3 = await C3.finish(s4, a2)
+                await s4.commit()
+                out["ochiq"] = (res3.percent, res3.passed, res3.pending_review,
+                                (res3.answers or [{}])[0].get("text"))
+
+            # ══════════════════════════════════════════════
+            # «XATO KUTILGAN» SINOVLAR — HAR BIRI O'Z SESSIYASIDA
+            #
+            # ⚠️ `rollback()` ATAYLAB ishlatilmaydi: u
+            # `expire_on_commit=False` bo'lsa ham sessiyadagi BARCHA
+            # obyektni ekspire qiladi va keyingi `obj.id` lazy-load
+            # boshlab, async kontekstda `MissingGreenlet` beradi
+            # (loyihaning ma'lum tuzog'i). Alohida sessiya jonli
+            # xulqqa ham yaqinroq — har so'rov o'z sessiyasida.
+            # ══════════════════════════════════════════════
+            async with async_session() as s5:
+                from api.services import courses as C4
+                #  Nashr qilinmagan kurs tayinlanmaydi
+                c3 = await C4.create_course(s5, title="T-S33 nashrsiz",
+                                            description=None, pass_percent=50,
+                                            max_attempts=0, actor_id=out["u1"])
+                await s5.commit()
+                try:
+                    await C4.assign(s5, course_id=c3.id, user_ids=[out["u1"]],
+                                    assigned_by=out["u1"])
+                    out["nashrsiz"] = "TAYINLANDI (xato)"
+                except ValueError as e:
+                    out["nashrsiz"] = str(e)
+
+            async with async_session() as s6:
+                from api.services import courses as C5
+                #  Material tugamasdan savolga javob
+                a3 = await C5.assignment_for(
+                    s6, course_id=out["course_id"], user_id=out["u2"])
+                try:
+                    await C5.submit_answer(s6, assignment=a3, choice=0)
+                    out["erta_savol"] = "QABUL QILINDI (xato)"
+                except ValueError as e:
+                    out["erta_savol"] = str(e)
+
+            async with async_session() as s7:
+                from api.services import courses as C6
+                from db.models import CourseAssignment as CA2
+                #  O'tilgan kursni qayta topshirib bo'lmaydi
+                a4 = await s7.scalar(
+                    C6.alive(CA2).where(CA2.id == out["assignment_id"]))
+                try:
+                    await C6.retry(s7, a4)
+                    out["otilgan_retry"] = "RUXSAT BERILDI (xato)"
+                except ValueError as e:
+                    out["otilgan_retry"] = str(e)
+            return out
+
+        r = asyncio.run(_oqim())
+
+        check("S-33: nashr qilinmagan kurs TAYINLANMAYDI",
+              "nashr" in r["nashrsiz"], "=" + str(r["nashrsiz"]))
+        check("S-33: ikki xodimga tayinlandi",
+              r["assign1"] == {"created": 2, "skipped": 0}, "=" + str(r["assign1"]))
+        check("S-33: ⚠️ IKKINCHI marta tayinlanmadi (dublikat yo'q)",
+              r["assign2"] == {"created": 0, "skipped": 2}
+              and r["jami_tayinlash"] == 2,
+              f"={r['assign2']}, jami={r['jami_tayinlash']}")
+        check("S-33: boshlang'ich holat `assigned`, urinish 1",
+              r["boshlangich"] == ("assigned", 1, 0, 0),
+              "=" + str(r["boshlangich"]))
+        check("S-33: material tugamasdan savolga javob RAD ETILADI",
+              "material" in r["erta_savol"].lower(), "=" + str(r["erta_savol"]))
+        check("S-33: material bosqichidan savol bosqichiga o'tadi",
+              (r["bosqich_material"], r["bosqich_savol"]) == ("material", "savol"),
+              f"={r['bosqich_material']} -> {r['bosqich_savol']}")
+        check("S-33: test savoli DARHOL baholanadi",
+              r["javob_togri"] == (True, False), "=" + str(r["javob_togri"]))
+        #  2 ball (to'g'ri) / 3 ball (jami) = 67% >= 60% -> o'tdi
+        check("S-33: 1-urinish natijasi ball va foiz bilan yozildi",
+              r["urinish1"][:3] == (2, 3, 67), "=" + str(r["urinish1"]))
+        check("S-33: 67% < 80% -> YIQILDI", r["urinish1"][3] is False,
+              "=" + str(r["urinish1"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ HOLAT BAZADA — RESTARTGA CHIDAMLI
+        # ══════════════════════════════════════════════
+        check("S-33: ⚠️ holat BAZADA — yangi sessiyada saqlanib qoldi",
+              r["restartdan_keyin"] == ("finished", 1, 2),
+              "=" + str(r["restartdan_keyin"]))
+
+        check("S-33: qayta urinishda raqam oshdi, javoblar tozalandi",
+              r["retry"][:2] == (2, True), "=" + str(r["retry"]))
+        check("S-33: qayta urinishda MATERIAL qayta ko'rsatilmaydi",
+              r["retry"][3] > 0, "current_material=" + str(r["retry"][3]))
+        check("S-33: 2-urinish 100% -> o'tdi",
+              r["urinish2"] == (100, True, 2), "=" + str(r["urinish2"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ URINISH RAQAMI SAQLANADI (TZ qabul mezoni)
+        # ══════════════════════════════════════════════
+        check("S-33: ⚠️ URINISHLAR TARIXI saqlanadi (eskisi o'chirilmaydi)",
+              r["tarix"] == [(1, 67, False), (2, 100, True)],
+              "=" + str(r["tarix"]))
+
+        check("S-33: o'tilgan kursni qayta topshirib bo'lmaydi",
+              "o'til" in r["otilgan_retry"], "=" + str(r["otilgan_retry"]))
+
+        # ══════════════════════════════════════════════
+        # OCHIQ SAVOL — odam baholaydi
+        # ══════════════════════════════════════════════
+        check("S-33: ochiq savolli urinish `pending_review` bilan yopiladi",
+              r["ochiq"][2] is True, "=" + str(r["ochiq"]))
+        check("S-33: ⚠️ baholanmagan urinish `passed` BO'LMAYDI",
+              r["ochiq"][1] is False, "=" + str(r["ochiq"]))
+        check("S-33: ochiq javob MATNI saqlanadi (odam baholashi uchun)",
+              r["ochiq"][3] == "Mening fikrim...", "=" + str(r["ochiq"]))
+
+        # ══════════════════════════════════════════════
+        # ⚠️ BAZA DARAJASIDA DUBLIKAT TO'SILADI
+        #
+        # Kod qo'riqchisi unutilsa ham qisman unique indeks ushlaydi.
+        # Xom SQL bilan sinaymiz — servisni chetlab o'tamiz.
+        # ══════════════════════════════════════════════
+        try:
+            cur.execute(
+                "insert into course_assignments (course_id, user_id, status,"
+                " current_material, current_q, attempt_no, created_at)"
+                " values (?,?,'assigned',0,0,1,datetime('now'))",
+                (r["course_id"], r["u1"]))
+            conn.commit()
+            check("S-33: ⚠️ baza dublikatni to'sadi (qisman unique indeks)",
+                  False, "INSERT o'tib ketdi — indeks ishlamayapti")
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            check("S-33: ⚠️ baza dublikatni to'sadi (qisman unique indeks)",
+                  "unique" in str(e).lower(), "=" + str(e)[:90])
+
+        #  Yumshoq o'chirilgach QAYTA tayinlash MUMKIN (yillik qayta o'qitish)
+        cur.execute(
+            "update course_assignments set deleted_at=datetime('now')"
+            " where course_id=? and user_id=?", (r["course_id"], r["u1"]))
+        conn.commit()
+        try:
+            cur.execute(
+                "insert into course_assignments (course_id, user_id, status,"
+                " current_material, current_q, attempt_no, created_at)"
+                " values (?,?,'assigned',0,0,1,datetime('now'))",
+                (r["course_id"], r["u1"]))
+            conn.commit()
+            check("S-33: yumshoq o'chirilgach QAYTA tayinlash mumkin"
+                  " (yillik qayta o'qitish)", True, "")
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            check("S-33: yumshoq o'chirilgach QAYTA tayinlash mumkin"
+                  " (yillik qayta o'qitish)", False, str(e)[:90])
+    except Exception:
+        check("S-33 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from course_results where assignment_id in"
+                " (select id from course_assignments where course_id in"
+                "  (select id from courses where title like 'T-S33%'))")
+            cur.execute(
+                "delete from course_assignments where course_id in"
+                " (select id from courses where title like 'T-S33%')")
+            cur.execute(
+                "delete from course_questions where course_id in"
+                " (select id from courses where title like 'T-S33%')")
+            cur.execute(
+                "delete from course_materials where course_id in"
+                " (select id from courses where title like 'T-S33%')")
+            cur.execute("delete from courses where title like 'T-S33%'")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -13648,6 +13944,12 @@ def main() -> None:
         test_courses_model()
     except Exception:
         print("S-32 o'quv paneli testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_course_assignments()
+    except Exception:
+        print("S-33 kurs tayinlash testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:
