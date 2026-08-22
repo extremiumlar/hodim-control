@@ -3678,3 +3678,41 @@ class CourseResult(Base):
     #  o'zgarsa ham javob konteksti yo'qolmaydi.
     answers: Mapped[list] = mapped_column(JSON, default=list)
     finished_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CourseStat(Base):
+    """Kurs bo'yicha YIG'MA raqamlar (yangi TZ 3.1 / S-37).
+
+    ⚠️ NEGA ALOHIDA JADVAL: ro'yxat sahifasi har kurs uchun material,
+    savol va tayinlash sonini ALOHIDA so'rov bilan olardi (S-34 da
+    kiritilgan N+1). Kurslar ko'paygach bu sahifani sekinlashtiradi,
+    cPanel'da esa konkurentlik = 1 — bitta sekin so'rov BUTUN saytni
+    kutdiradi.
+
+    Shuning uchun raqamlar CRON'da hisoblanadi (S-07 naqshi) va
+    sahifa tayyor qatorni o'qiydi. Ma'lumot bir necha daqiqa
+    eskirishi mumkin — bu HISOBOT, real vaqt emas.
+
+    ⚠️ Bu jadval faqat KESH: yo'qolsa ham hech narsa buzilmaydi,
+    keyingi tick qayta hisoblaydi."""
+
+    __tablename__ = "course_stats"
+
+    #  Kurs bilan 1:1 — `course_id` ning o'zi kalit.
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), primary_key=True
+    )
+    material_count: Mapped[int] = mapped_column(Integer, default=0)
+    question_count: Mapped[int] = mapped_column(Integer, default=0)
+    assigned_count: Mapped[int] = mapped_column(Integer, default=0)
+    #  Boshlamagan / boshlagan / yakunlagan.
+    not_started: Mapped[int] = mapped_column(Integer, default=0)
+    in_progress: Mapped[int] = mapped_column(Integer, default=0)
+    finished: Mapped[int] = mapped_column(Integer, default=0)
+    passed: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    #  Ochiq savoli bor, HR baholashini kutmoqda.
+    pending_review: Mapped[int] = mapped_column(Integer, default=0)
+    #  Muddati o'tgan va hali yakunlanmagan.
+    overdue: Mapped[int] = mapped_column(Integer, default=0)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
