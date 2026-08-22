@@ -3562,3 +3562,115 @@ class CourseQuestion(Base):
     points: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class CourseAssignmentStatus(str, enum.Enum):
+    """Tayinlash holati (yangi TZ 3.1 / S-33)."""
+
+    assigned = "assigned"  # tayinlandi, hali ochilmagan
+    in_progress = "in_progress"  # boshlandi
+    finished = "finished"  # yakunlandi (o'tdi yoki yiqildi — natijada)
+
+
+class CourseAudience(str, enum.Enum):
+    """Kurs kimga tayinlanadi.
+
+    ⚠️ Qiymatlar `AnnouncementAudience` (S-21) bilan AYNAN bir xil va
+    bu ataylab: `announcements.audience_user_ids()` qamrovni hal
+    qiladigan YAGONA funksiya bo'lib qoladi. Uchinchi nusxa yozilsa,
+    biri o'zgarib ikkinchisi eskirardi."""
+
+    all = "all"
+    roles = "roles"
+    positions = "positions"
+    users = "users"
+
+
+class CourseAssignment(Base):
+    """Xodimga tayinlangan kurs (yangi TZ 3.1 / S-33).
+
+    ⚠️ HOLAT BAZADA, FSM DA EMAS — `AnketaAssignment.current_q` naqshi.
+    Sabab: cPanel Passenger jarayoni har so'rovda qayta ko'tarilishi
+    mumkin va xotiradagi holat yo'qoladi. Xodim yarim yo'lda turgan
+    kursini qaytadan boshlashi kerak bo'lardi.
+
+    `current_material` / `current_q` — TARTIBLANGAN tirik ro'yxatdagi
+    0-asosli indeks (id EMAS). Material o'chirilsa ro'yxat qisqaradi va
+    indeks o'z-o'zidan keyingi bandga suriladi.
+
+    `answers` — joriy urinishning javoblari:
+    `[{"q": <savol_id>, "text": <matn>, "choice": <indeks|null>,
+       "correct": <true|false|null>}]`.
+    ⚠️ Alohida jadval ATAYLAB yaratilmadi (TZ S-33 ikkita jadval
+    ko'rsatadi). Ochiq javob matni SAQLANISHI SHART — u avtomat
+    baholanmaydi (`correct=null`) va odam ko'radi; javobsiz uni
+    baholab bo'lmasdi. Urinish yakunlanganda javoblar
+    `CourseResult.answers` ga NUSXA qilinadi va bu maydon
+    keyingi urinish uchun tozalanadi."""
+
+    #  ⚠️ BIR XODIMGA BIR KURS IKKI MARTA TAYINLANMAYDI (S-33 qabul
+    #  mezoni) — `uq_course_assignment_active` QISMAN unique indeksi,
+    #  `deleted_at IS NULL` shartli. U MIGRATSIYADA e'lon qilinadi
+    #  (loyiha naqshi: qisman indekslar modelda emas, migratsiyada —
+    #  `as01b2c3d4e5_assets`, `x3y4z5a6b7c8_deadlines`).
+    #
+    #  Nega QISMAN, to'liq emas: yillik qayta o'qitish (xavfsizlik
+    #  yo'riqnomasi har yili qayta o'tiladi) to'liq unique bilan UMUMAN
+    #  mumkin bo'lmasdi. Eskisini yumshoq o'chirib yangisini tayinlash
+    #  yo'li ochiq qoladi, tarix esa saqlanadi.
+    __tablename__ = "course_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(12), default=CourseAssignmentStatus.assigned.value, index=True
+    )
+    current_material: Mapped[int] = mapped_column(Integer, default=0)
+    current_q: Mapped[int] = mapped_column(Integer, default=0)
+    #  Joriy urinish raqami (1 dan boshlanadi).
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)
+    answers: Mapped[list] = mapped_column(JSON, default=list)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    assigned_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+
+class CourseResult(Base):
+    """Bitta URINISH natijasi (yangi TZ 3.1 / S-33).
+
+    Har urinish uchun ALOHIDA qator — eskisi o'chirilmaydi. Sabab:
+    «uch marta yiqilib, to'rtinchida o'tdi» degan ma'lumot kadr
+    bo'limiga kerak, faqat oxirgi natija emas.
+
+    `pending_review` — ochiq savollar bor va ular hali odam tomonidan
+    baholanmagan. Bunday urinish `passed` bo'la olmaydi: ball to'liq
+    emas."""
+
+    __tablename__ = "course_results"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "attempt_no", name="uq_course_result_attempt"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(
+        ForeignKey("course_assignments.id", ondelete="CASCADE"), index=True
+    )
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    max_score: Mapped[int] = mapped_column(Integer, default=0)
+    percent: Mapped[int] = mapped_column(Integer, default=0)
+    passed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    pending_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    #  Urinish javoblarining NUSXASI (savol matni bilan birga) —
+    #  `AnketaAnswer.question_text` naqshi: kurs savoli keyin
+    #  o'zgarsa ham javob konteksti yo'qolmaydi.
+    answers: Mapped[list] = mapped_column(JSON, default=list)
+    finished_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
