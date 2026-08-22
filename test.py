@@ -12820,15 +12820,22 @@ B_BLOCK_MATRIX = [
     ("ma'lumot so'rovlari","GET", "/profile-changes",                 403, 403, "ok"),
     ("murojaatlar",        "GET", "/hr-inquiries",                    403, 403, "ok"),
     ("murojaat hisoboti",  "GET", "/hr-inquiries/frequent",           403, 403, "ok"),
+    ("o'quv paneli",       "GET", "/courses",                         403, 403, "ok"),
+    ("kurs hisoboti",      "GET", "/courses/report",                  403, 403, "ok"),
     #  ── ROP ham ko'radigan modullar ──
     ("e'lonlar (rahbar)",  "GET", "/announcements",                   403, "ok", "ok"),
     ("shtat jadvali",      "GET", "/staff",                           403, "ok", "ok"),
+    #  Tuzilmani rahbar KO'RADI (ROP ham) — xodim kimga bo'ysunishini
+    #  bilishi kerak; tahrirlash esa HR bilan cheklangan.
+    ("tashkiliy tuzilma",  "GET", "/org/chart",                       403, "ok", "ok"),
     #  ── Hamma ko'radigan (xodim tomoni) ──
     ("bayramlar",          "GET", "/holidays?year=2026",             "ok", "ok", "ok"),
     ("mening hujjatlarim", "GET", "/employee-documents/me",          "ok", "ok", "ok"),
     ("menga biriktirilgan","GET", "/assets/me",                      "ok", "ok", "ok"),
     ("mening e'lonlarim",  "GET", "/announcements/me",               "ok", "ok", "ok"),
     ("mening murojaatim",  "GET", "/hr-inquiries/me",                "ok", "ok", "ok"),
+    ("darsliklarim",       "GET", "/courses/me/assignments",         "ok", "ok", "ok"),
+    ("mening o'rnim",      "GET", "/org/my-place",                   "ok", "ok", "ok"),
     ("tanishishlarim",     "GET", "/acks/me",                        "ok", "ok", "ok"),
     ("ma'lumotlarim",      "GET", "/profile-changes/me",             "ok", "ok", "ok"),
 ]
@@ -12847,6 +12854,8 @@ SECTION_TO_ENDPOINT = {
     "probation": "/probation",
     "profile-changes": "/profile-changes",
     "hr-inquiries": "/hr-inquiries",
+    "courses": "/courses",
+    "org-chart": "/org/chart",
 }
 
 
@@ -12961,6 +12970,7 @@ def test_b_block_visibility_audit() -> None:
             kutilgan_xodim = {
                 "documents", "my-assets", "my-announcements",
                 "my-inquiries", "my-profile", "my-salary-history",
+                "my-courses", "my-place",
             }
             check("S-30: B blok xodim bo'limlari kabinetda bor",
                   kutilgan_xodim <= xodim_bolimlar,
@@ -14995,6 +15005,237 @@ def test_org_structure() -> None:
         conn.close()
 
 
+
+def test_org_site() -> None:
+    """S-40 (TZ 3.16) — tuzilma sayti: sxema va yo'riqnoma.
+
+    Qabul mezonlari (TZ):
+      • server FAQAT MA'LUMOT beradi (rasm yaratilmaydi);
+      • mobil ko'rinish: rahbarim → men → menga bo'ysunadiganlar;
+      • bo'shliqlar ro'yxati ishlaydi.
+    """
+    import httpx
+
+    print("\n" + "=" * 60)
+    print("S-40: TUZILMA SAYTI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    pos: dict[str, int] = {}
+    try:
+        cur.execute("delete from users where full_name like 'T-Os%'")
+        cur.execute("delete from positions where name like 'T-Os%'")
+        conn.commit()
+        for nom in ("T-Os Direktor", "T-Os Boshliq", "T-Os Mutaxassis"):
+            cur.execute(
+                "insert into positions (name, is_active, created_at)"
+                " values (?,1,datetime('now'))", (nom,))
+            pos[nom] = cur.lastrowid
+        #  Rahbar va bo'ysunuvchi
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999703601,'T-Os Rahbar','employee',0,1,"
+            "?,datetime('now'))", (pos["T-Os Boshliq"],))
+        ids["rahbar"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, manager_id, created_at) values (999703602,'T-Os Xodim',"
+            "'employee',0,1,?,?,datetime('now'))",
+            (pos["T-Os Mutaxassis"], ids["rahbar"]))
+        ids["xodim"] = cur.lastrowid
+        #  Rahbari YO'Q xodim — bo'shliqlar ro'yxatiga tushishi kerak
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999703603,'T-Os Rahbarsiz','employee',0,1,"
+            "datetime('now'))")
+        ids["rahbarsiz"] = cur.lastrowid
+        #  Shtat: Mutaxassis lavozimida 3 o'rin
+        cur.execute(
+            "insert into staff_positions (department, position_id, units, status,"
+            " effective_from, created_at) values ('T-Os bo''lim',?,3,'active',"
+            "date('now'),datetime('now'))", (pos["T-Os Mutaxassis"],))
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── Ierarxiya qurish (HR) ──
+            r = c.put(f"/org/positions/{pos['T-Os Boshliq']}/parent",
+                      headers=auth(mgr_t),
+                      json={"parent_position_id": pos["T-Os Direktor"]})
+            ok1 = r.status_code == 200
+            r = c.put(f"/org/positions/{pos['T-Os Mutaxassis']}/parent",
+                      headers=auth(mgr_t),
+                      json={"parent_position_id": pos["T-Os Boshliq"]})
+            check("S-40: ierarxiya qurildi (3 bosqich)",
+                  ok1 and r.status_code == 200, "kod=" + str(r.status_code))
+
+            #  ⚠️ HALQA API orqali ham to'siladi
+            r = c.put(f"/org/positions/{pos['T-Os Direktor']}/parent",
+                      headers=auth(mgr_t),
+                      json={"parent_position_id": pos["T-Os Mutaxassis"]})
+            check("S-40: ⚠️ HALQA API orqali ham to'siladi -> 400",
+                  r.status_code == 400 and "halqa" in r.text.lower(),
+                  "kod=" + str(r.status_code) + " " + r.text[:100])
+
+            # ══════════════════════════════════════════════
+            # ⚠️ SERVER FAQAT MA'LUMOT BERADI
+            # ══════════════════════════════════════════════
+            r = c.get("/org/chart", headers=auth(mgr_t))
+            check("S-40: sxema -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            sxema = r.json() if r.status_code == 200 else {}
+            check("S-40: ⚠️ javob RASM emas, JSON ma'lumot",
+                  r.headers.get("content-type", "").startswith("application/json")
+                  and "nodes" in sxema,
+                  "content-type=" + str(r.headers.get("content-type")))
+            bizniki = {n["id"]: n for n in sxema.get("nodes", [])
+                       if n["id"] in pos.values()}
+            check("S-40: tugunlar ota-bola bog'lanishi bilan keldi",
+                  bizniki[pos["T-Os Mutaxassis"]]["parent_id"] == pos["T-Os Boshliq"]
+                  and bizniki[pos["T-Os Direktor"]]["parent_id"] is None,
+                  "=" + str([(n["id"], n["parent_id"]) for n in bizniki.values()]))
+            check("S-40: tugunda xodim va O'RIN soni bor",
+                  bizniki[pos["T-Os Mutaxassis"]]["employees"] == 1
+                  and bizniki[pos["T-Os Mutaxassis"]]["units"] == 3,
+                  "=" + str(bizniki[pos["T-Os Mutaxassis"]]))
+
+            # ══════════════════════════════════════════════
+            # BO'SHLIQLAR RO'YXATI
+            # ══════════════════════════════════════════════
+            yoq_yor = {g["id"] for g in sxema["gaps"]["without_description"]}
+            check("S-40: «yo'riqnomasiz lavozimlar» ro'yxatida uchalasi bor",
+                  set(pos.values()) <= yoq_yor, "=" + str(sorted(yoq_yor))[:100])
+            yoq_rah = {u["id"] for u in sxema["gaps"]["without_manager"]}
+            check("S-40: «rahbari yo'q xodimlar» ro'yxati ishlaydi",
+                  ids["rahbarsiz"] in yoq_rah and ids["xodim"] not in yoq_rah,
+                  "=" + str(sorted(yoq_rah))[:100])
+
+            # ══════════════════════════════════════════════
+            # LAVOZIM TAFSILOTI
+            # ══════════════════════════════════════════════
+            r = c.get(f"/org/positions/{pos['T-Os Mutaxassis']}", headers=auth(mgr_t))
+            d = r.json() if r.status_code == 200 else {}
+            check("S-40: lavozim tafsiloti: kim ishlaydi, nechta o'rin",
+                  len(d.get("employees", [])) == 1 and d.get("units") == 3
+                  and d.get("vacant") == 2, "=" + str({
+                      k: d.get(k) for k in ("units", "vacant")}))
+            check("S-40: tafsilotda ota va bolalar bor",
+                  d.get("parent", {}).get("id") == pos["T-Os Boshliq"]
+                  and d.get("children") == [], "=" + str(d.get("parent")))
+
+            # ── Yo'riqnoma qo'shish ──
+            r = c.post(f"/org/positions/{pos['T-Os Mutaxassis']}/descriptions",
+                       headers=auth(mgr_t), json={
+                           "purpose": "Mijozlarga xizmat",
+                           "duties": ["Qo'ng'iroq qilish", "Hisobot yozish"],
+                           "rights": ["Ma'lumot so'rash"],
+                           "responsibility": ["Muddat"], "requirements": ["Oliy ta'lim"]})
+            check("S-40: yo'riqnoma versiyasi qo'shildi -> 201",
+                  r.status_code == 201 and r.json()["version"] == 1,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            r = c.get(f"/org/positions/{pos['T-Os Mutaxassis']}", headers=auth(mgr_t))
+            check("S-40: tafsilotda JORIY yo'riqnoma ko'rinadi",
+                  (r.json().get("description") or {}).get("purpose") == "Mijozlarga xizmat",
+                  "=" + str(r.json().get("description"))[:100])
+
+            #  Ikkinchi versiya — eskisi qoladi
+            r = c.post(f"/org/positions/{pos['T-Os Mutaxassis']}/descriptions",
+                       headers=auth(mgr_t), json={
+                           "purpose": "Yangilangan maqsad", "duties": ["A"],
+                           "rights": [], "responsibility": [], "requirements": []})
+            ok2 = r.status_code == 201 and r.json()["version"] == 2
+            r = c.get(f"/org/positions/{pos['T-Os Mutaxassis']}/descriptions",
+                      headers=auth(mgr_t))
+            check("S-40: yangi versiya qo'shildi, ESKISI ham ro'yxatda",
+                  ok2 and [v["version"] for v in r.json()] == [2, 1],
+                  "=" + str([v["version"] for v in r.json()]))
+
+            #  ⚠️ Tahrirlash endpointi UMUMAN yo'q
+            r = c.put(f"/org/positions/{pos['T-Os Mutaxassis']}/descriptions",
+                      headers=auth(mgr_t), json={"purpose": "x"})
+            check("S-40: ⚠️ yo'riqnomani TAHRIRLASH endpointi yo'q -> 405",
+                  r.status_code == 405, "kod=" + str(r.status_code))
+
+            # ══════════════════════════════════════════════
+            # ⚠️ MOBIL KO'RINISH: rahbarim -> men -> bo'ysunuvchilar
+            # ══════════════════════════════════════════════
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            m = r.json() if r.status_code == 200 else {}
+            check("S-40: «mening o'rnim» -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            check("S-40: ⚠️ RAHBARIM to'g'ri ko'rsatildi",
+                  (m.get("manager") or {}).get("full_name") == "T-Os Rahbar",
+                  "=" + str(m.get("manager")))
+            check("S-40: MENING lavozimim ko'rsatildi",
+                  (m.get("me", {}).get("position") or {}).get("name") == "T-Os Mutaxassis",
+                  "=" + str(m.get("me")))
+            check("S-40: yo'riqnoma versiyasi ko'rsatildi",
+                  m.get("has_description") is True and m.get("description_version") == 2,
+                  "=" + str({k: m.get(k) for k in
+                             ("has_description", "description_version")}))
+
+            r = c.get("/org/my-place", headers=auth(token_for(ids["rahbar"], "employee")))
+            m2 = r.json()
+            check("S-40: ⚠️ MENGA BO'YSUNADIGANLAR ro'yxati",
+                  [u["full_name"] for u in m2.get("subordinates", [])] == ["T-Os Xodim"],
+                  "=" + str(m2.get("subordinates")))
+
+            # ══════════════════════════════════════════════
+            # KOMPANIYA PROFILI
+            # ══════════════════════════════════════════════
+            r = c.put("/org/profile", headers=auth(mgr_t), json={
+                "mission": "T-Os missiya", "values": ["Halollik"],
+                "goals": ["Maqsad 1"]})
+            check("S-40: kompaniya profili saqlandi -> 200",
+                  r.status_code == 200 and r.json()["mission"] == "T-Os missiya",
+                  "kod=" + str(r.status_code) + " " + r.text[:120])
+            r = c.get("/org/profile", headers=auth(xodim_t))
+            check("S-40: profilni XODIM ham o'qiy oladi",
+                  r.status_code == 200 and r.json()["mission"] == "T-Os missiya",
+                  "kod=" + str(r.status_code))
+            r = c.put("/org/profile", headers=auth(xodim_t), json={"mission": "x"})
+            check("S-40: xodim profilni TAHRIRLAY olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            #  Tuzilmani tahrirlash ham xodimga yopiq
+            r = c.put(f"/org/positions/{pos['T-Os Direktor']}/parent",
+                      headers=auth(xodim_t), json={"parent_position_id": None})
+            check("S-40: xodim ierarxiyani o'zgartira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+    except Exception:
+        check("S-40 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            if pos:
+                belgi = ",".join("?" * len(pos))
+                cur.execute(
+                    f"delete from job_descriptions where position_id in ({belgi})",
+                    tuple(pos.values()))
+                cur.execute(
+                    f"delete from staff_positions where position_id in ({belgi})",
+                    tuple(pos.values()))
+            if ids:
+                b2 = ",".join("?" * len(ids))
+                cur.execute(f"delete from users where id in ({b2})",
+                            tuple(ids.values()))
+            cur.execute("update positions set parent_position_id=null"
+                        " where name like 'T-Os%'")
+            cur.execute("delete from positions where name like 'T-Os%'")
+            cur.execute("delete from company_profile")
+            conn.commit()
+        except Exception:
+            pass
+        conn.close()
+
+
 def cleanup_orphans() -> None:
     """EGASIZ (user'i o'chirilgan) payroll qatorlarini tozalaydi.
 
@@ -15437,6 +15678,12 @@ def main() -> None:
         test_org_structure()
     except Exception:
         print("S-39 tuzilma testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_org_site()
+    except Exception:
+        print("S-40 tuzilma sayti testida kutilmagan xato:\n"
               + traceback.format_exc())
 
     try:

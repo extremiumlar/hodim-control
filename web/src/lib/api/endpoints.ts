@@ -19,7 +19,12 @@ import type {
   CourseResultOut,
   CourseDetail,
   CourseItem,
+  CompanyProfileOut,
   CourseReport,
+  JobDescriptionVersion,
+  OrgChart,
+  OrgMyPlace,
+  OrgPositionDetail,
   MyCourseItem,
   HrFrequentReport,
   HrInquiryItem,
@@ -1325,4 +1330,39 @@ export const api = {
       `/courses/me/${id}/send-material`,
       { method: "POST" }
     ),
+  // ── Tashkiliy tuzilma (TZ 3.16 / S-40) ──
+  orgChart: () => apiFetch<OrgChart>("/org/chart"),
+  orgMyPlace: () => apiFetch<OrgMyPlace>("/org/my-place"),
+  orgPosition: (id: number) => apiFetch<OrgPositionDetail>(`/org/positions/${id}`),
+  orgSetParent: (id: number, parentId: number | null) =>
+    apiFetch<{ ok: boolean }>(`/org/positions/${id}/parent`, {
+      method: "PUT",
+      body: JSON.stringify({ parent_position_id: parentId }),
+    }),
+  orgDescriptions: (id: number) =>
+    apiFetch<JobDescriptionVersion[]>(`/org/positions/${id}/descriptions`),
+  orgAddDescription: (
+    id: number,
+    body: {
+      purpose?: string | null;
+      duties: string[];
+      rights: string[];
+      responsibility: string[];
+      requirements: string[];
+      effective_from?: string | null;
+    }
+  ) =>
+    apiFetch<{ id: number; version: number }>(`/org/positions/${id}/descriptions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  orgProfile: () => apiFetch<CompanyProfileOut>("/org/profile"),
+  orgSaveProfile: (body: {
+    mission?: string | null;
+    values?: string[];
+    goals?: string[];
+  }) => apiFetch<CompanyProfileOut>("/org/profile", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  }),
 };

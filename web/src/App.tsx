@@ -63,6 +63,8 @@ const ProfileChanges = lazy(() => import("./pages/ProfileChanges"));
 const HrInquiries = lazy(() => import("./pages/HrInquiries"));
 const Courses = lazy(() => import("./pages/Courses"));
 const MeCourses = lazy(() => import("./pages/me/Courses"));
+const OrgChartPage = lazy(() => import("./pages/OrgChart"));
+const MePlace = lazy(() => import("./pages/me/Place"));
 const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
 
@@ -222,6 +224,7 @@ export default function App() {
           <Route path="me/profile" element={<MeProfile />} />
           <Route path="me/inquiries" element={<MeInquiries />} />
           <Route path="me/courses" element={<MeCourses />} />
+          <Route path="me/place" element={<MePlace />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />
@@ -236,6 +239,7 @@ export default function App() {
           <Route path="profile-changes" element={<ManagerRoute><ProfileChanges /></ManagerRoute>} />
           <Route path="hr-inquiries" element={<ManagerRoute><HrInquiries /></ManagerRoute>} />
           <Route path="courses" element={<ManagerRoute><Courses /></ManagerRoute>} />
+          <Route path="org-chart" element={<ManagerRoute><OrgChartPage /></ManagerRoute>} />
           <Route path="excused-days" element={<ManagerRoute><ExcusedDays /></ManagerRoute>} />
           <Route path="norms" element={<ManagerRoute><Norms /></ManagerRoute>} />
           <Route path="lead-stats" element={<ManagerRoute><LeadStats /></ManagerRoute>} />

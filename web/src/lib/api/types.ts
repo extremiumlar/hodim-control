@@ -1933,3 +1933,74 @@ export type CourseResultOut = {
   pass_percent: number | null;
   can_retry: boolean;
 };
+
+/** Tashkiliy sxema ma'lumoti (TZ 3.16 / S-40).
+ *  ⚠️ Server RASM bermaydi — brauzer `parent_id` bo'yicha o'zi
+ *  chizadi (Passenger'da rasm generatsiyasi butun saytni kutdirardi). */
+export type OrgNode = {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  employees: number;
+  units: number;
+  has_description: boolean;
+};
+
+export type OrgChart = {
+  nodes: OrgNode[];
+  gaps: {
+    without_description: { id: number; name: string }[];
+    without_manager: { id: number; full_name: string }[];
+  };
+};
+
+export type OrgPositionDetail = {
+  id: number;
+  name: string;
+  parent: { id: number; name: string } | null;
+  children: { id: number; name: string }[];
+  employees: { id: number; full_name: string; role: string }[];
+  units: number;
+  /** Manfiy bo'lsa — shtatdan ORTIQ odam ishlayapti. */
+  vacant: number;
+  description: {
+    version: number;
+    purpose: string | null;
+    duties: string[];
+    rights: string[];
+    responsibility: string[];
+    requirements: string[];
+    effective_from: string;
+  } | null;
+};
+
+export type OrgMyPlace = {
+  manager: { id: number; full_name: string } | null;
+  me: {
+    id: number;
+    full_name: string;
+    position: { id: number; name: string } | null;
+  };
+  subordinates: { id: number; full_name: string }[];
+  has_description: boolean;
+  description_version: number | null;
+};
+
+export type JobDescriptionVersion = {
+  id: number;
+  version: number;
+  purpose: string | null;
+  duties: string[];
+  rights: string[];
+  responsibility: string[];
+  requirements: string[];
+  effective_from: string;
+  created_at: string;
+};
+
+export type CompanyProfileOut = {
+  mission: string | null;
+  values: string[];
+  goals: string[];
+  updated_at?: string;
+};

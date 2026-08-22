@@ -176,6 +176,11 @@ _MANAGER: list[Section] = [
     #  olgani kadr ma'lumoti, `can_view_hr_docs` bilan bir xil qamrov).
     Section("courses", "O'quv paneli", "/courses", "GraduationCap", 166,
             "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  Tuzilmani HAMMA rahbar ko'radi (ROP ham) — bu maxfiy emas,
+    #  aksincha xodim kimga bo'ysunishini bilishi kerak. Tahrirlash
+    #  esa backendda HR bilan cheklangan.
+    Section("org-chart", "Tashkiliy tuzilma", "/org-chart", "Network", 167,
+            "manager", "Ma'muriyat", visible=lambda c: c.is_manager),
     Section("requests", "Arizalar", "/requests", "FileText", 160, "manager", "Ma'muriyat",
             visible=lambda c: c.can_manage_payroll),
     Section("appeals", "E'tiroz/Shikoyat", "/appeals", "Scale", 170, "manager", "Ma'muriyat",
@@ -234,6 +239,7 @@ _EMPLOYEE: list[Section] = [
             "employee", bot_button="❓ HR ga savol"),
     Section("my-courses", "Darsliklarim", "/me/courses", "GraduationCap", 133,
             "employee", bot_button="📚 Darsliklarim"),
+    Section("my-place", "Mening o'rnim", "/me/place", "Network", 134, "employee"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

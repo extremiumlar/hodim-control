@@ -54,6 +54,8 @@ export const qk = {
   courseAssignments: (id: number) => ["courses", id, "assignments"] as const,
   courseMeta: ["courses", "meta"] as const,
   myCourses: ["courses", "me"] as const,
+  org: ["org"] as const,
+  orgPosition: (id: number) => ["org", "position", id] as const,
   myCourseProgress: (id: number) => ["courses", "me", id] as const,
   announcementQuota: ["announcements", "quota"] as const,
   myAcks: ["acks", "me"] as const,
@@ -1662,3 +1664,51 @@ export const useMyCourseRetry = () =>
 
 export const useMyCourseSendMaterial = () =>
   useApiMutation((id: number) => api.myCourseSendMaterial(id), []);
+
+// ── Tashkiliy tuzilma (TZ 3.16 / S-40) ──
+
+export const useOrgChart = () =>
+  useQuery({ queryKey: [...qk.org, "chart"], queryFn: api.orgChart });
+
+export const useOrgMyPlace = () =>
+  useQuery({ queryKey: [...qk.org, "my-place"], queryFn: api.orgMyPlace });
+
+/** `id` null bo'lsa so'rov yuborilmaydi — lavozim tanlanmagan. */
+export const useOrgPosition = (id: number | null) =>
+  useQuery({
+    queryKey: qk.orgPosition(id ?? 0),
+    queryFn: () => api.orgPosition(id as number),
+    enabled: id !== null,
+  });
+
+export const useOrgDescriptions = (id: number | null) =>
+  useQuery({
+    queryKey: [...qk.orgPosition(id ?? 0), "descriptions"],
+    queryFn: () => api.orgDescriptions(id as number),
+    enabled: id !== null,
+  });
+
+export const useOrgProfile = () =>
+  useQuery({ queryKey: [...qk.org, "profile"], queryFn: api.orgProfile });
+
+const ORG_KEYS = [["org"], ["positions"]] as const;
+
+export const useOrgSetParent = () =>
+  useApiMutation(
+    ({ id, parentId }: { id: number; parentId: number | null }) =>
+      api.orgSetParent(id, parentId),
+    ORG_KEYS
+  );
+
+export const useOrgAddDescription = () =>
+  useApiMutation(
+    ({ id, body }: { id: number; body: Parameters<typeof api.orgAddDescription>[1] }) =>
+      api.orgAddDescription(id, body),
+    ORG_KEYS
+  );
+
+export const useOrgSaveProfile = () =>
+  useApiMutation(
+    (body: Parameters<typeof api.orgSaveProfile>[0]) => api.orgSaveProfile(body),
+    ORG_KEYS
+  );
