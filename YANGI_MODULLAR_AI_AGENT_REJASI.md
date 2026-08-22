@@ -829,9 +829,11 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Test natijasi darhol: foiz, o'tdi/o'tmadi, qayta urinish.
 
 **Qabul mezoni**
-- [ ] Bot restart bo'lsa ham xodim qolgan joyidan davom etadi
-- [ ] Test barcha material ko'rilmaguncha ochilmaydi
-- [ ] O'tmasa qayta urinish beriladi (urinish soni yoziladi)
+- [x] Bot restart bo'lsa ham xodim qolgan joyidan davom etadi
+      (FSM umuman yo'q; test «restart taqlidi» bilan tekshiradi)
+- [x] Test barcha material ko'rilmaguncha ochilmaydi (409)
+- [x] O'tmasa qayta urinish beriladi (urinish soni `course_results`
+      da alohida qator bo'lib yoziladi)
 
 ---
 
