@@ -1459,6 +1459,27 @@ async def my_place(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def my_onboarding(telegram_id: int) -> dict | None:
+    """«Birinchi kunlarim» — faol reja (yo'q bo'lsa `None`)."""
+    resp = await _get_client().get(
+        "/onboarding/bot/my", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def onboarding_mark_done(telegram_id: int, item_id: int) -> dict:
+    """Qadamni bajarilgan deb belgilaydi — sayt bilan bitta holat."""
+    resp = await _get_client().post(
+        f"/onboarding/bot/items/{item_id}/done",
+        json={"telegram_id": telegram_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def company_card(telegram_id: int) -> dict | None:
     """Kompaniya kartasi — missiya, qadriyatlar, maqsadlar, tuzilma."""
     resp = await _get_client().get(

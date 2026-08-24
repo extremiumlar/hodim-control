@@ -1683,6 +1683,36 @@ export const useOrgChart = (opts?: { enabled?: boolean }) =>
 export const useOrgMyPlace = () =>
   useQuery({ queryKey: [...qk.org, "my-place"], queryFn: api.orgMyPlace });
 
+// ── Onboarding (TZ 3.2 / S-45..S-47) ──
+
+export const useOnboardingPlans = () =>
+  useQuery({ queryKey: ["onboarding", "plans"], queryFn: api.onboardingPlans });
+
+/** `id` null bo'lsa so'rov yuborilmaydi — reja tanlanmagan. */
+export const useOnboardingPlan = (id: number | null) =>
+  useQuery({
+    queryKey: ["onboarding", "plan", id ?? 0],
+    queryFn: () => api.onboardingPlan(id as number),
+    enabled: id != null,
+  });
+
+export const useOnboardingTemplates = () =>
+  useQuery({
+    queryKey: ["onboarding", "templates"],
+    queryFn: api.onboardingTemplates,
+  });
+
+export const useMyOnboarding = () =>
+  useQuery({ queryKey: ["onboarding", "me"], queryFn: api.myOnboarding });
+
+/** Qadamni belgilash — HR ro'yxati ham, xodim ro'yxati ham yangilanadi. */
+export const useOnboardingItemDone = () =>
+  useApiMutation(
+    (vars: { id: number; note?: string }) =>
+      api.onboardingItemDone(vars.id, vars.note),
+    [["onboarding"]]
+  );
+
 /** Kompaniya kartasi — missiya, qadriyatlar, maqsadlar, tuzilma (S-43). */
 export const useCompanyCard = () =>
   useQuery({ queryKey: [...qk.org, "company"], queryFn: api.companyCard });

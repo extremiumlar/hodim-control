@@ -164,6 +164,10 @@ _MANAGER: list[Section] = [
     #  filtrlaydi), lekin oddiy xodim UMUMAN ko'rmaydi.
     Section("staff", "Shtat jadvali", "/staff", "Briefcase", 162, "manager",
             "Ma'muriyat", visible=lambda c: c.is_manager),
+    #  Onboarding — HR ekrani (TZ 3.2 / S-47): hozir kim onboardingda,
+    #  kimda qaysi qadam kechikkan.
+    Section("onboarding", "Onboarding", "/onboarding", "ClipboardList", 162,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("probation", "Sinov muddati", "/probation", "UserCheck", 163, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("profile-changes", "Ma'lumot so'rovlari", "/profile-changes", "PencilLine",
@@ -252,6 +256,10 @@ _EMPLOYEE: list[Section] = [
     #  chaqirilmaydi va hech narsa o'ylab topilmaydi.
     Section("company", "Kompaniya", "/me/company", "Building2", 135, "employee",
             bot_button="🏛 Kompaniya"),
+    #  «Birinchi kunlarim» — TEPADA (order 120): yangi xodim uchun bu
+    #  eng muhim ro'yxat va uni menyu oxirida qidirib yurmasin.
+    Section("my-onboarding", "Birinchi kunlarim", "/me/onboarding",
+            "ClipboardList", 120, "employee", bot_button="📋 Birinchi kunlarim"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

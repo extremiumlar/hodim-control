@@ -13408,6 +13408,16 @@ def test_org_employee_side() -> None:
             # ══ LAVOZIMSIZ XODIM — TUGMA ISHLAMAYDI, XATO EMAS ══
             cur.execute("update users set position_id=null where id=?", (ids["xodim"],))
             conn.commit()
+            #  ⚠️ SAHIFANING O'ZI HAM OCHILISHI KERAK. Ilgari
+            #  `lavozim.metrics` qo'riqchidan OLDIN hisoblanardi va
+            #  lavozimsiz xodimda «Mening o'rnim» 500 berardi.
+            #  Jonli bazada lavozimi belgilanmagan xodimlar BOR.
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            check("S-41: ⚠️ LAVOZIMSIZ xodimda ham sahifa ochiladi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + r.text[:90])
+            check("S-41: lavozimsiz xodimda ko'rsatkichlar bo'sh",
+                  r.status_code == 200 and r.json().get("metrics") == [],
+                  "=" + str(r.json().get("metrics") if r.status_code == 200 else r.text[:60]))
             r = c.post("/org/my-place/acknowledge", headers=auth(xodim_t))
             check("S-41: lavozimsiz xodimda «Tanishdim» -> 400 (tushunarli xato)",
                   r.status_code == 400, "kod=" + str(r.status_code) + r.text[:90])
@@ -13489,6 +13499,242 @@ class _SoxtaUser:
 
 
 
+
+
+def test_onboarding_hr_screen() -> None:
+    """S-47 (TZ 3.2) — HR ekrani, xodim ro'yxati va yakunlash.
+
+    Qabul mezonlari (TZ):
+      • KECHIKKAN qadam ajratib ko\'rsatiladi;
+      • reja AVTOMATIK ochiladi (offerdan);
+      • yakunlanganda KEYINGI BOSQICH ochiladi.
+    """
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-47: ONBOARDING — HR EKRANI VA YAKUNLASH")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from tasks where assigned_to in"
+            " (select id from users where full_name like 'T-Oh%')"
+            " or title like 'T-Oh%'")
+        cur.execute(
+            "delete from onboarding_progress where plan_id in"
+            " (select id from onboarding_plans where user_id in"
+            "  (select id from users where full_name like 'T-Oh%'))")
+        cur.execute(
+            "delete from onboarding_plans where user_id in"
+            " (select id from users where full_name like 'T-Oh%')")
+        cur.execute(
+            "delete from onboarding_steps where template_id in"
+            " (select id from onboarding_templates where name like 'T-Oh%')")
+        cur.execute("delete from onboarding_templates where name like 'T-Oh%'")
+        cur.execute("delete from offers where candidate_name like 'T-Oh%'")
+        cur.execute(
+            "delete from salary_rates where user_id in"
+            " (select id from users where full_name like 'T-Oh%')")
+        cur.execute(
+            "delete from audit_logs where target_user_id in"
+            " (select id from users where full_name like 'T-Oh%')")
+        cur.execute("delete from users where full_name like 'T-Oh%'")
+        cur.execute("delete from positions where name like 'T-Oh%'")
+        conn.commit()
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-Oh Lavozim',1,datetime('now'))")
+        ids["pos"] = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            #  ⚠️ Shablon LAVOZIMGA emas, UMUMIY qilib yaratiladi:
+            #  offerdan yaratilgan xodimning lavozimi shu bo'ladi,
+            #  lekin biz avtomatik tanlovni ham sinamoqchimiz.
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Oh Shablon", "position_id": ids["pos"], "steps": [
+                    {"title": "T-Oh Kechikkan qadam", "kind": "task",
+                     "due_offset_days": 0},
+                    {"title": "T-Oh Kelajakdagi qadam", "kind": "meeting",
+                     "due_offset_days": 30},
+                ]})
+            check("S-47: shablon yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            ids["tpl"] = r.json().get("id")
+
+            # ══ MEZON 2: OFFERDAN AVTOMATIK REJA ══
+            r = c.post("/offers", headers=auth(mgr_t), json={
+                "candidate_name": "T-Oh Nomzod", "position_id": ids["pos"],
+                "salary": 5000000})
+            check("S-47: taklif yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            offer_id = r.json().get("id")
+
+            r = c.post(f"/offers/{offer_id}/hire", headers=auth(mgr_t))
+            check("S-47: xodim yaratildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:120])
+            hire = r.json() if r.status_code == 200 else {}
+            ids["xodim"] = hire.get("user_id")
+            check("S-47: ⚠️ REJA AVTOMATIK OCHILDI (offerdan)",
+                  hire.get("onboarding_ready") is True
+                  and hire.get("onboarding_plan_id") is not None,
+                  "=" + str(hire))
+
+            reja_soni = cur.execute(
+                "select count(*) from onboarding_plans where user_id=?",
+                (ids["xodim"],)).fetchone()[0]
+            check("S-47: bitta reja yaratildi", reja_soni == 1,
+                  "=" + str(reja_soni))
+
+            #  ⚠️ IDEMPOTENT: `hire` qayta chaqirilsa IKKINCHI reja
+            #  ochilmaydi (HR tugmani ikki marta bosishi mumkin).
+            r = c.post(f"/offers/{offer_id}/hire", headers=auth(mgr_t))
+            reja_soni2 = cur.execute(
+                "select count(*) from onboarding_plans where user_id=?",
+                (ids["xodim"],)).fetchone()[0]
+            check("S-47: ⚠️ qayta `hire` da IKKINCHI reja ochilmadi",
+                  reja_soni2 == 1, "=" + str(reja_soni2))
+            check("S-47: qayta `hire` da ham reja id qaytdi",
+                  r.json().get("onboarding_plan_id") is not None,
+                  "=" + str(r.json())[:110])
+
+            xodim_t = token_for(ids["xodim"], "employee")
+
+            # ══ MEZON 1: KECHIKKAN QADAM AJRATIB KO'RSATILADI ══
+            #  Birinchi qadam muddati BUGUN; uni kechagi kunga
+            #  suramiz — kechikkan bo'lsin.
+            cur.execute(
+                "update onboarding_progress set due_date=date('now','-2 days')"
+                " where plan_id=(select id from onboarding_plans where user_id=?)"
+                "   and title='T-Oh Kechikkan qadam'", (ids["xodim"],))
+            conn.commit()
+
+            r = c.get("/onboarding/me", headers=auth(xodim_t))
+            check("S-47: xodim O'Z rejasini ko'rdi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            meniki = r.json() if r.status_code == 200 else {}
+            check("S-47: ⚠️ KECHIKKAN qadam sanaldi", meniki.get("overdue") == 1,
+                  "=" + str(meniki.get("overdue")))
+            kech = [b for b in meniki.get("items", []) if b["overdue"]]
+            check("S-47: kechikkan qadam AJRATIB belgilangan",
+                  len(kech) == 1 and kech[0]["title"] == "T-Oh Kechikkan qadam",
+                  "=" + str([b["title"] for b in kech]))
+            kelajak = [b for b in meniki.get("items", []) if not b["overdue"]]
+            check("S-47: muddati kelmagan qadam kechikkan DEB BELGILANMADI",
+                  len(kelajak) == 1, "=" + str(len(kelajak)))
+
+            # ══ HR EKRANI ══
+            r = c.get("/onboarding/plans", headers=auth(mgr_t))
+            check("S-47: HR ekrani -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            royxat = r.json() if r.status_code == 200 else []
+            meniki_hr = [p for p in royxat if p["user_id"] == ids["xodim"]]
+            check("S-47: xodim HR ro'yxatida ko'rindi", len(meniki_hr) == 1,
+                  "=" + str(len(meniki_hr)))
+            check("S-47: HR ro'yxatida ism bor",
+                  meniki_hr and meniki_hr[0].get("full_name") == "T-Oh Nomzod",
+                  "=" + str(meniki_hr[0].get("full_name") if meniki_hr else None))
+            check("S-47: ⚠️ ro'yxatda `items` YO'Q (og'ir hisob sahifada emas)",
+                  meniki_hr and "items" not in meniki_hr[0],
+                  "=" + str(list(meniki_hr[0].keys()) if meniki_hr else None))
+            check("S-47: ⚠️ KECHIKKANLAR ro'yxat TEPASIDA",
+                  royxat and royxat[0]["overdue"] >= royxat[-1]["overdue"],
+                  "=" + str([p["overdue"] for p in royxat]))
+
+            #  Xodim HR ekraniga kira olmaydi.
+            r = c.get("/onboarding/plans", headers=auth(xodim_t))
+            check("S-47: xodim HR ekraniga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ══ MEZON 3: YAKUNLANGANDA KEYINGI BOSQICH ══
+            check("S-47: tugamagan rejada keyingi bosqich YO'Q",
+                  meniki.get("next_stage") is None,
+                  "=" + str(meniki.get("next_stage")))
+
+            for band in meniki.get("items", []):
+                r = c.post(f"/onboarding/items/{band['id']}/done",
+                           headers=auth(xodim_t), json={})
+            yakun = r.json() if r.status_code == 200 else {}
+            check("S-47: barcha qadam bajarildi -> reja yakunlandi",
+                  yakun.get("status") == "done", "=" + str(yakun.get("status")))
+            check("S-47: ⚠️ KEYINGI BOSQICH ochildi (sinov muddati)",
+                  (yakun.get("next_stage") or {}).get("kind") == "probation",
+                  "=" + str(yakun.get("next_stage")))
+            check("S-47: keyingi bosqich sanasi bor",
+                  (yakun.get("next_stage") or {}).get("due_date") is not None,
+                  "=" + str(yakun.get("next_stage")))
+
+            #  ⚠️ Sana `deadlines` moduli bilan BIR XIL bo'lishi kerak
+            #  — ikkita manba bo'lmasin.
+            xodim_qatori = cur.execute(
+                "select hire_date from users where id=?", (ids["xodim"],)).fetchone()
+            cfg = cur.execute(
+                "select probation_days from deadline_config limit 1").fetchone()
+            if xodim_qatori and xodim_qatori[0] and cfg:
+                from datetime import timedelta as _td
+                kutilgan = (date.fromisoformat(str(xodim_qatori[0])[:10])
+                            + _td(days=cfg[0])).isoformat()
+                check("S-47: ⚠️ sana `deadlines` hisobi bilan BIR XIL"
+                      " (qayta hisoblanmaydi)",
+                      (yakun.get("next_stage") or {}).get("due_date") == kutilgan,
+                      "=" + str((yakun.get("next_stage") or {}).get("due_date"))
+                      + " kutilgan=" + kutilgan)
+
+            #  Yakunlangan reja `/me` da ko'rinmaydi (u FAOL emas).
+            r = c.get("/onboarding/me", headers=auth(xodim_t))
+            check("S-47: yakunlangach `/me` bo'sh qaytadi (faol reja yo'q)",
+                  r.status_code == 200 and r.json() is None,
+                  "=" + str(r.text)[:90])
+
+            # ══ BOT — SAYT BILAN BITTA HOLAT ══
+            cur.execute("update users set telegram_id=999704701 where id=?",
+                        (ids["xodim"],))
+            conn.commit()
+            r = c.get("/onboarding/bot/my", params={"telegram_id": 999704701},
+                      headers=bot_secret_hdr())
+            check("S-47: bot ham bo'sh qaytardi (bitta holat)",
+                  r.status_code == 200 and r.json() is None,
+                  "kod=" + str(r.status_code) + str(r.text)[:60])
+            r = c.get("/onboarding/bot/my", params={"telegram_id": 999704701})
+            check("S-47: sirsiz bot yo'li -> 401", r.status_code == 401,
+                  "kod=" + str(r.status_code))
+
+        # ══ BO'LIM VA TUGMA ══
+        from api.services.sections import ALL_SECTIONS
+        from bot.keyboards import ALL_MENU_BUTTONS, BTN_ONBOARDING
+
+        xodim_bolim = next((s for s in ALL_SECTIONS if s.key == "my-onboarding"), None)
+        check("S-47: «Birinchi kunlarim» bo'limi bor va bot tugmasi ulangan",
+              xodim_bolim is not None and xodim_bolim.bot_button == BTN_ONBOARDING,
+              "=" + str(xodim_bolim.bot_button if xodim_bolim else None))
+        check("S-47: bot tugmasi ALL_MENU_BUTTONS da",
+              BTN_ONBOARDING in ALL_MENU_BUTTONS, "=" + BTN_ONBOARDING)
+        hr_bolim = next((s for s in ALL_SECTIONS if s.key == "onboarding"), None)
+        check("S-47: HR «Onboarding» bo'limi bor",
+              hr_bolim is not None and hr_bolim.audience == "manager",
+              "=" + str(hr_bolim.audience if hr_bolim else None))
+
+    except Exception:
+        check("S-47 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+        except Exception:
+            print("S-47 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
 
 def test_onboarding_tasks() -> None:
     """S-46 (TZ 3.2) — onboarding qadamlari vazifalarga ulanadi.
@@ -17561,6 +17807,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_onboarding_hr_screen()
+    except Exception:
+        print("S-47 onboarding HR ekrani testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

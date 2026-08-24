@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.services import onboarding as svc
 from db.models import (
     OnboardingProgress,
@@ -28,6 +28,11 @@ from db.models import (
 )
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+
+#  ⚠️ Bot yo'llari uchun sir MAJBURIY — ular xodimni `telegram_id`
+#  bo'yicha topadi, ya'ni JWT yo'q (`77fd2d6` da 17 ta yo'lda
+#  unutilgani aniqlangan edi).
+_BOT_SIR = [Depends(verify_bot_secret)]
 
 #  Shablon va rejani BOSHQARISH — HR/Boshliq/Dasturchi.
 _HR = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
@@ -59,6 +64,10 @@ class PlanIn(BaseModel):
 
 class DoneIn(BaseModel):
     note: str | None = None
+
+
+class BotDoneIn(DoneIn):
+    telegram_id: int
 
 
 def _step_out(s: OnboardingStep) -> dict:
@@ -235,6 +244,43 @@ async def create_plan(
     return out
 
 
+@router.get("/me")
+async def my_onboarding(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict | None:
+    """«📋 Birinchi kunlarim» — xodimning O'Z rejasi.
+
+    ⚠️ FAOL reja yo'q bo'lsa `null` qaytadi (xato EMAS): xodimlarning
+    ko'pchiligida onboarding tugagan yoki umuman bo'lmagan."""
+    plan = await svc.active_plan(db, user.id)
+    if plan is None:
+        return None
+    return await svc.progress_with_next(db, plan)
+
+
+@router.get("/bot/my", dependencies=_BOT_SIR)
+async def bot_my_onboarding(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> dict | None:
+    u = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if u is None or not u.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    plan = await svc.active_plan(db, u.id)
+    if plan is None:
+        return None
+    return await svc.progress_with_next(db, plan)
+
+
+@router.post("/bot/items/{item_id}/done", dependencies=_BOT_SIR)
+async def bot_mark_done(
+    item_id: int, payload: BotDoneIn, db: AsyncSession = Depends(get_db)
+) -> dict:
+    u = await db.scalar(select(User).where(User.telegram_id == payload.telegram_id))
+    if u is None or not u.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return await _mark_done(db, item_id, u)
+
+
 @router.get("/plans/{plan_id}")
 async def read_plan(
     plan_id: int,
@@ -270,6 +316,15 @@ async def mark_item_done(
     404."""
     from db.models import OnboardingPlan
 
+    return await _mark_done(db, item_id, actor, note=payload.note)
+
+
+async def _mark_done(
+    db: AsyncSession, item_id: int, actor: User, note: str | None = None
+) -> dict:
+    """Sayt va bot uchun YAGONA mantiq (loyiha naqshi)."""
+    from db.models import OnboardingPlan
+
     band = await db.get(OnboardingProgress, item_id)
     if band is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Qadam topilmadi")
@@ -279,8 +334,8 @@ async def mark_item_done(
     if actor.role not in _HR and plan.user_id != actor.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Qadam topilmadi")
 
-    await svc.mark_done(db, band=band, actor_id=actor.id, note=payload.note)
+    await svc.mark_done(db, band=band, actor_id=actor.id, note=note)
     await svc.finish_if_complete(db, plan)
-    out = await svc.progress(db, plan)
+    out = await svc.progress_with_next(db, plan)
     await db.commit()
     return out

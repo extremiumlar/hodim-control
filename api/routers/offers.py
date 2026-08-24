@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -30,6 +32,8 @@ from db.models import (
     Role,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/offers", tags=["offers"])
 
@@ -271,10 +275,12 @@ class HireOut(BaseModel):
     full_name: str
     created: bool
     salary_rate_from: date
-    #  3.2 (onboarding) hali qurilmagan. Bayroq: modul tayyor bo'lgach
-    #  shu nuqtadan reja ochiladi. Panel foydalanuvchiga «keyin
-    #  ulanadi» deb ko'rsatishi uchun javobda turadi (TZ 4-band).
+    #  ⚠️ S-47 da ULANDI. Ilgari bu bayroq har doim `False` edi va
+    #  «modul tayyor bo'lgach ulanadi» deb turardi. Endi xodim
+    #  yaratilishi bilan onboarding rejasi AVTOMATIK ochiladi va
+    #  bayroq reja haqiqatan ochilganini bildiradi.
     onboarding_ready: bool = False
+    onboarding_plan_id: int | None = None
 
 
 @router.post("/{offer_id}/hire", response_model=HireOut)
@@ -299,13 +305,57 @@ async def hire(
     if o.status != OfferStatus.accepted.value:
         o.status = OfferStatus.accepted.value
         await db.commit()
-    from api.timeutil import today_local
+    #  ⚠️ ONBOARDING REJASI AVTOMATIK OCHILADI (TZ 3.2 / S-47).
+    #  Qo'lda ochish talab qilinsa, band HR eng ko'p unutadigan
+    #  qadam aynan shu bo'lardi — yangi xodim birinchi kunlarida
+    #  hech qanday ro'yxatsiz qolardi.
+    #
+    #  ⚠️ REJA OCHILMASA HAM XODIM YARATILGAN bo'lib qolaveradi.
+    #  Mos shablon topilmasligi MUMKIN (hali kiritilmagan) va
+    #  bunda butun `hire` yiqilsa, HR xodimni umuman yarata
+    #  olmasdi. Shuning uchun xato yutiladi va bayroq `False`
+    #  qoladi — panel «reja ochilmadi» deb ko'rsatadi.
+    #  ⚠️ QIYMATLARNI OLDIN OLAMIZ. Quyida `rollback()` bo'lishi
+    #  mumkin, u esa SESSIYADAGI BARCHA obyektni eskirtiradi
+    #  (`expire_on_commit=False` bo'lsa ham) — keyin `xodim.id`
+    #  o'qilsa `MissingGreenlet` bilan yiqilardi. Bu loyihada
+    #  allaqachon uchragan tuzoq (S-33) va shu yerda ham JONLI
+    #  500 xatosini berdi.
+    from api.timeutil import today_local as _bugun
+
+    xodim_id = xodim.id
+    xodim_ismi = xodim.full_name
+    #  ⚠️ `o` (taklif) HAM eskiradi — `rollback()` sessiyadagi
+    #  BARCHA obyektni eskirtiradi, faqat biz o'ylagan bittasini
+    #  emas. Birinchi tuzatishda buni o'tkazib yuborib, xato
+    #  boshqa qatorda qayta chiqdi.
+    stavka_sanasi = o.start_date or _bugun()
+
+    reja_id = None
+    try:
+        from api.services import onboarding as obsvc
+
+        mavjud = await obsvc.active_plan(db, xodim.id)
+        if mavjud is not None:
+            reja_id = mavjud.id  # idempotent: qayta ochilmaydi
+        else:
+            reja = await obsvc.create_plan(db, user=xodim, actor_id=actor.id)
+            reja_id = reja.id
+            await db.commit()
+    except ValueError:
+        #  Mos shablon yo'q — bu XATO EMAS, kutilgan holat.
+        await db.rollback()
+    except Exception:  # noqa: BLE001
+        logger.exception("Onboarding rejasini avtomatik ochib bo'lmadi")
+        await db.rollback()
 
     return HireOut(
-        user_id=xodim.id,
-        full_name=xodim.full_name,
+        user_id=xodim_id,
+        full_name=xodim_ismi,
         created=yangi,
-        salary_rate_from=o.start_date or today_local(),
+        salary_rate_from=stavka_sanasi,
+        onboarding_ready=reja_id is not None,
+        onboarding_plan_id=reja_id,
     )
 
 

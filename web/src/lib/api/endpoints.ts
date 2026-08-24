@@ -24,6 +24,8 @@ import type {
   JobDescriptionVersion,
   OrgChart,
   CompanyCard,
+  OnboardingPlan,
+  OnboardingTemplate,
   InstructionAckOverview,
   OrgMyPlace,
   OrgPositionDetail,
@@ -1336,6 +1338,18 @@ export const api = {
   orgChart: () => apiFetch<OrgChart>("/org/chart"),
   orgMyPlace: () => apiFetch<OrgMyPlace>("/org/my-place"),
   companyCard: () => apiFetch<CompanyCard>("/org/company"),
+  // ── Onboarding (TZ 3.2 / S-45..S-47) ──
+  onboardingPlans: () => apiFetch<OnboardingPlan[]>("/onboarding/plans"),
+  onboardingPlan: (id: number) =>
+    apiFetch<OnboardingPlan>(`/onboarding/plans/${id}`),
+  onboardingTemplates: () =>
+    apiFetch<OnboardingTemplate[]>("/onboarding/templates"),
+  myOnboarding: () => apiFetch<OnboardingPlan | null>("/onboarding/me"),
+  onboardingItemDone: (id: number, note?: string) =>
+    apiFetch<OnboardingPlan>(`/onboarding/items/${id}/done`, {
+      method: "POST",
+      body: JSON.stringify({ note: note ?? null }),
+    }),
   instructionAcks: () =>
     apiFetch<InstructionAckOverview[]>("/acks/instructions/overview"),
   orgAcknowledge: () =>

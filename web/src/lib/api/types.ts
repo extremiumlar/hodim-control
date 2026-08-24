@@ -2004,6 +2004,61 @@ export type OrgMyPlace = {
   } | null;
 };
 
+export type OnboardingItem = {
+  id: number;
+  order_index: number;
+  title: string;
+  description: string | null;
+  kind: "task" | "document" | "course" | "briefing" | "meeting";
+  owner_role: string | null;
+  owner_user_id: number | null;
+  due_date: string | null;
+  ref_id: number | null;
+  ref_text: string | null;
+  done: boolean;
+  /** ⚠️ `done` rost bo'lsa ham `null` bo'lishi mumkin — qadam BOSHQA
+   *  modulda (kurs/hujjat) bajarilgan bo'lsa vaqt shu yerda emas. */
+  done_at: string | null;
+  overdue: boolean;
+  note: string | null;
+};
+
+export type OnboardingPlan = {
+  plan_id: number;
+  user_id: number;
+  full_name?: string;
+  template_name: string | null;
+  start_date: string;
+  status: "active" | "done" | "cancelled";
+  finished_at: string | null;
+  total: number;
+  done: number;
+  overdue: number;
+  percent: number;
+  items?: OnboardingItem[];
+  next_stage?: { kind: string; label: string; due_date: string } | null;
+};
+
+export type OnboardingTemplate = {
+  id: number;
+  name: string;
+  position_id: number | null;
+  role: string | null;
+  is_active: boolean;
+  step_count: number;
+  steps: {
+    id: number;
+    order_index: number;
+    title: string;
+    description: string | null;
+    kind: string;
+    owner_role: string | null;
+    due_offset_days: number;
+    ref_id: number | null;
+    ref_text: string | null;
+  }[];
+};
+
 export type CompanyCard = {
   mission: string | null;
   values: string[];

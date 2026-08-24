@@ -337,6 +337,13 @@ async def progress(db: AsyncSession, plan: OnboardingPlan) -> dict:
     }
 
 
+async def progress_with_next(db: AsyncSession, plan: OnboardingPlan) -> dict:
+    """`progress` + yakunlangandan keyin ochiladigan bosqich."""
+    holat = await progress(db, plan)
+    holat["next_stage"] = await next_stage(db, plan)
+    return holat
+
+
 async def mark_done(
     db: AsyncSession,
     *,
@@ -360,16 +367,89 @@ async def mark_done(
 
 
 async def finish_if_complete(db: AsyncSession, plan: OnboardingPlan) -> bool:
-    """Barcha qadam bajarilgan bo'lsa rejani yakunlaydi (S-47 asosi).
+    """Barcha qadam bajarilgan bo'lsa rejani yakunlaydi (TZ 3.2 / S-47).
 
-    Qaytaradi: yakunlandimi."""
+    ⚠️ YAKUNLANGANDA KEYINGI BOSQICH OCHILADI — sinov muddati
+    baholashi. Muddatning O'ZI bu yerda YARATILMAYDI: u
+    `deadlines` modulida `hire_date + probation_days` bo'yicha
+    ALLAQACHON hisoblanadi (S-12). Ikkinchi joyda yaratsak bitta
+    xodimda ikkita sinov muddati paydo bo'lardi. Bu yerda faqat
+    HR ga xabar beriladi — ya'ni «ochilish» ko'rinadigan bo'ladi.
+
+    Qaytaradi: SHU CHAQIRUVDA yakunlandimi (idempotent — allaqachon
+    yakunlangan reja uchun `False`, aks holda HR ga har safar
+    takroriy xabar ketardi)."""
+    if plan.status != OnboardingStatus.active.value:
+        return False
     holat = await progress(db, plan)
     if holat["total"] == 0 or holat["done"] < holat["total"]:
         return False
     plan.status = OnboardingStatus.done.value
     plan.finished_at = datetime.utcnow()
     await db.flush()
+    await _notify_finished(db, plan)
     return True
+
+
+async def _notify_finished(db: AsyncSession, plan: OnboardingPlan) -> None:
+    """HR ga «onboarding tugadi» xabari.
+
+    ⚠️ Xabar yiqilsa REJA YAKUNLANGAN bo'lib qolaveradi — holat
+    xabardan muhimroq. Shuning uchun butun blok qo'riqlangan."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        from api.notify import notify_user
+        from api.services.push import Category
+
+        xodim = await db.get(User, plan.user_id)
+        if xodim is None:
+            return
+        hrlar = list(
+            await db.scalars(
+                select(User).where(
+                    User.role.in_((Role.hr.value, Role.boss.value)),
+                    User.is_active.is_(True),
+                    User.telegram_id.isnot(None),
+                )
+            )
+        )
+        matn = (
+            f"✅ <b>Onboarding tugadi</b> — {xodim.full_name}\n\n"
+            f"«{plan.template_name or 'Reja'}» bo'yicha barcha qadam "
+            "bajarildi.\n"
+            "Keyingi bosqich — <b>sinov muddati baholashi</b> "
+            "(«Muddatlar» bo'limida ko'rinadi)."
+        )
+        for hr in hrlar:
+            await notify_user(db, hr, Category.APPROVALS, matn,
+                              data={"path": "/onboarding"})
+    except Exception:  # noqa: BLE001
+        logger.exception("Onboarding yakuni haqida xabar berib bo'lmadi")
+
+
+async def next_stage(db: AsyncSession, plan: OnboardingPlan) -> dict | None:
+    """Reja tugagach ochiladigan bosqich — sinov muddati.
+
+    ⚠️ Sana `deadlines` modulining O'Z hisobidan olinadi
+    (`hire_date + probation_days`), bu yerda qayta hisoblanmaydi —
+    ikkita manba bo'lmasin."""
+    if plan.status != OnboardingStatus.done.value:
+        return None
+    xodim = await db.get(User, plan.user_id)
+    if xodim is None or not xodim.hire_date:
+        return None
+    from datetime import timedelta as _td
+
+    from api.services import deadlines as dsvc
+
+    cfg = await dsvc.get_config(db)
+    return {
+        "kind": "probation",
+        "label": "Sinov muddati baholashi",
+        "due_date": xodim.hire_date + _td(days=cfg.probation_days),
+    }
 
 
 # ─────────────────────────────────────────────────────────────

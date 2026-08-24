@@ -466,10 +466,15 @@ async def my_place(db: AsyncSession, user: User) -> dict:
     #  sotuv ko'rsatkichi chiqib qolmasin.
     from api.routers.norms import METRIC_LABELS
 
+    #  ⚠️ `lavozim is None` TEKSHIRUVI RO'YXATDAN OLDIN. Ilgari u
+    #  `if` shartida turardi va Python avval `lavozim.metrics` ni
+    #  hisoblab, LAVOZIMSIZ xodimda `AttributeError` bilan yiqilardi
+    #  — «Mening o'rnim» sahifasi 500 berardi. Jonli bazada lavozimi
+    #  belgilanmagan xodimlar BOR, ya'ni bu nazariy xato emas edi.
     korsatkichlar = [
         {"key": m, "label": METRIC_LABELS[m]}
-        for m in (lavozim.metrics or [])
-        if lavozim is not None and m in METRIC_LABELS
+        for m in ((lavozim.metrics or []) if lavozim is not None else [])
+        if m in METRIC_LABELS
     ]
 
     #  Tanishuv holati — joriy versiya bo'yicha.
