@@ -1104,9 +1104,16 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Kadr auditi (3.30) uchun so'rov tayyorlanadi.
 
 **Qabul mezoni**
-- [ ] Muddati o'tgan instruktaj ro'yxati
-- [ ] Eslatma takrorlanmaydi
-- [ ] Yangi xodimga kirish instruktaji onboardingdan tushadi
+- [x] Muddati o'tgan instruktaj ro'yxati — `deadlines` dan
+      o'qiladi (qayta hisoblanmaydi), eng ko'p kechikkan tepada
+- [x] Eslatma takrorlanmaydi — S-13 ning `reminded_at` izi; test
+      tickni ikki marta chaqirib, ikkinchisida xabar ketmasligini
+      tasdiqlaydi
+- [x] Yangi xodimga kirish instruktaji onboardingdan tushadi —
+      MAVJUD instruktajdan tanishish so'raladi, yangi yozuv
+      yaratilmaydi. Yo'l-yo'lakay: oxirgi qadami tashqi modulda
+      bajariladigan reja yakunlanmasligi topildi va cron bilan
+      hal qilindi
 
 ---
 
