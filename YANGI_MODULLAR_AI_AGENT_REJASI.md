@@ -940,9 +940,16 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 2. Yo'riqnoma ostida «✅ Tanishdim» → `acknowledgements` (S-20).
 
 **Qabul mezoni**
-- [ ] Xodim faqat **o'z** lavozimi yo'riqnomasini ko'radi
-- [ ] Tuzilma sxemasi hammaga ochiq (ish haqi va baho **yo'q**)
-- [ ] Tanishuv versiyasi bilan yoziladi
+- [x] Xodim faqat **o'z** lavozimi yo'riqnomasini ko'radi — begona
+      lavozimda `description: null`, faqat `has_description` qoladi
+      (S-40 da bu buzilgan edi: matn har kimga berilardi)
+- [x] Tuzilma sxemasi hammaga ochiq (ish haqi va baho **yo'q**) —
+      13 ta taqiqlangan kalit ichma-ich tekshiriladi; `gaps` esa
+      faqat rahbarga (kadr rejalashtirish ma'lumoti). S-40 da butun
+      endpoint yopilgandi — TZ ga zid edi, tuzatildi
+- [x] Tanishuv versiyasi bilan yoziladi — S-20 ning umumiy
+      `acknowledgements` jadvalida; yangi versiya eski tanishuvni
+      bekor qiladi, eskisi tarix bo'lib qoladi
 
 ---
 
