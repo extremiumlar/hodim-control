@@ -1062,9 +1062,13 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. Offer qabul qilinganda reja **avtomatik** ochiladi (S-16 dagi bayroq ulanadi).
 
 **Qabul mezoni**
-- [ ] Kechikkan qadam ajratib ko'rsatiladi
-- [ ] Reja avtomatik ochiladi (offerdan)
-- [ ] Yakunlanganda keyingi bosqich ochiladi
+- [x] Kechikkan qadam ajratib ko'rsatiladi — HR ekranida, kabinetda
+      va botda; kechikkanlar ro'yxat tepasida
+- [x] Reja avtomatik ochiladi (offerdan) — `onboarding_ready`
+      bayrog'i ulandi; qayta `hire` da ikkinchi reja ochilmaydi
+- [x] Yakunlanganda keyingi bosqich ochiladi — sinov muddati
+      baholashi; sana `deadlines` hisobidan olinadi (qayta
+      hisoblanmaydi, test bilan tasdiqlangan)
 
 ---
 
