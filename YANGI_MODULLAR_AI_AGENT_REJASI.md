@@ -1003,9 +1003,16 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Ariza zanjiri (`pending → manager_ok → hr_ok`) endi **aniq odamga** (bevosita rahbarga) boradi.
 
 **Qabul mezoni**
-- [ ] `can_manage_norms` ierarxiyani biladi
-- [ ] Ariza aniq rahbarga boradi
-- [ ] Eski xatti-harakat buzilmagan (regressiya testi majburiy)
+- [x] `can_manage_norms` ierarxiyani biladi — endi ZANJIR bo'ylab
+      (rahbarimning rahbari ham); qoida `api/services/hierarchy.py`
+      da, uch nusxa o'rniga yagona manba
+- [x] Ariza aniq rahbarga boradi — xabar bevosita rahbarga, qaror
+      huquqi esa butun zanjirda (rahbar ta'tilda bo'lsa muzlamasin)
+- [x] Eski xatti-harakat buzilmagan — eski mantiqning aynan nusxasi
+      etalon sifatida testda, 900 kombinatsiya solishtirildi.
+      Yagona farq: HR bevosita rahbar bo'lgan holat (ataylab
+      tuzatildi). Yo'l-yo'lakay ruxsat oshib ketish xavfi topildi
+      va yopildi (`MANAGING_ROLES`)
 
 ---
 
