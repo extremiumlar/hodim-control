@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import assert_can_view, get_current_user, get_db, require_roles
+from api.deps import assert_can_view, get_current_user, get_db, require_roles, verify_bot_secret
 from db.models import (
     DOCUMENT_TYPE_LABELS,
     DocumentType,
@@ -35,6 +35,14 @@ from db.models import (
 )
 
 router = APIRouter(prefix="/employee-documents", tags=["employee-documents"])
+
+#  ⚠️ BOT ENDPOINTLARI UCHUN SIR QO'RIQCHISI — MAJBURIY.
+#  Bu yo'llar xodimni `telegram_id` bo'yicha topadi, ya'ni JWT yo'q.
+#  Sir tekshirilmasa istalgan kishi begona `telegram_id` yuborib
+#  o'sha xodimning ma'lumotini o'qiy va uning NOMIDAN amal qila
+#  olardi. Router darajasida qo'yib bo'lmaydi — shu routerda JWT
+#  bilan ishlaydigan yo'llar ham bor.
+_BOT_SIR = [Depends(verify_bot_secret)]
 
 #  Yuklash va boshqa xodimning hujjatini ko'rish — faqat shu rollar.
 #  ROP ataylab YO'Q (yuqoridagi izohga qarang).
@@ -230,7 +238,7 @@ async def _bot_actor(db: AsyncSession, telegram_id: int) -> User:
     return user
 
 
-@router.get("/bot/my", response_model=list[DocumentOut])
+@router.get("/bot/my", response_model=list[DocumentOut], dependencies=_BOT_SIR)
 async def bot_my_documents(
     telegram_id: int, db: AsyncSession = Depends(get_db)
 ) -> list[DocumentOut]:
@@ -239,7 +247,7 @@ async def bot_my_documents(
     return await _list_for(db, actor.id)
 
 
-@router.get("/bot/types")
+@router.get("/bot/types", dependencies=_BOT_SIR)
 async def bot_document_types(
     telegram_id: int, db: AsyncSession = Depends(get_db)
 ) -> list[dict]:
@@ -251,7 +259,7 @@ async def bot_document_types(
     ]
 
 
-@router.get("/bot/employees")
+@router.get("/bot/employees", dependencies=_BOT_SIR)
 async def bot_employees(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[dict]:
     """HR hujjat yuklashda xodim tanlaydi. Faqat HR/Boshliq/Dasturchi."""
     actor = await _bot_actor(db, telegram_id)
@@ -263,7 +271,7 @@ async def bot_employees(telegram_id: int, db: AsyncSession = Depends(get_db)) ->
     return [{"id": u.id, "full_name": u.full_name} for u in rows]
 
 
-@router.post("/bot/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
+@router.post("/bot/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED, dependencies=_BOT_SIR)
 async def bot_upload(
     payload: BotUploadIn, db: AsyncSession = Depends(get_db)
 ) -> DocumentOut:
@@ -285,7 +293,7 @@ async def bot_upload(
     )
 
 
-@router.post("/bot/send")
+@router.post("/bot/send", dependencies=_BOT_SIR)
 async def bot_send_document(
     payload: BotSendIn, db: AsyncSession = Depends(get_db)
 ) -> dict:

@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.notify import notify_user
 from api.services import hr_inquiries as svc
 from api.services.push import Category
@@ -35,6 +35,14 @@ from db.models import (
 )
 
 router = APIRouter(prefix="/hr-inquiries", tags=["hr_inquiries"])
+
+#  ⚠️ BOT ENDPOINTLARI UCHUN SIR QO'RIQCHISI — MAJBURIY.
+#  Bu yo'llar xodimni `telegram_id` bo'yicha topadi, ya'ni JWT yo'q.
+#  Sir tekshirilmasa istalgan kishi begona `telegram_id` yuborib
+#  o'sha xodimning ma'lumotini o'qiy va uning NOMIDAN amal qila
+#  olardi. Router darajasida qo'yib bo'lmaydi — shu routerda JWT
+#  bilan ishlaydigan yo'llar ham bor.
+_BOT_SIR = [Depends(verify_bot_secret)]
 
 _HR = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
 
@@ -376,13 +384,13 @@ async def _bot_actor(db: AsyncSession, telegram_id: int) -> User:
     return user
 
 
-@router.post("/bot/ask", status_code=status.HTTP_201_CREATED)
+@router.post("/bot/ask", status_code=status.HTTP_201_CREATED, dependencies=_BOT_SIR)
 async def bot_ask(payload: BotAskIn, db: AsyncSession = Depends(get_db)) -> dict:
     actor = await _bot_actor(db, payload.telegram_id)
     return await _ask(db, actor, payload.question)
 
 
-@router.get("/bot/my", response_model=list[InquiryOut])
+@router.get("/bot/my", response_model=list[InquiryOut], dependencies=_BOT_SIR)
 async def bot_my(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[InquiryOut]:
     actor = await _bot_actor(db, telegram_id)
     rows = await svc.for_user(db, actor.id)
@@ -390,7 +398,7 @@ async def bot_my(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[I
     return [_out(r, ismlar) for r in rows]
 
 
-@router.get("/bot/open", response_model=list[InquiryOut])
+@router.get("/bot/open", response_model=list[InquiryOut], dependencies=_BOT_SIR)
 async def bot_open(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list[InquiryOut]:
     """HR uchun: javob kutayotgan murojaatlar."""
     actor = await _bot_actor(db, telegram_id)
@@ -401,7 +409,7 @@ async def bot_open(telegram_id: int, db: AsyncSession = Depends(get_db)) -> list
     return [_out(r, ismlar) for r in rows]
 
 
-@router.post("/bot/answer")
+@router.post("/bot/answer", dependencies=_BOT_SIR)
 async def bot_answer(payload: BotAnswerIn, db: AsyncSession = Depends(get_db)) -> dict:
     actor = await _bot_actor(db, payload.telegram_id)
     if actor.role not in _HR:
@@ -478,7 +486,7 @@ class BotSuggestionIn(BaseModel):
     accepted: bool
 
 
-@router.post("/bot/suggestion")
+@router.post("/bot/suggestion", dependencies=_BOT_SIR)
 async def bot_suggestion(
     payload: BotSuggestionIn, db: AsyncSession = Depends(get_db)
 ) -> dict:

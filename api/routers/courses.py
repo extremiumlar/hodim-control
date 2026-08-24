@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.services import courses as svc
 from api.services.announcements import audience_user_ids
 from db.models import (
@@ -33,6 +33,14 @@ from db.models import (
 )
 
 router = APIRouter(prefix="/courses", tags=["courses"])
+
+#  ⚠️ BOT ENDPOINTLARI UCHUN SIR QO'RIQCHISI — MAJBURIY.
+#  Bu yo'llar xodimni `telegram_id` bo'yicha topadi, ya'ni JWT yo'q.
+#  Sir tekshirilmasa istalgan kishi begona `telegram_id` yuborib
+#  o'sha xodimning ma'lumotini o'qiy va uning NOMIDAN amal qila
+#  olardi. Router darajasida qo'yib bo'lmaydi — shu routerda JWT
+#  bilan ishlaydigan yo'llar ham bor.
+_BOT_SIR = [Depends(verify_bot_secret)]
 
 #  O'quv paneli — HR moduli. ROP ataylab ko'rmaydi: kurs mazmuni va
 #  kimning qanday ball olgani kadr ma'lumoti (kadr hujjatlari bilan
@@ -629,20 +637,20 @@ class BotTextIn(BaseModel):
     text: str
 
 
-@router.get("/bot/my")
+@router.get("/bot/my", dependencies=_BOT_SIR)
 async def bot_my_courses(
     telegram_id: int, db: AsyncSession = Depends(get_db)
 ) -> list[dict]:
     return await _me_list(db, await _bot_user(db, telegram_id))
 
 
-@router.post("/bot/progress")
+@router.post("/bot/progress", dependencies=_BOT_SIR)
 async def bot_progress(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
     u = await _bot_user(db, payload.telegram_id)
     return await _me_progress(db, u, payload.assignment_id)
 
 
-@router.post("/bot/next-material")
+@router.post("/bot/next-material", dependencies=_BOT_SIR)
 async def bot_next_material(
     payload: BotIdIn, db: AsyncSession = Depends(get_db)
 ) -> dict:
@@ -650,7 +658,7 @@ async def bot_next_material(
     return await _me_next_material(db, u, payload.assignment_id)
 
 
-@router.post("/bot/answer")
+@router.post("/bot/answer", dependencies=_BOT_SIR)
 async def bot_answer(payload: BotAnswerIn, db: AsyncSession = Depends(get_db)) -> dict:
     u = await _bot_user(db, payload.telegram_id)
     return await _me_answer(
@@ -658,19 +666,19 @@ async def bot_answer(payload: BotAnswerIn, db: AsyncSession = Depends(get_db)) -
     )
 
 
-@router.post("/bot/finish")
+@router.post("/bot/finish", dependencies=_BOT_SIR)
 async def bot_finish(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
     u = await _bot_user(db, payload.telegram_id)
     return await _me_finish(db, u, payload.assignment_id)
 
 
-@router.post("/bot/retry")
+@router.post("/bot/retry", dependencies=_BOT_SIR)
 async def bot_retry(payload: BotIdIn, db: AsyncSession = Depends(get_db)) -> dict:
     u = await _bot_user(db, payload.telegram_id)
     return await _me_retry(db, u, payload.assignment_id)
 
 
-@router.post("/bot/answer-text")
+@router.post("/bot/answer-text", dependencies=_BOT_SIR)
 async def bot_answer_text(payload: BotTextIn, db: AsyncSession = Depends(get_db)) -> dict:
     """Xodimning ERKIN MATNI — OCHIQ savolga javobmi?
 

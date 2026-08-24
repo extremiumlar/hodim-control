@@ -69,7 +69,16 @@ def _fail_print(line: str) -> None:
 
 
 def db() -> sqlite3.Connection:
-    return sqlite3.connect(DB_PATH)
+    """Test uchun to'g'ridan-to'g'ri SQLite ulanishi.
+
+    ⚠️ `timeout` SHART. Standart qiymat — 5 soniya, va server ham shu
+    faylga yozadi. Yozuv qulfi 5 soniyadan uzoq turganda tozalash
+    «database is locked» bilan yiqilardi; qator o'chirilmay qolib,
+    KEYINGI ishga tushirishda «UNIQUE constraint failed» chiqardi —
+    ya'ni bitta qulf keyingi seansdagi butunlay boshqa testni
+    yiqitardi. Sababni topish qiyin, chunki xato boshqa joyda
+    ko'rinadi."""
+    return sqlite3.connect(DB_PATH, timeout=30)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -3828,6 +3837,16 @@ def test_payroll_engine() -> None:
                         AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
                     )
                 )
+                #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+                #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+                #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+                #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+                #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+                #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+                #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+                from db.models import Acknowledgement as _Ack
+                await s.execute(delete(_Ack).where(
+                    _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             # Qo'shimcha himoya: agar avvalgi qulagan ishga tushirishda AVVAL
             # User o'chirilib, keyingi qadam (masalan Attendance o'chirish)
@@ -4112,6 +4131,16 @@ def test_payroll_engine() -> None:
                     AuditLog.target_user_id.in_([u1.id, u2.id]) | AuditLog.actor_id.in_([u1.id, u2.id])
                 )
             )
+            #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+            #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+            #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+            #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+            #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+            #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+            #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+            from db.models import Acknowledgement as _Ack
+            await s.execute(delete(_Ack).where(
+                _Ack.user_id.in_([u1.id, u2.id]) | _Ack.requested_by.in_([u1.id, u2.id])))
             await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
             await s.commit()
 
@@ -4746,6 +4775,16 @@ def test_payroll_automation() -> None:
                         AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
                     )
                 )
+                #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+                #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+                #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+                #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+                #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+                #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+                #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+                from db.models import Acknowledgement as _Ack
+                await s.execute(delete(_Ack).where(
+                    _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 3, 1), Attendance.date < date(2020, 4, 1))
@@ -4922,6 +4961,16 @@ def test_payroll_automation() -> None:
             await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(ids)))
             await s.execute(delete(PayrollPeriod).where(PayrollPeriod.period == PERIOD))
             await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(ids) | AuditLog.actor_id.in_(ids)))
+            #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+            #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+            #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+            #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+            #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+            #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+            #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+            from db.models import Acknowledgement as _Ack
+            await s.execute(delete(_Ack).where(
+                _Ack.user_id.in_(ids) | _Ack.requested_by.in_(ids)))
             await s.execute(delete(User).where(User.id.in_(ids)))
             await s.commit()
 
@@ -5035,6 +5084,16 @@ def test_payroll_reporting() -> None:
                         AuditLog.target_user_id.in_(stale_ids) | AuditLog.actor_id.in_(stale_ids)
                     )
                 )
+                #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+                #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+                #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+                #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+                #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+                #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+                #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+                from db.models import Acknowledgement as _Ack
+                await s.execute(delete(_Ack).where(
+                    _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 4, 1), Attendance.date < date(2020, 5, 1))
@@ -5113,6 +5172,16 @@ def test_payroll_reporting() -> None:
                 await s.execute(delete(WorkScheduleOverride).where(WorkScheduleOverride.user_id.in_(ids)))
                 await s.execute(delete(WorkScheduleWeekly).where(WorkScheduleWeekly.user_id.in_(ids)))
                 await s.execute(delete(AuditLog).where(AuditLog.target_user_id.in_(ids) | AuditLog.actor_id.in_(ids)))
+                #  ⚠️ TANISHUV QATORLARI — xodimni o'chirishdan OLDIN. S-41 dan
+                #  boshlab yo'riqnomaning yangi versiyasi shu lavozimdagi barcha
+                #  xodimdan tanishishni AVTOMATIK so'raydi, ya'ni oddiy oqim ham
+                #  `acknowledgements` ga qator yozadi. Ular qolsa FOREIGN KEY
+                #  xatosi chiqadi va tozalash BUTUNLAY to'xtaydi (aynan shunday
+                #  bo'ldi: `DELETE FROM users` yiqilib, test ma'lumoti bazada
+                #  qolib ketdi). `requested_by` ham users.id ga bog'langan.
+                from db.models import Acknowledgement as _Ack
+                await s.execute(delete(_Ack).where(
+                    _Ack.user_id.in_(ids) | _Ack.requested_by.in_(ids)))
                 await s.execute(delete(User).where(User.id.in_(ids)))
             await s.execute(
                 delete(LeadStageDaily).where(
@@ -8921,18 +8990,18 @@ def test_documents_bot() -> None:
 
         with httpx.Client(base_url=API_BASE, timeout=30) as c:
             # Tur ro'yxati botga ham ochiq (bot o'z nusxasini yuritmasin)
-            r = c.get("/employee-documents/bot/types", params={"telegram_id": tg["emp"]})
+            r = c.get("/employee-documents/bot/types", params={"telegram_id": tg["emp"]}, headers=bot_secret_hdr())
             check("S-11: bot /types -> 200", r.status_code == 200,
                   "kod=" + str(r.status_code))
 
             # Xodim ro'yxati — faqat HR
-            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["emp"]})
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["emp"]}, headers=bot_secret_hdr())
             check("S-11: bot xodim ro'yxati oddiy xodimga -> 403",
                   r.status_code == 403, "kod=" + str(r.status_code))
-            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["rop"]})
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["rop"]}, headers=bot_secret_hdr())
             check("S-11: bot xodim ro'yxati ROP ga -> 403", r.status_code == 403,
                   "kod=" + str(r.status_code))
-            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["hr"]})
+            r = c.get("/employee-documents/bot/employees", params={"telegram_id": tg["hr"]}, headers=bot_secret_hdr())
             check("S-11: bot xodim ro'yxati HR ga -> 200", r.status_code == 200,
                   "kod=" + str(r.status_code))
 
@@ -8942,16 +9011,16 @@ def test_documents_bot() -> None:
                    "name": "T-BDoc diplom", "file_id": "T-BOT-FILE-1",
                    "file_type": "document", "expires_at": muddat}
             r = c.post("/employee-documents/bot/upload",
-                       json={**yuk, "telegram_id": tg["emp"]})
+                       json={**yuk, "telegram_id": tg["emp"]}, headers=bot_secret_hdr())
             check("S-11: botdan oddiy xodim yuklay olmaydi -> 403",
                   r.status_code == 403, "kod=" + str(r.status_code))
-            r = c.post("/employee-documents/bot/upload", json=yuk)
+            r = c.post("/employee-documents/bot/upload", json=yuk, headers=bot_secret_hdr())
             check("S-11: HR botdan yukladi -> 201", r.status_code == 201,
                   "kod=" + str(r.status_code) + " " + r.text[:120])
             doc_id = r.json().get("id") if r.status_code == 201 else None
 
             # ── O'QISH: xodim o'zinikini botdan ko'radi ──
-            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]})
+            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]}, headers=bot_secret_hdr())
             check("S-11: xodim botdan o'z hujjatini ko'radi",
                   r.status_code == 200 and len(r.json()) == 1
                   and r.json()[0]["name"] == "T-BDoc diplom",
@@ -8961,18 +9030,18 @@ def test_documents_bot() -> None:
                   "=" + str(r.json()[0].get("days_left") if r.status_code == 200 else None))
 
             # HR ning o'z ro'yxati BO'SH — yuklagan bo'lsa ham egasi u emas
-            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["hr"]})
+            r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["hr"]}, headers=bot_secret_hdr())
             check("S-11: yuklagan HR ning o'z ro'yxatiga tushmadi",
                   r.status_code == 200 and r.json() == [], "=" + r.text[:80])
 
             # ── YUBORISH: ruxsat SHU YERDA ham tekshiriladi ──
             if doc_id:
                 r = c.post("/employee-documents/bot/send",
-                           json={"telegram_id": tg["rop"], "doc_id": doc_id})
+                           json={"telegram_id": tg["rop"], "doc_id": doc_id}, headers=bot_secret_hdr())
                 check("S-11: ROP begona hujjatni o'ziga yuborib ololmaydi -> 404",
                       r.status_code == 404, "kod=" + str(r.status_code))
                 r = c.post("/employee-documents/bot/send",
-                           json={"telegram_id": tg["emp"], "doc_id": doc_id})
+                           json={"telegram_id": tg["emp"], "doc_id": doc_id}, headers=bot_secret_hdr())
                 check("S-11: egasi o'z hujjatini qayta oladi -> 200",
                       r.status_code == 200, "kod=" + str(r.status_code) + " " + r.text[:100])
                 # ⚠️ Testda bildirishnomalar O'CHIQ — `delivered` False bo'lishi
@@ -8988,11 +9057,11 @@ def test_documents_bot() -> None:
                 r = c.delete(f"/employee-documents/{doc_id}", headers=auth(hr_t))
                 check("S-11: o'chirildi -> 200", r.status_code == 200,
                       "kod=" + str(r.status_code))
-                r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]})
+                r = c.get("/employee-documents/bot/my", params={"telegram_id": tg["emp"]}, headers=bot_secret_hdr())
                 check("S-11: o'chirilgach botdagi ro'yxat bo'shadi",
                       r.status_code == 200 and r.json() == [], "=" + r.text[:80])
                 r = c.post("/employee-documents/bot/send",
-                           json={"telegram_id": tg["emp"], "doc_id": doc_id})
+                           json={"telegram_id": tg["emp"], "doc_id": doc_id}, headers=bot_secret_hdr())
                 check("S-11: o'chirilgan hujjatni yuborib bo'lmaydi -> 404",
                       r.status_code == 404, "kod=" + str(r.status_code))
     except Exception:
@@ -9967,8 +10036,16 @@ def test_offer_hire() -> None:
             uid2 = r.json().get("user_id") if r.status_code == 200 else None
             if uid2:
                 yaratilgan.append(uid2)
+                #  ⚠️ `order by id desc limit 1` — SHART. SQLite `id` ni
+                #  qayta ishlatadi: o'chirilgan xodimning raqami yangi
+                #  xodimga tegib qolishi mumkin. Tartibsiz `fetchone()`
+                #  esa BOSHQA testning eski stavkasini qaytarardi va
+                #  natija har safar o'zgarardi («2019-01-01», keyin
+                #  «2020-01-01») — mantiq buzilmagan holda test
+                #  yiqilardi. Bizga AYNAN hozir yaratilgan qator kerak.
                 bugun = cur.execute(
-                    "select effective_from from salary_rates where user_id=?",
+                    "select effective_from from salary_rates where user_id=?"
+                    " order by id desc limit 1",
                     (uid2,)).fetchone()
                 check("S-16: sanasiz taklifda stavka BUGUNDAN boshlanadi",
                       bugun and bugun[0] == date.today().isoformat(), "=" + str(bugun))
@@ -10748,8 +10825,17 @@ def test_acknowledgements() -> None:
 
         with httpx.Client(base_url=API_BASE, timeout=30) as c:
             # ── XODIM O'Z RO'YXATINI KO'RADI ──
+            #  ⚠️ FAQAT SHU TESTNING obyektlari (9001-9003) hisoblanadi.
+            #  Ilgari BARCHA bandlar sanalardi va test boshqa modullarga
+            #  bog'liq bo'lib qolgan edi: S-41 da `add_version` yangi
+            #  yo'riqnoma versiyasi uchun tanishuvni AVTOMATIK so'ray
+            #  boshladi (TZ 3.16 talabi) va shu testning xodimi o'z
+            #  lavozimi bo'yicha qo'shimcha band oldi — test yiqildi,
+            #  garchi S-20 mantiqida hech narsa buzilmagan bo'lsa ham.
+            OZ = (9001, 9002, 9003)
             r = c.get("/acks/me", headers=auth(t0))
-            bandlar = r.json() if r.status_code == 200 else []
+            bandlar = [b for b in (r.json() if r.status_code == 200 else [])
+                       if b["object_id"] in OZ]
             check("S-20: xodimda uchta band ko'rindi", len(bandlar) == 3,
                   "=" + str([b["object_type"] for b in bandlar]))
             check("S-20: sarlavha va havola saqlangan",
@@ -10759,8 +10845,10 @@ def test_acknowledgements() -> None:
                   any(b["object_type_label"] == "Instruktaj" for b in bandlar),
                   "=" + str([b["object_type_label"] for b in bandlar]))
             r = c.get("/acks/me", headers=auth(t1))
+            oz1 = [b for b in (r.json() if r.status_code == 200 else [])
+                   if b["object_id"] in OZ]
             check("S-20: ikkinchi xodimda faqat bitta band",
-                  r.status_code == 200 and len(r.json()) == 1, "=" + r.text[:110])
+                  r.status_code == 200 and len(oz1) == 1, "=" + str(oz1)[:110])
 
             # ── «TANISHDIM» ──
             r = c.post("/acks/me/ack", headers=auth(t0),
@@ -12464,7 +12552,7 @@ def test_hr_inquiries() -> None:
             # ── BOT YO'LI ──
             r = c.post("/hr-inquiries/bot/ask",
                        json={"telegram_id": 999702802,
-                             "question": "Ma'lumotnoma kerak edi"})
+                             "question": "Ma'lumotnoma kerak edi"}, headers=bot_secret_hdr())
             check("S-28: botdan savol -> 201", r.status_code == 201,
                   "kod=" + str(r.status_code) + " " + r.text[:150])
             bot_savol = r.json() if r.status_code == 201 else {}
@@ -12477,26 +12565,26 @@ def test_hr_inquiries() -> None:
             r = c.post("/hr-inquiries/bot/answer",
                        json={"telegram_id": mgr_tg,
                              "inquiry_id": bot_savol.get("id", 0),
-                             "answer": "Ma'lumotnomani ertaga tayyorlaymiz."})
+                             "answer": "Ma'lumotnomani ertaga tayyorlaymiz."}, headers=bot_secret_hdr())
             #  ⚠️ Bu tekshiruv MARSHRUT TARTIBINI qo'riqlaydi: `/bot/answer`
             #  `/{inquiry_id}/answer` dan KEYIN e'lon qilinsa, «bot» so'zi
             #  raqam deb o'qilib 422 kelardi va bot javob bera olmasdi.
             check("S-28: botdan javob berildi -> 200 (marshrut almashmadi)",
                   r.status_code == 200,
                   "kod=" + str(r.status_code) + " " + r.text[:150])
-            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802})
+            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802}, headers=bot_secret_hdr())
             bot_javob = [x for x in r.json() if x["id"] == bot_savol.get("id")]
             check("S-28: botdagi javob xodimga yetdi",
                   bool(bot_javob) and bot_javob[0]["status"] == "answered",
                   "=" + str(bot_javob[:1]))
 
-            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802})
+            r = c.get("/hr-inquiries/bot/my", params={"telegram_id": 999702802}, headers=bot_secret_hdr())
             check("S-28: botda o'z murojaatlarim ko'rinadi",
                   r.status_code == 200
                   and all(x["user_id"] == ids["T-Hq Bobur"] for x in r.json()),
                   "kod=" + str(r.status_code))
 
-            r = c.get("/hr-inquiries/bot/open", params={"telegram_id": 999702801})
+            r = c.get("/hr-inquiries/bot/open", params={"telegram_id": 999702801}, headers=bot_secret_hdr())
             check("S-28: oddiy xodim botda javobsizlar ro'yxatini ko'rmaydi -> 403",
                   r.status_code == 403, "kod=" + str(r.status_code))
 
@@ -12858,6 +12946,158 @@ SECTION_TO_ENDPOINT = {
     "org-chart": "/org/chart",
 }
 
+
+
+#  `/bot/webhook` — YAGONA ATAYLAB ISTISNO. U Telegram'ning O'Z
+#  mexanizmi bilan qo'riqlanadi: sekret `X-Telegram-Bot-Api-Secret-Token`
+#  sarlavhasida keladi (`api/routers/bot_webhook.py`). Unga
+#  `verify_bot_secret` qo'yib bo'lmaydi — Telegram bizning sarlavhamizni
+#  yubormaydi.
+BOT_QORIQCHI_ISTISNO = {"/bot/webhook"}
+
+
+
+def test_check_calls_wellformed() -> None:
+    """`check()` chaqiruvlari TO'G'RI TARTIBDA yozilganini tekshiradi.
+
+    ⚠️ NEGA BU TEST BOR. Imzo `check(name, cond, extra)`. Agar
+    argumentlar almashtirilib `check(cond, name, extra)` yozilsa,
+    `cond` o'rniga BO'SH BO'LMAGAN MATN tushadi — u har doim rost,
+    ya'ni tekshiruv HAR QANDAY holatda «OK» beradi. Test yashil
+    bo'lib turadi va aslida HECH NARSANI tekshirmaydi.
+
+    Aynan shu S-41 da sodir bo'ldi: yangi qo'shilgan 4 ta tekshiruv
+    bekorga «OK» berdi. Konsolda `[OK] True | 37` ko'rinishi shubha
+    tug'dirdi — nom o'rnida `True` chiqib turgan edi.
+
+    Shuning uchun tekshiruvni MASHINAGA topshiramiz: birinchi
+    argument solishtirish yoki mantiqiy amal bo'lsa — xato.
+    """
+    import ast as _ast
+
+    print(chr(10) + "=" * 60)
+    print("TEST SIFATI: check() ARGUMENT TARTIBI")
+    print("=" * 60)
+
+    manba = Path(__file__).resolve()
+    daraxt = _ast.parse(manba.read_text(encoding="utf-8"))
+    buzuvchilar = []
+    jami = 0
+    for tugun in _ast.walk(daraxt):
+        if not isinstance(tugun, _ast.Call):
+            continue
+        nom = getattr(tugun.func, "id", None) or getattr(tugun.func, "attr", None)
+        if nom != "check" or not tugun.args:
+            continue
+        jami += 1
+        birinchi = tugun.args[0]
+        #  Nom MATN bo'lishi shart. Solishtirish (`==`, `>=`), mantiqiy
+        #  amal (`and`/`or`), `not` yoki to'g'ridan-to'g'ri `True/False`
+        #  — argumentlar almashtirilgan.
+        almashgan = isinstance(
+            birinchi, (_ast.Compare, _ast.BoolOp, _ast.UnaryOp)
+        ) or (isinstance(birinchi, _ast.Constant) and isinstance(birinchi.value, bool))
+        if almashgan:
+            buzuvchilar.append(f"test.py:{tugun.lineno}")
+
+    check("check() chaqiruvlari topildi", jami > 500, str(jami))
+    check(
+        "check() argumentlari TO'G'RI tartibda (name, cond, extra)",
+        not buzuvchilar,
+        ", ".join(buzuvchilar[:8]) if buzuvchilar else f"{jami} chaqiruv toza",
+    )
+
+def test_bot_endpoint_secret_guard() -> None:
+    """Har bir `/bot/...` yo'li SIR bilan qo'riqlanganini tekshiradi.
+
+    ⚠️ NEGA BU TEST BOR. S-41 da tekshirilganda `courses`,
+    `hr_inquiries` va `employee_documents` routerlaridagi 17 ta bot
+    yo'li `X-Bot-Secret` ni UMUMAN tekshirmasligi aniqlandi. Bu
+    yo'llar xodimni `telegram_id` bo'yicha topadi, ya'ni JWT yo'q —
+    sir tekshirilmasa istalgan kishi begona `telegram_id` yuborib
+    o'sha xodimning kurslarini/hujjatlarini o'qiy va uning NOMIDAN
+    javob bera olardi.
+
+    ⚠️ MATN bo'yicha emas, MARSHRUT JADVALI bo'yicha tekshiramiz.
+    Dekoratorni grep qilish ishonchsiz: qo'riqchi router darajasida
+    (`APIRouter(dependencies=...)`) ham qo'yilishi mumkin va unda
+    dekoratorda hech narsa ko'rinmaydi. FastAPI hisoblab chiqqan
+    bog'liqlik daraxti — yagona haqiqat.
+
+    ⚠️ Bu test YANGI bot endpointini ham ushlaydi: kimdir kelasi
+    bosqichda `/bot/...` qo'shib qo'riqchini unutsa, test darhol
+    yiqiladi. Aynan shu narsa 17 marta sodir bo'lgan.
+    """
+    print("\n" + "=" * 60)
+    print("BOT ENDPOINTLARI — SIR QO'RIQCHISI")
+    print("=" * 60)
+
+    import os
+    os.environ.setdefault("NOTIFICATIONS_ENABLED", "false")
+    from api.deps import get_current_user, verify_bot_secret
+    from api.main import app as fastapi_app
+
+    def qorovullar(route) -> set:
+        """Marshrutning BUTUN bog'liqlik daraxtidagi funksiyalar."""
+        topilgan: set = set()
+        dep = getattr(route, "dependant", None)
+
+        def yur(d):
+            for sub in d.dependencies:
+                if sub.call is not None:
+                    topilgan.add(sub.call)
+                yur(sub)
+
+        if dep is not None:
+            yur(dep)
+        return topilgan
+
+    bot_yollari = []
+    qoriqchisiz = []
+    for route in fastapi_app.routes:
+        yol = getattr(route, "path", "")
+        if "/bot" not in yol:
+            continue
+        bot_yollari.append(yol)
+        if yol in BOT_QORIQCHI_ISTISNO:
+            continue
+        nomlar = qorovullar(route)
+        #  JWT ham qabul: unda so'rovchi allaqachon aniqlangan.
+        if verify_bot_secret not in nomlar and get_current_user not in nomlar:
+            usullar = ",".join(sorted(getattr(route, "methods", []) or []))
+            qoriqchisiz.append(f"{usullar} {yol}")
+
+    check("bot yo'llari topildi", len(bot_yollari) >= 30, str(len(bot_yollari)))
+    check("har bir bot yo'li SIR bilan qo'riqlangan", not qoriqchisiz,
+          str(qoriqchisiz) if qoriqchisiz else "hammasi qo'riqlangan")
+
+    #  Tirik tekshiruv: sirsiz so'rov 401 olishi kerak. Statik
+    #  tekshiruv o'zi yetarli emas — `verify_bot_secret` daraxtda
+    #  turib ham xato yozilgan bo'lsa o'tkazib yuborishi mumkin.
+    import httpx
+
+    for usul, yol, tana in [
+        ("GET", "/courses/bot/my?telegram_id=1", None),
+        ("GET", "/hr-inquiries/bot/my?telegram_id=1", None),
+        ("GET", "/employee-documents/bot/employees?telegram_id=1", None),
+        ("POST", "/courses/bot/answer-text", {"telegram_id": 1, "text": "T-salom"}),
+    ]:
+        try:
+            r = httpx.request(usul, f"{API_BASE}{yol}", json=tana, timeout=20)
+            kod = r.status_code
+        except Exception as e:  # noqa: BLE001
+            kod = f"ERR {e}"
+        check(f"sirsiz {usul} {yol.split('?')[0]} -> 401", kod == 401, str(kod))
+
+    #  Sir bilan esa o'tishi kerak (401 EMAS) — aks holda biz botni
+    #  o'zini ham to'sib qo'ygan bo'lardik.
+    try:
+        r = httpx.get(f"{API_BASE}/courses/bot/my", params={"telegram_id": 1},
+                      headers=bot_secret_hdr(), timeout=20)
+        kod = r.status_code
+    except Exception as e:  # noqa: BLE001
+        kod = f"ERR {e}"
+    check("SIR BILAN bot yo'li ochiq (bot o'zi to'silmadi)", kod != 401, str(kod))
 
 def test_b_block_visibility_audit() -> None:
     """S-30 — B blok ko'rinish auditi.
@@ -13879,7 +14119,7 @@ def test_courses_employee() -> None:
             # ══════════════════════════════════════════════
             # BOT: kurslarim
             # ══════════════════════════════════════════════
-            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             check("S-35: botda «Darsliklarim» -> 200", r.status_code == 200,
                   "kod=" + str(r.status_code) + " " + r.text[:150])
             mine = r.json() if r.status_code == 200 else []
@@ -13894,7 +14134,7 @@ def test_courses_employee() -> None:
             # ⚠️ TEST MATERIAL KO'RILMAGUNCHA OCHILMAYDI
             # ══════════════════════════════════════════════
             r = c.post("/courses/bot/progress",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             p1 = r.json() if r.status_code == 200 else {}
             check("S-35: boshlanishda MATERIAL bosqichi",
                   p1.get("stage") == "material" and p1.get("material_index") == 0,
@@ -13904,19 +14144,19 @@ def test_courses_employee() -> None:
                   "=" + str(p1.get("item")))
 
             r = c.post("/courses/bot/answer",
-                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0}, headers=bot_secret_hdr())
             check("S-35: ⚠️ material tugamasdan TEST OCHILMAYDI -> 409",
                   r.status_code == 409, "kod=" + str(r.status_code) + " " + r.text[:120])
 
             #  Ikkala materialni ko'ramiz
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-35: 1-material ko'rildi -> 2-material",
                   r.json().get("stage") == "material"
                   and r.json().get("material_index") == 1,
                   "=" + str(r.json().get("stage")))
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             p2 = r.json()
             check("S-35: barcha material ko'rilgach TEST ochildi",
                   p2.get("stage") == "savol", "=" + str(p2.get("stage")))
@@ -13926,7 +14166,7 @@ def test_courses_employee() -> None:
 
             #  Materiallar tugagach yana `next-material` MUMKIN EMAS
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-35: materiallar tugagach yana o'tib bo'lmaydi -> 409",
                   r.status_code == 409, "kod=" + str(r.status_code))
 
@@ -13936,10 +14176,10 @@ def test_courses_employee() -> None:
             # Bot «qayta ishga tushdi» deb faraz qilamiz: hech qanday
             # xotira yo'q, faqat `telegram_id` bilan so'raymiz.
             # ══════════════════════════════════════════════
-            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             qayta = r.json()[0]
             r = c.post("/courses/bot/progress",
-                       json={"telegram_id": TG, "assignment_id": qayta["assignment_id"]})
+                       json={"telegram_id": TG, "assignment_id": qayta["assignment_id"]}, headers=bot_secret_hdr())
             check("S-35: ⚠️ RESTARTDAN keyin xodim QOLGAN JOYIDA (savol bosqichi)",
                   r.json().get("stage") == "savol"
                   and r.json().get("question_index") == 0,
@@ -13949,19 +14189,19 @@ def test_courses_employee() -> None:
             # 1-urinish: bittasi noto'g'ri -> 2/3 = 67% < 80%
             # ══════════════════════════════════════════════
             r = c.post("/courses/bot/answer",
-                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1}, headers=bot_secret_hdr())
             check("S-35: 1-savol javobi qabul qilindi",
                   r.status_code == 200 and r.json().get("correct") is True,
                   "kod=" + str(r.status_code) + " " + r.text[:120])
             r = c.post("/courses/bot/answer",
-                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1}, headers=bot_secret_hdr())
             check("S-35: 2-savol noto'g'ri deb belgilandi",
                   r.json().get("correct") is False, "=" + str(r.json().get("correct")))
             check("S-35: savollar tugagach bosqich «tugadi»",
                   r.json().get("stage") == "tugadi", "=" + str(r.json().get("stage")))
 
             r = c.post("/courses/bot/finish",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             res1 = r.json() if r.status_code == 200 else {}
             check("S-35: natija DARHOL keldi (foiz va o'tdi/o'tmadi)",
                   res1.get("percent") == 67 and res1.get("passed") is False,
@@ -13973,7 +14213,7 @@ def test_courses_employee() -> None:
             # ⚠️ QAYTA URINISH — urinish soni yoziladi
             # ══════════════════════════════════════════════
             r = c.post("/courses/bot/retry",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             p3 = r.json() if r.status_code == 200 else {}
             check("S-35: qayta urinish boshlandi, urinish raqami 2",
                   p3.get("attempt_no") == 2 and p3.get("stage") == "savol",
@@ -13983,11 +14223,11 @@ def test_courses_employee() -> None:
                   "=" + str({k: p3.get(k) for k in ("material_index", "material_total")}))
 
             c.post("/courses/bot/answer",
-                   json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+                   json={"telegram_id": TG, "assignment_id": aid, "choice": 1}, headers=bot_secret_hdr())
             c.post("/courses/bot/answer",
-                   json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+                   json={"telegram_id": TG, "assignment_id": aid, "choice": 0}, headers=bot_secret_hdr())
             r = c.post("/courses/bot/finish",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             res2 = r.json()
             check("S-35: 2-urinish 100% -> o'tdi",
                   res2.get("percent") == 100 and res2.get("passed") is True
@@ -13995,7 +14235,7 @@ def test_courses_employee() -> None:
             check("S-35: o'tilgach qayta urinish TAKLIF QILINMAYDI",
                   res2.get("can_retry") is False, "=" + str(res2))
 
-            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             check("S-35: ro'yxatda natija va urinish soni ko'rinadi",
                   r.json()[0]["percent"] == 100 and r.json()[0]["attempt_no"] == 2,
                   "=" + str(r.json()[:1]))
@@ -14015,7 +14255,7 @@ def test_courses_employee() -> None:
             # ══════════════════════════════════════════════
             r_jwt = c.get(f"/courses/me/{aid}/progress", headers=auth(xodim_t))
             r_bot = c.post("/courses/bot/progress",
-                           json={"telegram_id": TG, "assignment_id": aid})
+                           json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-35: JWT va bot BIR XIL holatni qaytaradi",
                   r_jwt.status_code == 200 and r_jwt.json() == r_bot.json(),
                   f"jwt={r_jwt.json()} bot={r_bot.json()}")
@@ -14035,18 +14275,18 @@ def test_courses_employee() -> None:
                 "audience": "users", "scope_ids": [ids["T-Ce Xodim"]]})
 
             r = c.post("/courses/bot/answer-text",
-                       json={"telegram_id": TG, "text": "Mening fikrim shu."})
+                       json={"telegram_id": TG, "text": "Mening fikrim shu."}, headers=bot_secret_hdr())
             check("S-35: ochiq savol javobi ERKIN MATNDAN ushlandi",
                   r.json().get("handled") is True, "=" + str(r.json())[:150])
 
             #  ⚠️ Mos holat yo'q bo'lsa `handled: false` — xabar boshqa
             #  oqimlarga o'tadi (anketa protokoli).
             r = c.post("/courses/bot/answer-text",
-                       json={"telegram_id": TG, "text": "Yana bir matn"})
+                       json={"telegram_id": TG, "text": "Yana bir matn"}, headers=bot_secret_hdr())
             check("S-35: ⚠️ kutilmagan matn USHLANMAYDI (boshqa oqimga o'tadi)",
                   r.json().get("handled") is False, "=" + str(r.json())[:120])
             r = c.post("/courses/bot/answer-text",
-                       json={"telegram_id": 111222333, "text": "notanish"})
+                       json={"telegram_id": 111222333, "text": "notanish"}, headers=bot_secret_hdr())
             check("S-35: notanish foydalanuvchi matni ushlanmaydi",
                   r.json().get("handled") is False, "=" + str(r.json())[:120])
     except Exception:
@@ -14155,7 +14395,7 @@ def test_courses_cabinet() -> None:
             # ══════════════════════════════════════════════
             #  1) BOTDA: 1-materialni ko'rdi
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-36: [bot] 1-material ko'rildi",
                   r.status_code == 200 and r.json()["material_index"] == 1,
                   "=" + str(r.json().get("material_index")))
@@ -14171,7 +14411,7 @@ def test_courses_cabinet() -> None:
 
             #  3) BOTDA: birinchi savolga javob
             r = c.post("/courses/bot/answer",
-                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0})
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 0}, headers=bot_secret_hdr())
             check("S-36: [bot] 1-savolga javob berildi",
                   r.status_code == 200 and r.json()["question_index"] == 1,
                   "=" + str(r.json().get("question_index")))
@@ -14197,7 +14437,7 @@ def test_courses_cabinet() -> None:
             # ⚠️ IKKALA JOYDA BIR XIL FOIZ
             # ══════════════════════════════════════════════
             r_sayt = c.get("/courses/me/assignments", headers=auth(xodim_t))
-            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             check("S-36: ⚠️ sayt va bot ro'yxati AYNAN bir xil",
                   r_sayt.status_code == 200 and r_sayt.json() == r_bot.json(),
                   f"sayt={r_sayt.json()} bot={r_bot.json()}")
@@ -14387,12 +14627,12 @@ def test_courses_report() -> None:
 
             #  Biri o'tadi, biri yiqiladi, biri boshlamaydi
             for tg, javob in ((999703401, 0), (999703402, 1)):
-                r = c.get("/courses/bot/my", params={"telegram_id": tg})
+                r = c.get("/courses/bot/my", params={"telegram_id": tg}, headers=bot_secret_hdr())
                 aid = r.json()[0]["assignment_id"]
                 c.post("/courses/bot/answer",
-                       json={"telegram_id": tg, "assignment_id": aid, "choice": javob})
+                       json={"telegram_id": tg, "assignment_id": aid, "choice": javob}, headers=bot_secret_hdr())
                 c.post("/courses/bot/finish",
-                       json={"telegram_id": tg, "assignment_id": aid})
+                       json={"telegram_id": tg, "assignment_id": aid}, headers=bot_secret_hdr())
 
             # ══════════════════════════════════════════════
             # ⚠️ RO'YXAT SAHIFASI: hisob CRON'DA, sahifada emas
@@ -14470,14 +14710,14 @@ def test_courses_report() -> None:
                   f"soni={soni}, {res2}")
 
             #  ── O'tgach muddat yopiladi ──
-            r = c.get("/courses/bot/my", params={"telegram_id": 999703402})
+            r = c.get("/courses/bot/my", params={"telegram_id": 999703402}, headers=bot_secret_hdr())
             aid2 = r.json()[0]["assignment_id"]
             c.post("/courses/bot/retry",
-                   json={"telegram_id": 999703402, "assignment_id": aid2})
+                   json={"telegram_id": 999703402, "assignment_id": aid2}, headers=bot_secret_hdr())
             c.post("/courses/bot/answer",
-                   json={"telegram_id": 999703402, "assignment_id": aid2, "choice": 0})
+                   json={"telegram_id": 999703402, "assignment_id": aid2, "choice": 0}, headers=bot_secret_hdr())
             c.post("/courses/bot/finish",
-                   json={"telegram_id": 999703402, "assignment_id": aid2})
+                   json={"telegram_id": 999703402, "assignment_id": aid2}, headers=bot_secret_hdr())
             res3 = asyncio.run(_tick())
             holat = cur.execute(
                 "select status from deadlines where kind='course' and source_id=?"
@@ -14633,7 +14873,7 @@ def test_courses_end_to_end() -> None:
                   "kod=" + str(r.status_code) + " " + r.text[:120])
 
             # ── 5. Xodim BOTDA kursni ko'radi ──
-            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             mine = r.json() if r.status_code == 200 else []
             check("S-38/5: xodim botda kursni ko'rdi",
                   len(mine) == 1 and mine[0]["is_mandatory"] is True,
@@ -14642,31 +14882,31 @@ def test_courses_end_to_end() -> None:
 
             # ── 6. Materiallarni ketma-ket ko'rish ──
             r = c.post("/courses/bot/progress",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             bosqich1 = r.json().get("stage")
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             r = c.post("/courses/bot/next-material",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-38/6: ikkala material ko'rildi -> test ochildi",
                   bosqich1 == "material" and r.json().get("stage") == "savol",
                   f"{bosqich1} -> {r.json().get('stage')}")
 
             # ── 7. Test savoliga javob ──
             r = c.post("/courses/bot/answer",
-                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1})
+                       json={"telegram_id": TG, "assignment_id": aid, "choice": 1}, headers=bot_secret_hdr())
             check("S-38/7: test savoliga to'g'ri javob berildi",
                   r.json().get("correct") is True, "=" + str(r.json().get("correct")))
 
             # ── 8. Ochiq savolga ERKIN MATN bilan javob ──
             r = c.post("/courses/bot/answer-text",
-                       json={"telegram_id": TG, "text": "Belgilarni ko'paytirish kerak."})
+                       json={"telegram_id": TG, "text": "Belgilarni ko'paytirish kerak."}, headers=bot_secret_hdr())
             check("S-38/8: ochiq savol erkin matndan ushlandi",
                   r.json().get("handled") is True, "=" + str(r.json())[:120])
 
             # ── 9. Yakunlash: ochiq savol bor -> baholanmagan ──
             r = c.post("/courses/bot/finish",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             n1 = r.json() if r.status_code == 200 else {}
             check("S-38/9: ochiq savol bor -> `pending_review`, `passed` EMAS",
                   n1.get("pending_review") is True and n1.get("passed") is False,
@@ -14675,7 +14915,7 @@ def test_courses_end_to_end() -> None:
             # ── 10. Sayt va bot BIR XIL holatni ko'rsatadi ──
             xodim_t = token_for(ids["xodim"], "employee")
             r_sayt = c.get("/courses/me/assignments", headers=auth(xodim_t))
-            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r_bot = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             check("S-38/10: sayt va bot AYNAN bir xil holat",
                   r_sayt.json() == r_bot.json(),
                   f"sayt={r_sayt.json()} bot={r_bot.json()}")
@@ -14731,13 +14971,13 @@ def test_courses_end_to_end() -> None:
 
             # ── 16. Qayta urinish: ochiq savol baholanmagani uchun MUMKIN EMAS ──
             r = c.post("/courses/bot/retry",
-                       json={"telegram_id": TG, "assignment_id": aid})
+                       json={"telegram_id": TG, "assignment_id": aid}, headers=bot_secret_hdr())
             check("S-38/16: baholanmagan urinishdan keyin qayta urinish YO'Q",
                   n1.get("can_retry") is False, "can_retry=" + str(n1.get("can_retry")))
 
             # ── 17. Kurs o'chirilsa xodimda ham ko'rinmaydi ──
             c.delete(f"/courses/{kurs_id}", headers=auth(mgr_t))
-            r = c.get("/courses/bot/my", params={"telegram_id": TG})
+            r = c.get("/courses/bot/my", params={"telegram_id": TG}, headers=bot_secret_hdr())
             check("S-38/17: o'chirilgan kurs xodimda ham ko'rinmaydi",
                   r.status_code == 200 and r.json() == [], "=" + str(r.json())[:80])
     except Exception:
@@ -15684,6 +15924,18 @@ def main() -> None:
         test_org_site()
     except Exception:
         print("S-40 tuzilma sayti testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_bot_endpoint_secret_guard()
+    except Exception:
+        print("Bot sir qo'riqchisi testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_check_calls_wellformed()
+    except Exception:
+        print("check() tartibi testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:
