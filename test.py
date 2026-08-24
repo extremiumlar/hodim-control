@@ -3858,6 +3858,14 @@ def test_payroll_engine() -> None:
                 await s.execute(
                     sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
                     .values(source_user_id=None))
+                #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+                #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+                #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+                #  xodimga bog'lanadi.
+                from db.models import TaskModel as _TM
+                await s.execute(
+                    delete(_TM).where(
+                        _TM.assigned_to.in_(stale_ids) | _TM.assigned_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             # Qo'shimcha himoya: agar avvalgi qulagan ishga tushirishda AVVAL
             # User o'chirilib, keyingi qadam (masalan Attendance o'chirish)
@@ -4163,6 +4171,14 @@ def test_payroll_engine() -> None:
             await s.execute(
                 sa_update(_KE).where(_KE.source_user_id.in_([u1.id, u2.id]))
                 .values(source_user_id=None))
+            #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+            #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+            #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+            #  xodimga bog'lanadi.
+            from db.models import TaskModel as _TM
+            await s.execute(
+                delete(_TM).where(
+                    _TM.assigned_to.in_([u1.id, u2.id]) | _TM.assigned_by.in_([u1.id, u2.id])))
             await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
             await s.commit()
 
@@ -4832,6 +4848,14 @@ def test_payroll_automation() -> None:
                 await s.execute(
                     sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
                     .values(source_user_id=None))
+                #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+                #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+                #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+                #  xodimga bog'lanadi.
+                from db.models import TaskModel as _TM
+                await s.execute(
+                    delete(_TM).where(
+                        _TM.assigned_to.in_(stale_ids) | _TM.assigned_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 3, 1), Attendance.date < date(2020, 4, 1))
@@ -5029,6 +5053,14 @@ def test_payroll_automation() -> None:
             await s.execute(
                 sa_update(_KE).where(_KE.source_user_id.in_(ids))
                 .values(source_user_id=None))
+            #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+            #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+            #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+            #  xodimga bog'lanadi.
+            from db.models import TaskModel as _TM
+            await s.execute(
+                delete(_TM).where(
+                    _TM.assigned_to.in_(ids) | _TM.assigned_by.in_(ids)))
             await s.execute(delete(User).where(User.id.in_(ids)))
             await s.commit()
 
@@ -5163,6 +5195,14 @@ def test_payroll_reporting() -> None:
                 await s.execute(
                     sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
                     .values(source_user_id=None))
+                #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+                #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+                #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+                #  xodimga bog'lanadi.
+                from db.models import TaskModel as _TM
+                await s.execute(
+                    delete(_TM).where(
+                        _TM.assigned_to.in_(stale_ids) | _TM.assigned_by.in_(stale_ids)))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 4, 1), Attendance.date < date(2020, 5, 1))
@@ -5262,6 +5302,14 @@ def test_payroll_reporting() -> None:
                 await s.execute(
                     sa_update(_KE).where(_KE.source_user_id.in_(ids))
                     .values(source_user_id=None))
+                #  ⚠️ VAZIFALAR — xodimni o'chirishdan OLDIN. S-46 dan
+                #  boshlab onboarding qadamlari avtomatik `tasks` yozuvi
+                #  yaratadi va ular `assigned_to`/`assigned_by` orqali
+                #  xodimga bog'lanadi.
+                from db.models import TaskModel as _TM
+                await s.execute(
+                    delete(_TM).where(
+                        _TM.assigned_to.in_(ids) | _TM.assigned_by.in_(ids)))
                 await s.execute(delete(User).where(User.id.in_(ids)))
             await s.execute(
                 delete(LeadStageDaily).where(
@@ -13441,6 +13489,202 @@ class _SoxtaUser:
 
 
 
+
+def test_onboarding_tasks() -> None:
+    """S-46 (TZ 3.2) — onboarding qadamlari vazifalarga ulanadi.
+
+    Qabul mezonlari (TZ):
+      • qadam VAZIFA sifatida ko\'rinadi va bajariladi;
+      • kunlik digestda vazifa foizi O\'ZGARMAGAN (test bilan isbot);
+      • qadam bajarilsa progress yangilanadi.
+    """
+    import asyncio
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-46: ONBOARDING — VAZIFALARGA ULANISH")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from tasks where assigned_to in"
+            " (select id from users where full_name like 'T-Ov%')"
+            " or title like 'T-Ov%'")
+        cur.execute(
+            "delete from onboarding_progress where plan_id in"
+            " (select id from onboarding_plans where user_id in"
+            "  (select id from users where full_name like 'T-Ov%'))")
+        cur.execute(
+            "delete from onboarding_plans where user_id in"
+            " (select id from users where full_name like 'T-Ov%')")
+        cur.execute(
+            "delete from onboarding_steps where template_id in"
+            " (select id from onboarding_templates where name like 'T-Ov%')")
+        cur.execute("delete from onboarding_templates where name like 'T-Ov%'")
+        cur.execute(
+            "delete from audit_logs where target_user_id in"
+            " (select id from users where full_name like 'T-Ov%')")
+        cur.execute("delete from users where full_name like 'T-Ov%'")
+        conn.commit()
+
+    async def _digest_tasks(kun):
+        from api.services.daily_digest import _tasks_by_user
+        from db.base import async_session
+
+        async with async_session() as s2:
+            return await _tasks_by_user(s2, kun)
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " created_at) values (999704601,'T-Ov Yangi','employee',0,1,datetime('now'))")
+        ids["xodim"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+        bugun = date.today()
+
+        # ══ ETALON: ODDIY VAZIFA STATISTIKASI ══
+        #  ⚠️ Avval oddiy vazifa beramiz va digest raqamini ESLAB
+        #  QOLAMIZ. Keyin onboarding rejasi ochiladi va raqam
+        #  O'ZGARMAGANI tekshiriladi — TZ aynan shuni talab qiladi.
+        cur.execute(
+            "insert into tasks (assigned_by, assigned_to, title, status, created_at)"
+            " values (?,?,'T-Ov oddiy vazifa 1','pending',datetime('now'))",
+            (mgr[0], ids["xodim"]))
+        cur.execute(
+            "insert into tasks (assigned_by, assigned_to, title, status,"
+            " completed_at, created_at) values (?,?,'T-Ov oddiy vazifa 2','done',"
+            "datetime('now'),datetime('now'))", (mgr[0], ids["xodim"]))
+        conn.commit()
+
+        oldin = asyncio.run(_digest_tasks(bugun)).get(ids["xodim"])
+        check("S-46: etalon — oddiy vazifalar digestda sanaldi (1/2)",
+              oldin == (1, 2), "=" + str(oldin))
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Ov Shablon", "steps": [
+                    {"title": "T-Ov Qadam A", "kind": "task", "due_offset_days": 1},
+                    {"title": "T-Ov Qadam B", "kind": "meeting", "due_offset_days": 2},
+                    {"title": "T-Ov HR qadami", "kind": "task", "owner_role": "hr",
+                     "due_offset_days": 1},
+                ]})
+            check("S-46: shablon yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            ids["tpl"] = r.json().get("id")
+
+            r = c.post("/onboarding/plans", headers=auth(mgr_t), json={
+                "user_id": ids["xodim"], "template_id": ids["tpl"],
+                "start_date": bugun.isoformat()})
+            check("S-46: reja yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:120])
+            reja = r.json() if r.status_code == 201 else {}
+            ids["plan"] = reja.get("plan_id")
+
+            # ══ MEZON 1: QADAM VAZIFA SIFATIDA KO'RINADI ══
+            #  ⚠️ FAQAT SHU REJANING vazifalari. Ilgari BARCHA
+            #  `source='onboarding'` qatorlari sanalardi va boshqa
+            #  testning qoldig'i bo'lsa sanoq 3 emas 5 chiqardi —
+            #  test o'z ma'lumotidan tashqariga bog'lanib qolgan edi.
+            vazifalar = cur.execute(
+                "select id, assigned_to, title, source, source_id, deadline"
+                " from tasks where source='onboarding' and source_id in"
+                " (select id from onboarding_progress where plan_id=?)"
+                " order by id", (ids["plan"],)).fetchall()
+            check("S-46: ⚠️ har qadam uchun VAZIFA yaratildi (3 ta)",
+                  len(vazifalar) == 3, "=" + str(len(vazifalar)))
+            check("S-46: vazifalar `source='onboarding'` bilan belgilandi",
+                  all(v[3] == "onboarding" for v in vazifalar),
+                  "=" + str([v[3] for v in vazifalar]))
+            check("S-46: vazifa qadamga bog'landi (`source_id`)",
+                  all(v[4] is not None for v in vazifalar),
+                  "=" + str([v[4] for v in vazifalar]))
+
+            #  ⚠️ MAS'ULI BOR QADAM XODIMGA EMAS, MAS'ULGA ketadi.
+            hr_vazifa = [v for v in vazifalar if v[2] == "T-Ov HR qadami"]
+            check("S-46: ⚠️ mas'uli bor qadam MAS'ULGA berildi (xodimga emas)",
+                  hr_vazifa and hr_vazifa[0][1] != ids["xodim"],
+                  "=" + str(hr_vazifa))
+            oz_vazifalari = [v for v in vazifalar if v[1] == ids["xodim"]]
+            check("S-46: qolgan ikkitasi xodimning o'ziga berildi",
+                  len(oz_vazifalari) == 2, "=" + str(len(oz_vazifalari)))
+            check("S-46: muddat KUN OXIRI (ertalabdanoq kechikkan bo'lmasin)",
+                  all("23:59" in str(v[5]) for v in vazifalar if v[5]),
+                  "=" + str([str(v[5]) for v in vazifalar]))
+
+            # ══ MEZON 2: DIGESTDAGI FOIZ O'ZGARMAGAN ══
+            keyin = asyncio.run(_digest_tasks(bugun)).get(ids["xodim"])
+            check("S-46: ⚠️ DIGESTDAGI VAZIFA FOIZI O'ZGARMADI"
+                  " (onboarding vazifalari sanalmadi)",
+                  keyin == oldin, "oldin=" + str(oldin) + " keyin=" + str(keyin))
+
+            #  ⚠️ Oddiy vazifalar TUSHIB QOLMAGANINI ham tekshiramiz.
+            #  `NOT IN` SQL tuzog'i: `source IS NULL` bo'lgan qatorlar
+            #  filtrdan butunlay chiqib ketishi mumkin edi.
+            check("S-46: ⚠️ ODDIY vazifalar filtrdan tushib qolmadi",
+                  keyin is not None and keyin[1] == 2, "=" + str(keyin))
+
+            r = c.get("/stats/me", headers=auth(xodim_t))
+            if r.status_code == 200:
+                st = r.json()
+                check("S-46: /stats/me da ham onboarding sanalmadi",
+                      st.get("tasks_total") == 2, "=" + str(st.get("tasks_total")))
+
+            # ══ MEZON 3: VAZIFA BAJARILSA PROGRESS YANGILANADI ══
+            oz_id = oz_vazifalari[0][0]
+            r = c.post(f"/tasks/me/{oz_id}/complete", headers=auth(xodim_t))
+            check("S-46: xodim vazifani bajardi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            r = c.get(f"/onboarding/plans/{ids['plan']}", headers=auth(mgr_t))
+            holat = r.json() if r.status_code == 200 else {}
+            check("S-46: ⚠️ VAZIFA bajarilgach QADAM ham bajarildi",
+                  holat.get("done") == 1, "=" + str((holat.get("done"), holat.get("total"))))
+
+            # ══ TESKARI YO'NALISH: QADAM -> VAZIFA ══
+            ochiq = [b for b in holat["items"] if not b["done"]]
+            r = c.post(f"/onboarding/items/{ochiq[0]['id']}/done",
+                       headers=auth(mgr_t), json={})
+            check("S-46: qadam qo'lda belgilandi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            vazifa_holati = cur.execute(
+                "select status from tasks where source='onboarding' and source_id=?",
+                (ochiq[0]["id"],)).fetchone()
+            check("S-46: ⚠️ QADAM belgilangach VAZIFA ham yopildi"
+                  " (eslatma kelavermasin)",
+                  vazifa_holati is not None and vazifa_holati[0] == "done",
+                  "=" + str(vazifa_holati))
+
+            # ══ FILTR YAGONA JOYDA ══
+            #  ⚠️ S-44 dagi «uch nusxa» xatosi takrorlanmasin.
+            ildiz = Path(__file__).resolve().parent
+            nusxalar = []
+            for nisbiy in ("api/services/daily_digest.py", "api/routers/stats.py"):
+                matn = (ildiz / nisbiy).read_text(encoding="utf-8")
+                if "task_stats_filter" not in matn:
+                    nusxalar.append(nisbiy)
+            check("S-46: statistika filtri YAGONA joydan olinadi",
+                  not nusxalar, "=" + str(nusxalar))
+
+    except Exception:
+        check("S-46 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+        except Exception:
+            print("S-46 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_onboarding_model() -> None:
     """S-45 (TZ 3.2) — onboarding: model va shablon.
 
@@ -13467,6 +13711,20 @@ def test_onboarding_model() -> None:
     ids: dict[str, int] = {}
 
     def tozala():
+        #  ⚠️ VAZIFALAR BIRINCHI. S-46 dan boshlab har onboarding
+        #  qadami `tasks` yozuvini yaratadi. Ular o'chirilmasa xodim
+        #  o'chirilgach YETIM qolardi va `id` qayta ishlatilganda
+        #  BUTUNLAY BOSHQA testning tozalashi «FOREIGN KEY
+        #  constraint failed» bilan yiqilardi — xato boshqa joyda
+        #  ko'rinadi va sababini topish qiyin (aynan shunday bo'ldi).
+        cur.execute(
+            "delete from tasks where source='onboarding' and source_id in"
+            " (select id from onboarding_progress where plan_id in"
+            "  (select id from onboarding_plans where user_id in"
+            "   (select id from users where full_name like 'T-Ob%')))")
+        cur.execute(
+            "delete from tasks where assigned_to in"
+            " (select id from users where full_name like 'T-Ob%')")
         cur.execute(
             "delete from onboarding_progress where plan_id in"
             " (select id from onboarding_plans where user_id in"
@@ -17303,6 +17561,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_onboarding_tasks()
+    except Exception:
+        print("S-46 onboarding vazifalari testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

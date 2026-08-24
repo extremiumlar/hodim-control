@@ -27,6 +27,7 @@ from api.services import lead_diff
 from api.telegram_notify import send_message
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from crm.config import CRM_UYSOT_VISIT_PIPE_STATUS_IDS
+from api.services.task_scope import task_stats_filter
 from db.models import (
     AiConfig,
     ExcusedDay,
@@ -207,7 +208,15 @@ async def _tasks_by_user(db: AsyncSession, day: date) -> dict[int, tuple[int, in
             func.count(TaskModel.id),
             func.sum(case((TaskModel.status == TaskStatus.done.value, 1), else_=0)),
         )
-        .where(TaskModel.created_at >= day_start, TaskModel.created_at < day_end)
+        .where(
+            TaskModel.created_at >= day_start,
+            TaskModel.created_at < day_end,
+            #  ⚠️ ONBOARDING VAZIFALARI SANALMAYDI (TZ 3.2 / S-46).
+            #  Yangi xodimga birinchi kunlarida 10-15 qadam tushadi;
+            #  ular oddiy vazifa deb sanalsa digestdagi foiz sun'iy
+            #  o'zgarardi va rahbar buni ISH ko'rsatkichi deb o'qirdi.
+            task_stats_filter(),
+        )
         .group_by(TaskModel.assigned_to)
     )
     return {uid: (int(done or 0), int(total)) for uid, total, done in rows.all()}

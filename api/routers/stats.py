@@ -23,6 +23,7 @@ from api.schemas import (
 )
 from api.timeutil import TASHKENT_TZ, local_range_utc_naive, today_local
 from crm import get_crm_adapter
+from api.services.task_scope import task_stats_filter
 from db.models import (
     Attendance,
     AttendanceStatus,
@@ -167,6 +168,8 @@ async def _my_stats_for_user(db: AsyncSession, user: User) -> MyStatsOut:
                 TaskModel.assigned_to == user.id,
                 TaskModel.created_at >= start_utc,
                 TaskModel.created_at < end_utc,
+                #  ⚠️ Onboarding vazifalari sanalmaydi (TZ 3.2 / S-46).
+                task_stats_filter(),
             )
         )
     ) or 0
@@ -177,6 +180,7 @@ async def _my_stats_for_user(db: AsyncSession, user: User) -> MyStatsOut:
                 TaskModel.status == TaskStatus.done.value,
                 TaskModel.created_at >= start_utc,
                 TaskModel.created_at < end_utc,
+                task_stats_filter(),
             )
         )
     ) or 0

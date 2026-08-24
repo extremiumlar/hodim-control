@@ -440,6 +440,15 @@ async def _complete_task_for_user(db: AsyncSession, task_id: int, user: User | N
     task.status = TaskStatus.done.value
     task.completed_at = datetime.utcnow()
 
+    #  ⚠️ ONBOARDING QADAMI HAM BELGILANADI (TZ 3.2 / S-46). Xodim
+    #  vazifani botda «✅» qilsa, kabinetdagi «Birinchi kunlarim»
+    #  ro'yxatida ham bajarilgan bo'lib turishi kerak — aks holda
+    #  bir joyda bajarilgan, boshqasida bajarilmagan holat paydo
+    #  bo'lardi.
+    from api.services import onboarding as _ob
+
+    await _ob.task_completed(db, task)
+
     db.add(
         AuditLog(
             actor_id=user.id,

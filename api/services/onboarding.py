@@ -39,6 +39,8 @@ from db.models import (
     OnboardingStepKind,
     OnboardingTemplate,
     Role,
+    TaskModel,
+    TaskStatus,
     User,
 )
 
@@ -211,6 +213,11 @@ async def _link_step(
 
     logger = logging.getLogger(__name__)
 
+    #  ⚠️ HAR QADAM VAZIFA YARATADI (TZ 3.2 / S-46): bildirishnoma,
+    #  muddat va «bajardim» tugmasi TAYYOR keladi — onboarding uchun
+    #  alohida xabar mexanizmi qurilmaydi.
+    await _create_task(db, band, user, actor_id)
+
     if step.kind != OnboardingStepKind.course.value or not step.ref_id:
         return
     try:
@@ -347,6 +354,8 @@ async def mark_done(
     if note is not None:
         band.note = note.strip() or None
     await db.flush()
+    #  Bog'langan vazifa ham yopiladi (ikki tomonlama sinxron).
+    await close_task_for(db, band)
     return band
 
 
@@ -359,5 +368,106 @@ async def finish_if_complete(db: AsyncSession, plan: OnboardingPlan) -> bool:
         return False
     plan.status = OnboardingStatus.done.value
     plan.finished_at = datetime.utcnow()
+    await db.flush()
+    return True
+
+
+# ─────────────────────────────────────────────────────────────
+# VAZIFALARGA ULANISH (yangi TZ 3.2 / S-46)
+# ─────────────────────────────────────────────────────────────
+
+#  ⚠️ `tasks.source` shu qiymat bilan belgilanadi va aynan shu
+#  qiymat STATISTIKADAN chiqarib tashlanadi
+#  (`db.models.TASK_STATS_EXCLUDED_SOURCES`).
+TASK_SOURCE = "onboarding"
+
+
+async def _create_task(
+    db: AsyncSession,
+    band: OnboardingProgress,
+    user: User,
+    actor_id: int | None,
+) -> TaskModel:
+    """Qadam uchun vazifa yozuvi.
+
+    ⚠️ KIMGA: mas'ul belgilangan bo'lsa MAS'ULGA, aks holda
+    XODIMNING O'ZIGA. Ba'zi qadamlar («ish joyini tayyorlash»,
+    «kirish huquqlarini ochish») xodimning emas, HR yoki IT ning
+    ishi — ularni xodimga berish uni bajara olmaydigan ish bilan
+    yuklardi.
+
+    ⚠️ `source="onboarding"` — VAZIFA STATISTIKASIGA KIRMASIN
+    (TZ 3.2). Batafsil izoh `db/models.py::TaskModel.source` da.
+
+    ⚠️ Muddat — kun OXIRI. `due_date` sana, `deadline` esa vaqt;
+    kun boshi qo'yilsa vazifa o'sha kuni ertalabdanoq «muddati
+    o'tgan» bo'lib ko'rinardi."""
+    from datetime import time as _time
+
+    kimga = band.owner_user_id or user.id
+    muddat = (
+        datetime.combine(band.due_date, _time(23, 59))
+        if band.due_date
+        else None
+    )
+    task = TaskModel(
+        assigned_by=actor_id or kimga,
+        assigned_to=kimga,
+        title=band.title[:500],
+        description=band.description,
+        deadline=muddat,
+        status=TaskStatus.pending.value,
+        source=TASK_SOURCE,
+        source_id=band.id,
+    )
+    db.add(task)
+    await db.flush()
+    return task
+
+
+async def task_completed(db: AsyncSession, task: TaskModel) -> bool:
+    """Onboarding vazifasi bajarildi -> QADAM ham bajarilgan.
+
+    ⚠️ IKKI TOMONLAMA SINXRON. Xodim vazifani botda «✅» qilsa,
+    kabinetdagi «Birinchi kunlarim» ro'yxatida ham belgilanishi
+    kerak — aks holda u bir joyda bajarilgan, boshqasida
+    bajarilmagan bo'lib turardi.
+
+    ⚠️ HOKIMIYAT QADAMDA. Vazifa — KO'ZGU (bildirishnoma va tugma
+    uchun); haqiqat `OnboardingProgress.done_at` da. Shuning uchun
+    sinxron shu yo'nalishda yoziladi, teskarisi emas.
+
+    Qaytaradi: qadam belgilandimi."""
+    if task.source != TASK_SOURCE or not task.source_id:
+        return False
+    band = await db.get(OnboardingProgress, task.source_id)
+    if band is None or band.done_at is not None:
+        return False
+    band.done_at = task.completed_at or datetime.utcnow()
+    band.done_by = task.assigned_to
+    await db.flush()
+    plan = await db.get(OnboardingPlan, band.plan_id)
+    if plan is not None:
+        await finish_if_complete(db, plan)
+    return True
+
+
+async def close_task_for(db: AsyncSession, band: OnboardingProgress) -> bool:
+    """Qadam bajarilgach BOG'LANGAN vazifani ham yopadi.
+
+    ⚠️ Teskari yo'nalish: xodim kabinetdagi chekboxni belgilasa,
+    botdagi vazifa ochiq qolmasligi kerak — aks holda unga
+    muddat eslatmasi kelaverardi."""
+    task = await db.scalar(
+        select(TaskModel).where(
+            TaskModel.source == TASK_SOURCE,
+            TaskModel.source_id == band.id,
+            TaskModel.status != TaskStatus.done.value,
+        )
+    )
+    if task is None:
+        return False
+    task.status = TaskStatus.done.value
+    task.completed_at = band.done_at or datetime.utcnow()
     await db.flush()
     return True

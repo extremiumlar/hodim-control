@@ -466,6 +466,14 @@ class LoginAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+#  ⚠️ STATISTIKAGA KIRMAYDIGAN VAZIFA MANBALARI (S-46).
+#  Onboarding qadamlaridan yaratilgan vazifalar xodimning «bajarilgan
+#  vazifalar foizi»ga KIRMAYDI (TZ 3.2). Ro'yxat shu yerda —
+#  filtr uch joyda takrorlanmasin va yangi manba qo'shilganda
+#  bittasi unutilmasin.
+TASK_STATS_EXCLUDED_SOURCES = ("onboarding",)
+
+
 class TaskModel(Base):
     __tablename__ = "tasks"
 
@@ -478,6 +486,27 @@ class TaskModel(Base):
     status: Mapped[str] = mapped_column(String(20), default=TaskStatus.pending.value, index=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    #  ── VAZIFA MANBAI (yangi TZ 3.2 / S-46) ──
+    #
+    #  ⚠️ BU MAYDON STATISTIKA UCHUN. `NULL` — odatdagi ish
+    #  topshirig'i; `"onboarding"` — onboarding qadamidan avtomatik
+    #  yaratilgan vazifa.
+    #
+    #  NEGA KERAK: yangi xodimga birinchi kunlarida 10-15 qadam
+    #  tushadi va ular vazifa sifatida yaratiladi. Agar ular oddiy
+    #  vazifa deb sanalsa, xodimning «bajarilgan vazifalar foizi»
+    #  birinchi hafta sun'iy ravishda o'zgarardi (avval keskin
+    #  pastga, keyin keskin yuqoriga) va rahbar buni ISH ko'rsatkichi
+    #  deb o'qirdi. TZ 3.2 aynan shuni taqiqlaydi: «vazifa
+    #  statistikasini buzmasin».
+    #
+    #  Filtrlanadigan joylar: `daily_digest._tasks_by_user`,
+    #  `stats.py` (kunlik vazifa hisoblari). Test buni tekshiradi.
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    #  Manba yozuv (`onboarding_progress.id`) — ikki tomonlama
+    #  sinxron uchun: vazifa bajarilsa qadam ham bajarilgan bo'ladi.
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 
 class Norm(Base):
