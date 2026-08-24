@@ -1025,9 +1025,12 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Shablon lavozim yoki rol uchun.
 
 **Qabul mezoni**
-- [ ] Shablondan reja yaratiladi, qadamlar nusxalanadi
-- [ ] Qadam turi bo'yicha bog'lanish (kurs tayinlanadi, hujjat kutiladi)
-- [ ] Test: shablon → reja → progress
+- [x] Shablondan reja yaratiladi, qadamlar NUSXALANADI — shablon
+      keyin tahrirlansa yo'ldagi reja o'zgarmaydi (test bilan)
+- [x] Qadam turi bo'yicha bog'lanish — kurs TAYINLANADI, hujjat
+      kutiladi; holat ikki joyda saqlanmaydi, manba moduldan
+      so'raladi (kurs o'tilgach onboarding o'zi ko'radi)
+- [x] Test: shablon → reja → progress (32 ta tekshiruv)
 
 ---
 
