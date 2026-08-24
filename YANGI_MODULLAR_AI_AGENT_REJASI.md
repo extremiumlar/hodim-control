@@ -984,9 +984,13 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. Ish haqi, baho, shaxsiy ma'lumot bu javoblarga **hech qachon** kirmaydi.
 
 **Qabul mezoni**
-- [ ] «Missiyamiz nima» savoliga aniq javob
-- [ ] Bilim bazasida yo'q savol → «kiritilmagan» + `unknown` qaydi
-- [ ] Maxfiy ma'lumot javobga tushmaydi (test bilan)
+- [x] «Missiyamiz nima» savoliga aniq javob — 6 ta tabiiy aytilish
+      mos keladi (ball 0.33-1.00), begona savol 0.00
+- [x] Bilim bazasida yo'q savol → «kiritilmagan» + `unknown` qaydi;
+      savol baribir HR ga ham boradi (qayd odam o'rnini bosmaydi)
+- [x] Maxfiy ma'lumot javobga tushmaydi — uch qatlam:
+      `audience="hr"` (tashqi chatbotga ketmaydi), tuzilmada xodim
+      ismlari yo'q, ish haqi/baho kalitlari ichma-ich tekshiriladi
 
 ---
 
