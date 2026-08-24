@@ -503,6 +503,53 @@ async def suggest(
     return eng_yaxshi, eng_ball
 
 
+async def record_unknown(db: AsyncSession, *, question: str, asker: User) -> bool:
+    """Bilim bazasida javobi YO'Q savolni `unknown` qilib qayd etadi.
+
+    ⚠️ TZ 3.16 QOIDASI: «AI TAXMIN QILMASIN». Javob bazada bo'lmasa
+    tizim o'ylab topmaydi — bo'shliqni QAYD etadi va HR ko'radi.
+    Boss/HR uni «🔍 Ko'rib chiqish» oqimida to'ldirsa, keyingi safar
+    javob avtomatik topiladi va baza shu tarzda o'sadi.
+
+    ⚠️ `audience="hr"` ANIQ ko'rsatiladi. Ustunning standart qiymati
+    `sales` va u MIJOZGA ketadigan baza — xodimning ichki savoli
+    (oylik, jarima, intizom) u yerga tushmasligi SHART. Hozircha
+    zarar yo'q edi, chunki tashqariga faqat `verified` chiqadi;
+    lekin bu yozuv keyin tasdiqlanishi mumkin va o'shanda kech
+    bo'lardi.
+
+    Takror yozilmaydi — bir xil savol bazada `unknown` bo'lib
+    tursa, ikkinchi qator yaratilmaydi.
+
+    Qaytaradi: yangi qator yaratildimi."""
+    norm = _norm(question)[:300]
+    if not norm:
+        return False
+    mavjudlar = list(
+        await db.scalars(
+            select(KnowledgeEntry.question).where(
+                KnowledgeEntry.status == KnowledgeStatus.unknown.value
+            )
+        )
+    )
+    if any(_norm(q)[:300] == norm for q in mavjudlar):
+        return False
+    db.add(
+        KnowledgeEntry(
+            kind="single",
+            audience="hr",
+            category="umumiy",
+            question=question.strip()[:1000],
+            answer="",
+            status=KnowledgeStatus.unknown.value,
+            source=f"HR savol (bazada yo'q) — so'ragan: {asker.full_name.strip()}",
+            source_user_id=asker.id,
+        )
+    )
+    await db.flush()
+    return True
+
+
 async def accept_suggestion(
     db: AsyncSession, *, inquiry: HrInquiry, entry: KnowledgeEntry
 ) -> HrInquiry:

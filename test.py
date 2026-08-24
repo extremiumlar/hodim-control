@@ -3791,7 +3791,7 @@ def test_payroll_engine() -> None:
     print("=" * 60)
 
     async def _run():
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, select, update as sa_update
         from db.base import async_session
         from db.models import (
             Attendance, AuditLog, Bonus, ExcusedDay, FinePolicy, OvertimeEntry, OvertimeProfile,
@@ -3847,6 +3847,17 @@ def test_payroll_engine() -> None:
                 from db.models import Acknowledgement as _Ack
                 await s.execute(delete(_Ack).where(
                     _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
+                #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+                #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+                #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+                #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+                #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+                #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+                #  to'xtatardi.
+                from db.models import KnowledgeEntry as _KE
+                await s.execute(
+                    sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
+                    .values(source_user_id=None))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             # Qo'shimcha himoya: agar avvalgi qulagan ishga tushirishda AVVAL
             # User o'chirilib, keyingi qadam (masalan Attendance o'chirish)
@@ -4141,6 +4152,17 @@ def test_payroll_engine() -> None:
             from db.models import Acknowledgement as _Ack
             await s.execute(delete(_Ack).where(
                 _Ack.user_id.in_([u1.id, u2.id]) | _Ack.requested_by.in_([u1.id, u2.id])))
+            #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+            #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+            #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+            #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+            #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+            #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+            #  to'xtatardi.
+            from db.models import KnowledgeEntry as _KE
+            await s.execute(
+                sa_update(_KE).where(_KE.source_user_id.in_([u1.id, u2.id]))
+                .values(source_user_id=None))
             await s.execute(delete(User).where(User.id.in_([u1.id, u2.id])))
             await s.commit()
 
@@ -4205,6 +4227,20 @@ def test_payroll_api() -> None:
 
     def cleanup_payapi():
         try:
+            #  ⚠️ AVVAL TASHQI ULANISHNI COMMIT QILAMIZ. Bu funksiya
+            #  IKKINCHI ulanish ochadi, tashqi `conn` esa hali
+            #  yakunlanmagan yozuv tranzaksiyasini ushlab turgan
+            #  bo'lishi mumkin — SQLite da bu O'Z-O'ZINI QULFLASH:
+            #  ikkinchi ulanish `timeout` tugaguncha kutadi va
+            #  «database is locked» bilan yiqiladi. Natijada tozalash
+            #  bajarilmay, qatorlar bazada qolib ketadi va KEYINGI
+            #  seansda «UNIQUE constraint failed» chiqadi — xato
+            #  butunlay boshqa joyda ko'rinadi va sababini topish
+            #  qiyin bo'ladi (aynan shunday bo'ldi).
+            try:
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                pass
             conn2 = db()
             c2 = conn2.cursor()
             uids = [rop_uid, emp_uid, outsider_uid]
@@ -4735,7 +4771,7 @@ def test_payroll_automation() -> None:
     WINDOW_MIN = 480  # work_minutes(09:00,18:00) — tushliksiz 8 soat
 
     async def _setup_and_direct_checks() -> dict:
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, select, update as sa_update
 
         from api.services import payroll as pr
         from api.services.attendance import local_hm_to_utc
@@ -4785,6 +4821,17 @@ def test_payroll_automation() -> None:
                 from db.models import Acknowledgement as _Ack
                 await s.execute(delete(_Ack).where(
                     _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
+                #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+                #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+                #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+                #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+                #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+                #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+                #  to'xtatardi.
+                from db.models import KnowledgeEntry as _KE
+                await s.execute(
+                    sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
+                    .values(source_user_id=None))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 3, 1), Attendance.date < date(2020, 4, 1))
@@ -4921,7 +4968,7 @@ def test_payroll_automation() -> None:
             return {"d1": d1.isoformat(), "day_http": day_http.isoformat()}
 
     async def _cleanup() -> None:
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, select, update as sa_update
 
         from db.base import async_session
         from db.models import (
@@ -4971,6 +5018,17 @@ def test_payroll_automation() -> None:
             from db.models import Acknowledgement as _Ack
             await s.execute(delete(_Ack).where(
                 _Ack.user_id.in_(ids) | _Ack.requested_by.in_(ids)))
+            #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+            #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+            #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+            #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+            #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+            #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+            #  to'xtatardi.
+            from db.models import KnowledgeEntry as _KE
+            await s.execute(
+                sa_update(_KE).where(_KE.source_user_id.in_(ids))
+                .values(source_user_id=None))
             await s.execute(delete(User).where(User.id.in_(ids)))
             await s.commit()
 
@@ -5051,7 +5109,7 @@ def test_payroll_reporting() -> None:
     WINDOW_MIN = 480
 
     async def _setup() -> dict:
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, select, update as sa_update
 
         from api.services.payroll import run_payroll
         from db.base import async_session
@@ -5094,6 +5152,17 @@ def test_payroll_reporting() -> None:
                 from db.models import Acknowledgement as _Ack
                 await s.execute(delete(_Ack).where(
                     _Ack.user_id.in_(stale_ids) | _Ack.requested_by.in_(stale_ids)))
+                #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+                #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+                #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+                #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+                #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+                #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+                #  to'xtatardi.
+                from db.models import KnowledgeEntry as _KE
+                await s.execute(
+                    sa_update(_KE).where(_KE.source_user_id.in_(stale_ids))
+                    .values(source_user_id=None))
                 await s.execute(delete(User).where(User.id.in_(stale_ids)))
             await s.execute(
                 delete(Attendance).where(Attendance.date >= date(2020, 4, 1), Attendance.date < date(2020, 5, 1))
@@ -5141,7 +5210,7 @@ def test_payroll_reporting() -> None:
             return {"rop_id": rop.id, "emp_id": emp.id, "outsider_id": outsider.id}
 
     async def _cleanup() -> None:
-        from sqlalchemy import delete, select
+        from sqlalchemy import delete, select, update as sa_update
 
         from db.base import async_session
         from db.models import (
@@ -5182,6 +5251,17 @@ def test_payroll_reporting() -> None:
                 from db.models import Acknowledgement as _Ack
                 await s.execute(delete(_Ack).where(
                     _Ack.user_id.in_(ids) | _Ack.requested_by.in_(ids)))
+                #  ⚠️ BILIM BAZASI BOG'LANISHI — xodimni o'chirishdan OLDIN.
+                #  S-43 dan boshlab javobi topilmagan savol `unknown` yozuv
+                #  bo'lib qoladi va `source_user_id` so'ragan xodimga
+                #  bog'lanadi. Yozuvning O'ZI qimmatli (bilim bazasidagi
+                #  bo'shliq), shuning uchun O'CHIRMAYMIZ — faqat bog'lanishni
+                #  uzamiz. Aks holda FOREIGN KEY xatosi butun tozalashni
+                #  to'xtatardi.
+                from db.models import KnowledgeEntry as _KE
+                await s.execute(
+                    sa_update(_KE).where(_KE.source_user_id.in_(ids))
+                    .values(source_user_id=None))
                 await s.execute(delete(User).where(User.id.in_(ids)))
             await s.execute(
                 delete(LeadStageDaily).where(
@@ -13316,6 +13396,240 @@ def test_org_employee_side() -> None:
         conn.close()
 
 
+
+def test_company_profile_ai() -> None:
+    """S-43 (TZ 3.16) — kompaniya profili va AI javobi.
+
+    Qabul mezonlari (TZ):
+      • «Missiyamiz nima» savoliga ANIQ javob;
+      • bilim bazasida yo\'q savol -> «kiritilmagan» + `unknown` qaydi;
+      • MAXFIY ma\'lumot javobga tushmaydi.
+    """
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-43: KOMPANIYA PROFILI VA AI JAVOBI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute("delete from knowledge_entries where source like 'kompaniya:%'")
+        cur.execute(
+            "delete from knowledge_entries where question like 'T-%'"
+            " or source like '%T-Kp%'")
+        cur.execute(
+            "delete from hr_inquiries where user_id in"
+            " (select id from users where full_name like 'T-Kp%')")
+        cur.execute("delete from users where full_name like 'T-Kp%'")
+        cur.execute("delete from positions where name like 'T-Kp%'")
+        conn.commit()
+
+    #  Profilning ASL holatini saqlab qo'yamiz — test uni o'zgartiradi.
+    #  ⚠️ `values` — SQLite ning ZAHIRA SO'ZI, qo'shtirnoqsiz yozilsa
+    #  «syntax error» beradi (ustun nomi to'g'ri bo'lsa ham).
+    asl = cur.execute(
+        'select mission, "values", goals from company_profile where id=1').fetchone()
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-Kp Sotuvchi',1,datetime('now'))")
+        ids["pos"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999704301,'T-Kp Xodim','employee',0,1,"
+            "?,datetime('now'))", (ids["pos"],))
+        ids["xodim"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+        TG = 999704301
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══ PROFIL SAQLANGANDA BILIM BAZASI YANGILANADI ══
+            r = c.put("/org/profile", headers=auth(mgr_t), json={
+                "mission": "T-Biz sifatli uy quramiz",
+                "values": ["T-halollik", "T-sifat"],
+                "goals": ["T-2027 ga 1000 xonadon"],
+            })
+            check("S-43: profil saqlandi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            sinx = (r.json() or {}).get("knowledge") or {}
+            check("S-43: bilim bazasi SHU YERDA sinxronlandi",
+                  sinx.get("total", 0) >= 4, "=" + str(sinx))
+
+            yozuvlar = cur.execute(
+                "select source, question, answer, status, audience from"
+                " knowledge_entries where source like 'kompaniya:%' order by source"
+            ).fetchall()
+            check("S-43: 4 ta yozuv yaratildi (missiya/qadriyat/maqsad/tuzilma)",
+                  len(yozuvlar) == 4, "=" + str([y[0] for y in yozuvlar]))
+            check("S-43: yozuvlar VERIFIED (darhol ishlaydi)",
+                  all(y[3] == "verified" for y in yozuvlar),
+                  "=" + str([y[3] for y in yozuvlar]))
+            check("S-43: ⚠️ yozuvlar audience='hr' (MIJOZGA ketmaydi)",
+                  all(y[4] == "hr" for y in yozuvlar),
+                  "=" + str([y[4] for y in yozuvlar]))
+
+            # ══ MEZON 1: «MISSIYAMIZ NIMA» -> ANIQ JAVOB ══
+            r = c.post("/hr-inquiries/me", headers=auth(xodim_t),
+                       json={"question": "Missiyamiz nima?"})
+            check("S-43: savol qabul qilindi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            javob = r.json() if r.status_code == 201 else {}
+            taklif = javob.get("suggestion") or {}
+            check("S-43: ⚠️ «Missiyamiz nima» ga TAYYOR javob topildi",
+                  bool(taklif), "=" + str(javob)[:140])
+            check("S-43: javob AYNAN missiya matni",
+                  "T-Biz sifatli uy quramiz" in (taklif.get("answer") or ""),
+                  "=" + str(taklif.get("answer"))[:110])
+            check("S-43: HR bezovta QILINMADI (avtomatik javob)",
+                  javob.get("notified") == 0, "=" + str(javob.get("notified")))
+
+            #  ⚠️ KALIT JUDA KENG BO'LMASLIGI kerak: begona savol
+            #  kompaniya yozuviga TUSHIB QOLMASIN. Aks holda xodim
+            #  oylik haqida so'raganda unga missiya taklif qilinardi.
+            from api.services.hr_inquiries import _similarity, _tokens, _SUGGEST_MATCH
+            begona = _similarity(
+                _tokens("oylik qachon beriladi"),
+                _tokens("Missiyamiz nima? (kompaniyaning missiyasi)"))
+            check("S-43: ⚠️ begona savol kompaniya yozuviga MOS KELMAYDI",
+                  begona < _SUGGEST_MATCH, "ball=" + str(round(begona, 2)))
+
+            # ══ MEZON 2: BAZADA YO'Q SAVOL -> unknown QAYDI ══
+            gap_savol = "T-Kp qanday qilib marsga uchamiz?"
+            r = c.post("/hr-inquiries/me", headers=auth(xodim_t),
+                       json={"question": gap_savol})
+            check("S-43: notanish savol qabul qilindi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code))
+            javob2 = r.json() if r.status_code == 201 else {}
+            check("S-43: ⚠️ javob O'YLAB TOPILMADI (taklif yo'q)",
+                  not javob2.get("suggestion"), "=" + str(javob2.get("suggestion")))
+
+            qayd = cur.execute(
+                "select status, audience, answer from knowledge_entries"
+                " where question=?", (gap_savol,)).fetchone()
+            check("S-43: ⚠️ bo'shliq `unknown` bo'lib QAYD etildi",
+                  qayd is not None and qayd[0] == "unknown", "=" + str(qayd))
+            check("S-43: qayd audience='hr' (sotuv bazasiga tushmadi)",
+                  qayd is not None and qayd[1] == "hr", "=" + str(qayd))
+            check("S-43: qaydda javob BO'SH (hech narsa taxmin qilinmagan)",
+                  qayd is not None and (qayd[2] or "") == "", "=" + str(qayd))
+            check("S-43: savol baribir HR ga bordi (qayd odam o'rnini bosmaydi)",
+                  javob2.get("notified", 0) >= 0 and javob2.get("id"),
+                  "=" + str(javob2)[:110])
+
+            #  Takroriy savol IKKINCHI qayd yaratmaydi.
+            c.post("/hr-inquiries/me", headers=auth(xodim_t), json={"question": gap_savol})
+            soni = cur.execute(
+                "select count(*) from knowledge_entries where question=?",
+                (gap_savol,)).fetchone()[0]
+            check("S-43: takroriy savol IKKINCHI qayd yaratmadi", soni == 1,
+                  "=" + str(soni))
+
+            # ══ MEZON 3: MAXFIY MA'LUMOT JAVOBGA TUSHMAYDI ══
+            r = c.get("/org/company", headers=auth(xodim_t))
+            karta = r.json() if r.status_code == 200 else {}
+            check("S-43: kompaniya kartasi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-43: missiya kartada bor",
+                  karta.get("mission") == "T-Biz sifatli uy quramiz",
+                  "=" + str(karta.get("mission")))
+            yomon = _taqiqlangan_kalitlar(karta)
+            check("S-43: ⚠️ kartada ISH HAQI/BAHO kaliti YO'Q",
+                  not yomon, "=" + str(yomon[:6]))
+
+            #  ⚠️ ISM ham tushmasligi kerak — «kim qayerda ishlaydi»
+            #  shaxsiy ma'lumot.
+            matn = str(karta)
+            check("S-43: ⚠️ kartada XODIM ISMI yo'q (faqat lavozim va son)",
+                  "T-Kp Xodim" not in matn, "=" + matn[:130])
+            tuzilma_yozuv = cur.execute(
+                "select answer from knowledge_entries where source='kompaniya:tuzilma'"
+            ).fetchone()
+            check("S-43: ⚠️ TUZILMA yozuvida ham xodim ismi yo'q",
+                  tuzilma_yozuv and "T-Kp Xodim" not in tuzilma_yozuv[0],
+                  "=" + str(tuzilma_yozuv)[:130])
+            check("S-43: tuzilma yozuvida lavozim nomi bor",
+                  tuzilma_yozuv and "T-Kp Sotuvchi" in tuzilma_yozuv[0],
+                  "=" + str(tuzilma_yozuv)[:130])
+
+            #  ⚠️ TASHQI CHATBOT DATASETIGA TUSHMASLIGI SHART.
+            sotuvda = cur.execute(
+                "select count(*) from knowledge_entries where source like 'kompaniya:%'"
+                " and audience='sales'").fetchone()[0]
+            check("S-43: ⚠️ kompaniya yozuvlari SOTUV bazasida YO'Q"
+                  " (tashqi chatbotga ketmaydi)", sotuvda == 0, "=" + str(sotuvda))
+
+            # ══ BOT KARTASI ══
+            r = c.get("/org/bot/company", params={"telegram_id": TG},
+                      headers=bot_secret_hdr())
+            check("S-43: bot kartasi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            check("S-43: bot kartasi sayt bilan bir xil",
+                  r.json().get("mission") == karta.get("mission"),
+                  "=" + str(r.json().get("mission")))
+            r = c.get("/org/bot/company", params={"telegram_id": TG})
+            check("S-43: sirsiz bot kartasi -> 401", r.status_code == 401,
+                  "kod=" + str(r.status_code))
+
+            # ══ BO'SH MAYDON UCHUN YOZUV YARATILMAYDI ══
+            r = c.put("/org/profile", headers=auth(mgr_t),
+                      json={"mission": "", "values": [], "goals": []})
+            check("S-43: profil bo'shatildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            qolgan = cur.execute(
+                "select source from knowledge_entries where source like 'kompaniya:%'"
+            ).fetchall()
+            check("S-43: ⚠️ bo'sh maydon yozuvi O'CHIRILDI (eski javob qolmadi)",
+                  [q[0] for q in qolgan] == ["kompaniya:tuzilma"],
+                  "=" + str([q[0] for q in qolgan]))
+
+            r = c.get("/org/company", headers=auth(xodim_t))
+            check("S-43: bo'sh missiya `null` qaytadi (mijoz «kiritilmagan» deydi)",
+                  r.json().get("mission") is None, "=" + str(r.json().get("mission")))
+
+        # ══ BOT MATNI: «KIRITILMAGAN» ══
+        from bot.handlers.org import _company_matn
+        bosh = _company_matn({"mission": None, "values": [], "goals": [],
+                              "positions": []})
+        check("S-43: ⚠️ bot bo'sh maydon uchun «kiritilmagan» deydi"
+              " (taxmin qilmaydi)", bosh.count("kiritilmagan") == 4,
+              "=" + str(bosh.count("kiritilmagan")))
+
+        from bot.keyboards import ALL_MENU_BUTTONS, BTN_COMPANY
+        check("S-43: bot tugmasi ALL_MENU_BUTTONS da",
+              BTN_COMPANY in ALL_MENU_BUTTONS, "=" + BTN_COMPANY)
+
+        cron_matn = (Path(__file__).resolve().parent / "scripts" / "cron_tick.py").read_text(
+            encoding="utf-8")
+        check("S-43: sinxron cron jadvalida bor (tuzilma eskirmasin)",
+              "company_kb_tick" in cron_matn, "=cron_tick.py")
+
+    except Exception:
+        check("S-43 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+            #  Profilni ASL holiga qaytaramiz — jonli ma'lumot buzilmasin.
+            if asl is not None:
+                cur.execute(
+                    'update company_profile set mission=?, "values"=?, goals=?'
+                    " where id=1", (asl[0], asl[1], asl[2]))
+                conn.commit()
+        except Exception:
+            print("S-43 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_instruction_ack_reminders() -> None:
     """S-42 (TZ 3.16) — tanishuv eslatmasi va HR paneli.
 
@@ -16500,6 +16814,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_company_profile_ai()
+    except Exception:
+        print("S-43 kompaniya profili testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

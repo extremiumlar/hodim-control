@@ -247,6 +247,11 @@ _EMPLOYEE: list[Section] = [
     #  «Mening o'rnim» sahifasi ichida ko'rsatiladi.
     Section("my-place", "Mening o'rnim", "/me/place", "Network", 134, "employee",
             bot_button="🏢 Mening o'rnim"),
+    #  Kompaniya kartasi (TZ 3.16 / S-43): missiya, qadriyatlar,
+    #  maqsadlar, tuzilma. Ma'lumot HR profilidan keladi — AI
+    #  chaqirilmaydi va hech narsa o'ylab topilmaydi.
+    Section("company", "Kompaniya", "/me/company", "Building2", 135, "employee",
+            bot_button="🏛 Kompaniya"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

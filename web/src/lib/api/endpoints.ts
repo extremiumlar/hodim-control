@@ -23,6 +23,7 @@ import type {
   CourseReport,
   JobDescriptionVersion,
   OrgChart,
+  CompanyCard,
   InstructionAckOverview,
   OrgMyPlace,
   OrgPositionDetail,
@@ -1334,6 +1335,7 @@ export const api = {
   // ── Tashkiliy tuzilma (TZ 3.16 / S-40) ──
   orgChart: () => apiFetch<OrgChart>("/org/chart"),
   orgMyPlace: () => apiFetch<OrgMyPlace>("/org/my-place"),
+  companyCard: () => apiFetch<CompanyCard>("/org/company"),
   instructionAcks: () =>
     apiFetch<InstructionAckOverview[]>("/acks/instructions/overview"),
   orgAcknowledge: () =>

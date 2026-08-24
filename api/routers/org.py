@@ -121,6 +121,41 @@ async def _bot_user(db: AsyncSession, telegram_id: int) -> User:
     return u
 
 
+async def _company(db: AsyncSession) -> dict:
+    """Kompaniya kartasi — missiya, qadriyatlar, maqsadlar, tuzilma.
+
+    ⚠️ AI CHAQIRILMAYDI va HECH NARSA O'YLAB TOPILMAYDI (TZ 3.16):
+    javob to'g'ridan-to'g'ri HR kiritgan profildan olinadi.
+    Kiritilmagan maydon uchun `null` qaytadi va mijoz «kiritilmagan»
+    deb ko'rsatadi — bu «bilmayman» dan aniqroq va yolg'on emas.
+
+    ⚠️ Tuzilmada ISM YO'Q, faqat lavozim va son."""
+    p = await svc.get_profile(db)
+    out = {
+        "mission": p.mission,
+        "values": p.values or [],
+        "goals": p.goals or [],
+        "positions": await svc.position_summary(db),
+    }
+    await db.commit()  # `get_profile` yangi qator yaratgan bo'lishi mumkin
+    return out
+
+
+@router.get("/bot/company", dependencies=_BOT_SIR)
+async def bot_company(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    await _bot_user(db, telegram_id)  # xodim faolligini tekshiramiz
+    return await _company(db)
+
+
+@router.get("/company")
+async def company(
+    _user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    return await _company(db)
+
+
 @router.get("/bot/my-place", dependencies=_BOT_SIR)
 async def bot_my_place(
     telegram_id: int, db: AsyncSession = Depends(get_db)
@@ -185,6 +220,12 @@ async def write_profile(
         actor_id=actor.id,
     )
     out = {"mission": p.mission, "values": p.values or [], "goals": p.goals or []}
+    #  ⚠️ Bilim bazasi SHU YERDA yangilanadi (S-43). Aks holda HR
+    #  missiyani o'zgartirgach, xodim «Missiyamiz nima?» deb
+    #  so'raganda bazadan ESKI matn taklif qilinardi.
+    from api.services import company_kb
+
+    out["knowledge"] = await company_kb.sync(db)
     await db.commit()
     return out
 

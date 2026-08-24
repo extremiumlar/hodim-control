@@ -23,7 +23,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot import api_client
-from bot.keyboards import BTN_MY_PLACE
+from bot.keyboards import BTN_COMPANY, BTN_MY_PLACE
 
 router = Router(name="org")
 logger = logging.getLogger(__name__)
@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 #  Telegram bitta xabarda 4096 belgidan ko'pini qabul qilmaydi.
 #  Yo'riqnoma uzun bo'lishi mumkin, shuning uchun kesamiz.
 _MAX_MATN = 3500
+
+#  Uzun ro'yxat Telegram xabarini yorib yuboradi.
+_MAX_LAVOZIM = 25
 
 
 def _royxat(sarlavha: str, bandlar: list) -> str:
@@ -144,3 +147,64 @@ async def acknowledge(callback: CallbackQuery) -> None:
     await callback.answer(
         f"✅ Tanishdingiz (v{natija.get('version')})", show_alert=True
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# KOMPANIYA KARTASI (TZ 3.16 / S-43)
+# ─────────────────────────────────────────────────────────────
+
+
+def _company_matn(k: dict) -> str:
+    """Kompaniya kartasi matni.
+
+    ⚠️ HECH NARSA O'YLAB TOPILMAYDI (TZ 3.16). Kiritilmagan maydon
+    uchun ochiq «kiritilmagan» deb yoziladi — bu «bilmayman» dan
+    aniqroq va yolg'on emas. Xodim shundan keyin HR ga savol berishi
+    mumkin va savol `unknown` sifatida qayd etiladi.
+    """
+    q = ["🏛 <b>Kompaniya</b>"]
+
+    q.append("\n<b>Missiyamiz</b>")
+    q.append(k.get("mission") or "<i>kiritilmagan</i>")
+
+    qadriyatlar = k.get("values") or []
+    q.append("\n<b>Qadriyatlarimiz</b>")
+    q.append("\n".join(f"  • {v}" for v in qadriyatlar)
+             if qadriyatlar else "<i>kiritilmagan</i>")
+
+    maqsadlar = k.get("goals") or []
+    q.append("\n<b>Maqsadlarimiz</b>")
+    q.append("\n".join(f"  • {g}" for g in maqsadlar)
+             if maqsadlar else "<i>kiritilmagan</i>")
+
+    lavozimlar = k.get("positions") or []
+    q.append("\n<b>Tuzilma</b>")
+    if not lavozimlar:
+        q.append("<i>kiritilmagan</i>")
+    else:
+        #  ⚠️ ISM YO'Q — faqat lavozim va son (shaxsiy ma'lumot emas).
+        for L in lavozimlar[:_MAX_LAVOZIM]:
+            qator = f"  • {L['name']}"
+            if L.get("parent"):
+                qator += f" → {L['parent']}"
+            if L.get("employees"):
+                qator += f" ({L['employees']} xodim)"
+            q.append(qator)
+        if len(lavozimlar) > _MAX_LAVOZIM:
+            q.append(f"  … va yana {len(lavozimlar) - _MAX_LAVOZIM} ta")
+        q.append("\n<i>O'z o'rningizni «🏢 Mening o'rnim» da ko'ring.</i>")
+    return "\n".join(q)[:_MAX_MATN]
+
+
+@router.message(F.text == BTN_COMPANY)
+async def company(message: Message) -> None:
+    try:
+        k = await api_client.company_card(message.from_user.id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Kompaniya kartasini olishda xato")
+        await message.answer("Hozir ochib bo'lmadi — keyinroq urinib ko'ring.")
+        return
+    if k is None:
+        await message.answer("Ma'lumot topilmadi — HR ga ayting.")
+        return
+    await message.answer(_company_matn(k))

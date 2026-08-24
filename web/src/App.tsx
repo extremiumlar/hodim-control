@@ -65,6 +65,7 @@ const Courses = lazy(() => import("./pages/Courses"));
 const MeCourses = lazy(() => import("./pages/me/Courses"));
 const OrgChartPage = lazy(() => import("./pages/OrgChart"));
 const MePlace = lazy(() => import("./pages/me/Place"));
+const MeCompany = lazy(() => import("./pages/me/Company"));
 const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
 
@@ -225,6 +226,7 @@ export default function App() {
           <Route path="me/inquiries" element={<MeInquiries />} />
           <Route path="me/courses" element={<MeCourses />} />
           <Route path="me/place" element={<MePlace />} />
+          <Route path="me/company" element={<MeCompany />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />
           <Route path="users" element={<ManagerRoute><Users /></ManagerRoute>} />

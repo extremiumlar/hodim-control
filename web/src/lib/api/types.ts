@@ -2004,6 +2004,19 @@ export type OrgMyPlace = {
   } | null;
 };
 
+export type CompanyCard = {
+  mission: string | null;
+  values: string[];
+  goals: string[];
+  /** ⚠️ Xodim ismlari YO'Q — faqat lavozim, ota lavozim va son. */
+  positions: {
+    id: number;
+    name: string;
+    parent: string | null;
+    employees: number;
+  }[];
+};
+
 export type AckPerson = {
   user_id: number;
   full_name: string;

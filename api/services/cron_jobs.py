@@ -1029,6 +1029,23 @@ async def appeals_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
     return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}
 
 
+async def company_kb_tick(db: AsyncSession) -> dict:
+    """Kompaniya ma'lumotini bilim bazasi bilan moslashtiradi (S-43).
+
+    ⚠️ NEGA CRON KERAK, profil saqlanganda sinxron qilinsa ham:
+    TUZILMA profil orqali o'zgarmaydi. Yangi lavozim qo'shilishi,
+    bo'ysunish o'zgarishi yoki xodimning ishga kirishi — bularning
+    hech biri `PUT /org/profile` ni chaqirmaydi. Cron bo'lmasa
+    «Kompaniya tuzilmasi qanday?» javobi jimgina eskirib qolardi.
+
+    ⚠️ Ish YENGIL: lavozimlar va faol xodimlar sanog'i, keyin
+    matn solishtiriladi. O'zgarish bo'lmasa hech narsa yozilmaydi."""
+    from api.services import company_kb
+
+    natija = await company_kb.sync(db)
+    await db.commit()
+    return natija
+
 async def instruction_ack_tick(db: AsyncSession, dry_run: bool = False) -> dict:
     """Yo'riqnoma bilan tanishmaganlarga eslatma (yangi TZ 3.16 / S-42).
 

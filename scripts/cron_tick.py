@@ -654,6 +654,14 @@ async def main() -> None:
     # tayyor `course_stats` qatorini o'qiydi.
     if now.hour == 8 and now.minute == 50:
         await _run_misc_inprocess(now, "kurs hisoboti", "course_report_tick")
+    # Kompaniya ma'lumoti -> bilim bazasi (S-43) — HAR KUNI 8:45.
+    #
+    # ⚠️ TUZILMA profil saqlanganda YANGILANMAYDI: yangi lavozim,
+    # bo'ysunish o'zgarishi va xodimning ishga kirishi `PUT /org/profile`
+    # ni chaqirmaydi. Cron bo'lmasa «Kompaniya tuzilmasi qanday?»
+    # javobi jimgina eskirib qolardi.
+    if now.hour == 8 and now.minute == 45:
+        await _run_misc_inprocess(now, "kompaniya bilim bazasi", "company_kb_tick")
     # Yo'riqnoma tanishuvi eslatmasi (S-42) — HAR KUNI 9:10.
     #
     # ⚠️ `deadline_tick` (9:00) DAN KEYIN, ataylab: ertalabki xabarlar

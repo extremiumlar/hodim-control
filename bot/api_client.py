@@ -1459,6 +1459,17 @@ async def my_place(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def company_card(telegram_id: int) -> dict | None:
+    """Kompaniya kartasi — missiya, qadriyatlar, maqsadlar, tuzilma."""
+    resp = await _get_client().get(
+        "/org/bot/company", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def acknowledge_instruction(telegram_id: int) -> dict:
     """«✅ Tanishdim» — yo'riqnoma tanishuvini qayd etadi (S-20)."""
     resp = await _get_client().post(

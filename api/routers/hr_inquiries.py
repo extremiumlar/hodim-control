@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -33,6 +35,8 @@ from db.models import (
     Role,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/hr-inquiries", tags=["hr_inquiries"])
 
@@ -165,6 +169,19 @@ async def _ask(db: AsyncSession, user: User, question: str) -> dict:
         }
         await db.commit()
         return javob
+
+    #  ⚠️ BAZADA JAVOB YO'Q — BO'SHLIQNI QAYD ETAMIZ (TZ 3.16 / S-43).
+    #  «AI taxmin qilmasin»: tizim javob o'ylab topmaydi, savolni
+    #  `unknown` yozuv qilib qo'yadi. HR/Boss uni «🔍 Ko'rib chiqish»
+    #  oqimida to'ldirsa, keyingi safar javob AVTOMATIK topiladi va
+    #  baza shu tarzda o'sadi. Savol baribir HR ga ham boradi —
+    #  qayd bo'shliqni ko'rsatadi, odamning o'rnini bosmaydi.
+    try:
+        await svc.record_unknown(db, question=question, asker=user)
+    except Exception:  # noqa: BLE001
+        #  Qayd yozilmasa ham SAVOL YO'QOLMASLIGI kerak — bu ikkinchi
+        #  darajali vazifa, asosiysi murojaatning HR ga yetishi.
+        logger.exception("Bilim bazasi bo'shlig'ini qayd etib bo'lmadi")
 
     #  ⚠️ Qiymatlarni commitdan OLDIN olamiz: `commit()` obyektni
     #  eskirtiradi va keyingi atribut o'qish async kontekstda

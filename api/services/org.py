@@ -524,3 +524,30 @@ async def my_place(db: AsyncSession, user: User) -> dict:
         "metrics": korsatkichlar,
         "acknowledgement": tanishuv,
     }
+
+
+async def position_summary(db: AsyncSession) -> list[dict]:
+    """Kompaniya kartasi uchun lavozimlar ro'yxati.
+
+    ⚠️ XODIM ISMLARI YO'Q — faqat lavozim, ota lavozim va SON.
+    «Kim qayerda ishlaydi» ro'yxati shaxsiy ma'lumot va uni
+    kompaniya kartasiga chiqarish shart emas (TZ 3.16)."""
+    lavozimlar = list(
+        await db.scalars(
+            select(Position).where(Position.is_active.is_(True)).order_by(Position.name)
+        )
+    )
+    sanoq: dict[int, int] = {}
+    for u in await db.scalars(select(User).where(User.is_active.is_(True))):
+        if u.position_id:
+            sanoq[u.position_id] = sanoq.get(u.position_id, 0) + 1
+    nomlar = {p.id: p.name for p in lavozimlar}
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "parent": nomlar.get(p.parent_position_id) if p.parent_position_id else None,
+            "employees": sanoq.get(p.id, 0),
+        }
+        for p in lavozimlar
+    ]

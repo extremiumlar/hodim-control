@@ -1683,6 +1683,10 @@ export const useOrgChart = (opts?: { enabled?: boolean }) =>
 export const useOrgMyPlace = () =>
   useQuery({ queryKey: [...qk.org, "my-place"], queryFn: api.orgMyPlace });
 
+/** Kompaniya kartasi — missiya, qadriyatlar, maqsadlar, tuzilma (S-43). */
+export const useCompanyCard = () =>
+  useQuery({ queryKey: [...qk.org, "company"], queryFn: api.companyCard });
+
 /** HR paneli: kim yo'riqnoma bilan tanishgan / tanishmagan (S-42). */
 export const useInstructionAcks = () =>
   useQuery({ queryKey: [...qk.org, "acks"], queryFn: api.instructionAcks });
