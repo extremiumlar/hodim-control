@@ -13315,6 +13315,268 @@ def test_org_employee_side() -> None:
             print("S-41 tozalash xatosi:" + chr(10) + traceback.format_exc())
         conn.close()
 
+
+def test_instruction_ack_reminders() -> None:
+    """S-42 (TZ 3.16) — tanishuv eslatmasi va HR paneli.
+
+    Qabul mezonlari (TZ):
+      • bot CHEKSIZ eslatmaydi (3 marta);
+      • yangi versiya eski tanishuvni bekor qiladi;
+      • «tanishmaganlar» ro\'yxati aniq.
+    """
+    import asyncio
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-42: YO'RIQNOMA TANISHUVI — ESLATMA VA HR PANELI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    pos: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from acknowledgements where user_id in"
+            " (select id from users where full_name like 'T-Es%')")
+        cur.execute("delete from users where full_name like 'T-Es%'")
+        cur.execute(
+            "delete from job_descriptions where position_id in"
+            " (select id from positions where name like 'T-Es%')")
+        cur.execute("delete from positions where name like 'T-Es%'")
+        conn.commit()
+
+    #  ⚠️ XABAR YUBORISH TO'SILADI. Test haqiqiy xodimlarga yozib
+    #  yubormasligi SHART — bu loyihada allaqachon sodir bo'lgan.
+    #  `notify_user` ni almashtiramiz va ayni paytda YUBORILGANLARNI
+    #  aniq sanaymiz (dry_run bilan sanoq oshmasdi, ya'ni chegara
+    #  tekshirilmay qolardi).
+    yuborilgan: list = []
+
+    async def _tick():
+        import api.services.cron_jobs as cj
+        import api.notify as notify_mod
+        from db.base import async_session
+
+        asl = notify_mod.notify_user
+
+        async def soxta(db_, user, category, text, **kw):
+            yuborilgan.append({"user_id": user.id, "text": text})
+            return None
+
+        notify_mod.notify_user = soxta
+        try:
+            async with async_session() as s2:
+                return await cj.instruction_ack_tick(s2)
+        finally:
+            notify_mod.notify_user = asl
+
+    def eskirt(kun: int) -> None:
+        """So'rov va oxirgi eslatma sanasini `kun` kun orqaga suradi."""
+        cur.execute(
+            "update acknowledgements set requested_at=datetime('now', ?),"
+            " last_reminded_at=case when last_reminded_at is null then null"
+            " else datetime('now', ?) end"
+            " where user_id=? and object_type='instruction'",
+            (f"-{kun} days", f"-{kun} days", ids["xodim"]))
+        conn.commit()
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-Es Lavozim',1,datetime('now'))")
+        pos["oz"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999704201,'T-Es Xodim','employee',0,1,"
+            "?,datetime('now'))", (pos["oz"],))
+        ids["xodim"] = cur.lastrowid
+        #  Telegramsiz xodim — eslatma YUBORILMAYDI va sanoq OSHMAYDI.
+        cur.execute(
+            "insert into users (full_name, role, bot_started, is_active,"
+            " position_id, created_at) values ('T-Es Telegramsiz','employee',0,1,"
+            "?,datetime('now'))", (pos["oz"],))
+        ids["tgsiz"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.post(f"/org/positions/{pos['oz']}/descriptions",
+                       headers=auth(mgr_t),
+                       json={"purpose": "T-maqsad", "duties": ["T-vazifa"],
+                             "rights": [], "responsibility": [], "requirements": []})
+            check("S-42: yo'riqnoma yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+
+            soni = cur.execute(
+                "select count(*) from acknowledgements where object_type='instruction'"
+                " and object_id=?", (pos["oz"],)).fetchone()[0]
+            check("S-42: ikkala xodimdan ham tanishish SO'RALDI", soni == 2,
+                  "=" + str(soni))
+
+            # ══ ERTA ESLATMA YUBORILMAYDI ══
+            res = asyncio.run(_tick())
+            check("S-42: ⚠️ so'rov YANGI bo'lsa eslatma YO'Q (3 kun kutiladi)",
+                  res.get("sent") == 0, "=" + str(res))
+
+            # ══ MEZON 1: KO'PI BILAN 3 MARTA ══
+            sanoqlar = []
+            for urinish in (1, 2, 3):
+                eskirt(4 * urinish)
+                yuborilgan.clear()
+                res = asyncio.run(_tick())
+                n = cur.execute(
+                    "select reminder_count from acknowledgements where user_id=?"
+                    " and object_type='instruction' and object_id=?",
+                    (ids["xodim"], pos["oz"])).fetchone()[0]
+                sanoqlar.append(n)
+                check(f"S-42: {urinish}-eslatma yuborildi",
+                      res.get("sent") == 1 and n == urinish,
+                      "=" + str(res) + " sanoq=" + str(n))
+
+            check("S-42: sanoq 1,2,3 bo'lib o'sdi", sanoqlar == [1, 2, 3],
+                  "=" + str(sanoqlar))
+            check("S-42: ⚠️ TELEGRAMSIZ xodimga yuborilmadi",
+                  all(y["user_id"] == ids["xodim"] for y in yuborilgan),
+                  "=" + str([y["user_id"] for y in yuborilgan]))
+            tgsiz_sanoq = cur.execute(
+                "select reminder_count from acknowledgements where user_id=?"
+                " and object_type='instruction'", (ids["tgsiz"],)).fetchone()[0]
+            check("S-42: ⚠️ yuborilmagan xodimda sanoq OSHMADI (0)",
+                  tgsiz_sanoq == 0, "=" + str(tgsiz_sanoq))
+            check("S-42: oxirgi eslatmada «HR ga uzatiladi» ogohlantirishi bor",
+                  any("oxirgi eslatma" in y["text"] for y in yuborilgan),
+                  "=" + str(yuborilgan)[:120])
+
+            # ══ TO'RTINCHISI YO'Q — BOT JIM ══
+            eskirt(20)
+            yuborilgan.clear()
+            res = asyncio.run(_tick())
+            n = cur.execute(
+                "select reminder_count from acknowledgements where user_id=?"
+                " and object_type='instruction' and object_id=?",
+                (ids["xodim"], pos["oz"])).fetchone()[0]
+            check("S-42: ⚠️ 4-ESLATMA YUBORILMADI (bot jim bo'ldi)",
+                  res.get("sent") == 0 and n == 3, "=" + str(res) + " sanoq=" + str(n))
+
+            # ══ MEZON 3: «TANISHMAGANLAR» RO'YXATI ══
+            r = c.get("/acks/instructions/overview", headers=auth(mgr_t))
+            check("S-42: HR paneli -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            panel = r.json() if r.status_code == 200 else []
+            band = next((b for b in panel if b["object_id"] == pos["oz"]), None)
+            check("S-42: panelda shu lavozim bor", band is not None,
+                  "=" + str([b["object_id"] for b in panel])[:90])
+            if band:
+                check("S-42: versiya ko'rsatilgan", band["version"] == 1,
+                      "=" + str(band["version"]))
+                check("S-42: tanishmaganlar 2 ta, tanishganlar 0",
+                      len(band["pending"]) == 2 and len(band["read"]) == 0,
+                      "=" + str((len(band["pending"]), len(band["read"]))))
+                charchagan = [x for x in band["pending"] if x["exhausted"]]
+                check("S-42: ⚠️ «bot jim bo'ldi» belgisi (exhausted) qo'yildi",
+                      len(charchagan) == 1
+                      and charchagan[0]["full_name"] == "T-Es Xodim",
+                      "=" + str(charchagan)[:120])
+                check("S-42: charchaganlar TEPADA (HR aynan ularni qidiradi)",
+                      band["pending"][0]["exhausted"] is True,
+                      "=" + str([x["full_name"] for x in band["pending"]]))
+                check("S-42: eslatma soni ko'rinadi",
+                      charchagan and charchagan[0]["reminder_count"] == 3,
+                      "=" + str(charchagan[0]["reminder_count"] if charchagan else None))
+
+            #  Xodim panelni KO'RMAYDI.
+            r = c.get("/acks/instructions/overview", headers=auth(xodim_t))
+            check("S-42: xodim HR paneliga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ══ TANISHGANDAN KEYIN RO'YXATDAN CHIQADI ══
+            r = c.post("/org/my-place/acknowledge", headers=auth(xodim_t))
+            check("S-42: xodim tanishdi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            r = c.get("/acks/instructions/overview", headers=auth(mgr_t))
+            band = next((b for b in r.json() if b["object_id"] == pos["oz"]), None)
+            check("S-42: tanishgan xodim «tanishganlar» ga o'tdi",
+                  band and len(band["read"]) == 1
+                  and band["read"][0]["full_name"] == "T-Es Xodim",
+                  "=" + str(band["read"] if band else None)[:120])
+
+            #  Tanishganga eslatma ketmaydi.
+            eskirt(20)
+            yuborilgan.clear()
+            res = asyncio.run(_tick())
+            check("S-42: tanishganga eslatma YO'Q",
+                  all(y["user_id"] != ids["xodim"] for y in yuborilgan),
+                  "=" + str(res))
+
+            # ══ MEZON 2: YANGI VERSIYA RO'YXATNI QAYTA OCHADI ══
+            r = c.post(f"/org/positions/{pos['oz']}/descriptions",
+                       headers=auth(mgr_t),
+                       json={"purpose": "T-maqsad 2", "duties": ["T-vazifa 2"],
+                             "rights": [], "responsibility": [], "requirements": []})
+            check("S-42: 2-versiya -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code))
+
+            r = c.get("/acks/instructions/overview", headers=auth(mgr_t))
+            band = next((b for b in r.json() if b["object_id"] == pos["oz"]), None)
+            check("S-42: panel YANGI versiyaga o'tdi", band and band["version"] == 2,
+                  "=" + str(band["version"] if band else None))
+            check("S-42: ⚠️ YANGI VERSIYA ro'yxatni QAYTA OCHDI"
+                  " (tanishgan xodim yana tanishmaganlar ichida)",
+                  band and len(band["pending"]) == 2 and len(band["read"]) == 0,
+                  "=" + str((len(band["pending"]), len(band["read"])) if band else None))
+            yangi_sanoq = cur.execute(
+                "select reminder_count from acknowledgements where user_id=?"
+                " and object_type='instruction' and object_id=? and version=2",
+                (ids["xodim"], pos["oz"])).fetchone()[0]
+            check("S-42: ⚠️ yangi versiyada eslatma sanoqi NOLDAN boshlandi",
+                  yangi_sanoq == 0, "=" + str(yangi_sanoq))
+
+            #  Ya'ni bot yangi versiya uchun QAYTA eslata oladi.
+            eskirt(5)
+            yuborilgan.clear()
+            res = asyncio.run(_tick())
+            check("S-42: yangi versiya uchun bot QAYTA eslatdi",
+                  res.get("sent") == 1, "=" + str(res))
+
+            # ══ ESKI VERSIYA UCHUN ESLATMA YO'Q ══
+            eski_sanoq = cur.execute(
+                "select reminder_count from acknowledgements where user_id=?"
+                " and object_type='instruction' and object_id=? and version=1",
+                (ids["xodim"], pos["oz"])).fetchone()[0]
+            check("S-42: ESKI versiya uchun eslatma yuborilmadi (sanoq 3 da qoldi)",
+                  eski_sanoq == 3, "=" + str(eski_sanoq))
+
+        # ══ CRON JADVALIDA BOR ══
+        #  ⚠️ Tick yozilib, cronga ULANMAY qolishi mumkin — u holda modul
+        #  jimgina ishlamasdi.
+        cron_matn = (Path(__file__).resolve().parent / "scripts" / "cron_tick.py").read_text(
+            encoding="utf-8")
+        check("S-42: tick cron jadvaliga ulangan",
+              "instruction_ack_tick" in cron_matn, "=cron_tick.py")
+
+        from api.services import acknowledgements as acksvc
+        check("S-42: chegara sonlari nomlangan (3 kun / 3 marta)",
+              (acksvc.ESLATMA_KUNI, acksvc.MAX_ESLATMA) == (3, 3),
+              "=" + str((acksvc.ESLATMA_KUNI, acksvc.MAX_ESLATMA)))
+
+    except Exception:
+        check("S-42 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+        except Exception:
+            print("S-42 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_bot_endpoint_secret_guard() -> None:
     """Har bir `/bot/...` yo'li SIR bilan qo'riqlanganini tekshiradi.
 
@@ -16238,6 +16500,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_instruction_ack_reminders()
+    except Exception:
+        print("S-42 tanishuv eslatmasi testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

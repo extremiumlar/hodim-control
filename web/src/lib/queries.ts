@@ -1683,6 +1683,10 @@ export const useOrgChart = (opts?: { enabled?: boolean }) =>
 export const useOrgMyPlace = () =>
   useQuery({ queryKey: [...qk.org, "my-place"], queryFn: api.orgMyPlace });
 
+/** HR paneli: kim yo'riqnoma bilan tanishgan / tanishmagan (S-42). */
+export const useInstructionAcks = () =>
+  useQuery({ queryKey: [...qk.org, "acks"], queryFn: api.instructionAcks });
+
 /** «Tanishdim» — muvaffaqiyatdan keyin `my-place` qaytadan o'qiladi. */
 export const useOrgAcknowledge = () =>
   useApiMutation(() => api.orgAcknowledge(), [[...qk.org, "my-place"]]);

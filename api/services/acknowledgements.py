@@ -16,7 +16,7 @@ va «o'sha paytda nimaga rozi bo'lgan edi?» degan savolga javob beradi.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -238,3 +238,170 @@ async def stats(
         "pending": len(qatorlar) - oqigan,
         "version": qatorlar[0].version if qatorlar else None,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# ESLATMA (yangi TZ 3.16 / S-42)
+# ─────────────────────────────────────────────────────────────
+
+#  ⚠️ IKKI SON — MODULNING BUTUN SIYOSATI.
+#  `ESLATMA_KUNI` — so'ralgandan keyin necha kun jim turamiz va
+#  eslatmalar orasida necha kun kutamiz.
+#  `MAX_ESLATMA` — undan keyin bot JIM BO'LADI va band HR ro'yxatiga
+#  tushadi.
+#
+#  NEGA CHEKLANGAN: cheksiz eslatma «shovqin»ga aylanadi va xodim
+#  botni butunlay o'chirib qo'yadi — shundan keyin unga BOSHQA hech
+#  qanday xabar (kechikish, oylik, vazifa) ham yetib bormaydi. Ya'ni
+#  cheksiz eslatma bitta modulni emas, BUTUN tizimni buzadi.
+#  Uch martadan keyin masala texnik emas: HR odam bilan gaplashishi
+#  kerak.
+ESLATMA_KUNI = 3
+MAX_ESLATMA = 3
+
+
+@dataclass(frozen=True)
+class ReminderRow:
+    """Eslatma yuborilishi kerak bo'lgan bitta band."""
+
+    id: int
+    user_id: int
+    object_type: str
+    object_id: int
+    version: int
+    title: str | None
+    link: str | None
+    reminder_count: int
+
+
+async def due_for_reminder(
+    db: AsyncSession,
+    *,
+    object_type: str,
+    now: datetime | None = None,
+) -> list[ReminderRow]:
+    """Eslatma vaqti kelgan bandlar.
+
+    Shart: tanishilmagan · so'ralganiga `ESLATMA_KUNI` kun bo'lgan ·
+    oxirgi eslatmadan beri ham shuncha o'tgan · sanoq `MAX_ESLATMA`
+    dan kichik.
+
+    ⚠️ FAQAT ENG YANGI VERSIYA. Yo'riqnoma ikki marta yangilangan
+    bo'lsa, eski versiya uchun eslatma yuborish mantiqsiz — u
+    almashtirilgan (`pending_for` bilan bir xil qoida)."""
+    hozir = now or datetime.utcnow()
+    chegara = hozir - timedelta(days=ESLATMA_KUNI)
+
+    rows = list(
+        await db.scalars(
+            select(Acknowledgement).where(
+                Acknowledgement.object_type == object_type,
+                Acknowledgement.acknowledged_at.is_(None),
+                Acknowledgement.reminder_count < MAX_ESLATMA,
+                Acknowledgement.requested_at <= chegara,
+            )
+        )
+    )
+    #  Obyekt bo'yicha eng katta versiyani qoldiramiz.
+    eng_yangi: dict[tuple[int, str, int], Acknowledgement] = {}
+    for r in rows:
+        kalit = (r.user_id, r.object_type, r.object_id)
+        bor = eng_yangi.get(kalit)
+        if bor is None or r.version > bor.version:
+            eng_yangi[kalit] = r
+
+    natija = []
+    for r in eng_yangi.values():
+        if r.last_reminded_at is not None and r.last_reminded_at > chegara:
+            continue  # hali erta
+        natija.append(
+            ReminderRow(
+                id=r.id,
+                user_id=r.user_id,
+                object_type=r.object_type,
+                object_id=r.object_id,
+                version=r.version,
+                title=r.title,
+                link=r.link,
+                reminder_count=r.reminder_count,
+            )
+        )
+    return sorted(natija, key=lambda x: x.id)
+
+
+async def mark_reminded(
+    db: AsyncSession, ids: list[int], *, now: datetime | None = None
+) -> int:
+    """Eslatma YUBORILGANDAN KEYIN sanoqni oshiradi.
+
+    ⚠️ Chaqiruvchi COMMIT qiladi. Sanoq xabar HAQIQATAN yuborilgandan
+    keyin oshirilishi kerak — aks holda yuborish yiqilsa xodim
+    eslatmani olmay turib «eslatilgan» bo'lib qolardi."""
+    if not ids:
+        return 0
+    hozir = now or datetime.utcnow()
+    for row in await db.scalars(
+        select(Acknowledgement).where(Acknowledgement.id.in_(ids))
+    ):
+        row.reminder_count = (row.reminder_count or 0) + 1
+        row.last_reminded_at = hozir
+    await db.flush()
+    return len(ids)
+
+
+async def overview(db: AsyncSession, *, object_type: str) -> list[dict]:
+    """HR paneli: obyekt bo'yicha kim tanishgan / kim yo'q.
+
+    ⚠️ FAQAT ENG SO'NGGI VERSIYA hisoblanadi — HR ni «hozirgi matn
+    bilan kim tanishdi?» qiziqtiradi, eski versiyalar tarix.
+
+    ⚠️ `exhausted` — bot uch marta eslatib bo'lgan va endi JIM.
+    Aynan shu odamlar bilan HR gaplashishi kerak; ro'yxatning butun
+    ma'nosi shu."""
+    rows = list(
+        await db.scalars(
+            select(Acknowledgement).where(Acknowledgement.object_type == object_type)
+        )
+    )
+    if not rows:
+        return []
+
+    #  Obyekt bo'yicha eng katta versiya.
+    eng_yangi: dict[int, int] = {}
+    for r in rows:
+        if r.version > eng_yangi.get(r.object_id, 0):
+            eng_yangi[r.object_id] = r.version
+
+    ismlar = {u.id: u.full_name for u in await db.scalars(select(User))}
+    yigma: dict[int, dict] = {}
+    for r in rows:
+        if r.version != eng_yangi.get(r.object_id):
+            continue
+        band = yigma.setdefault(
+            r.object_id,
+            {
+                "object_id": r.object_id,
+                "object_type": r.object_type,
+                "version": r.version,
+                "title": r.title,
+                "read": [],
+                "pending": [],
+            },
+        )
+        odam = {
+            "user_id": r.user_id,
+            "full_name": ismlar.get(r.user_id, "—"),
+            "acknowledged_at": r.acknowledged_at,
+            "reminder_count": r.reminder_count or 0,
+            #  Bot jim bo'ldi — endi HR ning ishi.
+            "exhausted": (r.reminder_count or 0) >= MAX_ESLATMA,
+        }
+        band["read" if r.acknowledged_at else "pending"].append(odam)
+
+    for band in yigma.values():
+        band["read"].sort(key=lambda x: x["full_name"])
+        #  Bot jim bo'lganlar TEPADA — HR aynan ularni qidiradi.
+        band["pending"].sort(key=lambda x: (not x["exhausted"], x["full_name"]))
+        band["total"] = len(band["read"]) + len(band["pending"])
+        band["exhausted_count"] = sum(1 for x in band["pending"] if x["exhausted"])
+    return sorted(yigma.values(), key=lambda b: (-b["exhausted_count"], b["object_id"]))

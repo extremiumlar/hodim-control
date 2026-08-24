@@ -2004,6 +2004,26 @@ export type OrgMyPlace = {
   } | null;
 };
 
+export type AckPerson = {
+  user_id: number;
+  full_name: string;
+  acknowledged_at: string | null;
+  reminder_count: number;
+  /** Bot 3 marta eslatib bo'ldi va endi JIM — HR gaplashishi kerak. */
+  exhausted: boolean;
+};
+
+export type InstructionAckOverview = {
+  object_id: number;
+  object_type: string;
+  version: number;
+  title: string | null;
+  read: AckPerson[];
+  pending: AckPerson[];
+  total: number;
+  exhausted_count: number;
+};
+
 export type JobDescriptionVersion = {
   id: number;
   version: number;

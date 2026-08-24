@@ -3168,6 +3168,18 @@ class Acknowledgement(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    #  ── ESLATMA HISOBI (yangi TZ 3.16 / S-42) ──
+    #  ⚠️ ESLATMA CHEKSIZ BO'LMASLIGI SHART. Sanoqsiz bot har kuni
+    #  yozaverardi va xodim uni o'chirib qo'yardi — shundan keyin
+    #  BOSHQA hech qanday eslatma ham yetib bormasdi. Uch martadan
+    #  keyin bot jim bo'ladi va band HR ro'yxatiga tushadi: bu yerda
+    #  masala texnik emas, HR ning odam bilan gaplashishi kerak.
+    #
+    #  ⚠️ Sanoq (obyekt, VERSIYA) bo'yicha: yangi versiya yangi qator
+    #  demak, ya'ni yangi yo'riqnoma uchun eslatma noldan boshlanadi.
+    reminder_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
 
 class AnnouncementAudience(str, enum.Enum):
     """E'lon kimga boradi (yangi TZ 3.12 / S-21)."""

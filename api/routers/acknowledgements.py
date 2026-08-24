@@ -112,3 +112,27 @@ async def object_stats(
     return await svc.stats(
         db, object_type=object_type, object_id=object_id, version=version
     )
+
+
+#  Kim tanishgan/tanishmaganini KO'RISH — rahbarlar.
+_HR = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
+
+
+@router.get("/instructions/overview")
+async def instructions_overview(
+    _actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """HR paneli: lavozim yo'riqnomalari bo'yicha tanishuv holati.
+
+    ⚠️ FAQAT ENG SO'NGGI VERSIYA. Yo'riqnoma yangilansa ro'yxat
+    QAYTADAN ochiladi (TZ 3.16 qabul mezoni) — eski tanishuv
+    hisobga olinmaydi, chunki xodim eski matnga rozi bo'lgan.
+
+    ⚠️ `exhausted` — bot uch marta eslatib bo'ldi va endi JIM.
+    Aynan shu odamlar bilan HR gaplashishi kerak; ro'yxat shular
+    tepada bo'ladigan qilib saralangan.
+    """
+    from db.models import AckObjectType
+
+    return await svc.overview(db, object_type=AckObjectType.instruction.value)

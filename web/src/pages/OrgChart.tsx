@@ -11,7 +11,7 @@
  * o'zi ro'yxatga aylanadi va alohida ko'rinish yozish shart emas.
  */
 import { useMemo, useState } from "react";
-import { AlertTriangle, ChevronRight, Network, Plus, UserX } from "lucide-react";
+import { AlertTriangle, BellOff, ChevronRight, Network, Plus, UserX } from "lucide-react";
 import { toast } from "sonner";
 
 import PageHeader from "@/components/PageHeader";
@@ -29,6 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import type { OrgNode } from "@/lib/api/types";
 import {
+  useInstructionAcks,
   useOrgAddDescription,
   useOrgChart,
   useOrgDescriptions,
@@ -106,6 +107,99 @@ function Tugun({
   );
 }
 
+/**
+ * Yo'riqnoma tanishuvi — HR paneli (TZ 3.16 / S-42).
+ *
+ * ⚠️ `exhausted` — bot 3 marta eslatib bo'ldi va endi JIM. Aynan
+ * shu odamlar bilan HR gaplashishi kerak, shuning uchun ular
+ * ajratib ko'rsatiladi va ro'yxat tepasida turadi.
+ *
+ * ⚠️ FAQAT ENG SO'NGGI VERSIYA. Yo'riqnoma yangilansa ro'yxat
+ * qaytadan ochiladi — eski tanishuv o'tmaydi (xodim eski matnga
+ * rozi bo'lgan).
+ */
+function TanishuvPaneli() {
+  const { data, isLoading } = useInstructionAcks();
+  const [ochiq, setOchiq] = useState<number | null>(null);
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (!data?.length)
+    return (
+      <p className="text-sm text-slate-600">
+        Hali hech qaysi lavozimga yo'riqnoma kiritilmagan.
+      </p>
+    );
+
+  return (
+    <div className="space-y-2 text-sm">
+      {data.map((b) => (
+        <div key={b.object_id} className="rounded border">
+          <button
+            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+            onClick={() => setOchiq(ochiq === b.object_id ? null : b.object_id)}
+          >
+            <span className="min-w-0">
+              <span className="font-medium">{b.title ?? `Lavozim #${b.object_id}`}</span>
+              <span className="text-xs text-slate-600"> · v{b.version}</span>
+            </span>
+            <span className="flex shrink-0 items-center gap-2 text-xs">
+              <span className={b.pending.length ? "text-amber-700" : "text-emerald-700"}>
+                {b.read.length}/{b.total} tanishgan
+              </span>
+              {b.exhausted_count > 0 && (
+                <span className="flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-red-800">
+                  <BellOff className="h-3 w-3" />
+                  {b.exhausted_count}
+                </span>
+              )}
+            </span>
+          </button>
+          {ochiq === b.object_id && (
+            <div className="space-y-2 border-t px-3 py-2">
+              {!!b.pending.length && (
+                <div>
+                  <div className="mb-1 text-xs text-slate-600">
+                    Tanishmaganlar ({b.pending.length}):
+                  </div>
+                  <ul className="space-y-0.5">
+                    {b.pending.map((u) => (
+                      <li key={u.user_id} className="flex items-center gap-1.5">
+                        {u.exhausted && <BellOff className="h-3.5 w-3.5 text-red-600" />}
+                        <span>{u.full_name}</span>
+                        <span className="text-xs text-slate-600">
+                          · {u.reminder_count} eslatma
+                          {u.exhausted ? " · bot jim, HR gaplashsin" : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {!!b.read.length && (
+                <div>
+                  <div className="mb-1 text-xs text-slate-600">
+                    Tanishganlar ({b.read.length}):
+                  </div>
+                  <ul className="space-y-0.5 text-slate-700">
+                    {b.read.map((u) => (
+                      <li key={u.user_id}>
+                        {u.full_name}
+                        {u.acknowledged_at
+                          ? ` · ${u.acknowledged_at.slice(0, 10)}`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function OrgChart() {
   const { data: chart, isLoading } = useOrgChart();
   const [openId, setOpenId] = useState<number | null>(null);
@@ -173,6 +267,16 @@ export default function OrgChart() {
   return (
     <div className="space-y-4">
       <PageHeader title="Tashkiliy tuzilma" />
+
+      {/* ── Yo'riqnoma tanishuvi (S-42) ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Yo'riqnoma bilan tanishuv</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <TanishuvPaneli />
+        </CardContent>
+      </Card>
 
       {/* ── Bo'shliqlar ──
           ⚠️ `gaps` bo'sh KELISHI MUMKIN: server uni faqat rahbarga

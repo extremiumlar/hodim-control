@@ -1029,6 +1029,85 @@ async def appeals_sla_tick(db: AsyncSession, dry_run: bool = False) -> dict:
     return {"reminded": reminded, "escalated": escalated, "open": len(open_items)}
 
 
+async def instruction_ack_tick(db: AsyncSession, dry_run: bool = False) -> dict:
+    """Yo'riqnoma bilan tanishmaganlarga eslatma (yangi TZ 3.16 / S-42).
+
+    ⚠️ BOT CHEKSIZ ESLATMAYDI. Ko'pi bilan `MAX_ESLATMA` (3) marta,
+    har `ESLATMA_KUNI` (3) kunda bir. Undan keyin bot JIM BO'LADI va
+    band HR ro'yxatiga tushadi (`/acks/instructions/overview`).
+
+    NEGA CHEKLANGAN: cheksiz eslatma xodimni botni butunlay
+    o'chirishga majbur qiladi — shundan keyin unga kechikish, oylik
+    va vazifa xabarlari ham yetib bormaydi. Ya'ni cheksiz eslatma
+    bitta modulni emas, BUTUN xabar kanalini buzadi.
+
+    ⚠️ SANOQ XABAR YUBORILGANDAN KEYIN oshiriladi. Aks holda yuborish
+    yiqilsa (Telegram bloki, `telegram_id` yo'q) xodim eslatmani
+    ko'rmay turib «eslatilgan» bo'lib qolardi va uch marta shu
+    takrorlanib, hech qachon xabar olmasdan HR ro'yxatiga tushardi.
+    """
+    from sqlalchemy import select
+
+    from api.notify import notify_user
+    from api.services import acknowledgements as ack
+    from api.services.push import Category
+    from db.models import AckObjectType, User
+
+    bandlar = await ack.due_for_reminder(db, object_type=AckObjectType.instruction.value)
+    if not bandlar:
+        return {"ok": True, "due": 0, "sent": 0}
+
+    xodimlar = {
+        u.id: u
+        for u in await db.scalars(
+            select(User).where(
+                User.id.in_([b.user_id for b in bandlar]),
+                User.is_active.is_(True),
+                User.telegram_id.isnot(None),
+            )
+        )
+    }
+
+    yuborilgan_ids: list[int] = []
+    for band in bandlar:
+        user = xodimlar.get(band.user_id)
+        if user is None:
+            #  ⚠️ Nofaol yoki Telegramsiz xodim: sanoq OSHIRILMAYDI,
+            #  chunki eslatma yuborilmadi. U HR ro'yxatida
+            #  «tanishmagan» bo'lib qolaveradi — bu to'g'ri holat.
+            continue
+        qolgan = ack.MAX_ESLATMA - (band.reminder_count + 1)
+        #  ⚠️ Sarlavha f-string DAN TASHQARIDA hisoblanadi: Python 3.11
+        #  da f-string ifodasi ichida teskari slesh (apostrof qochirish)
+        #  SINTAKSIS XATOSI beradi.
+        sarlavha = band.title or "Yo'riqnoma"
+        matn = (
+            "📋 <b>Lavozim yo'riqnomangiz bilan tanishing</b>\n\n"
+            f"{sarlavha}\n\n"
+            "Botda «🏢 Mening o'rnim» tugmasini bosing yoki saytda "
+            "«Mening o'rnim» bo'limini oching va yo'riqnomani o'qib "
+            "«✅ Tanishdim» tugmasini bosing."
+        )
+        if qolgan <= 0:
+            #  Oxirgi eslatma — ochiq aytamiz, HR ga borishini bilsin.
+            matn += (
+                "\n\n⚠️ Bu <b>oxirgi eslatma</b>. Tanishmasangiz "
+                "ro'yxat HR ga uzatiladi."
+            )
+        if dry_run:
+            continue
+        await notify_user(
+            db, user, Category.TASKS, matn, data={"path": band.link or "/me/place"}
+        )
+        yuborilgan_ids.append(band.id)
+
+    if not dry_run and yuborilgan_ids:
+        await ack.mark_reminded(db, yuborilgan_ids)
+        await db.commit()
+    return {"ok": True, "due": len(bandlar), "sent": len(yuborilgan_ids),
+            "dry_run": dry_run}
+
+
 async def course_report_tick(db: AsyncSession) -> dict:
     """Kurs yig'ma raqamlarini qayta hisoblaydi va MAJBURIY kursning
     muddati o'tayotganini `deadlines` ga yozadi (yangi TZ 3.1 / S-37).

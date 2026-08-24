@@ -654,6 +654,21 @@ async def main() -> None:
     # tayyor `course_stats` qatorini o'qiydi.
     if now.hour == 8 and now.minute == 50:
         await _run_misc_inprocess(now, "kurs hisoboti", "course_report_tick")
+    # Yo'riqnoma tanishuvi eslatmasi (S-42) — HAR KUNI 9:10.
+    #
+    # ⚠️ `deadline_tick` (9:00) DAN KEYIN, ataylab: ertalabki xabarlar
+    # bir necha daqiqaga taqsimlansin, xodimga bir vaqtda uchta
+    # bildirishnoma tushmasin.
+    #
+    # ⚠️ Bot CHEKSIZ ESLATMAYDI: ko'pi bilan 3 marta, har 3 kunda bir.
+    # Undan keyin band HR ro'yxatiga tushadi
+    # (`/acks/instructions/overview`). Kunda bir marta chaqirilsa ham
+    # `last_reminded_at` qo'riqchisi ortiqcha xabarni to'sadi, ya'ni
+    # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.
+    if now.hour == 9 and now.minute == 10:
+        await _run_misc_inprocess(
+            now, "yo'riqnoma tanishuvi eslatmasi", "instruction_ack_tick"
+        )
     # Muddat eslatmalari (S-13) — HAR KUNI ertalab soat 9:00.
     # Kuniga bir marta: `reminded_at` takrorlanishni o'zi to'sadi, ya'ni
     # cron qayta ishga tushsa ham ikkinchi xabar ketmaydi.
