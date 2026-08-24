@@ -662,6 +662,16 @@ async def main() -> None:
     # javobi jimgina eskirib qolardi.
     if now.hour == 8 and now.minute == 45:
         await _run_misc_inprocess(now, "kompaniya bilim bazasi", "company_kb_tick")
+    # Tugagan onboarding rejalarini yopish (S-49) — HAR KUNI 8:40.
+    #
+    # ⚠️ Qadamlarning bir qismi BOSHQA modulda bajariladi (kurs,
+    # hujjat, instruktaj) va u yerda onboarding chaqirilmaydi —
+    # shuning uchun yakunlash cron ishi. Aks holda 100% bajarilgan
+    # reja HR ro'yxatida `active` bo'lib turaverardi.
+    if now.hour == 8 and now.minute == 40:
+        await _run_misc_inprocess(
+            now, "onboarding yakuni", "onboarding_finish_tick"
+        )
     # Yo'riqnoma tanishuvi eslatmasi (S-42) — HAR KUNI 9:10.
     #
     # ⚠️ `deadline_tick` (9:00) DAN KEYIN, ataylab: ertalabki xabarlar

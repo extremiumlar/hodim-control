@@ -13502,6 +13502,281 @@ class _SoxtaUser:
 
 
 
+
+def test_briefing_report() -> None:
+    """S-49 (TZ 3.6) — instruktaj hisoboti va muddat.
+
+    Qabul mezonlari (TZ):
+      • muddati O\'TGAN instruktaj ro\'yxati;
+      • ESLATMA TAKRORLANMAYDI;
+      • yangi xodimga KIRISH instruktaji ONBOARDINGDAN tushadi.
+    """
+    import asyncio
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-49: INSTRUKTAJ — HISOBOT VA MUDDAT")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from acknowledgements where object_type='briefing'"
+            " and object_id in (select id from safety_briefings"
+            "  where title like 'T-Hs%')")
+        cur.execute(
+            "delete from acknowledgements where user_id in"
+            " (select id from users where full_name like 'T-Hs%')")
+        cur.execute(
+            "delete from deadlines where user_id in"
+            " (select id from users where full_name like 'T-Hs%')")
+        cur.execute(
+            "delete from tasks where assigned_to in"
+            " (select id from users where full_name like 'T-Hs%')"
+            " or title like 'T-Hs%'")
+        cur.execute(
+            "delete from onboarding_progress where plan_id in"
+            " (select id from onboarding_plans where user_id in"
+            "  (select id from users where full_name like 'T-Hs%'))")
+        cur.execute(
+            "delete from onboarding_plans where user_id in"
+            " (select id from users where full_name like 'T-Hs%')")
+        cur.execute(
+            "delete from onboarding_steps where template_id in"
+            " (select id from onboarding_templates where name like 'T-Hs%')")
+        cur.execute("delete from onboarding_templates where name like 'T-Hs%'")
+        cur.execute("delete from safety_briefings where title like 'T-Hs%'")
+        cur.execute("delete from users where full_name like 'T-Hs%'")
+        conn.commit()
+
+    yuborilgan: list = []
+
+    async def _deadline_tick():
+        """`deadline_tick` — xabar YUBORISHI to'silgan holda."""
+        import api.notify as notify_mod
+        import api.services.cron_jobs as cj
+        from db.base import async_session
+
+        asl = notify_mod.notify_user
+
+        async def soxta(db_, user, category, text, **kw):
+            yuborilgan.append({"user_id": user.id, "text": text})
+            return None
+
+        notify_mod.notify_user = soxta
+        try:
+            async with async_session() as s2:
+                return await cj.deadline_tick(s2)
+        finally:
+            notify_mod.notify_user = asl
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started,"
+            " is_active, created_at) values (999704901,'T-Hs Ishchi','employee',"
+            "0,1,datetime('now'))")
+        ids["ishchi"] = cur.lastrowid
+        conn.commit()
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══ MEZON 1: MUDDATI O'TGANLAR ══
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "repeat", "title": "T-Hs Eski takroriy",
+                "held_on": "2025-01-01", "repeat_months": 6,
+                "user_ids": [ids["ishchi"]]})
+            check("S-49: eski instruktaj yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            ids["eski"] = r.json().get("id")
+
+            r = c.get("/briefings/report", headers=auth(mgr_t))
+            check("S-49: hisobot -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            hisobot = r.json() if r.status_code == 200 else {}
+            kech = [x for x in hisobot.get("overdue", [])
+                    if x["user_id"] == ids["ishchi"]]
+            check("S-49: ⚠️ MUDDATI O'TGAN instruktaj ro'yxatda",
+                  len(kech) == 1, "=" + str(kech))
+            check("S-49: kechikish kunlari hisoblangan",
+                  kech and kech[0]["days_late"] > 300,
+                  "=" + str(kech[0]["days_late"] if kech else None))
+            check("S-49: eng ko'p kechikkan TEPADA",
+                  hisobot.get("overdue")
+                  and hisobot["overdue"][0]["days_late"]
+                  >= hisobot["overdue"][-1]["days_late"],
+                  "=" + str([x["days_late"] for x in hisobot.get("overdue", [])]))
+
+            kutayotgan = [x for x in hisobot.get("pending", [])
+                          if x["user_id"] == ids["ishchi"]]
+            check("S-49: tanishmaganlar ro'yxatida ham bor",
+                  len(kutayotgan) == 1, "=" + str(kutayotgan))
+
+            #  ⚠️ KIRISH instruktajisiz xodimlar alohida ko'rsatiladi —
+            #  tekshiruvchi birinchi shuni so'raydi.
+            check("S-49: ⚠️ KIRISH instruktajisiz xodimlar ro'yxati bor",
+                  "T-Hs Ishchi" in (hisobot.get("without_intro") or []),
+                  "=" + str(hisobot.get("without_intro"))[:110])
+
+            #  Audit kesimi.
+            audit = [a for a in hisobot.get("audit", [])
+                     if a["user_id"] == ids["ishchi"]]
+            check("S-49: kadr auditi kesimida xodim bor", len(audit) == 1,
+                  "=" + str(len(audit)))
+            check("S-49: auditda TUR bo'yicha ko'rsatilgan",
+                  audit and "repeat" in (audit[0].get("kinds") or {}),
+                  "=" + str(audit[0].get("kinds") if audit else None))
+            check("S-49: auditda `has_intro` bayrog'i bor",
+                  audit and audit[0].get("has_intro") is False,
+                  "=" + str(audit[0].get("has_intro") if audit else None))
+
+            r = c.get("/briefings/report", headers=auth(token_for(ids["ishchi"], "employee")))
+            check("S-49: xodim hisobotga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            #  ⚠️ `/report` `/{id}` dan OLDIN turishi kerak — aks
+            #  holda «report» id sifatida o'qilib 422 berardi.
+            check("S-49: ⚠️ `/report` marshruti id bilan ALMASHMADI"
+                  " (422 emas)", r.status_code != 422, "kod=" + str(r.status_code))
+
+            # ══ MEZON 2: ESLATMA TAKRORLANMAYDI ══
+            #  Muddatni bugunga yaqinlashtiramiz — eslatma oynasiga
+            #  tushsin.
+            cur.execute(
+                "update deadlines set due_date=date('now','+3 days'),"
+                " reminded_at=null where kind='safety_briefing' and user_id=?",
+                (ids["ishchi"],))
+            conn.commit()
+
+            yuborilgan.clear()
+            r1 = asyncio.run(_deadline_tick())
+            birinchi = [y for y in yuborilgan]
+            check("S-49: eslatma yuborildi", len(birinchi) >= 1,
+                  "=" + str(r1))
+
+            yuborilgan.clear()
+            r2 = asyncio.run(_deadline_tick())
+            check("S-49: ⚠️ SHU KUNI IKKINCHI eslatma YUBORILMADI",
+                  len(yuborilgan) == 0, "=" + str(r2) + " yuborilgan="
+                  + str(len(yuborilgan)))
+
+            iz = cur.execute(
+                "select reminded_at from deadlines where kind='safety_briefing'"
+                " and user_id=?", (ids["ishchi"],)).fetchone()
+            check("S-49: takrorlanmaslik izi (`reminded_at`) yozildi",
+                  iz is not None and iz[0] is not None, "=" + str(iz))
+
+            # ══ MEZON 3: KIRISH INSTRUKTAJI ONBOARDINGDAN ══
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "intro", "title": "T-Hs Kirish (standart)",
+                "held_on": "2026-08-24", "user_ids": [ids["ishchi"]]})
+            check("S-49: standart kirish instruktaji yaratildi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code))
+            ids["kirish"] = r.json().get("id")
+
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Hs Shablon", "steps": [
+                    {"title": "T-Hs Kirish instruktaji", "kind": "briefing",
+                     "ref_id": ids["kirish"], "due_offset_days": 1},
+                ]})
+            check("S-49: instruktaj qadamli shablon -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code) + r.text[:90])
+            ids["tpl"] = r.json().get("id")
+
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (999704902,'T-Hs Yangi','employee',"
+                "0,1,datetime('now'))")
+            ids["yangi"] = cur.lastrowid
+            conn.commit()
+            yangi_t = token_for(ids["yangi"], "employee")
+
+            r = c.post("/onboarding/plans", headers=auth(mgr_t), json={
+                "user_id": ids["yangi"], "template_id": ids["tpl"]})
+            check("S-49: yangi xodimga reja ochildi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code) + r.text[:110])
+
+            #  ⚠️ INSTRUKTAJ SO'ROVI ONBOARDINGDAN TUSHDI.
+            r = c.get("/briefings/me", headers=auth(yangi_t))
+            meniki = r.json() if r.status_code == 200 else []
+            check("S-49: ⚠️ KIRISH instruktaji ONBOARDINGDAN tushdi",
+                  len(meniki) == 1 and meniki[0]["id"] == ids["kirish"],
+                  "=" + str([(b["id"], b["title"]) for b in meniki]))
+            check("S-49: hali tanishmagan",
+                  meniki and meniki[0]["acknowledged"] is False,
+                  "=" + str(meniki[0]["acknowledged"] if meniki else None))
+
+            #  ⚠️ YANGI INSTRUKTAJ YOZUVI YARATILMAYDI — kod HR
+            #  o'tkazgan real voqeani o'ylab topmaydi.
+            soni = cur.execute(
+                "select count(*) from safety_briefings where title like 'T-Hs%'"
+            ).fetchone()[0]
+            check("S-49: ⚠️ yangi instruktaj YOZUVI yaratilmadi (2 ta qoldi)",
+                  soni == 2, "=" + str(soni))
+
+            #  Tanishgach onboarding qadami O'ZI bajariladi.
+            r = c.get("/onboarding/me", headers=auth(yangi_t))
+            reja = r.json() if r.status_code == 200 else {}
+            check("S-49: onboarding qadami hali bajarilmagan",
+                  reja and reja.get("done") == 0, "=" + str(reja.get("done") if reja else None))
+
+            r = c.post(f"/briefings/me/{ids['kirish']}/ack", headers=auth(yangi_t))
+            check("S-49: xodim instruktaj bilan tanishdi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + r.text[:90])
+
+            r = c.get("/onboarding/me", headers=auth(yangi_t))
+            keyin = r.json() if r.status_code == 200 else None
+            check("S-49: ⚠️ tanishgach ONBOARDING qadami O'ZI bajarildi"
+                  " (holat ikki joyda saqlanmaydi)",
+                  keyin is None or keyin.get("done") == 1,
+                  "=" + str(keyin.get("done") if keyin else "reja yakunlandi"))
+
+            #  ⚠️ REJA `active` BO'LIB QOLGAN: oxirgi qadam BOSHQA
+            #  modulda bajarildi va u yerda onboarding chaqirilmaydi.
+            #  Shuning uchun yakunlash CRON ishi — aks holda 100%
+            #  bajarilgan reja HR ro'yxatida osilib turardi.
+            check("S-49: tashqi modulda bajarilgan reja hali `active`",
+                  keyin is not None and keyin.get("status") == "active"
+                  and keyin.get("percent") == 100,
+                  "=" + str((keyin.get("status"), keyin.get("percent"))
+                            if keyin else None))
+
+            async def _yakunla():
+                import api.services.cron_jobs as cj
+                from db.base import async_session
+                async with async_session() as s3:
+                    return await cj.onboarding_finish_tick(s3)
+
+            natija = asyncio.run(_yakunla())
+            check("S-49: ⚠️ CRON to'liq bajarilgan rejani YAKUNLADI",
+                  natija.get("finished", 0) >= 1, "=" + str(natija))
+            r = c.get("/onboarding/me", headers=auth(yangi_t))
+            check("S-49: yakunlangach `/me` bo'sh qaytadi",
+                  r.status_code == 200 and r.json() is None,
+                  "=" + str(r.text)[:70])
+
+            cron_matn = (Path(__file__).resolve().parent / "scripts"
+                         / "cron_tick.py").read_text(encoding="utf-8")
+            check("S-49: yakunlash tick cron jadvalida bor",
+                  "onboarding_finish_tick" in cron_matn, "=cron_tick.py")
+
+    except Exception:
+        check("S-49 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+        except Exception:
+            print("S-49 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_safety_briefings() -> None:
     """S-48 (TZ 3.6) — texnika xavfsizligi instruktaji jurnali.
 
@@ -18069,6 +18344,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_briefing_report()
+    except Exception:
+        print("S-49 instruktaj hisoboti testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

@@ -218,6 +218,37 @@ async def _link_step(
     #  alohida xabar mexanizmi qurilmaydi.
     await _create_task(db, band, user, actor_id)
 
+    #  ⚠️ INSTRUKTAJ QADAMI (TZ 3.6 / S-49): yangi xodimga KIRISH
+    #  instruktaji aynan onboardingdan tushadi. Shablon qadamida
+    #  `ref_id` — mavjud instruktaj yozuvi; undan xodimdan
+    #  tanishish SO'RALADI (S-20 mexanizmi). Yangi instruktaj
+    #  yozuvi YARATILMAYDI: u HR o'tkazgan real voqea va uni kod
+    #  o'ylab topmasligi kerak.
+    if step.kind == OnboardingStepKind.briefing.value and step.ref_id:
+        try:
+            from api.services import acknowledgements as ack
+            from api.services import briefings as bsvc
+
+            await ack.request_ack(
+                db,
+                object_type=bsvc.ACK_TYPE,
+                object_id=step.ref_id,
+                version=bsvc.ACK_VERSION,
+                user_ids=[user.id],
+                title=f"Instruktaj — {band.title}",
+                link="/me/briefings",
+                requested_by=actor_id,
+            )
+            band.ref_id = step.ref_id
+            await db.flush()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Onboarding qadami instruktajga ulanmadi (plan=%s, briefing=%s)",
+                band.plan_id,
+                step.ref_id,
+            )
+        return
+
     if step.kind != OnboardingStepKind.course.value or not step.ref_id:
         return
     try:
@@ -270,6 +301,22 @@ async def _auto_done(db: AsyncSession, plan: OnboardingPlan, band: OnboardingPro
             ).limit(1)
         )
         return otdi is not None
+    if band.kind == OnboardingStepKind.briefing.value and band.ref_id:
+        #  ⚠️ Holat `acknowledgements` da — onboarding uni NUSXA
+        #  qilmaydi (S-45 qoidasi). Xodim botda «Tanishdim» bossa
+        #  onboarding qadami ham o'zi bajarilgan bo'ladi.
+        from api.services import briefings as bsvc
+        from db.models import Acknowledgement
+
+        iz = await db.scalar(
+            select(Acknowledgement.acknowledged_at).where(
+                Acknowledgement.user_id == plan.user_id,
+                Acknowledgement.object_type == bsvc.ACK_TYPE,
+                Acknowledgement.object_id == band.ref_id,
+            ).limit(1)
+        )
+        return iz is not None
+
     if band.kind == OnboardingStepKind.document.value and band.ref_text:
         topildi = await db.scalar(
             select(EmployeeDocument.id).where(

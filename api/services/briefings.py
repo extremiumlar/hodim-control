@@ -314,3 +314,142 @@ async def _close_deadline(db: AsyncSession, user_id: int, briefing_id: int) -> b
     muddat.status = DeadlineStatus.done.value
     await db.flush()
     return True
+
+
+# ─────────────────────────────────────────────────────────────
+# HISOBOT VA KADR AUDITI (yangi TZ 3.6 / S-49)
+# ─────────────────────────────────────────────────────────────
+
+
+async def overdue(db: AsyncSession, today: date | None = None) -> list[dict]:
+    """Muddati O'TGAN takroriy instruktajlar.
+
+    ⚠️ MANBA — `deadlines` (S-12), bu yerda qayta hisoblanmaydi.
+    Muddat instruktaj yaratilganda o'sha yerga yozilgan va xodim
+    tanishgach yopiladi; ya'ni OCHIQ va sanasi o'tgan qator
+    aynan «muddati o'tgan instruktaj» degani. Ikkinchi hisob
+    qilsak, ikkita haqiqat paydo bo'lardi."""
+    from api.timeutil import today_local
+
+    bugun = today or today_local()
+    rows = list(
+        await db.scalars(
+            select(Deadline).where(
+                Deadline.kind == DeadlineKind.safety_briefing.value,
+                Deadline.status == DeadlineStatus.open.value,
+                Deadline.due_date.isnot(None),
+                Deadline.due_date < bugun,
+            )
+        )
+    )
+    if not rows:
+        return []
+    ismlar = {u.id: u.full_name for u in await db.scalars(select(User))}
+    natija = [
+        {
+            "user_id": r.user_id,
+            "full_name": ismlar.get(r.user_id, "—"),
+            "due_date": r.due_date,
+            "days_late": (bugun - r.due_date).days,
+            "note": r.note,
+        }
+        for r in rows
+    ]
+    #  Eng ko'p kechikkanlar TEPADA — ular eng katta xavf.
+    return sorted(natija, key=lambda x: -x["days_late"])
+
+
+async def audit_rows(db: AsyncSession) -> list[dict]:
+    """Kadr auditi so'rovi (TZ 3.30 uchun tayyorlangan).
+
+    ⚠️ TEKSHIRUVCHI SAVOLI SHAKLIDA: «har bir xodim bo'yicha
+    qaysi turdagi instruktaj, qachon, tanishganmi». Aynan shu
+    kesimda so'raladi va uni jurnal ro'yxatidan qo'lda yig'ish
+    uzoq vaqt olardi.
+
+    ⚠️ FAOL xodimlar bo'yicha. Ishdan bo'shaganlar auditda
+    so'ralmaydi va ro'yxatni uzaytirib yuborardi."""
+    xodimlar = list(
+        await db.scalars(
+            select(User).where(User.is_active.is_(True)).order_by(User.full_name)
+        )
+    )
+    instruktajlar = {r.id: r for r in await db.scalars(alive())}
+    if not instruktajlar:
+        return [
+            {"user_id": u.id, "full_name": u.full_name, "kinds": {}} for u in xodimlar
+        ]
+
+    izlar = list(
+        await db.scalars(
+            select(Acknowledgement).where(Acknowledgement.object_type == ACK_TYPE)
+        )
+    )
+    #  (xodim, tur) -> eng SO'NGGI instruktaj
+    yigma: dict[tuple[int, str], dict] = {}
+    for iz in izlar:
+        b = instruktajlar.get(iz.object_id)
+        if b is None:
+            continue
+        kalit = (iz.user_id, b.kind)
+        bor = yigma.get(kalit)
+        if bor is None or b.held_on > bor["held_on"]:
+            yigma[kalit] = {
+                "briefing_id": b.id,
+                "title": b.title,
+                "held_on": b.held_on,
+                "acknowledged": iz.acknowledged_at is not None,
+                "acknowledged_at": iz.acknowledged_at,
+            }
+
+    return [
+        {
+            "user_id": u.id,
+            "full_name": u.full_name,
+            "kinds": {
+                tur: yigma[(u.id, tur)]
+                for tur in BRIEFING_KIND_LABELS
+                if (u.id, tur) in yigma
+            },
+            #  Tekshiruvchi birinchi shuni so'raydi: KIRISH
+            #  instruktaji bormi. Yo'q bo'lsa bu jiddiy kamchilik.
+            "has_intro": (u.id, BriefingKind.intro.value) in yigma,
+        }
+        for u in xodimlar
+    ]
+
+
+async def report(db: AsyncSession) -> dict:
+    """Umumiy hisobot: tanishmaganlar, muddati o'tganlar, audit."""
+    kutayotganlar = []
+    ismlar = {u.id: u.full_name for u in await db.scalars(select(User))}
+    instruktajlar = {r.id: r for r in await db.scalars(alive())}
+    for iz in await db.scalars(
+        select(Acknowledgement).where(
+            Acknowledgement.object_type == ACK_TYPE,
+            Acknowledgement.acknowledged_at.is_(None),
+        )
+    ):
+        b = instruktajlar.get(iz.object_id)
+        if b is None:
+            continue
+        kutayotganlar.append(
+            {
+                "user_id": iz.user_id,
+                "full_name": ismlar.get(iz.user_id, "—"),
+                "briefing_id": b.id,
+                "title": b.title,
+                "kind_label": kind_label(b.kind),
+                "held_on": b.held_on,
+                "reminder_count": iz.reminder_count or 0,
+            }
+        )
+    kutayotganlar.sort(key=lambda x: (x["held_on"], x["full_name"]))
+
+    audit = await audit_rows(db)
+    return {
+        "pending": kutayotganlar,
+        "overdue": await overdue(db),
+        "audit": audit,
+        "without_intro": [a["full_name"] for a in audit if not a["has_intro"]],
+    }

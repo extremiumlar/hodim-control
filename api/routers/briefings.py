@@ -157,6 +157,25 @@ async def create_briefing(
     return out
 
 
+@router.get("/report")
+async def report(
+    _actor: User = Depends(require_roles(*_HR)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Hisobot: kim tanishmagan, muddati o'tganlar, kadr auditi.
+
+    ⚠️ Bu yo'l `/{briefing_id}` DAN OLDIN turishi SHART — aks
+    holda «report» so'zi id sifatida o'qilib 422 berardi (S-28 da
+    jonli uchragan tuzoq).
+
+    ⚠️ OG'IR SO'ROV EMAS: xodimlar o'nlab, instruktajlar yuzlab.
+    Ro'yxatlar bir marta o'qiladi va xotirada birlashtiriladi —
+    N+1 yo'q."""
+    out = await svc.report(db)
+    out["paper_journal_warning"] = PAPER_JOURNAL_WARNING
+    return out
+
+
 @router.get("/{briefing_id}")
 async def read_briefing(
     briefing_id: int,

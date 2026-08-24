@@ -1046,6 +1046,41 @@ async def company_kb_tick(db: AsyncSession) -> dict:
     await db.commit()
     return natija
 
+async def onboarding_finish_tick(db: AsyncSession) -> dict:
+    """To'liq bajarilgan onboarding rejalarini yakunlaydi (S-49).
+
+    ⚠️ NEGA CRON KERAK. Reja `mark_done` chaqirilganda yakunlanadi,
+    lekin qadamlarning bir qismi BOSHQA modulda bajariladi (kurs
+    o'tildi, hujjat topshirildi, instruktaj bilan tanishildi) va
+    u yerda onboarding umuman chaqirilmaydi. Natijada oxirgi
+    qadami kurs bo'lgan reja 100% bajarilgan bo'lsa ham `active`
+    bo'lib qolaverardi va HR ro'yxatidan tushmasdi.
+
+    ⚠️ SAHIFADA HAL QILINMAYDI. `GET` so'rovida yozish noto'g'ri
+    bo'lardi: Passenger'da konkurentlik = 1 va har sahifa ochilishi
+    yozuv tranzaksiyasiga aylanardi.
+
+    Ish yengil: faol rejalar o'nlab bo'ladi."""
+    from sqlalchemy import select
+
+    from api.services import onboarding as obsvc
+    from db.models import OnboardingPlan, OnboardingStatus
+
+    rejalar = list(
+        await db.scalars(
+            select(OnboardingPlan).where(
+                OnboardingPlan.status == OnboardingStatus.active.value
+            )
+        )
+    )
+    yakunlandi = 0
+    for plan in rejalar:
+        if await obsvc.finish_if_complete(db, plan):
+            yakunlandi += 1
+    if yakunlandi:
+        await db.commit()
+    return {"ok": True, "active": len(rejalar), "finished": yakunlandi}
+
 async def instruction_ack_tick(db: AsyncSession, dry_run: bool = False) -> dict:
     """Yo'riqnoma bilan tanishmaganlarga eslatma (yangi TZ 3.16 / S-42).
 
