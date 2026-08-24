@@ -13440,6 +13440,317 @@ class _SoxtaUser:
         self.position = position
 
 
+
+def test_onboarding_model() -> None:
+    """S-45 (TZ 3.2) — onboarding: model va shablon.
+
+    Qabul mezonlari (TZ):
+      • shablondan reja yaratiladi, qadamlar NUSXALANADI;
+      • qadam turi bo\'yicha bog\'lanish (kurs tayinlanadi, hujjat
+        kutiladi);
+      • test: shablon -> reja -> progress.
+    """
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-45: ONBOARDING — MODEL VA SHABLON")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from onboarding_progress where plan_id in"
+            " (select id from onboarding_plans where user_id in"
+            "  (select id from users where full_name like 'T-Ob%'))")
+        cur.execute(
+            "delete from onboarding_plans where user_id in"
+            " (select id from users where full_name like 'T-Ob%')")
+        cur.execute(
+            "delete from onboarding_steps where template_id in"
+            " (select id from onboarding_templates where name like 'T-Ob%')")
+        cur.execute("delete from onboarding_templates where name like 'T-Ob%'")
+        cur.execute(
+            "delete from course_results where assignment_id in"
+            " (select id from course_assignments where user_id in"
+            "  (select id from users where full_name like 'T-Ob%'))")
+        cur.execute(
+            "delete from course_assignments where user_id in"
+            " (select id from users where full_name like 'T-Ob%')")
+        cur.execute(
+            "delete from employee_documents where user_id in"
+            " (select id from users where full_name like 'T-Ob%')")
+        cur.execute(
+            "delete from courses where title like 'T-Ob%'")
+        cur.execute("delete from users where full_name like 'T-Ob%'")
+        cur.execute("delete from positions where name like 'T-Ob%'")
+        conn.commit()
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-Ob Sotuvchi',1,datetime('now'))")
+        ids["pos"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999704501,'T-Ob Yangi','employee',0,1,"
+            "?,datetime('now'))", (ids["pos"],))
+        ids["xodim"] = cur.lastrowid
+        #  Kurs qadami uchun tirik kurs
+        cur.execute(
+            "insert into courses (title, description, is_published, is_mandatory,"
+            " pass_percent, created_at) values ('T-Ob Kurs','', 1, 0, 50,"
+            " datetime('now'))")
+        ids["kurs"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══ SHABLON ══
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Ob Umumiy", "steps": [
+                    {"title": "T-Ob 1-kun tanishuv", "kind": "meeting",
+                     "owner_role": "hr", "due_offset_days": 0},
+                ]})
+            check("S-45: UMUMIY shablon yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            ids["tpl_umumiy"] = r.json().get("id")
+
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Ob Sotuvchi uchun",
+                "position_id": ids["pos"],
+                "steps": [
+                    {"title": "T-Ob Shartnoma topshirish", "kind": "document",
+                     "ref_text": "contract", "due_offset_days": 3,
+                     "owner_role": "hr"},
+                    {"title": "T-Ob Kirish kursi", "kind": "course",
+                     "ref_id": ids["kurs"], "due_offset_days": 7},
+                    {"title": "T-Ob Rahbar bilan uchrashuv", "kind": "meeting",
+                     "due_offset_days": 1},
+                ]})
+            check("S-45: LAVOZIM shabloni yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            ids["tpl"] = r.json().get("id")
+            check("S-45: qadamlar soni javobda", r.json().get("step_count") == 3,
+                  "=" + str(r.json()))
+
+            r = c.post("/onboarding/templates", headers=auth(mgr_t),
+                       json={"name": "T-Ob Bo'sh", "steps": []})
+            check("S-45: qadamsiz shablon RAD etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            r = c.post("/onboarding/templates", headers=auth(mgr_t), json={
+                "name": "T-Ob Xato tur",
+                "steps": [{"title": "x", "kind": "raqs"}]})
+            check("S-45: noma'lum qadam turi RAD etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code))
+
+            #  Xodim shablonlarni ko'rmaydi.
+            r = c.get("/onboarding/templates", headers=auth(xodim_t))
+            check("S-45: xodim shablonlarga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            # ══ MEZON 1: SHABLONDAN REJA, QADAMLAR NUSXALANADI ══
+            r = c.post("/onboarding/plans", headers=auth(mgr_t), json={
+                "user_id": ids["xodim"], "start_date": "2026-08-24"})
+            check("S-45: reja yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:120])
+            reja = r.json() if r.status_code == 201 else {}
+            ids["plan"] = reja.get("plan_id")
+            check("S-45: ⚠️ ANIQROQ shablon tanlandi (lavozimniki, umumiysi emas)",
+                  reja.get("template_name") == "T-Ob Sotuvchi uchun",
+                  "=" + str(reja.get("template_name")))
+            check("S-45: uchala qadam NUSXALANDI", reja.get("total") == 3,
+                  "=" + str(reja.get("total")))
+
+            bandlar = {b["title"]: b for b in (reja.get("items") or [])}
+            check("S-45: ⚠️ MUDDAT boshlanish sanasidan hisoblandi",
+                  bandlar.get("T-Ob Shartnoma topshirish", {}).get("due_date")
+                  == "2026-08-27",
+                  "=" + str(bandlar.get("T-Ob Shartnoma topshirish", {}).get("due_date")))
+            check("S-45: mas'ul ROLdan aniq ODAM hisoblandi",
+                  bandlar.get("T-Ob Shartnoma topshirish", {}).get("owner_user_id")
+                  is not None,
+                  "=" + str(bandlar.get("T-Ob Shartnoma topshirish", {}).get("owner_user_id")))
+
+            # ══ SHABLON TAHRIRI YO'LDAGI REJAGA TA'SIR QILMAYDI ══
+            cur.execute(
+                "update onboarding_steps set title='T-Ob O''ZGARTIRILDI'"
+                " where template_id=? and kind='meeting'", (ids["tpl"],))
+            conn.commit()
+            r = c.get(f"/onboarding/plans/{ids['plan']}", headers=auth(mgr_t))
+            nomlar = [b["title"] for b in r.json().get("items", [])]
+            check("S-45: ⚠️ SHABLON tahriri YO'LDAGI rejani o'zgartirmadi",
+                  "T-Ob Rahbar bilan uchrashuv" in nomlar
+                  and "T-Ob O'ZGARTIRILDI" not in nomlar,
+                  "=" + str(nomlar))
+
+            # ══ MEZON 2: QADAM TURI BO'YICHA BOG'LANISH ══
+            kurs_band = bandlar.get("T-Ob Kirish kursi", {})
+            check("S-45: ⚠️ KURS qadami kursni TAYINLADI",
+                  kurs_band.get("ref_id") is not None, "=" + str(kurs_band))
+            tayinlov = cur.execute(
+                "select id, course_id, user_id, due_date from course_assignments"
+                " where user_id=?", (ids["xodim"],)).fetchone()
+            check("S-45: kurs tayinlovi bazada bor",
+                  tayinlov is not None and tayinlov[1] == ids["kurs"],
+                  "=" + str(tayinlov))
+            check("S-45: tayinlov muddati qadam muddatidan olindi",
+                  tayinlov is not None and str(tayinlov[3])[:10] == "2026-08-31",
+                  "=" + str(tayinlov))
+
+            check("S-45: kurs qadami hali BAJARILMAGAN",
+                  kurs_band.get("done") is False, "=" + str(kurs_band.get("done")))
+
+            #  Kursni «o'tdi» qilamiz — onboarding O'ZI ko'radi.
+            cur.execute(
+                "update course_assignments set status='finished' where id=?",
+                (tayinlov[0],))
+            cur.execute(
+                "insert into course_results (assignment_id, attempt_no, score,"
+                " max_score, percent, passed, pending_review, answers, finished_at)"
+                " values (?,1,10,10,100,1,0,'[]',datetime('now'))", (tayinlov[0],))
+            conn.commit()
+            r = c.get(f"/onboarding/plans/{ids['plan']}", headers=auth(mgr_t))
+            kurs2 = next(b for b in r.json()["items"] if b["kind"] == "course")
+            check("S-45: ⚠️ KURS o'tilgach onboarding O'ZI ko'rdi"
+                  " (holat ikki joyda saqlanmaydi)",
+                  kurs2["done"] is True, "=" + str(kurs2))
+            check("S-45: `done_at` bo'sh, lekin `done` rost (manba boshqa modul)",
+                  kurs2["done_at"] is None, "=" + str(kurs2["done_at"]))
+
+            #  Hujjat qadami — hujjat qo'shilsa bajariladi.
+            hujjat_band = next(b for b in r.json()["items"] if b["kind"] == "document")
+            check("S-45: HUJJAT qadami hali kutilmoqda",
+                  hujjat_band["done"] is False, "=" + str(hujjat_band["done"]))
+            cur.execute(
+                "insert into employee_documents (user_id, doc_type, name, file_id,"
+                " file_type, uploaded_by, created_at) values (?, 'contract',"
+                " 'T-Ob shartnoma', 'T-file', 'document', ?, datetime('now'))",
+                (ids["xodim"], mgr[0]))
+            conn.commit()
+            r = c.get(f"/onboarding/plans/{ids['plan']}", headers=auth(mgr_t))
+            hujjat2 = next(b for b in r.json()["items"] if b["kind"] == "document")
+            check("S-45: ⚠️ HUJJAT topshirilgach qadam O'ZI bajarildi",
+                  hujjat2["done"] is True, "=" + str(hujjat2))
+
+            # ══ MEZON 3: PROGRESS ══
+            holat = r.json()
+            check("S-45: progress 3 dan 2 tasi bajarilgan", holat["done"] == 2,
+                  "=" + str((holat["done"], holat["total"])))
+            check("S-45: foiz hisoblandi", holat["percent"] == 67,
+                  "=" + str(holat["percent"]))
+
+            #  Qo'lda belgilash — uchrashuv qadami.
+            uchrashuv = next(b for b in holat["items"] if b["kind"] == "meeting")
+            r = c.post(f"/onboarding/items/{uchrashuv['id']}/done",
+                       headers=auth(xodim_t), json={"note": "T-bajardim"})
+            check("S-45: xodim O'Z qadamini belgiladi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code) + r.text[:90])
+            yakun = r.json() if r.status_code == 200 else {}
+            check("S-45: hammasi bajarildi -> reja YAKUNLANDI",
+                  yakun.get("status") == "done" and yakun.get("percent") == 100,
+                  "=" + str((yakun.get("status"), yakun.get("percent"))))
+
+            #  Idempotent: qayta bosishda birinchi vaqt saqlanadi.
+            birinchi = cur.execute(
+                "select done_at from onboarding_progress where id=?",
+                (uchrashuv["id"],)).fetchone()[0]
+            c.post(f"/onboarding/items/{uchrashuv['id']}/done",
+                   headers=auth(xodim_t), json={})
+            keyin = cur.execute(
+                "select done_at from onboarding_progress where id=?",
+                (uchrashuv["id"],)).fetchone()[0]
+            check("S-45: qayta belgilashda BIRINCHI vaqt saqlandi",
+                  birinchi == keyin, "=" + str(birinchi) + " -> " + str(keyin))
+
+            # ══ IKKINCHI FAOL REJA YARATILMAYDI ══
+            #  ⚠️ Birinchi reja YAKUNLANDI, shuning uchun yangisi
+            #  ochilishi KERAK — cheklov faqat FAOL rejalarga.
+            r = c.post("/onboarding/plans", headers=auth(mgr_t),
+                       json={"user_id": ids["xodim"]})
+            check("S-45: yakunlangandan keyin YANGI reja ochildi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code) + r.text[:90])
+            r = c.post("/onboarding/plans", headers=auth(mgr_t),
+                       json={"user_id": ids["xodim"]})
+            check("S-45: ⚠️ IKKINCHI FAOL reja RAD etildi -> 400",
+                  r.status_code == 400, "kod=" + str(r.status_code) + r.text[:90])
+
+            # ══ BEGONA REJA -> 404 (403 EMAS) ══
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (999704502,'T-Ob Begona','employee',"
+                "0,1,datetime('now'))")
+            begona_id = cur.lastrowid
+            conn.commit()
+            begona_t = token_for(begona_id, "employee")
+            r = c.get(f"/onboarding/plans/{ids['plan']}", headers=auth(begona_t))
+            check("S-45: begona reja -> 404 (mavjudligi oshkor qilinmaydi)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # ══ YUMSHOQ O'CHIRISH ══
+            r = c.delete(f"/onboarding/templates/{ids['tpl_umumiy']}",
+                         headers=auth(mgr_t))
+            check("S-45: shablon o'chirildi -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            r = c.get("/onboarding/templates", headers=auth(mgr_t))
+            nomlar = [t["name"] for t in r.json()]
+            check("S-45: o'chirilgan shablon ro'yxatda YO'Q",
+                  "T-Ob Umumiy" not in nomlar, "=" + str(nomlar))
+            qator = cur.execute(
+                "select deleted_at from onboarding_templates where id=?",
+                (ids["tpl_umumiy"],)).fetchone()
+            check("S-45: ⚠️ qator bazada QOLDI (yumshoq o'chirish)",
+                  qator is not None and qator[0] is not None, "=" + str(qator))
+
+        # ══ TO'G'RIDAN-TO'G'RI `select` QO'RIQCHISI ══
+        #  ⚠️ AST bo'yicha (S-32 naqshi): oddiy `re` izohlardagi
+        #  «select(OnboardingTemplate...)» iborasini ham topib,
+        #  YOLG'ON ogohlantirish berardi.
+        import ast as _ast
+        ildiz = Path(__file__).resolve().parent
+        taqiq = {"OnboardingTemplate", "OnboardingStep"}
+        buzuvchilar = []
+        for fayl in list((ildiz / "api").rglob("*.py")):
+            if fayl.name == "onboarding.py" and fayl.parent.name == "services":
+                continue  # `alive()` ning o'zi shu yerda
+            try:
+                daraxt = _ast.parse(fayl.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for tugun in _ast.walk(daraxt):
+                if not isinstance(tugun, _ast.Call):
+                    continue
+                nom = getattr(tugun.func, "id", None) or getattr(tugun.func, "attr", None)
+                if nom != "select" or not tugun.args:
+                    continue
+                model = getattr(tugun.args[0], "id", None) or getattr(
+                    tugun.args[0], "attr", None)
+                if model in taqiq:
+                    buzuvchilar.append(f"{fayl.relative_to(ildiz)}:{tugun.lineno}")
+        check("S-45: ⚠️ shablon jadvallari FAQAT `alive()` orqali o'qiladi",
+              not buzuvchilar, "=" + str(buzuvchilar[:4]))
+
+    except Exception:
+        check("S-45 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+            cur.execute("delete from users where full_name like 'T-Ob%'")
+            conn.commit()
+        except Exception:
+            print("S-45 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_hierarchy_authority() -> None:
     """S-44 (TZ 3.16) — `managed_by_roles` ziddiyatini yopish.
 
@@ -16992,6 +17303,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_onboarding_model()
+    except Exception:
+        print("S-45 onboarding testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

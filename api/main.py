@@ -81,6 +81,7 @@ from api.routers import (
     staff,
     hr_inquiries,
     courses,
+    onboarding,
     org,
     hourly_plan,
     idle_watch,
@@ -190,6 +191,7 @@ app.include_router(profile_changes.router)
 app.include_router(staff.router)
 app.include_router(hr_inquiries.router)
 app.include_router(courses.router)
+app.include_router(onboarding.router)
 app.include_router(org.router)
 app.include_router(work_schedule.router)
 app.include_router(work_log.router)

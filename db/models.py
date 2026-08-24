@@ -3797,3 +3797,165 @@ class CompanyProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# ONBOARDING — «birinchi kunlar» (yangi TZ 3.2 / S-45)
+# ─────────────────────────────────────────────────────────────
+
+
+class OnboardingStepKind(str, enum.Enum):
+    """Qadam turi — u BOSHQA MODULGA BOG'LANADI (TZ 3.2).
+
+    Ro'yxat YOPIQ: har tur uchun tizimda aniq bir mexanizm bor va
+    yangi tur qo'shish o'sha mexanizmni ham ulashni talab qiladi."""
+
+    task = "task"  # oddiy vazifa (matn bilan)
+    document = "document"  # kadr hujjati kutiladi (3.4)
+    course = "course"  # kurs tayinlanadi (3.1)
+    briefing = "briefing"  # instruktaj bilan tanishish (3.6)
+    meeting = "meeting"  # uchrashuv (rahbar/jamoa bilan)
+
+
+class OnboardingStatus(str, enum.Enum):
+    active = "active"
+    done = "done"
+    cancelled = "cancelled"
+
+
+class OnboardingTemplate(Base):
+    """Onboarding SHABLONI — lavozim yoki rol uchun (TZ 3.2 / S-45).
+
+    ⚠️ SHABLON — ANDOZA, REJA EMAS. Reja yaratilganda qadamlar
+    NUSXALANADI (`OnboardingProgress`). Sabab `AnketaTemplate` bilan
+    bir xil: shablon keyin tahrirlansa, YO'LDA turgan xodimning
+    ro'yxati o'zgarib ketardi — u kecha ko'rgan qadam bugun
+    yo'qolardi yoki muddat siljib ketardi.
+
+    ⚠️ `position_id` yoki `role` — IKKALASI HAM ixtiyoriy. Ikkalasi
+    ham bo'sh bo'lsa shablon UMUMIY (hamma uchun zaxira). Aniqroq
+    moslik ustun: avval lavozim, keyin rol, keyin umumiy."""
+
+    __tablename__ = "onboarding_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    position_id: Mapped[int | None] = mapped_column(
+        ForeignKey("positions.id"), nullable=True, index=True
+    )
+    role: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    #  Yumshoq o'chirish — `courses` naqshi. Shablon o'chirilsa ham
+    #  undan yaratilgan REJALAR tirik qoladi.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    steps: Mapped[list["OnboardingStep"]] = relationship(
+        back_populates="template", cascade="all, delete-orphan"
+    )
+
+
+class OnboardingStep(Base):
+    """Shablon qadami — ANDOZA bandi (TZ 3.2 / S-45).
+
+    ⚠️ `due_offset_days` — MUTLAQ SANA EMAS, ishga chiqishdan
+    keyingi kunlar soni. Shablon barcha xodim uchun umumiy, ya'ni
+    unda aniq sana bo'lishi mumkin emas; sana reja yaratilganda
+    hisoblanadi (`plan.start_date + offset`).
+
+    `ref_id` — qadam turi bo'yicha bog'lanish nishoni:
+      • `course`   -> `courses.id`
+      • `document` -> `DocumentType` qiymati `ref_text` da
+      • qolganlari -> ishlatilmaydi."""
+
+    __tablename__ = "onboarding_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("onboarding_templates.id"), index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(
+        String(16), default=OnboardingStepKind.task.value, index=True
+    )
+    #  Mas'ul ROL (aniq odam emas): shablon uzoq yashaydi va aniq
+    #  odam ishdan bo'shashi mumkin. Aniq odam reja yaratilganda
+    #  hisoblanadi.
+    owner_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    due_offset_days: Mapped[int] = mapped_column(Integer, default=0)
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ref_text: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    template: Mapped["OnboardingTemplate"] = relationship(back_populates="steps")
+
+
+class OnboardingPlan(Base):
+    """Bitta xodimning onboarding REJASI (TZ 3.2 / S-45).
+
+    ⚠️ BIR XODIMDA BIR VAQTDA BITTA FAOL REJA. Ikkinchisi
+    yaratilsa xodimda ikkita «birinchi kunlarim» ro'yxati paydo
+    bo'lardi va qaysi biri haqiqiy ekani noma'lum bo'lardi.
+    Chegara MIGRATSIYADA — qisman unique indeks (`status='active'`
+    bo'lganlar uchun), chunki tugagan rejalar tarix bo'lib qoladi
+    va ular uchun cheklov bo'lmasligi kerak."""
+
+    __tablename__ = "onboarding_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    template_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    #  Shablon nomi NUSXASI — shablon keyin o'chirilsa/qayta
+    #  nomlansa ham reja nimadan yaratilgani ko'rinib tursin.
+    template_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    start_date: Mapped[date] = mapped_column(Date, index=True)
+    status: Mapped[str] = mapped_column(
+        String(12), default=OnboardingStatus.active.value, index=True
+    )
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    items: Mapped[list["OnboardingProgress"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+
+
+class OnboardingProgress(Base):
+    """Reja bandi — SHABLON QADAMINING NUSXASI (TZ 3.2 / S-45).
+
+    ⚠️ NUSXA, HAVOLA EMAS. `title`, `kind`, `due_date` shu yerda
+    saqlanadi. Shablon keyin tahrirlansa yo'lda turgan xodimning
+    ro'yxati O'ZGARMAYDI — bu `AnketaAnswer.question_text` va
+    `Acknowledgement.title` bilan bir xil naqsh: odam NIMANI
+    ko'rgan bo'lsa, o'sha saqlanadi.
+
+    `ref_id` — qadam boshqa modulda yaratgan yozuv (masalan
+    `CourseAssignment.id`). Shu orqali «kurs o'tildimi?» degan
+    savolga javob beriladi — holat IKKI JOYDA saqlanmaydi."""
+
+    __tablename__ = "onboarding_progress"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("onboarding_plans.id"), index=True)
+    step_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), default=OnboardingStepKind.task.value)
+    owner_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    #  Qadam boshqa modulda yaratgan yozuv (kurs tayinlovi, vazifa).
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ref_text: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    done_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    plan: Mapped["OnboardingPlan"] = relationship(back_populates="items")
