@@ -1082,9 +1082,16 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. Xodimga botda matn/video + «Tanishdim» tugmasi; vaqt yoziladi.
 
 **Qabul mezoni**
-- [ ] Instruktaj → qatnashchilar → tanishuv qaydi zanjiri
-- [ ] Takroriy instruktaj muddati `deadlines` ga tushadi
-- [ ] Qog'oz jurnal o'rnini bosmasligi hujjatda yozilgan
+- [x] Instruktaj → qatnashchilar → tanishuv qaydi zanjiri —
+      imzolar S-20 ning `acknowledgements` jadvalida, yangi jadval
+      yaratilmadi; so'ralmagan instruktajni tasdiqlab bo'lmaydi
+- [x] Takroriy instruktaj muddati `deadlines` ga tushadi — har
+      xodimga alohida; tanishgach O'ZINING muddati yopiladi.
+      Kirish instruktajiga muddat yaratilmaydi (bir marta)
+- [x] Qog'oz jurnal o'rnini bosmasligi hujjatda yozilgan —
+      `PAPER_JOURNAL_WARNING` matni API javobida, xodim ekranida
+      va bot xabarida ham chiqadi (faqat izohda qolsa hech kim
+      ko'rmasdi)
 
 ---
 
