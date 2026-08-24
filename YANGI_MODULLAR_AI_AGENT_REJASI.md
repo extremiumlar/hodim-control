@@ -962,9 +962,15 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 3. Yo'riqnoma yangilansa ro'yxat qaytadan ochiladi.
 
 **Qabul mezoni**
-- [ ] Bot cheksiz eslatmaydi (3 marta)
-- [ ] Yangi versiya eski tanishuvni bekor qiladi
-- [ ] «Tanishmaganlar» ro'yxati aniq
+- [x] Bot cheksiz eslatmaydi — 3 marta, har 3 kunda bir
+      (`MAX_ESLATMA`/`ESLATMA_KUNI`); undan keyin bot jim, band HR
+      ro'yxatiga tushadi. Chegarani 99 ga ko'tarib sinaldi — test
+      yiqildi, ya'ni chegara haqiqatan ishlaydi
+- [x] Yangi versiya eski tanishuvni bekor qiladi — sanoq ham
+      noldan boshlanadi, ya'ni yangi matn uchun qayta eslatiladi;
+      eski versiya uchun eslatma to'xtaydi
+- [x] «Tanishmaganlar» ro'yxati aniq — `/acks/instructions/overview`,
+      `exhausted` (bot jim bo'lganlar) tepada
 
 ---
 
