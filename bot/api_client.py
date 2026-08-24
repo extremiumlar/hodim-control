@@ -1448,6 +1448,26 @@ async def my_courses(telegram_id: int) -> list[dict]:
     return resp.json()
 
 
+async def my_place(telegram_id: int) -> dict | None:
+    """«Mening o'rnim» — tuzilmadagi o'rni, yo'riqnomasi, ko'rsatkichlari."""
+    resp = await _get_client().get(
+        "/org/bot/my-place", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def acknowledge_instruction(telegram_id: int) -> dict:
+    """«✅ Tanishdim» — yo'riqnoma tanishuvini qayd etadi (S-20)."""
+    resp = await _get_client().post(
+        "/org/bot/acknowledge", json={"telegram_id": telegram_id}
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def course_progress(telegram_id: int, assignment_id: int) -> dict:
     resp = await _get_client().post(
         "/courses/bot/progress",

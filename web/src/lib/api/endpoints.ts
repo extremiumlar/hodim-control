@@ -1333,6 +1333,10 @@ export const api = {
   // ── Tashkiliy tuzilma (TZ 3.16 / S-40) ──
   orgChart: () => apiFetch<OrgChart>("/org/chart"),
   orgMyPlace: () => apiFetch<OrgMyPlace>("/org/my-place"),
+  orgAcknowledge: () =>
+    apiFetch<{ ok: boolean; version: number }>("/org/my-place/acknowledge", {
+      method: "POST",
+    }),
   orgPosition: (id: number) => apiFetch<OrgPositionDetail>(`/org/positions/${id}`),
   orgSetParent: (id: number, parentId: number | null) =>
     apiFetch<{ ok: boolean }>(`/org/positions/${id}/parent`, {

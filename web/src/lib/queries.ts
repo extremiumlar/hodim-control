@@ -1667,11 +1667,25 @@ export const useMyCourseSendMaterial = () =>
 
 // ── Tashkiliy tuzilma (TZ 3.16 / S-40) ──
 
-export const useOrgChart = () =>
-  useQuery({ queryKey: [...qk.org, "chart"], queryFn: api.orgChart });
+/**
+ * `enabled: false` — sxema so'ralmaydi. Xodim kabinetida sxema
+ * yopiladigan bo'limda: ochilmaguncha so'rov yubormaymiz, chunki
+ * Passenger'da konkurentlik = 1 va har ortiqcha so'rov navbat
+ * yaratadi.
+ */
+export const useOrgChart = (opts?: { enabled?: boolean }) =>
+  useQuery({
+    queryKey: [...qk.org, "chart"],
+    queryFn: api.orgChart,
+    enabled: opts?.enabled ?? true,
+  });
 
 export const useOrgMyPlace = () =>
   useQuery({ queryKey: [...qk.org, "my-place"], queryFn: api.orgMyPlace });
+
+/** «Tanishdim» — muvaffaqiyatdan keyin `my-place` qaytadan o'qiladi. */
+export const useOrgAcknowledge = () =>
+  useApiMutation(() => api.orgAcknowledge(), [[...qk.org, "my-place"]]);
 
 /** `id` null bo'lsa so'rov yuborilmaydi — lavozim tanlanmagan. */
 export const useOrgPosition = (id: number | null) =>

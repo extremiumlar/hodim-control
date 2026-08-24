@@ -239,7 +239,14 @@ _EMPLOYEE: list[Section] = [
             "employee", bot_button="❓ HR ga savol"),
     Section("my-courses", "Darsliklarim", "/me/courses", "GraduationCap", 133,
             "employee", bot_button="📚 Darsliklarim"),
-    Section("my-place", "Mening o'rnim", "/me/place", "Network", 134, "employee"),
+    #  ⚠️ Xodim TUZILMANI shu bo'lim orqali ko'radi (TZ 3.16:
+    #  «tuzilma sxemasi hammaga ochiq»). `org-chart` esa RAHBAR
+    #  qobig'ida qoladi — `sections_for` bir vaqtda faqat BITTA
+    #  qamrovni beradi (rahbarga yon panel, xodimga tab-bar), ya'ni
+    #  bitta bo'lim ikkovida turolmaydi. Shuning uchun sxema xodimga
+    #  «Mening o'rnim» sahifasi ichida ko'rsatiladi.
+    Section("my-place", "Mening o'rnim", "/me/place", "Network", 134, "employee",
+            bot_button="🏢 Mening o'rnim"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

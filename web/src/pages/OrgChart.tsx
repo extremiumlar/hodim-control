@@ -167,12 +167,19 @@ export default function OrgChart() {
     );
   }
 
+  const yoriqnomasizlar = chart?.gaps?.without_description ?? [];
+  const rahbarsizlar = chart?.gaps?.without_manager ?? [];
+
   return (
     <div className="space-y-4">
       <PageHeader title="Tashkiliy tuzilma" />
 
-      {/* ── Bo'shliqlar ── */}
-      {!!(chart?.gaps.without_description.length || chart?.gaps.without_manager.length) && (
+      {/* ── Bo'shliqlar ──
+          ⚠️ `gaps` bo'sh KELISHI MUMKIN: server uni faqat rahbarga
+          yuboradi (S-41). Bu sahifa rahbar uchun, lekin maydonlar
+          ATAYLAB majburiy emas — kim ko'rayotganini backend hal
+          qiladi, mijoz esa yo'qligiga chidashi kerak. */}
+      {!!(yoriqnomasizlar.length || rahbarsizlar.length) && (
         <Card className="border-amber-300 bg-amber-50/60">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -181,13 +188,13 @@ export default function OrgChart() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            {!!chart.gaps.without_description.length && (
+            {!!yoriqnomasizlar.length && (
               <div>
                 <div className="mb-1 text-xs text-slate-600">
-                  Yo'riqnomasi yo'q lavozimlar ({chart.gaps.without_description.length}):
+                  Yo'riqnomasi yo'q lavozimlar ({yoriqnomasizlar.length}):
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {chart.gaps.without_description.map((g) => (
+                  {yoriqnomasizlar.map((g) => (
                     <button
                       key={g.id}
                       className="rounded bg-white px-2 py-0.5 text-xs underline"
@@ -199,14 +206,14 @@ export default function OrgChart() {
                 </div>
               </div>
             )}
-            {!!chart.gaps.without_manager.length && (
+            {!!rahbarsizlar.length && (
               <div>
                 <div className="mb-1 flex items-center gap-1 text-xs text-slate-600">
                   <UserX className="h-3.5 w-3.5" />
-                  Rahbari belgilanmagan xodimlar ({chart.gaps.without_manager.length}):
+                  Rahbari belgilanmagan xodimlar ({rahbarsizlar.length}):
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {chart.gaps.without_manager.map((u) => (
+                  {rahbarsizlar.map((u) => (
                     <span key={u.id} className="rounded bg-white px-2 py-0.5 text-xs">
                       {u.full_name}
                     </span>

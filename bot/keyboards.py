@@ -52,6 +52,7 @@ BTN_CODE_NOT_RECEIVED = "📵 Kod kelmadi"
 BTN_CHECKIN = "✅ Keldim / Ketdim"
 BTN_HR_ASK = "❓ HR ga savol"
 BTN_MY_COURSES = "📚 Darsliklarim"
+BTN_MY_PLACE = "🏢 Mening o'rnim"
 
 MANAGER_ROLES = {"hr", "rop", "boss", "dasturchi"}
 
@@ -65,7 +66,7 @@ ALL_MENU_BUTTONS = frozenset({
     BTN_CHANGE_NORM, BTN_TASK_CONTROL, BTN_CALC_KPI, BTN_REPORT, BTN_AUDIT,
     BTN_AI_CENTER, BTN_SET_BUSY, BTN_MARK_EXCUSED, BTN_ANKETA, BTN_KNOWLEDGE,
     BTN_SALES_AI, BTN_CHECKIN, BTN_WORK_LOG, BTN_APPEAL, BTN_REQUESTS,
-    BTN_CELEBRATION, BTN_HR_ASK, BTN_MY_COURSES,
+    BTN_CELEBRATION, BTN_HR_ASK, BTN_MY_COURSES, BTN_MY_PLACE,
     #  Hujjat tugmalari ro'yxatdan TUSHIB QOLGAN edi: FSM matn kutayotgan
     #  paytda «📁 Hujjatlarim» bosilsa, tugma matni javob sifatida
     #  yozilardi. Ro'yxatning butun mazmuni shu holatni to'sish.

@@ -1946,11 +1946,26 @@ export type OrgNode = {
   has_description: boolean;
 };
 
+export type JobDescriptionText = {
+  version: number;
+  purpose: string | null;
+  duties: string[];
+  rights: string[];
+  responsibility: string[];
+  requirements: string[];
+  effective_from: string;
+};
+
 export type OrgChart = {
   nodes: OrgNode[];
+  /**
+   * ⚠️ Xodimga BO'SH keladi (S-41). «Bo'shliqlar» — kadr rejalashtirish
+   * ma'lumoti (rahbarsiz xodimlar, bo'sh o'rinlar) va faqat rahbarga
+   * boradi. Sxemaning O'ZI esa hammaga ochiq (TZ 3.16).
+   */
   gaps: {
-    without_description: { id: number; name: string }[];
-    without_manager: { id: number; full_name: string }[];
+    without_description?: { id: number; name: string }[];
+    without_manager?: { id: number; full_name: string }[];
   };
 };
 
@@ -1963,15 +1978,9 @@ export type OrgPositionDetail = {
   units: number;
   /** Manfiy bo'lsa — shtatdan ORTIQ odam ishlayapti. */
   vacant: number;
-  description: {
-    version: number;
-    purpose: string | null;
-    duties: string[];
-    rights: string[];
-    responsibility: string[];
-    requirements: string[];
-    effective_from: string;
-  } | null;
+  /** Xodim BEGONA lavozimda `null` oladi (S-41). */
+  description: JobDescriptionText | null;
+  has_description: boolean;
 };
 
 export type OrgMyPlace = {
@@ -1984,6 +1993,15 @@ export type OrgMyPlace = {
   subordinates: { id: number; full_name: string }[];
   has_description: boolean;
   description_version: number | null;
+  /** O'Z lavozimining to'liq yo'riqnomasi (S-41). */
+  description: JobDescriptionText | null;
+  /** `Position.metrics` dan — faqat biriktirilganlari. */
+  metrics: { key: string; label: string }[];
+  acknowledgement: {
+    version: number;
+    acknowledged: boolean;
+    acknowledged_at: string | null;
+  } | null;
 };
 
 export type JobDescriptionVersion = {

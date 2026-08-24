@@ -16,11 +16,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, require_roles
+from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
 from api.services import org as svc
+from sqlalchemy import select
+
 from db.models import Position, Role, User
 
 router = APIRouter(prefix="/org", tags=["org"])
+
+#  ⚠️ BOT ENDPOINTLARI UCHUN SIR QO'RIQCHISI — MAJBURIY. Bu yo'llar
+#  xodimni `telegram_id` bo'yicha topadi, ya'ni JWT yo'q. Sir
+#  tekshirilmasa istalgan kishi begona `telegram_id` yuborib o'sha
+#  xodimning yo'riqnomasini o'qiy va uning NOMIDAN «tanishdim»
+#  bosib qo'ya olardi — tanishuv esa HUQUQIY qayd.
+#  (Aynan shu qo'riqchi `courses`/`hr_inquiries`/`employee_documents`
+#  da 17 ta yo'lda unutilgan edi — `77fd2d6`.)
+_BOT_SIR = [Depends(verify_bot_secret)]
 
 #  TAHRIRLASH — HR/Boshliq/Dasturchi.
 _EDIT = (Role.hr.value, Role.boss.value, Role.dasturchi.value)
@@ -50,8 +61,8 @@ class ProfileIn(BaseModel):
 # ─────────────────────────────────────────────────────────────
 
 
-#  Sxemani KO'RISH — rahbarlar (ROP ham). Xodim uchun `/my-place`.
-_VIEW_CHART = (
+#  «Bo'shliqlar» bo'limini KO'RISH — rahbarlar (ROP ham).
+_VIEW_GAPS = (
     Role.hr.value,
     Role.boss.value,
     Role.dasturchi.value,
@@ -59,25 +70,30 @@ _VIEW_CHART = (
 )
 
 
+def _rahbarmi(user: User) -> bool:
+    return user.role in _VIEW_GAPS
+
+
 @router.get("/chart")
 async def org_chart(
-    _actor: User = Depends(require_roles(*_VIEW_CHART)),
-    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Sxema ma'lumoti — tugunlar, o'rinlar va bo'shliqlar.
 
     ⚠️ Rasm QAYTARILMAYDI, faqat ma'lumot. Chizishni brauzer
     qiladi (TZ 3.16).
 
-    ⚠️ RAHBARLAR uchun, xodim uchun EMAS. Javobda `gaps` bor —
-    rahbari belgilanmagan xodimlar ro'yxati va shtatdagi bo'sh
-    o'rinlar; bu kadr rejalashtirish ma'lumoti. Xodim o'z o'rnini
-    `/org/my-place` dan ko'radi.
+    ⚠️ SXEMA HAMMAGA OCHIQ (TZ 3.16 / S-41 qabul mezoni) — xodim
+    kompaniya qanday qurilganini va kimga bo'ysunishini bilishi
+    kerak. Tugunlarda ISH HAQI ham, BAHO ham YO'Q.
 
-    Bu chegara S-30 auditida topildi: menyu bo'limi rahbarga
-    ochiq edi, endpoint esa hammaga — audit nomuvofiqlikni
-    ushladi."""
-    return await svc.chart(db)
+    ⚠️ Lekin `gaps` — KADR REJALASHTIRISH ma'lumoti (yo'riqnomasiz
+    lavozimlar, rahbari belgilanmagan xodimlar), u faqat rahbarga
+    boradi.
+
+    S-40 da butun endpoint rahbarga yopilgandi — bu TZ ga ZID edi.
+    To'g'ri chegara endpoint emas, AYNAN SHU BO'LIM."""
+    return await svc.chart(db, with_gaps=_rahbarmi(user))
 
 
 @router.get("/my-place")
@@ -89,6 +105,55 @@ async def my_place(
     Mobil ekranda sxema o'rniga shu ko'rsatiladi (S-40 qabul
     mezoni) — kichik ekranda butun daraxtni chizib bo'lmaydi."""
     return await svc.my_place(db, user)
+
+
+class BotIn(BaseModel):
+    telegram_id: int
+
+
+#  ⚠️ BOT MARSHRUTLARI `/positions/{position_id}` DAN OLDIN. S-28 da
+#  jonli uchragan tuzoq: `/bot/...` `/{id}` shaklidagi naqshga tushib
+#  ketardi va bot 422 olardi.
+async def _bot_user(db: AsyncSession, telegram_id: int) -> User:
+    u = await db.scalar(select(User).where(User.telegram_id == telegram_id))
+    if u is None or not u.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
+    return u
+
+
+@router.get("/bot/my-place", dependencies=_BOT_SIR)
+async def bot_my_place(
+    telegram_id: int, db: AsyncSession = Depends(get_db)
+) -> dict:
+    return await svc.my_place(db, await _bot_user(db, telegram_id))
+
+
+@router.post("/bot/acknowledge", dependencies=_BOT_SIR)
+async def bot_acknowledge(
+    payload: BotIn, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Botda «✅ Tanishdim» — sayt bilan BITTA mantiq."""
+    return await _acknowledge(db, await _bot_user(db, payload.telegram_id))
+
+
+@router.post("/my-place/acknowledge")
+async def acknowledge_instruction(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Xodim O'Z lavozimi yo'riqnomasi bilan tanishdi (S-20 qaydi)."""
+    return await _acknowledge(db, user)
+
+
+async def _acknowledge(db: AsyncSession, user: User) -> dict:
+    """Sayt va bot uchun YAGONA mantiq.
+
+    ⚠️ Ikki adapter, bitta mantiq (loyiha naqshi): xodim botda
+    tanishsa saytda ham tanishgan bo'lib turishi SHART, aks holda
+    ikki joyda ikki xil holat paydo bo'lardi."""
+    try:
+        return await svc.acknowledge_instruction(db, user)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
 
 
 @router.get("/profile")
@@ -132,11 +197,21 @@ async def write_profile(
 @router.get("/positions/{position_id}")
 async def position_detail(
     position_id: int,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Lavozim: kim ishlaydi, nechta o'rin, joriy yo'riqnoma."""
-    res = await svc.position_detail(db, position_id)
+    """Lavozim: kim ishlaydi, nechta o'rin, joriy yo'riqnoma.
+
+    ⚠️ XODIM FAQAT O'Z LAVOZIMI yo'riqnomasini KO'RADI (TZ 3.16 /
+    S-41 qabul mezoni). Begona lavozimda `description: null` qoladi,
+    faqat `has_description` ko'rinadi.
+
+    Lavozim NOMI va tarkibi yashirilmaydi — ular sxemada turibdi va
+    TZ sxemani hammaga ochiq deydi. Yashiriladigan narsa — MATN:
+    yo'riqnomada aniq bir odamning majburiyatlari va unga qo'yilgan
+    talablar yozilgan."""
+    ozi = _rahbarmi(user) or user.position_id == position_id
+    res = await svc.position_detail(db, position_id, with_description=ozi)
     if res is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Lavozim topilmadi")
     return res

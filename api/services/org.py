@@ -26,12 +26,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
+    Acknowledgement,
+    AckObjectType,
     CompanyProfile,
     JobDescription,
     Position,
     StaffPosition,
     User,
 )
+
+#  Yo'riqnoma tanishuvi S-20 ning UMUMIY mexanizmida saqlanadi
+#  (`acknowledgements`), alohida jadval qilinmaydi — «kim nima bilan
+#  tanishmagan?» degan savol bitta so'rov bo'lib qolsin.
+ACK_TYPE = AckObjectType.instruction.value
 
 #  Ierarxiya chuqurligi chegarasi. Halqa qo'riqchisi bo'lsa ham bu
 #  ikkinchi to'siq: baza qo'lda tahrirlansa (yoki migratsiya xato
@@ -91,12 +98,24 @@ async def set_parent(
     return position
 
 
-async def chart(db: AsyncSession) -> dict:
+async def chart(db: AsyncSession, *, with_gaps: bool = True) -> dict:
     """Sxema uchun TUGUNLAR va BOG'LANISHLAR.
 
     ⚠️ RASM SERVERDA YARATILMAYDI (TZ 3.16 / S-40) — server faqat
     ma'lumot beradi, chizishni brauzer qiladi. Rasm generatsiyasi
-    Passenger ishchisini band qilardi."""
+    Passenger ishchisini band qilardi.
+
+    ⚠️ SXEMANING O'ZI HAMMAGA OCHIQ (TZ 3.16 / S-41 qabul mezoni) —
+    xodim kimga bo'ysunishini va kompaniya qanday qurilganini bilishi
+    kerak. Tugunlarda ISH HAQI ham, BAHO ham yo'q va bo'lmaydi.
+
+    ⚠️ `with_gaps` — YAGONA farq. «Bo'shliqlar» (yo'riqnomasiz
+    lavozimlar, rahbari belgilanmagan xodimlar) KADR REJALASHTIRISH
+    ma'lumoti: u kompaniyaning ochiq o'rinlarini va boshqaruvdagi
+    uzilishlarni ko'rsatadi, ya'ni har bir xodimga emas, rahbarga
+    kerak. S-40 da butun endpoint yopilgandi — bu TZ ga zid edi,
+    chunki sxema hammaga ochiq bo'lishi shart. To'g'ri chegara —
+    endpoint emas, AYNAN SHU BO'LIM."""
     lavozimlar = list(await db.scalars(select(Position).where(Position.is_active.is_(True))))
     xodimlar = list(await db.scalars(select(User).where(User.is_active.is_(True))))
     sanoq: dict[int, int] = {}
@@ -129,7 +148,8 @@ async def chart(db: AsyncSession) -> dict:
             for p in lavozimlar
         ],
         #  Bo'shliqlar — TZ 3.16 aniq so'ragan ikki ro'yxat.
-        "gaps": {
+        #  ⚠️ Rahbarga; xodimga BO'SH lug'at boradi (yuqoridagi izoh).
+        "gaps": {} if not with_gaps else {
             "without_description": [
                 {"id": p.id, "name": p.name}
                 for p in lavozimlar
@@ -222,7 +242,84 @@ async def add_version(
     )
     db.add(row)
     await db.flush()
+    #  ⚠️ YANGI VERSIYA — YANGI TANISHUV. Eski «tanishdim» O'TMAYDI:
+    #  xodim eski matnga rozi bo'lgan, yangisiga emas (S-20 qoidasi).
+    #  So'rov aynan SHU YERDA, chunki versiya yaratilishi bilan bitta
+    #  tranzaksiyada bo'lishi kerak — aks holda «yo'riqnoma bor, lekin
+    #  hech kimdan so'ralmagan» holati paydo bo'lardi.
+    await request_instruction_ack(db, position_id=position_id, version=row.version,
+                                  requested_by=created_by)
     return row
+
+
+async def request_instruction_ack(
+    db: AsyncSession, *, position_id: int, version: int, requested_by: int | None = None
+) -> int:
+    """Shu lavozimdagi BARCHA faol xodimdan tanishishni so'raydi."""
+    from api.services import acknowledgements as ack
+
+    pos = await db.get(Position, position_id)
+    xodimlar = list(
+        await db.scalars(
+            select(User.id).where(
+                User.position_id == position_id, User.is_active.is_(True)
+            )
+        )
+    )
+    if not xodimlar:
+        return 0
+    return await ack.request_ack(
+        db,
+        object_type=ACK_TYPE,
+        object_id=position_id,
+        version=version,
+        user_ids=xodimlar,
+        title=f"{pos.name if pos else 'Lavozim'} — yo'riqnoma (v{version})",
+        link="/me/place",
+        requested_by=requested_by,
+    )
+
+
+async def acknowledge_instruction(db: AsyncSession, user: User) -> dict:
+    """Xodim O'Z yo'riqnomasi bilan tanishdi.
+
+    ⚠️ Avval SO'RALADI, keyin BELGILANADI. `mark_ack` so'ralmagan
+    bandni tasdiqlamaydi (to'g'ri qoida: xodim o'ziga begona e'lonni
+    tasdiqlab qo'ymasin). Lekin yo'riqnoma boshqacha — u xodimning
+    O'Z lavoziminiki va unga ta'rifi bo'yicha tegishli. Xodim
+    versiya yaratilgandan KEYIN ishga kirgan bo'lsa so'rov qatori
+    yo'q edi va tugma jimgina ishlamasdi. Shuning uchun avval
+    so'rov qatorini ta'minlaymiz (idempotent), keyin belgilaymiz."""
+    from api.services import acknowledgements as ack
+
+    if not user.position_id:
+        raise ValueError("Sizga lavozim belgilanmagan")
+    joriy = await current_description(db, user.position_id)
+    if joriy is None:
+        raise ValueError("Lavozimingiz uchun yo'riqnoma hali kiritilmagan")
+
+    await ack.request_ack(
+        db,
+        object_type=ACK_TYPE,
+        object_id=user.position_id,
+        version=joriy.version,
+        user_ids=[user.id],
+        title=f"Yo'riqnoma (v{joriy.version})",
+        link="/me/place",
+    )
+    await db.commit()
+    row = await ack.mark_ack(
+        db,
+        user_id=user.id,
+        object_type=ACK_TYPE,
+        object_id=user.position_id,
+        version=joriy.version,
+    )
+    return {
+        "ok": row is not None,
+        "version": joriy.version,
+        "acknowledged_at": row.acknowledged_at if row else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -265,11 +362,19 @@ async def update_profile(
     return row
 
 
-async def position_detail(db: AsyncSession, position_id: int) -> dict | None:
+async def position_detail(
+    db: AsyncSession, position_id: int, *, with_description: bool = True
+) -> dict | None:
     """Bitta lavozim: kim ishlaydi, nechta o'rin, yo'riqnoma.
 
     ⚠️ Yo'riqnoma — HOZIR KUCHDA bo'lgan versiya (`current_description`),
-    eng katta raqamli emas."""
+    eng katta raqamli emas.
+
+    ⚠️ `with_description=False` — YO'RIQNOMA MATNI BERILMAYDI, faqat
+    borligi (`has_description`). TZ 3.16: «xodim faqat O'Z lavozimi
+    yo'riqnomasini ko'radi». Lavozim NOMI va tarkibi sir emas (ular
+    sxemada turibdi), yo'riqnoma MATNI esa boshqa gap: unda o'sha
+    odamning majburiyatlari va talablari yozilgan."""
     pos = await db.get(Position, position_id)
     if pos is None:
         return None
@@ -314,8 +419,11 @@ async def position_detail(db: AsyncSession, position_id: int) -> dict | None:
         #  Bo'sh o'rin: shtatda bor, lekin odam yo'q. Manfiy bo'lsa —
         #  shtatdan ORTIQ odam ishlayapti (HR buni ko'rishi kerak).
         "vacant": orinlar - len(xodimlar),
+        "has_description": joriy is not None,
         "description": (
-            {
+            None
+            if not with_description
+            else {
                 "version": joriy.version,
                 "purpose": joriy.purpose,
                 "duties": joriy.duties or [],
@@ -353,6 +461,34 @@ async def my_place(db: AsyncSession, user: User) -> dict:
     joriy = (
         await current_description(db, user.position_id) if user.position_id else None
     )
+    #  Kuzatiladigan ko'rsatkichlar — FAQAT lavozimga biriktirilgani
+    #  (`norms.metrics_for` qoidasi). Standart to'plam YO'Q: bugalterga
+    #  sotuv ko'rsatkichi chiqib qolmasin.
+    from api.routers.norms import METRIC_LABELS
+
+    korsatkichlar = [
+        {"key": m, "label": METRIC_LABELS[m]}
+        for m in (lavozim.metrics or [])
+        if lavozim is not None and m in METRIC_LABELS
+    ]
+
+    #  Tanishuv holati — joriy versiya bo'yicha.
+    tanishuv = None
+    if joriy is not None:
+        qator = await db.scalar(
+            select(Acknowledgement).where(
+                Acknowledgement.user_id == user.id,
+                Acknowledgement.object_type == ACK_TYPE,
+                Acknowledgement.object_id == user.position_id,
+                Acknowledgement.version == joriy.version,
+            )
+        )
+        tanishuv = {
+            "version": joriy.version,
+            "acknowledged": bool(qator and qator.acknowledged_at),
+            "acknowledged_at": qator.acknowledged_at if qator else None,
+        }
+
     return {
         "manager": (
             {"id": rahbar.id, "full_name": rahbar.full_name}
@@ -369,4 +505,22 @@ async def my_place(db: AsyncSession, user: User) -> dict:
         ],
         "has_description": joriy is not None,
         "description_version": joriy.version if joriy else None,
+        #  ⚠️ TO'LIQ MATN — bu XODIMNING O'Z yo'riqnomasi (S-41). Begona
+        #  lavozimniki `position_detail(with_description=False)` da
+        #  berilmaydi.
+        "description": (
+            {
+                "version": joriy.version,
+                "purpose": joriy.purpose,
+                "duties": joriy.duties or [],
+                "rights": joriy.rights or [],
+                "responsibility": joriy.responsibility or [],
+                "requirements": joriy.requirements or [],
+                "effective_from": joriy.effective_from,
+            }
+            if joriy
+            else None
+        ),
+        "metrics": korsatkichlar,
+        "acknowledgement": tanishuv,
     }

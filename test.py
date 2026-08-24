@@ -12915,7 +12915,10 @@ B_BLOCK_MATRIX = [
     ("shtat jadvali",      "GET", "/staff",                           403, "ok", "ok"),
     #  Tuzilmani rahbar KO'RADI (ROP ham) — xodim kimga bo'ysunishini
     #  bilishi kerak; tahrirlash esa HR bilan cheklangan.
-    ("tashkiliy tuzilma",  "GET", "/org/chart",                       403, "ok", "ok"),
+    #  ⚠️ Xodimga ham OCHIQ (TZ 3.16 / S-41: «tuzilma sxemasi hammaga
+    #  ochiq»). S-40 da 403 qilib qo'yilgandi — TZ ga zid edi. Farq
+    #  javob TARKIBIDA: xodimga `gaps` bo'sh keladi (`test_org_employee_side`).
+    ("tashkiliy tuzilma",  "GET", "/org/chart",                      "ok", "ok", "ok"),
     #  ── Hamma ko'radigan (xodim tomoni) ──
     ("bayramlar",          "GET", "/holidays?year=2026",             "ok", "ok", "ok"),
     ("mening hujjatlarim", "GET", "/employee-documents/me",          "ok", "ok", "ok"),
@@ -12943,7 +12946,16 @@ SECTION_TO_ENDPOINT = {
     "profile-changes": "/profile-changes",
     "hr-inquiries": "/hr-inquiries",
     "courses": "/courses",
-    "org-chart": "/org/chart",
+    #  ⚠️ `org-chart` ATAYLAB YO'Q. Bu xarita «menyuda bo'lim yo'q ->
+    #  endpoint ham yopiq» qoidasini tekshiradi, ya'ni endpoint AYNAN
+    #  SHU bo'lim bilan qo'riqlanadi deb hisoblaydi. `/org/chart`
+    #  boshqacha: TZ 3.16 «tuzilma sxemasi hammaga ochiq» deydi, ya'ni
+    #  u ATAYLAB hamma uchun ochiq va bitta bo'lim bilan
+    #  qo'riqlanmaydi — xodim unga «Mening o'rnim» orqali kiradi,
+    #  rahbar esa «Tashkiliy tuzilma» orqali. Uni bu xaritaga qo'yish
+    #  YOLG'ON ogohlantirish berardi (S-40 da aynan shunday bo'ldi).
+    #  Uning o'rniga `test_org_employee_side` aniq tekshiradi: xodim
+    #  sxemani KO'RADI, lekin `gaps`/ish haqi/baho javobda YO'Q.
 }
 
 
@@ -13006,6 +13018,302 @@ def test_check_calls_wellformed() -> None:
         not buzuvchilar,
         ", ".join(buzuvchilar[:8]) if buzuvchilar else f"{jami} chaqiruv toza",
     )
+
+
+#  ⚠️ ISH HAQI/BAHO KALITLARI. Tuzilma javoblarida bularning HECH BIRI
+#  bo'lmasligi kerak (TZ 3.16 qabul mezoni). Ro'yxat ATAYLAB keng —
+#  yangi maydon qo'shilib ketsa ham ushlansin.
+TAQIQLANGAN_KALITLAR = (
+    "salary", "rate", "amount", "oylik", "payroll", "net", "bonus",
+    "fine", "score", "grade", "rating", "kpi", "baho",
+)
+
+
+def _taqiqlangan_kalitlar(obj, yol: str = "") -> list[str]:
+    """Javob ichidagi (ichma-ich ham) taqiqlangan kalitlarni topadi."""
+    topilgan = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            past = str(k).lower()
+            if any(t in past for t in TAQIQLANGAN_KALITLAR):
+                topilgan.append(f"{yol}.{k}" if yol else str(k))
+            topilgan += _taqiqlangan_kalitlar(v, f"{yol}.{k}" if yol else str(k))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            topilgan += _taqiqlangan_kalitlar(v, f"{yol}[{i}]")
+    return topilgan
+
+
+def test_org_employee_side() -> None:
+    """S-41 (TZ 3.16) — «Mening o'rnim»: xodim tomoni.
+
+    Qabul mezonlari (TZ):
+      • xodim faqat O'Z lavozimi yo'riqnomasini ko'radi;
+      • tuzilma sxemasi hammaga ochiq (ish haqi va baho YO'Q);
+      • tanishuv VERSIYA bilan yoziladi.
+    """
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-41: MENING O'RNIM — XODIM TOMONI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+    pos: dict[str, int] = {}
+    try:
+        cur.execute(
+            "delete from acknowledgements where user_id in"
+            " (select id from users where full_name like 'T-Mo%')")
+        cur.execute("delete from users where full_name like 'T-Mo%'")
+        cur.execute(
+            "delete from job_descriptions where position_id in"
+            " (select id from positions where name like 'T-Mo%')")
+        cur.execute("delete from positions where name like 'T-Mo%'")
+        conn.commit()
+
+        #  Ikki lavozim: xodimning O'ZI va BEGONA lavozim.
+        cur.execute(
+            "insert into positions (name, is_active, metrics, created_at)"
+            " values ('T-Mo Sotuvchi',1,'[\"suhbat\", \"tashrif\"]',datetime('now'))")
+        pos["oz"] = cur.lastrowid
+        cur.execute(
+            "insert into positions (name, is_active, created_at)"
+            " values ('T-Mo Bugalter',1,datetime('now'))")
+        pos["begona"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, created_at) values (999704101,'T-Mo Rahbar','employee',0,1,"
+            "?,datetime('now'))", (pos["begona"],))
+        ids["rahbar"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started, is_active,"
+            " position_id, manager_id, created_at) values (999704102,'T-Mo Xodim',"
+            "'employee',0,1,?,?,datetime('now'))", (pos["oz"], ids["rahbar"]))
+        ids["xodim"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+        TG = 999704102
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ── IKKI LAVOZIMGA YO'RIQNOMA ──
+            for kalit, maqsad in (("oz", "Sotuv rejasini bajarish"),
+                                  ("begona", "Hisob-kitob yuritish")):
+                r = c.post(f"/org/positions/{pos[kalit]}/descriptions",
+                           headers=auth(mgr_t),
+                           json={"purpose": maqsad,
+                                 "duties": ["T-vazifa 1", "T-vazifa 2"],
+                                 "rights": ["T-huquq"],
+                                 "responsibility": ["T-javobgarlik"],
+                                 "requirements": ["T-talab"]})
+                check(f"S-41: yo'riqnoma qo'shildi ({kalit}) -> 201",
+                      r.status_code == 201, "kod=" + str(r.status_code) + r.text[:90])
+
+            # ══ MEZON 1: FAQAT O'Z YO'RIQNOMASI ══
+            r = c.get(f"/org/positions/{pos['oz']}", headers=auth(xodim_t))
+            oz = r.json() if r.status_code == 200 else {}
+            check("S-41: xodim O'Z lavozimi yo'riqnomasini KO'RADI",
+                  r.status_code == 200 and (oz.get("description") or {}).get("purpose")
+                  == "Sotuv rejasini bajarish", "=" + str(oz.get("description"))[:110])
+
+            r = c.get(f"/org/positions/{pos['begona']}", headers=auth(xodim_t))
+            begona = r.json() if r.status_code == 200 else {}
+            check("S-41: ⚠️ BEGONA lavozim yo'riqnomasi BERILMAYDI",
+                  r.status_code == 200 and begona.get("description") is None,
+                  "=" + str(begona.get("description"))[:110])
+            check("S-41: begona lavozimda faqat BORLIGI ko'rinadi",
+                  begona.get("has_description") is True,
+                  "=" + str(begona.get("has_description")))
+            check("S-41: lavozim NOMI yashirilmaydi (sxemada turibdi)",
+                  begona.get("name") == "T-Mo Bugalter", "=" + str(begona.get("name")))
+
+            #  Rahbar ikkalasini ham ko'radi.
+            r = c.get(f"/org/positions/{pos['begona']}", headers=auth(mgr_t))
+            check("S-41: RAHBAR begona lavozim yo'riqnomasini ko'radi",
+                  r.status_code == 200 and r.json().get("description") is not None,
+                  "kod=" + str(r.status_code))
+
+            # ══ MEZON 2: SXEMA HAMMAGA OCHIQ, ISH HAQI/BAHO YO'Q ══
+            r = c.get("/org/chart", headers=auth(xodim_t))
+            check("S-41: ⚠️ xodim SXEMANI ko'radi -> 200 (TZ: hammaga ochiq)",
+                  r.status_code == 200, "kod=" + str(r.status_code) + r.text[:90])
+            sxema = r.json() if r.status_code == 200 else {}
+            check("S-41: sxemada tugunlar bor",
+                  len(sxema.get("nodes") or []) >= 2,
+                  "soni=" + str(len(sxema.get("nodes") or [])))
+            check("S-41: ⚠️ xodimga «bo'shliqlar» BERILMAYDI (kadr ma'lumoti)",
+                  sxema.get("gaps") == {}, "=" + str(sxema.get("gaps"))[:110])
+
+            yomon = _taqiqlangan_kalitlar(sxema)
+            check("S-41: ⚠️ sxemada ISH HAQI/BAHO kaliti YO'Q",
+                  not yomon, "=" + str(yomon[:6]))
+
+            #  Rahbarda esa bo'shliqlar BOR.
+            r = c.get("/org/chart", headers=auth(mgr_t))
+            rahbar_sxema = r.json() if r.status_code == 200 else {}
+            check("S-41: RAHBARGA bo'shliqlar beriladi",
+                  "without_description" in (rahbar_sxema.get("gaps") or {}),
+                  "=" + str(list((rahbar_sxema.get("gaps") or {}).keys())))
+            check("S-41: rahbar sxemasida ham ish haqi/baho YO'Q",
+                  not _taqiqlangan_kalitlar(rahbar_sxema),
+                  "=" + str(_taqiqlangan_kalitlar(rahbar_sxema)[:6]))
+
+            # ══ «MENING O'RNIM» TARKIBI ══
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            orin = r.json() if r.status_code == 200 else {}
+            check("S-41: /org/my-place -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-41: rahbarim ko'rinadi",
+                  (orin.get("manager") or {}).get("full_name") == "T-Mo Rahbar",
+                  "=" + str(orin.get("manager")))
+            check("S-41: O'Z yo'riqnomasi TO'LIQ keladi",
+                  (orin.get("description") or {}).get("duties") == ["T-vazifa 1", "T-vazifa 2"],
+                  "=" + str((orin.get("description") or {}).get("duties")))
+            kalitlari = [m["key"] for m in (orin.get("metrics") or [])]
+            check("S-41: kuzatiladigan ko'rsatkichlar lavozimdan keldi",
+                  kalitlari == ["suhbat", "tashrif"], "=" + str(kalitlari))
+            check("S-41: ko'rsatkich nomi tarjima qilingan",
+                  any(m["label"] == "Suhbatlar soni" for m in (orin.get("metrics") or [])),
+                  "=" + str(orin.get("metrics")))
+            check("S-41: ⚠️ «mening o'rnim» da ish haqi/baho YO'Q",
+                  not _taqiqlangan_kalitlar(orin),
+                  "=" + str(_taqiqlangan_kalitlar(orin)[:6]))
+            check("S-41: hali tanishmagan",
+                  (orin.get("acknowledgement") or {}).get("acknowledged") is False,
+                  "=" + str(orin.get("acknowledgement")))
+
+            # ══ MEZON 3: TANISHUV VERSIYA BILAN ══
+            r = c.post("/org/my-place/acknowledge", headers=auth(xodim_t))
+            check("S-41: «Tanishdim» -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            check("S-41: javobda VERSIYA bor", r.json().get("version") == 1,
+                  "=" + str(r.json())[:110])
+
+            #  ⚠️ `object_id` bo'yicha ham filtrlaymiz. SQLite `id` ni
+            #  qayta ishlatadi, ya'ni bu xodimning raqami boshqa
+            #  testning o'chirilgan xodimiga tegishli bo'lgan va o'sha
+            #  odamning BOSHQA lavozimdagi tanishuvlari qolib ketishi
+            #  mumkin. Filtrsiz sanoq 2 emas, 4 chiqdi.
+            qator = cur.execute(
+                "select object_type, object_id, version, acknowledged_at"
+                " from acknowledgements where user_id=? and object_type='instruction'"
+                " and object_id=?",
+                (ids["xodim"], pos["oz"])).fetchone()
+            check("S-41: ⚠️ tanishuv VERSIYA bilan yozildi",
+                  qator is not None and qator[2] == 1 and qator[3] is not None,
+                  "=" + str(qator))
+            check("S-41: tanishuv S-20 ning UMUMIY jadvalida",
+                  qator is not None and qator[0] == "instruction"
+                  and qator[1] == pos["oz"], "=" + str(qator))
+
+            #  Ikkinchi bosish — BIRINCHI vaqt saqlanadi (idempotent).
+            birinchi = qator[3]
+            r = c.post("/org/my-place/acknowledge", headers=auth(xodim_t))
+            keyin = cur.execute(
+                "select acknowledged_at from acknowledgements where user_id=?"
+                " and object_type='instruction' and object_id=? and version=1",
+                (ids["xodim"], pos["oz"])).fetchone()
+            check("S-41: qayta bosishda BIRINCHI vaqt saqlandi (idempotent)",
+                  r.status_code == 200 and keyin[0] == birinchi,
+                  "=" + str(birinchi) + " -> " + str(keyin[0]))
+
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            check("S-41: endi «tanishgan» ko'rinadi",
+                  (r.json().get("acknowledgement") or {}).get("acknowledged") is True,
+                  "=" + str(r.json().get("acknowledgement")))
+
+            # ══ YANGI VERSIYA — ESKI TANISHUV O'TMAYDI ══
+            r = c.post(f"/org/positions/{pos['oz']}/descriptions",
+                       headers=auth(mgr_t),
+                       json={"purpose": "Sotuv rejasini bajarish (yangi)",
+                             "duties": ["T-vazifa 1", "T-vazifa 3"],
+                             "rights": [], "responsibility": [], "requirements": []})
+            check("S-41: 2-versiya qo'shildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code))
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            yangi_holat = r.json() if r.status_code == 200 else {}
+            check("S-41: ⚠️ YANGI VERSIYA eski tanishuvni BEKOR qildi",
+                  (yangi_holat.get("acknowledgement") or {}).get("acknowledged") is False,
+                  "=" + str(yangi_holat.get("acknowledgement")))
+            check("S-41: joriy versiya 2 ga o'tdi",
+                  (yangi_holat.get("acknowledgement") or {}).get("version") == 2,
+                  "=" + str(yangi_holat.get("acknowledgement")))
+            #  Eski qator O'CHIRILMAYDI — tarix bo'lib qoladi.
+            soni = cur.execute(
+                "select count(*) from acknowledgements where user_id=? and"
+                " object_type='instruction' and object_id=?",
+                (ids["xodim"], pos["oz"])).fetchone()[0]
+            check("S-41: eski tanishuv TARIX bo'lib qoldi (2 qator)", soni == 2,
+                  "=" + str(soni))
+
+            # ══ BOT — SAYT BILAN BITTA HOLAT ══
+            r = c.get("/org/bot/my-place", params={"telegram_id": TG},
+                      headers=bot_secret_hdr())
+            bot_orin = r.json() if r.status_code == 200 else {}
+            check("S-41: bot /org/bot/my-place -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            check("S-41: bot ham «tanishmagan» deb ko'rsatdi (v2)",
+                  (bot_orin.get("acknowledgement") or {}).get("acknowledged") is False,
+                  "=" + str(bot_orin.get("acknowledgement")))
+
+            r = c.post("/org/bot/acknowledge", json={"telegram_id": TG},
+                       headers=bot_secret_hdr())
+            check("S-41: botdan «Tanishdim» -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            r = c.get("/org/my-place", headers=auth(xodim_t))
+            check("S-41: ⚠️ BOTDAGI tanishuv SAYTDA ham ko'rindi",
+                  (r.json().get("acknowledgement") or {}).get("acknowledged") is True,
+                  "=" + str(r.json().get("acknowledgement")))
+
+            #  Bot yo'llari sirsiz ochilmaydi.
+            r = c.get("/org/bot/my-place", params={"telegram_id": TG})
+            check("S-41: sirsiz bot yo'li -> 401", r.status_code == 401,
+                  "kod=" + str(r.status_code))
+
+            # ══ LAVOZIMSIZ XODIM — TUGMA ISHLAMAYDI, XATO EMAS ══
+            cur.execute("update users set position_id=null where id=?", (ids["xodim"],))
+            conn.commit()
+            r = c.post("/org/my-place/acknowledge", headers=auth(xodim_t))
+            check("S-41: lavozimsiz xodimda «Tanishdim» -> 400 (tushunarli xato)",
+                  r.status_code == 400, "kod=" + str(r.status_code) + r.text[:90])
+
+        # ══ BOT TUGMASI MENYU RO'YXATIDA ══
+        #  ⚠️ `ALL_MENU_BUTTONS` ga tushmasa, FSM matn kutayotgan paytda
+        #  tugma matni JAVOB sifatida yozilib ketardi (S-28 da shunday
+        #  bo'lgan).
+        from bot.keyboards import ALL_MENU_BUTTONS, BTN_MY_PLACE
+        check("S-41: bot tugmasi ALL_MENU_BUTTONS da",
+              BTN_MY_PLACE in ALL_MENU_BUTTONS, "=" + BTN_MY_PLACE)
+
+        from api.services.sections import ALL_SECTIONS
+        bolim = next((s for s in ALL_SECTIONS if s.key == "my-place"), None)
+        check("S-41: «Mening o'rnim» bo'limida bot tugmasi bor",
+              bolim is not None and bolim.bot_button == BTN_MY_PLACE,
+              "=" + str(bolim.bot_button if bolim else None))
+
+    except Exception:
+        check("S-41 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute(
+                "delete from acknowledgements where user_id in"
+                " (select id from users where full_name like 'T-Mo%')")
+            cur.execute("delete from users where full_name like 'T-Mo%'")
+            cur.execute(
+                "delete from job_descriptions where position_id in"
+                " (select id from positions where name like 'T-Mo%')")
+            cur.execute("delete from positions where name like 'T-Mo%'")
+            conn.commit()
+        except Exception:
+            print("S-41 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
 
 def test_bot_endpoint_secret_guard() -> None:
     """Har bir `/bot/...` yo'li SIR bilan qo'riqlanganini tekshiradi.
@@ -15924,6 +16232,12 @@ def main() -> None:
         test_org_site()
     except Exception:
         print("S-40 tuzilma sayti testida kutilmagan xato:\n"
+              + traceback.format_exc())
+
+    try:
+        test_org_employee_side()
+    except Exception:
+        print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:
