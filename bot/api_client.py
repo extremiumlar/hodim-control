@@ -1459,6 +1459,27 @@ async def my_place(telegram_id: int) -> dict | None:
     return resp.json()
 
 
+async def my_briefings(telegram_id: int) -> list[dict]:
+    """Xodimning texnika xavfsizligi instruktajlari."""
+    resp = await _get_client().get(
+        "/briefings/bot/my", params={"telegram_id": telegram_id}
+    )
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def briefing_ack(telegram_id: int, briefing_id: int) -> dict:
+    """«Tanishdim» — sayt bilan bitta qayd."""
+    resp = await _get_client().post(
+        "/briefings/bot/ack",
+        json={"telegram_id": telegram_id, "briefing_id": briefing_id},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def my_onboarding(telegram_id: int) -> dict | None:
     """«Birinchi kunlarim» — faol reja (yo'q bo'lsa `None`)."""
     resp = await _get_client().get(

@@ -168,6 +168,10 @@ _MANAGER: list[Section] = [
     #  kimda qaysi qadam kechikkan.
     Section("onboarding", "Onboarding", "/onboarding", "ClipboardList", 162,
             "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  Instruktaj jurnali (TZ 3.6 / S-48) — kadr hujjatlari bilan
+    #  bir xil qamrov: bu ham mehnat muhofazasi hujjati.
+    Section("briefings", "Instruktaj jurnali", "/briefings", "HardHat", 164,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("probation", "Sinov muddati", "/probation", "UserCheck", 163, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("profile-changes", "Ma'lumot so'rovlari", "/profile-changes", "PencilLine",
@@ -260,6 +264,8 @@ _EMPLOYEE: list[Section] = [
     #  eng muhim ro'yxat va uni menyu oxirida qidirib yurmasin.
     Section("my-onboarding", "Birinchi kunlarim", "/me/onboarding",
             "ClipboardList", 120, "employee", bot_button="📋 Birinchi kunlarim"),
+    Section("my-briefings", "Instruktajlarim", "/me/briefings", "HardHat", 136,
+            "employee", bot_button="🦺 Instruktajlarim"),
     Section("requests", "Arizalarim", "/me/requests", "FileText", 130, "employee",
             visible=lambda c: c.role != "boss"),
     Section("appeals", "E'tiroz / Shikoyat", "/me/appeals", "Scale", 140, "employee",

@@ -3988,3 +3988,92 @@ class OnboardingProgress(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     plan: Mapped["OnboardingPlan"] = relationship(back_populates="items")
+
+
+# ─────────────────────────────────────────────────────────────
+# TEXNIKA XAVFSIZLIGI INSTRUKTAJI (yangi TZ 3.6 / S-48)
+# ─────────────────────────────────────────────────────────────
+
+
+class BriefingKind(str, enum.Enum):
+    """Instruktaj turlari — mehnat muhofazasi qoidalaridagi ro'yxat.
+
+    Ro'yxat YOPIQ: kadr auditida (3.30) aynan shu nomlar so'raladi
+    va HR o'z nomini yozsa, hisobot mos kelmasdi."""
+
+    intro = "intro"  # kirish (ishga qabulda, bir marta)
+    initial = "initial"  # dastlabki (ish o'rnida)
+    repeat = "repeat"  # takroriy (davriy)
+    unscheduled = "unscheduled"  # rejadan tashqari
+    targeted = "targeted"  # maqsadli
+
+
+BRIEFING_KIND_LABELS: dict[str, str] = {
+    BriefingKind.intro.value: "Kirish instruktaji",
+    BriefingKind.initial.value: "Dastlabki instruktaj",
+    BriefingKind.repeat.value: "Takroriy instruktaj",
+    BriefingKind.unscheduled.value: "Rejadan tashqari instruktaj",
+    BriefingKind.targeted.value: "Maqsadli instruktaj",
+}
+
+#  ═══════════════════════════════════════════════════════════
+#  ⚠️ BU TIZIM QOG'OZ JURNAL O'RNINI BOSMAYDI (TZ 3.6 qabul mezoni)
+#  ═══════════════════════════════════════════════════════════
+#  Mehnat muhofazasi instruktaji jurnali — QONUN talab qiladigan
+#  hujjat va u xodimning QO'L QO'YISHI bilan rasmiylashtiriladi.
+#  Tizimdagi «Tanishdim» tugmasi bosilishi buni ALMASHTIRMAYDI:
+#  tekshiruvda elektron qayd qog'oz imzo o'rniga o'tmaydi.
+#
+#  Bu modul QO'SHIMCHA nazorat vositasi: kim tanishgan, kim yo'q,
+#  qaysi instruktaj muddati o'tgan — buni qog'oz jurnaldan tez
+#  bilib bo'lmaydi. Jurnalning O'ZI baribir yuritilishi SHART.
+#
+#  Ogohlantirish HR ga API javobida ham qaytariladi
+#  (`PAPER_JOURNAL_WARNING`) — u kodda ko'rinmasligi mumkin,
+#  lekin ekranda ko'rinishi kerak.
+PAPER_JOURNAL_WARNING = (
+    "⚠️ Bu elektron qayd QOG'OZ JURNAL o'rnini bosmaydi. "
+    "Instruktaj jurnali qonun talabi bo'yicha qo'l qo'yish bilan "
+    "yuritilishi shart — tizim faqat nazorat uchun."
+)
+
+
+class SafetyBriefing(Base):
+    """O'tkazilgan instruktaj (yangi TZ 3.6 / S-48).
+
+    ⚠️ QATNASHCHILAR VA IMZOLAR SHU YERDA EMAS. Ular S-20 ning
+    UMUMIY `acknowledgements` jadvalida (`object_type="briefing"`,
+    `object_id=<instruktaj id>`). TZ ham shuni aytadi: «yoki
+    `acknowledgements` (S-20) ishlatiladi». Alohida jadval qilinsa
+    «kim nima bilan tanishmagan?» degan savolga ikkita so'rov
+    kerak bo'lardi va tanishuv eslatmasi (S-42) bu turga
+    ishlamasdi.
+
+    ⚠️ MATERIAL O'QUV PANELIDA (3.1). Bu yerda faqat `course_id` —
+    matn/video/hujjat kursning O'Z materiallarida yotadi va
+    alohida mexanizm QURILMAYDI (TZ 3.6 ning 3-bandi).
+    """
+
+    __tablename__ = "safety_briefings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    held_on: Mapped[date] = mapped_column(Date, index=True)
+    conducted_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    #  Material manbai — o'quv panelidagi kurs (3.1).
+    course_id: Mapped[int | None] = mapped_column(
+        ForeignKey("courses.id"), nullable=True, index=True
+    )
+    #  ⚠️ TAKRORIY instruktaj davri (oy). `NULL` — takrorlanmaydi
+    #  (kirish instruktaji bir marta o'tkaziladi). Qiymat berilsa
+    #  `deadlines` ga muddat tushadi (S-48 qabul mezoni).
+    repeat_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )

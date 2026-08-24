@@ -2004,6 +2004,18 @@ export type OrgMyPlace = {
   } | null;
 };
 
+export type MyBriefing = {
+  id: number;
+  kind: string;
+  kind_label: string;
+  title: string;
+  held_on: string;
+  course_id: number | null;
+  note: string | null;
+  acknowledged_at: string | null;
+  acknowledged: boolean;
+};
+
 export type OnboardingItem = {
   id: number;
   order_index: number;

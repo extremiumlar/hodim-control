@@ -1702,6 +1702,12 @@ export const useOnboardingTemplates = () =>
     queryFn: api.onboardingTemplates,
   });
 
+export const useMyBriefings = () =>
+  useQuery({ queryKey: ["briefings", "me"], queryFn: api.myBriefings });
+
+export const useBriefingAck = () =>
+  useApiMutation((id: number) => api.briefingAck(id), [["briefings"]]);
+
 export const useMyOnboarding = () =>
   useQuery({ queryKey: ["onboarding", "me"], queryFn: api.myOnboarding });
 

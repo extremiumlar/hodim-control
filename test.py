@@ -13501,6 +13501,268 @@ class _SoxtaUser:
 
 
 
+
+def test_safety_briefings() -> None:
+    """S-48 (TZ 3.6) — texnika xavfsizligi instruktaji jurnali.
+
+    Qabul mezonlari (TZ):
+      • instruktaj -> qatnashchilar -> tanishuv qaydi ZANJIRI;
+      • TAKRORIY instruktaj muddati `deadlines` ga tushadi;
+      • QOG\'OZ JURNAL o\'rnini bosmasligi HUJJATDA yozilgan.
+    """
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-48: INSTRUKTAJ JURNALI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from acknowledgements where object_type='briefing'"
+            " and object_id in (select id from safety_briefings"
+            "  where title like 'T-Tx%')")
+        cur.execute(
+            "delete from acknowledgements where user_id in"
+            " (select id from users where full_name like 'T-Tx%')")
+        cur.execute(
+            "delete from deadlines where user_id in"
+            " (select id from users where full_name like 'T-Tx%')")
+        cur.execute("delete from safety_briefings where title like 'T-Tx%'")
+        cur.execute("delete from users where full_name like 'T-Tx%'")
+        conn.commit()
+
+    try:
+        tozala()
+        for tg, nom in ((999704801, "T-Tx Ishchi"), (999704802, "T-Tx Ikkinchi")):
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (?,?,'employee',0,1,datetime('now'))",
+                (tg, nom))
+            ids[nom] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["T-Tx Ishchi"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            # ══ MEZON 3: QOG'OZ JURNAL OGOHLANTIRISHI ══
+            #  ⚠️ Faqat kod izohida emas — HR KO'RADIGAN javobda ham.
+            from db.models import PAPER_JOURNAL_WARNING
+            check("S-48: ⚠️ ogohlantirish matnida «qog'oz jurnal» bor",
+                  "QOG'OZ JURNAL" in PAPER_JOURNAL_WARNING.upper()
+                  or "QOG‘OZ JURNAL" in PAPER_JOURNAL_WARNING.upper(),
+                  "=" + PAPER_JOURNAL_WARNING[:80])
+
+            r = c.get("/briefings/kinds", headers=auth(xodim_t))
+            check("S-48: turlar ro'yxati -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            turlar = r.json() if r.status_code == 200 else {}
+            check("S-48: beshta tur bor (kirish/dastlabki/takroriy/...)",
+                  len(turlar.get("kinds") or []) == 5,
+                  "=" + str([k["value"] for k in turlar.get("kinds", [])]))
+            check("S-48: ⚠️ ogohlantirish API JAVOBIDA qaytariladi",
+                  turlar.get("paper_journal_warning") == PAPER_JOURNAL_WARNING,
+                  "=" + str(turlar.get("paper_journal_warning"))[:70])
+
+            #  ⚠️ Ekranda ham ko'rsatilishi kerak — sahifa matnini
+            #  tekshiramiz. Faqat backendda qolsa foydalanuvchi
+            #  hech qachon ko'rmasdi.
+            sahifa = (Path(__file__).resolve().parent / "web" / "src" / "pages"
+                      / "me" / "Briefings.tsx").read_text(encoding="utf-8")
+            check("S-48: ⚠️ ogohlantirish XODIM EKRANIDA ham bor",
+                  "qog'oz jurnal" in sahifa.lower(), "=me/Briefings.tsx")
+            bot_matn = (Path(__file__).resolve().parent / "bot" / "handlers"
+                        / "briefings.py").read_text(encoding="utf-8")
+            check("S-48: ⚠️ ogohlantirish BOTDA ham bor",
+                  "QOG'OZ JURNAL" in bot_matn.upper(), "=bot/handlers/briefings.py")
+
+            # ══ MEZON 1: ZANJIR ══
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "intro", "title": "T-Tx Kirish instruktaji",
+                "held_on": "2026-08-24",
+                "user_ids": [ids["T-Tx Ishchi"], ids["T-Tx Ikkinchi"]]})
+            check("S-48: instruktaj yaratildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:110])
+            kirish = r.json() if r.status_code == 201 else {}
+            ids["kirish"] = kirish.get("id")
+            check("S-48: ikkala qatnashchi qayd etildi",
+                  kirish.get("total") == 2, "=" + str(kirish.get("total")))
+            check("S-48: hali hech kim tanishmagan",
+                  kirish.get("read") == 0 and kirish.get("pending") == 2,
+                  "=" + str((kirish.get("read"), kirish.get("pending"))))
+            check("S-48: yaratish javobida ham ogohlantirish bor",
+                  kirish.get("paper_journal_warning") == PAPER_JOURNAL_WARNING,
+                  "=" + str(kirish.get("paper_journal_warning"))[:60])
+
+            #  ⚠️ IMZOLAR S-20 NING UMUMIY JADVALIDA — alohida
+            #  jadval yaratilmagan (TZ shuni ko'rsatadi).
+            qayd = cur.execute(
+                "select object_type, object_id, version from acknowledgements"
+                " where object_type='briefing' and object_id=?",
+                (ids["kirish"],)).fetchall()
+            check("S-48: ⚠️ imzolar `acknowledgements` da (yangi jadval YO'Q)",
+                  len(qayd) == 2 and all(q[0] == "briefing" for q in qayd),
+                  "=" + str(qayd))
+
+            #  Xodim o'z ro'yxatida ko'radi.
+            r = c.get("/briefings/me", headers=auth(xodim_t))
+            meniki = r.json() if r.status_code == 200 else []
+            check("S-48: xodim instruktajni ko'rdi", len(meniki) == 1,
+                  "=" + str(len(meniki)))
+            check("S-48: tur nomi tarjima qilingan",
+                  meniki and meniki[0]["kind_label"] == "Kirish instruktaji",
+                  "=" + str(meniki[0]["kind_label"] if meniki else None))
+            check("S-48: hali tanishmagan deb ko'rsatilgan",
+                  meniki and meniki[0]["acknowledged"] is False,
+                  "=" + str(meniki[0]["acknowledged"] if meniki else None))
+
+            #  «Tanishdim» — VAQT yoziladi.
+            r = c.post(f"/briefings/me/{ids['kirish']}/ack", headers=auth(xodim_t))
+            check("S-48: «Tanishdim» -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code) + r.text[:90])
+            check("S-48: ⚠️ tanishuv VAQTI yozildi",
+                  r.json().get("acknowledged_at") is not None,
+                  "=" + str(r.json()))
+
+            r = c.get(f"/briefings/{ids['kirish']}", headers=auth(mgr_t))
+            tafsilot = r.json() if r.status_code == 200 else {}
+            check("S-48: jurnalda 1/2 tanishgan ko'rindi",
+                  tafsilot.get("read") == 1 and tafsilot.get("pending") == 1,
+                  "=" + str((tafsilot.get("read"), tafsilot.get("pending"))))
+            check("S-48: TANISHMAGANLAR ro'yxat tepasida",
+                  (tafsilot.get("participants") or [])[0]["acknowledged_at"] is None,
+                  "=" + str([p["full_name"] for p in tafsilot.get("participants", [])]))
+
+            #  ⚠️ SO'RALMAGAN instruktajni tasdiqlab bo'lmaydi —
+            #  xodim o'zini ro'yxatga qo'sha olmaydi.
+            cur.execute(
+                "insert into users (telegram_id, full_name, role, bot_started,"
+                " is_active, created_at) values (999704803,'T-Tx Begona','employee',"
+                "0,1,datetime('now'))")
+            begona_id = cur.lastrowid
+            conn.commit()
+            begona_t = token_for(begona_id, "employee")
+            r = c.post(f"/briefings/me/{ids['kirish']}/ack", headers=auth(begona_t))
+            check("S-48: ⚠️ SO'RALMAGAN instruktaj -> 404 (o'zini qo'sha olmaydi)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+
+            # ══ MEZON 2: TAKRORIY MUDDAT `deadlines` GA ══
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "repeat", "title": "T-Tx Takroriy instruktaj",
+                "held_on": "2026-08-24", "repeat_months": 6,
+                "user_ids": [ids["T-Tx Ishchi"], ids["T-Tx Ikkinchi"]]})
+            check("S-48: takroriy instruktaj yaratildi -> 201",
+                  r.status_code == 201, "kod=" + str(r.status_code) + r.text[:90])
+            ids["takroriy"] = r.json().get("id")
+
+            muddatlar = cur.execute(
+                "select user_id, kind, due_date, status, note from deadlines"
+                " where kind='safety_briefing' and user_id in (?,?)",
+                (ids["T-Tx Ishchi"], ids["T-Tx Ikkinchi"])).fetchall()
+            check("S-48: ⚠️ TAKRORIY muddat `deadlines` ga TUSHDI (2 xodim)",
+                  len(muddatlar) == 2, "=" + str(muddatlar))
+            check("S-48: muddat 6 oydan keyin (~180 kun)",
+                  muddatlar and str(muddatlar[0][2])[:10] == "2027-02-20",
+                  "=" + str(muddatlar[0][2] if muddatlar else None))
+            check("S-48: muddat izohida instruktaj nomi bor",
+                  muddatlar and "T-Tx Takroriy instruktaj" in str(muddatlar[0][4]),
+                  "=" + str(muddatlar[0][4] if muddatlar else None))
+
+            #  ⚠️ KIRISH instruktaji uchun muddat YARATILMAYDI —
+            #  u bir marta o'tkaziladi.
+            check("S-48: ⚠️ KIRISH instruktajiga muddat yaratilmadi"
+                  " (bir marta o'tkaziladi)",
+                  all("Kirish" not in str(m[4]) for m in muddatlar),
+                  "=" + str([m[4] for m in muddatlar]))
+
+            #  Tanishgach muddat YOPILADI.
+            r = c.post(f"/briefings/me/{ids['takroriy']}/ack", headers=auth(xodim_t))
+            check("S-48: takroriy instruktaj bilan tanishildi -> 200",
+                  r.status_code == 200, "kod=" + str(r.status_code))
+            holat = cur.execute(
+                "select status from deadlines where kind='safety_briefing'"
+                " and user_id=?", (ids["T-Tx Ishchi"],)).fetchone()
+            check("S-48: ⚠️ tanishgach muddat YOPILDI (eslatma kelavermasin)",
+                  holat is not None and holat[0] == "done", "=" + str(holat))
+            qolgan = cur.execute(
+                "select status from deadlines where kind='safety_briefing'"
+                " and user_id=?", (ids["T-Tx Ikkinchi"],)).fetchone()
+            check("S-48: BOSHQA xodimning muddati OCHIQ qoldi",
+                  qolgan is not None and qolgan[0] == "open", "=" + str(qolgan))
+
+            # ══ JURNAL VA RUXSATLAR ══
+            r = c.get("/briefings", headers=auth(mgr_t))
+            jurnal = r.json() if r.status_code == 200 else {}
+            check("S-48: jurnal -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-48: jurnalda ikkala instruktaj bor",
+                  len(jurnal.get("items") or []) >= 2,
+                  "=" + str(len(jurnal.get("items") or [])))
+            check("S-48: jurnal javobida ham ogohlantirish bor",
+                  jurnal.get("paper_journal_warning") == PAPER_JOURNAL_WARNING,
+                  "=" + str(jurnal.get("paper_journal_warning"))[:60])
+            r = c.get("/briefings", headers=auth(xodim_t))
+            check("S-48: xodim jurnalga kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            #  Noma'lum tur rad etiladi.
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "raqs", "title": "T-Tx Xato", "held_on": "2026-08-24",
+                "user_ids": [ids["T-Tx Ishchi"]]})
+            check("S-48: noma'lum tur -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+            r = c.post("/briefings", headers=auth(mgr_t), json={
+                "kind": "intro", "title": "T-Tx Bo'sh", "held_on": "2026-08-24",
+                "user_ids": []})
+            check("S-48: qatnashchisiz instruktaj -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            # ══ BOT — SAYT BILAN BITTA HOLAT ══
+            r = c.get("/briefings/bot/my", params={"telegram_id": 999704801},
+                      headers=bot_secret_hdr())
+            bot_royxat = r.json() if r.status_code == 200 else []
+            check("S-48: bot ro'yxati -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-48: botda ham tanishgan holat ko'rindi",
+                  all(b["acknowledged"] for b in bot_royxat),
+                  "=" + str([(b["title"], b["acknowledged"]) for b in bot_royxat]))
+            r = c.get("/briefings/bot/my", params={"telegram_id": 999704801})
+            check("S-48: sirsiz bot yo'li -> 401", r.status_code == 401,
+                  "kod=" + str(r.status_code))
+
+        # ══ BO'LIM VA TUGMA ══
+        from api.services.sections import ALL_SECTIONS
+        from bot.keyboards import ALL_MENU_BUTTONS, BTN_BRIEFINGS
+        check("S-48: bot tugmasi ALL_MENU_BUTTONS da",
+              BTN_BRIEFINGS in ALL_MENU_BUTTONS, "=" + BTN_BRIEFINGS)
+        xodim_b = next((s for s in ALL_SECTIONS if s.key == "my-briefings"), None)
+        check("S-48: «Instruktajlarim» bo'limi bot tugmasi bilan",
+              xodim_b is not None and xodim_b.bot_button == BTN_BRIEFINGS,
+              "=" + str(xodim_b.bot_button if xodim_b else None))
+        hr_b = next((s for s in ALL_SECTIONS if s.key == "briefings"), None)
+        check("S-48: HR «Instruktaj jurnali» bo'limi bor",
+              hr_b is not None and hr_b.audience == "manager",
+              "=" + str(hr_b.audience if hr_b else None))
+
+    except Exception:
+        check("S-48 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            tozala()
+            cur.execute("delete from users where full_name like 'T-Tx%'")
+            conn.commit()
+        except Exception:
+            print("S-48 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_onboarding_hr_screen() -> None:
     """S-47 (TZ 3.2) — HR ekrani, xodim ro'yxati va yakunlash.
 
@@ -17807,6 +18069,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_safety_briefings()
+    except Exception:
+        print("S-48 instruktaj testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

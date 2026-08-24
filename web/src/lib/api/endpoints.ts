@@ -24,6 +24,7 @@ import type {
   JobDescriptionVersion,
   OrgChart,
   CompanyCard,
+  MyBriefing,
   OnboardingPlan,
   OnboardingTemplate,
   InstructionAckOverview,
@@ -1345,6 +1346,9 @@ export const api = {
   onboardingTemplates: () =>
     apiFetch<OnboardingTemplate[]>("/onboarding/templates"),
   myOnboarding: () => apiFetch<OnboardingPlan | null>("/onboarding/me"),
+  myBriefings: () => apiFetch<MyBriefing[]>("/briefings/me"),
+  briefingAck: (id: number) =>
+    apiFetch<{ ok: boolean }>(`/briefings/me/${id}/ack`, { method: "POST" }),
   onboardingItemDone: (id: number, note?: string) =>
     apiFetch<OnboardingPlan>(`/onboarding/items/${id}/done`, {
       method: "POST",

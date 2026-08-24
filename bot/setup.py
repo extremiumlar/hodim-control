@@ -22,6 +22,7 @@ from bot.handlers import (
     attendance_stats,
     celebration,
     courses,
+    briefings as briefings_h,
     onboarding as onboarding_h,
     org,
     busy_period,
@@ -134,6 +135,7 @@ def build_dispatcher(bot: Bot, storage=None) -> Dispatcher:
     dp.include_router(courses.router)
     dp.include_router(org.router)
     dp.include_router(onboarding_h.router)
+    dp.include_router(briefings_h.router)
     # ENG OXIRIDA UCH "erkin matn" ushlagichi, tartib muhim:
     # 1) avans summasi — API'da summa kutilmayotgan bo'lsa SkipHandler;
     #    BIRINCHI, chunki bu holat qisqa muddatli va xodim aynan shu
