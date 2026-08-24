@@ -1042,9 +1042,13 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 2. ⚠️ **Vazifa statistikasini buzmasin:** alohida `source` belgisi bilan va **kunlik digestdagi ✅ ustuniga kirmasin**.
 
 **Qabul mezoni**
-- [ ] Qadam vazifa sifatida ko'rinadi va bajariladi
-- [ ] Kunlik digestda vazifa foizi **o'zgarmagan** (test bilan isbot)
-- [ ] Qadam bajarilsa progress yangilanadi
+- [x] Qadam vazifa sifatida ko'rinadi va bajariladi — mas'uli bor
+      qadam MAS'ULGA, qolgani xodimga; muddat kun oxiri
+- [x] Kunlik digestda vazifa foizi **o'zgarmagan** — etalon
+      o'lchandi (1/2), reja ochilgach ham (1/2). Filtrni ataylab
+      olib tashlab sinaldi: (1,4) ga sakradi va test yiqildi
+- [x] Qadam bajarilsa progress yangilanadi — ikki tomonlama
+      sinxron (vazifa→qadam va qadam→vazifa)
 
 ---
 
