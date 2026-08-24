@@ -327,7 +327,7 @@ async def employee_hourly_plan(telegram_id: int, user_id: int, db: AsyncSession 
     """Rahbar (ROP/HR/Boshliq/Dasturchi) uchun: bitta xodimning bugungi soatma-soat
     rejasi — norma boshqaruvi bilan bir xil doira (norma o'rnata oladigan rahbar
     reja ham ko'radi)."""
-    from api.routers.norms import can_manage_norms  # circular importdan qochish
+    from api.routers.norms import can_manage_norms_db  # circular importdan qochish
 
     actor = await db.scalar(select(User).where(User.telegram_id == telegram_id))
     if not actor or not actor.is_active or actor.role not in (Role.hr.value, Role.rop.value, Role.boss.value, Role.dasturchi.value):
@@ -338,7 +338,7 @@ async def employee_hourly_plan(telegram_id: int, user_id: int, db: AsyncSession 
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
 
     is_privileged = actor.role in (Role.boss.value, Role.dasturchi.value)
-    if not is_privileged and not can_manage_norms(actor, target):
+    if not is_privileged and not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
 
     return await build_plan(db, target, datetime.now(TASHKENT_TZ))

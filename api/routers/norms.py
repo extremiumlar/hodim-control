@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_db, is_superadmin, require_roles, verify_bot_secret
 from api.timeutil import today_local
 from api.schemas import NormBotUpdate, NormCreate, NormOut, TeamNormRow, UserOut
+from api.services import hierarchy as _h
 from db.models import AuditLog, Norm, Role, User
 
 router = APIRouter(prefix="/norms", tags=["norms"])
@@ -49,17 +50,34 @@ def is_orphan_employee(target: User) -> bool:
     """"Yetim" xodim: na bevosita rahbari (manager_id), na boshqaruvchi-rol
     biriktirilgan lavozimi bor — uni ROP scope ham, lavozim matritsasi ham qamrab
     olmaydi. Bunday xodimlarni zaxira sifatida HR boshqaradi (aks holda faqat
-    Boshliq/Dasturchi ko'rar edi)."""
-    position = target.position
-    return target.manager_id is None and not (position and position.managed_by_roles)
+    Boshliq/Dasturchi ko'rar edi).
+
+    ⚠️ Mantiq `api/services/hierarchy.py` ga KO'CHIRILDI (S-44) — bu
+    yerda faqat eski nom saqlanib qolgan, chunki uni boshqa modullar
+    import qiladi."""
+    return _h.is_orphan(target)
 
 
-def can_manage_norms(actor: User, target: User) -> bool:
-    """Norma belgilash matritsasi (vazifa matritsasi bilan bir xil mantiq):
-    Boshliq/Dasturchi — barcha xodimlarga; ROP — o'z jamoasiga (manager_id) yoki
-    lavozimi "ROP boshqaradi" deb belgilangan xodimlarga; HR — lavozimi
-    "HR boshqaradi" deb belgilangan xodimlarga, hamda zaxira sifatida "yetim"
-    (rahbarsiz va boshqaruvchi-rolsiz) xodimlarga.
+def can_manage_norms(
+    actor: User, target: User, chain: set[int] | None = None
+) -> bool:
+    """Norma belgilash matritsasi.
+
+    Boshliq/Dasturchi — barchaga; rahbar — o'z shoxidagi xodimlarga;
+    rol istisnosi — lavozimi «falon rol boshqaradi» deb belgilangan
+    xodimlarga; HR — bundan tashqari «yetim» xodimlarga.
+
+    ⚠️ QOIDA ENDI `api/services/hierarchy.py` DA — YAGONA MANBA
+    (S-44). Ilgari ayni shu qoida uch joyda takrorlangan edi va
+    bittasi o'zgarsa qolganlari eski holida qolib ketardi.
+
+    ⚠️ `chain` — target ning RAHBARLAR ZANJIRI. Berilsa boshqaruv
+    huquqi butun zanjir bo'yicha hisoblanadi (rahbarimning rahbari
+    ham meni boshqaradi). BERILMASA faqat BEVOSITA rahbar
+    hisoblanadi — bu S-44 gacha bo'lgan xatti-harakat va u
+    ATAYLAB saqlangan: funksiya sinxron va o'zi bazaga bora
+    olmaydi, chaqiruvchi esa har doim ham `db` ga ega emas.
+    Zanjir kerak bo'lgan joyda `can_manage_norms_db` ishlatiladi.
 
     Bosqich 3.5 (Dasturchi rejimi): superadmin `target.role != employee`
     tekshiruvidan HAM OLDIN — Dasturchi HR/ROP/Boss'ga ham norma qo'ya oladi
@@ -68,19 +86,37 @@ def can_manage_norms(actor: User, target: User) -> bool:
         return True
     if target.role != Role.employee.value or not target.is_active:
         return False
-    if actor.role in {Role.boss.value, Role.dasturchi.value}:
-        return True
-    if actor.role == Role.rop.value:
-        if target.manager_id == actor.id:
-            return True
-        position = target.position
-        return bool(position and position.managed_by_roles and Role.rop.value in position.managed_by_roles)
-    if actor.role == Role.hr.value:
-        position = target.position
-        if position and position.managed_by_roles and Role.hr.value in position.managed_by_roles:
-            return True
-        return is_orphan_employee(target)
-    return False
+    zanjir = chain if chain is not None else (
+        {target.manager_id} if target.manager_id else set()
+    )
+    return _h.manages_with_chain(actor, target, zanjir)
+
+
+async def can_manage_norms_db(db: AsyncSession, actor: User, target: User) -> bool:
+    """`can_manage_norms` — IERARXIYA ZANJIRI bilan (S-44).
+
+    Bitta xodim uchun. Ro'yxatlar uchun `can_manage_norms_map`."""
+    if is_superadmin(actor) or actor.role in _h.FULL_ACCESS_ROLES:
+        #  Zanjirni hisoblash SHART EMAS — javob baribir «ha».
+        #  Bu ortiqcha so'rovni to'sadi (Passenger: konkurentlik = 1).
+        return can_manage_norms(actor, target)
+    return can_manage_norms(actor, target, await _h.chain_ids(db, target.id))
+
+
+async def can_manage_norms_map(
+    db: AsyncSession, actor: User, targets: list[User]
+) -> dict[int, bool]:
+    """Ko'p xodim uchun — BITTA so'rov bilan.
+
+    ⚠️ Har xodimga alohida `can_manage_norms_db` chaqirilsa, 50
+    xodimli sahifa 50 ta so'rov qilardi (N+1)."""
+    if is_superadmin(actor) or actor.role in _h.FULL_ACCESS_ROLES:
+        return {t.id: can_manage_norms(actor, t) for t in targets}
+    zanjirlar = await _h.chain_map(db, [t.id for t in targets])
+    return {
+        t.id: can_manage_norms(actor, t, zanjirlar.get(t.id, set()))
+        for t in targets
+    }
 
 
 async def _current_value(db: AsyncSession, user_id: int, metric_type: str) -> int | None:
@@ -156,9 +192,17 @@ async def team_norms(
 
     query = select(User).where(User.role == Role.employee.value, User.is_active == True)  # noqa: E712
     if actor.role == Role.rop.value:
-        query = query.where(User.manager_id == actor.id)
+        #  ⚠️ BUTUN SHOX (S-44), faqat bevosita bo'ysunuvchilar emas.
+        #  Ilgari `User.manager_id == actor.id` edi va ikki bo'g'in
+        #  pastdagi xodim ro'yxatda UMUMAN ko'rinmasdi, garchi ROP
+        #  unga norma qo'ya olsa ham — ro'yxat va huquq bir-biriga
+        #  mos kelmasdi.
+        shox = await _h.subordinate_ids(db, actor.id)
+        query = query.where(User.id.in_(shox or {-1}))
     employees = list(await db.scalars(query.order_by(User.full_name)))
 
+    #  Ruxsatlar BITTA so'rovda (N+1 emas).
+    ruxsat = await can_manage_norms_map(db, actor, employees)
     rows = []
     for emp in employees:
         rows.append(
@@ -166,7 +210,7 @@ async def team_norms(
                 user_id=emp.id,
                 full_name=emp.full_name,
                 position_name=emp.position.name if emp.position else None,
-                can_edit=can_manage_norms(actor, emp),
+                can_edit=ruxsat.get(emp.id, False),
                 # Bugungi haqiqiy (CRM/qo'lda) qiymat + norma — shu API orqali
                 # normani "tekshirish" imkonini beradi (bot bilan bir xil manba).
                 metrics=await today_metric_rows(db, emp),
@@ -191,7 +235,8 @@ async def norm_targets(telegram_id: int, db: AsyncSession = Depends(get_db)) -> 
             .order_by(User.full_name)
         )
     )
-    return [e for e in employees if can_manage_norms(actor, e)]
+    ruxsat = await can_manage_norms_map(db, actor, employees)
+    return [e for e in employees if ruxsat.get(e.id, False)]
 
 
 @router.post("", response_model=NormOut)
@@ -205,7 +250,7 @@ async def create_norm(
     # norma qo'ya oladi — role tekshiruvi superadmin uchun o'tkazib yuboriladi.
     if not target or (target.role != Role.employee.value and not is_superadmin(actor)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-    if not can_manage_norms(actor, target):
+    if not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga norma belgilash huquqingiz yo'q")
     _validate_metric(target, payload.metric_type, actor)
 
@@ -221,7 +266,7 @@ async def bot_update_norm(payload: NormBotUpdate, db: AsyncSession = Depends(get
     target = await db.get(User, payload.target_user_id)
     if not target or (target.role != Role.employee.value and not is_superadmin(actor)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-    if not can_manage_norms(actor, target):
+    if not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga norma belgilash huquqingiz yo'q")
     _validate_metric(target, payload.metric_type, actor)
 

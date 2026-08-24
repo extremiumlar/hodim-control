@@ -100,6 +100,7 @@ from api.notify import notify_user
 from api.services.push import Category
 from api.telegram_notify import inline_keyboard
 from api.timeutil import today_local
+from api.services import hierarchy as _h
 from db.models import (
     PAYROLL_COUNTED_STATUSES,
     AdvanceAnnouncement,
@@ -175,24 +176,32 @@ def _can_decide_advance(actor: User, adj: PayrollAdjustment) -> tuple[bool, str]
     return True, ""
 
 
-def can_view_payroll(actor: User, target: User) -> bool:
-    """ROP faqat o'z jamoasini (bevosita `manager_id` yoki lavozimi "ROP
-    boshqaradi" deb belgilangan) va o'zini ko'radi — boshqa rahbarlarning
-    payslip'ini emas. HR/Boshliq/Dasturchi — hammani (`norms.py::
-    can_manage_norms` bilan bir xil qamrov mantiqi, lekin faqat KO'RISH
-    uchun — tahrir/tasdiqlash huquqi bermaydi)."""
+def can_view_payroll(actor: User, target: User, chain: set[int] | None = None) -> bool:
+    """ROP o'z SHOXIDAGI xodimlarni va o'zini ko'radi — boshqa
+    rahbarlarning payslip'ini emas. HR/Boshliq/Dasturchi — hammani
+    (faqat KO'RISH; tahrir/tasdiqlash huquqi bermaydi).
+
+    ⚠️ QAMROV QOIDASI `api/services/hierarchy.py` DA — YAGONA MANBA
+    (S-44). Ilgari ayni shu qoida bu yerda, `norms.can_manage_norms`
+    da va `deps.scoped_user_ids` da alohida yozilgan edi; bittasi
+    o'zgarsa qolganlari eski holida qolib ketardi va xodim bir
+    modulda ko'rinib, boshqasida ko'rinmasdi.
+
+    ⚠️ `chain` berilmasa faqat BEVOSITA rahbar hisoblanadi (S-44
+    gacha bo'lgan xatti-harakat) — funksiya sinxron va bazaga
+    o'zi bora olmaydi."""
     if actor.role in (Role.hr.value, Role.boss.value, Role.dasturchi.value):
         return True
+    if target.id == actor.id:
+        return True
     if actor.role == Role.rop.value:
-        if target.id == actor.id:
-            return True
         if target.role != Role.employee.value:
             return False
-        if target.manager_id == actor.id:
-            return True
-        position = target.position
-        return bool(position and position.managed_by_roles and Role.rop.value in position.managed_by_roles)
-    return target.id == actor.id
+        zanjir = chain if chain is not None else (
+            {target.manager_id} if target.manager_id else set()
+        )
+        return _h.manages_with_chain(actor, target, zanjir)
+    return False
 
 
 def _require_view(actor: User = Depends(require_roles(*PAYROLL_VIEW_ROLES))) -> User:

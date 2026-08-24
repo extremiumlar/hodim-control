@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, require_roles, verify_bot_secret
-from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.routers.norms import METRIC_LABELS, can_manage_norms_db, metrics_for
 from api.services.crm_sync import sync_daily_results, upsert_daily_result
 from api.services.lead_diff import visit_stats_range
 from api.timeutil import today_local
@@ -49,7 +49,7 @@ async def manual_daily_result(
     target = await db.get(User, payload.user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-    if not can_manage_norms(actor, target):
+    if not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga kunlik natija kiritish huquqingiz yo'q")
     _validate_manual_metrics(target, payload.conversations_count, payload.visits_count)
 
@@ -95,7 +95,7 @@ async def list_daily_results(
     target = await db.get(User, user_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Foydalanuvchi topilmadi")
-    if not can_manage_norms(actor, target):
+    if not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimning natijalarini ko'rish huquqingiz yo'q")
 
     query = (

@@ -55,7 +55,7 @@ async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: Use
     kerak, position.managed_by_roles'ga qarab cheklash bu yerda foydasiz
     to'siq bo'lardi).
     ROP hamon can_manage_norms bilan cheklangan (faqat o'z jamoasi/lavozimi)."""
-    from api.routers.norms import can_manage_norms  # circular importdan qochish
+    from api.routers.norms import can_manage_norms_db  # circular importdan qochish
 
     user = await _get_user_or_404(db, user_id)
     if actor.role in (Role.boss.value, Role.dasturchi.value):
@@ -64,7 +64,7 @@ async def _get_manageable_user_or_404(db: AsyncSession, user_id: int, actor: Use
         if user.role in HR_SCHEDULE_TARGET_ROLES and user.is_active:
             return user
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
-    if not can_manage_norms(actor, user):
+    if not await can_manage_norms_db(db, actor, user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodim sizning nazoratingizda emas")
     return user
 

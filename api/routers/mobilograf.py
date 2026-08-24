@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_roles, verify_bot_secret
-from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, can_manage_norms, metrics_for
+from api.routers.norms import METRIC_LABELS, VIDEO_METRIC_TYPES, can_manage_norms_db, metrics_for
 from api.schemas import MobilografCreate, MobilografManualCreate, MobilografOut, MobilografReact
 from api.timeutil import local_range_utc_naive
 from db.models import AuditLog, MobilografSource, MobilografStatus, MobilografVideo, Role, User
@@ -45,7 +45,7 @@ async def set_manual_mobilograf_videos(
     target = await db.get(User, payload.user_id)
     if not target or target.role != Role.employee.value:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Xodim topilmadi")
-    if not can_manage_norms(actor, target):
+    if not await can_manage_norms_db(db, actor, target):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu xodimga video kiritish huquqingiz yo'q")
     if payload.metric_type not in VIDEO_METRIC_TYPES or payload.metric_type not in metrics_for(target):
         raise HTTPException(

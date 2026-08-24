@@ -89,23 +89,25 @@ async def scoped_user_ids(
     if actor.role in VIEW_ALL_ROLES:
         return None
     if actor.role == Role.rop.value and rop_sees_team:
-        # Bevosita bo'ysunuvchilar + lavozimi «ROP boshqaradi» deb
-        # belgilangan xodimlar (`can_view_payroll` bilan AYNAN bir xil
-        # qoida — u shu funksiyaning sinxron ko'rinishi).
+        #  ⚠️ QAMROV QOIDASI `api/services/hierarchy.py` DA — YAGONA
+        #  MANBA (S-44). Ilgari shu yerda, `norms.can_manage_norms` da
+        #  va `payroll.can_view_payroll` da uchta nusxa bor edi.
+        #
+        #  ⚠️ Endi butun SHOX: rahbarimning rahbari ham jamoani
+        #  ko'radi. Ilgari faqat bevosita bo'ysunuvchilar sanalardi va
+        #  ikki bo'g'in pastdagi xodim ko'rinmasdi.
+        from api.services import hierarchy as _h
+
         rows = list(
             await db.scalars(
                 select(User).where(User.role == Role.employee.value)
             )
         )
+        zanjirlar = await _h.chain_map(db, [u.id for u in rows])
         team = {
             u.id
             for u in rows
-            if u.manager_id == actor.id
-            or (
-                u.position is not None
-                and u.position.managed_by_roles
-                and Role.rop.value in u.position.managed_by_roles
-            )
+            if _h.manages_with_chain(actor, u, zanjirlar.get(u.id, set()))
         }
         return team | {actor.id}
     return {actor.id}

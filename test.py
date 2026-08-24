@@ -13397,6 +13397,184 @@ def test_org_employee_side() -> None:
 
 
 
+
+#  ⚠️ S-44 REGRESSIYA ETALONI. Bu — `7e65704` (S-44 dan OLDINGI)
+#  commitdagi `can_manage_norms` mantiqining AYNAN nusxasi. Yangi
+#  kod shu bilan solishtiriladi: TZ «eski xatti-harakat buzilmagan»
+#  deb talab qiladi va buni ko'z bilan tekshirib bo'lmaydi —
+#  kombinatsiyalar soni 900 ta.
+def _eski_can_manage_norms(actor, target):
+    from db.models import Role
+
+    if actor.role == Role.dasturchi.value:
+        return True
+    if target.role != Role.employee.value or not target.is_active:
+        return False
+    if actor.role in {Role.boss.value, Role.dasturchi.value}:
+        return True
+    if actor.role == Role.rop.value:
+        if target.manager_id == actor.id:
+            return True
+        poz = target.position
+        return bool(poz and poz.managed_by_roles
+                    and Role.rop.value in poz.managed_by_roles)
+    if actor.role == Role.hr.value:
+        poz = target.position
+        if poz and poz.managed_by_roles and Role.hr.value in poz.managed_by_roles:
+            return True
+        return target.manager_id is None and not (poz and poz.managed_by_roles)
+    return False
+
+
+class _SoxtaPoz:
+    def __init__(self, roles):
+        self.managed_by_roles = roles
+
+
+class _SoxtaUser:
+    def __init__(self, uid, role, is_active=True, manager_id=None, position=None):
+        self.id = uid
+        self.role = role
+        self.is_active = is_active
+        self.manager_id = manager_id
+        self.position = position
+
+
+def test_hierarchy_authority() -> None:
+    """S-44 (TZ 3.16) — `managed_by_roles` ziddiyatini yopish.
+
+    Qabul mezonlari (TZ):
+      • `can_manage_norms` IERARXIYANI biladi;
+      • ariza aniq rahbarga boradi;
+      • ESKI XATTI-HARAKAT BUZILMAGAN (regressiya majburiy).
+    """
+    import asyncio
+    import itertools
+
+    from api.routers.norms import can_manage_norms
+    from api.services import hierarchy as H
+    from db.models import Role
+
+    print(chr(10) + "=" * 60)
+    print("S-44: IERARXIYA — YAGONA MANBA")
+    print("=" * 60)
+
+    # ══ MEZON 3: REGRESSIYA (eng muhimi) ══
+    ROLLAR = [Role.employee.value, Role.rop.value, Role.hr.value,
+              Role.boss.value, Role.dasturchi.value]
+    POZLAR = [None, _SoxtaPoz(None), _SoxtaPoz([]), _SoxtaPoz(["rop"]),
+              _SoxtaPoz(["hr"]), _SoxtaPoz(["rop", "hr"])]
+
+    farqlar = []
+    jami = 0
+    for a_rol, t_rol, faol, mgr, poz in itertools.product(
+        ROLLAR, ROLLAR, [True, False], [None, 1, 99], POZLAR
+    ):
+        actor = _SoxtaUser(1, a_rol)
+        target = _SoxtaUser(2, t_rol, is_active=faol, manager_id=mgr, position=poz)
+        jami += 1
+        #  `chain` BERILMAYDI — aynan eski chaqiruv shakli.
+        if can_manage_norms(actor, target) != _eski_can_manage_norms(actor, target):
+            farqlar.append((a_rol, t_rol, faol, mgr,
+                            poz.managed_by_roles if poz else None))
+
+    check("S-44: regressiya — 900 kombinatsiya tekshirildi", jami == 900,
+          "=" + str(jami))
+
+    #  ⚠️ YAGONA KUTILGAN FARQ: HR o'sha xodimning BEVOSITA rahbari
+    #  bo'lsa. Eski mantiqda HR unga norma qo'ya OLMASDI (lavozim
+    #  «hr» demagan va xodim «yetim» emas) — bu ochiq xato edi:
+    #  `manager_id` HR ni ko'rsatib turibdi, lekin huquq yo'q.
+    #  Boshqa hech qanday farq BO'LMASLIGI shart.
+    kutilmagan = [f for f in farqlar if not (f[0] == "hr" and f[3] == 1)]
+    check("S-44: ⚠️ ESKI XATTI-HARAKAT BUZILMAGAN (kutilmagan farq yo'q)",
+          not kutilmagan, "=" + str(kutilmagan[:4]))
+    check("S-44: yagona farq — HR bevosita rahbar bo'lgan holat",
+          all(f[0] == "hr" and f[3] == 1 for f in farqlar) and len(farqlar) == 4,
+          "soni=" + str(len(farqlar)) + " " + str(farqlar[:2]))
+
+    #  ⚠️ ODDIY XODIM rahbar qilib qo'yilsa ham huquq OLMAYDI.
+    #  Bu tekshiruv S-44 ni yozayotganda topilgan xavf: ierarxiya
+    #  yolg'iz o'zi huquq berса, `manager_id` ni tahrirlash ruxsat
+    #  darajasini JIMGINA oshirardi.
+    xodim_rahbar = _SoxtaUser(1, Role.employee.value)
+    boysunuvchi = _SoxtaUser(2, Role.employee.value, manager_id=1)
+    check("S-44: ⚠️ oddiy xodim rahbar bo'lsa ham norma huquqi OLMAYDI",
+          can_manage_norms(xodim_rahbar, boysunuvchi, {1}) is False,
+          "=" + str(can_manage_norms(xodim_rahbar, boysunuvchi, {1})))
+
+    # ══ MEZON 1: IERARXIYANI BILADI ══
+    #  ROP -> o'rta rahbar -> xodim. ROP xodimga BEVOSITA rahbar EMAS.
+    rop = _SoxtaUser(10, Role.rop.value)
+    chuqur = _SoxtaUser(30, Role.employee.value, manager_id=20, position=_SoxtaPoz([]))
+    check("S-44: ⚠️ zanjirSIZ — ikki bo'g'in pastdagi xodim BEGONA (eski holat)",
+          can_manage_norms(rop, chuqur) is False,
+          "=" + str(can_manage_norms(rop, chuqur)))
+    check("S-44: ⚠️ ZANJIR bilan — ROP butun SHOXNI boshqaradi",
+          can_manage_norms(rop, chuqur, {20, 10}) is True,
+          "=" + str(can_manage_norms(rop, chuqur, {20, 10})))
+    begona_rop = _SoxtaUser(11, Role.rop.value)
+    check("S-44: BOSHQA jamoaning ROP i zanjirda yo'q -> huquq yo'q",
+          can_manage_norms(begona_rop, chuqur, {20, 10}) is False,
+          "=" + str(can_manage_norms(begona_rop, chuqur, {20, 10})))
+
+    # ══ ZANJIR HISOBI: HALQA VA CHUQURLIK ══
+    #  ⚠️ Bazada A->B->A bo'lsa (qo'lda tahrirlangan) zanjir bo'ylab
+    #  yurish CHEKSIZ aylanardi va Passenger'da konkurentlik = 1
+    #  bo'lgani uchun BUTUN sayt to'xtardi.
+    halqa = {1: 2, 2: 3, 3: 1}
+    z = H._chain_from_map(halqa, 1)
+    check("S-44: ⚠️ HALQA cheksiz aylanishga olib kelmadi", z == {2, 3, 1},
+          "=" + str(z))
+    uzun = {i: i + 1 for i in range(200)}
+    z2 = H._chain_from_map(uzun, 0)
+    check("S-44: juda uzun zanjir MAX_DEPTH da to'xtadi",
+          len(z2) == H.MAX_DEPTH, "=" + str(len(z2)))
+
+    # ══ YAGONA MANBA — NUSXA QOLMAGANINI TEKSHIRISH ══
+    #  ⚠️ AST emas, MATN bo'yicha: qoidaning eski shakli
+    #  (`manager_id == actor.id`) boshqa modullarda qayta paydo
+    #  bo'lmasin. Aynan shu takrorlanish S-44 ning sababi edi.
+    ildiz = Path(__file__).resolve().parent
+    nusxalar = []
+    for nisbiy in ("api/routers/norms.py", "api/deps.py", "api/routers/payroll.py"):
+        matn = (ildiz / nisbiy).read_text(encoding="utf-8")
+        for qator_no, qator in enumerate(matn.splitlines(), 1):
+            if "manager_id == actor.id" in qator and not qator.strip().startswith("#"):
+                nusxalar.append(f"{nisbiy}:{qator_no}")
+    check("S-44: ⚠️ eski qoida nusxasi QOLMADI (yagona manba)",
+          not nusxalar, "=" + str(nusxalar))
+
+    for nisbiy in ("api/routers/norms.py", "api/deps.py", "api/routers/payroll.py"):
+        matn = (ildiz / nisbiy).read_text(encoding="utf-8")
+        check(f"S-44: {nisbiy} yagona manbani ishlatadi",
+              "hierarchy" in matn, "=" + nisbiy)
+
+    # ══ MEZON 2: ARIZA ANIQ RAHBARGA ══
+    req = (ildiz / "api" / "routers" / "requests.py").read_text(encoding="utf-8")
+    check("S-44: ariza xabari BEVOSITA rahbarga boradi (TZ: aniq odamga)",
+          "user.manager_id" in req, "=requests.py")
+    check("S-44: ⚠️ qaror huquqi butun ZANJIRDA (rahbar ta'tilda bo'lsa muzlamasin)",
+          "chain_ids" in req, "=requests.py")
+
+    # ══ JONLI MA'LUMOT HOLATI ══
+    #  ⚠️ Bu tekshiruv EMAS, OGOHLANTIRISH. Ierarxiya to'ldirilmagan
+    #  bo'lsa S-44 ning butun foydasi kutib turadi.
+    conn = db()
+    cur = conn.cursor()
+    try:
+        jami_x = cur.execute(
+            "select count(*) from users where is_active=1 and role='employee'"
+        ).fetchone()[0]
+        rahbarli = cur.execute(
+            "select count(*) from users where is_active=1 and role='employee'"
+            " and manager_id is not null").fetchone()[0]
+        print(f"  [i]    ierarxiya to'ldirilishi: {rahbarli}/{jami_x} xodimda rahbar bor")
+        check("S-44: ierarxiya holati o'qildi", jami_x >= 0,
+              f"{rahbarli}/{jami_x}")
+    finally:
+        conn.close()
+
 def test_company_profile_ai() -> None:
     """S-43 (TZ 3.16) — kompaniya profili va AI javobi.
 
@@ -16814,6 +16992,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_hierarchy_authority()
+    except Exception:
+        print("S-44 ierarxiya testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

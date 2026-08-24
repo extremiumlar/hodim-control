@@ -27,7 +27,7 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.routers.norms import METRIC_LABELS, can_manage_norms, metrics_for
+from api.routers.norms import METRIC_LABELS, can_manage_norms_db, metrics_for
 from api.services import payroll as payroll_service
 from api.services import target_calc
 from db.models import ExcusedDay, ExcusedStatus, Norm, User
@@ -192,7 +192,7 @@ async def apply_suggestion(
         if not row["suggested_daily"]:
             continue
         target_user = await db.get(User, row["user_id"])
-        if target_user is None or not can_manage_norms(actor, target_user):
+        if target_user is None or not await can_manage_norms_db(db, actor, target_user):
             skipped += 1
             continue
         await _create_norm(db, actor, target_user, metric, row["suggested_daily"])

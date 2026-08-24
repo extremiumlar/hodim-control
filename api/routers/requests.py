@@ -630,8 +630,20 @@ async def _manager_decide(
     target = await db.get(User, item.user_id)
     if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Xodim topilmadi")
-    if actor.role not in (Role.boss.value, Role.dasturchi.value) and target.manager_id != actor.id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bu ariza sizning jamoangizdan emas")
+    #  ⚠️ IERARXIYA ZANJIRI (S-44), faqat BEVOSITA rahbar emas.
+    #  Ilgari bevosita rahbar ta'tilga chiqsa yoki ishdan bo'shasa,
+    #  ariza `pending` holatida MUZLAB qolardi: undan yuqoridagi
+    #  rahbar ham «begona» hisoblanardi. Xabar hamon BEVOSITA
+    #  rahbarga boradi (TZ: «aniq odamga»), lekin qaror qabul
+    #  qilish huquqi butun zanjirda.
+    from api.services import hierarchy as _h
+
+    if actor.role not in (Role.boss.value, Role.dasturchi.value):
+        zanjir = await _h.chain_ids(db, target.id)
+        if actor.id not in zanjir:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Bu ariza sizning jamoangizdan emas"
+            )
 
     item.manager_decided_by = actor.id
     item.manager_decided_at = datetime.utcnow()
