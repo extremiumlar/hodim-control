@@ -1127,9 +1127,15 @@ bayrog'i turibdi, modul tayyor bo'lgach shu nuqtadan ulanadi.
 4. **Buyruq yaratilgach tahrirlanmaydi** — bekor qilinadi va yangisi chiqariladi.
 
 **Qabul mezoni**
-- [ ] Raqam takrorlanmaydi (parallel test bilan)
-- [ ] Tahrirlash endpointi **yo'q**
-- [ ] Bekor qilish yangi yozuv yaratadi
+- [x] Raqam takrorlanmaydi — UNIQUE cheklov + qayta urinish;
+      8 ta parallel so'rov VA sun'iy poyga (band raqam) bilan
+      sinaldi. Poygaga umid qilmaydi: SQLite yozuvni ketma-ket
+      qilsa qayta urinish yo'li tekshirilmagan bo'lardi
+- [x] Tahrirlash endpointi **yo'q** — `PUT`/`PATCH`/`DELETE` 405,
+      servisda `update` yo'q, sahifada tugma yo'q (uchalasi test bilan)
+- [x] Bekor qilish yangi yozuv yaratadi — `cancellation` turida,
+      eskisiga havola bilan; eski buyruq o'chirilmaydi va matni
+      o'zgarmaydi
 
 ---
 
