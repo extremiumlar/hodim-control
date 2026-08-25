@@ -68,6 +68,7 @@ const MePlace = lazy(() => import("./pages/me/Place"));
 const MeCompany = lazy(() => import("./pages/me/Company"));
 const MeOnboarding = lazy(() => import("./pages/me/Onboarding"));
 const MeBriefings = lazy(() => import("./pages/me/Briefings"));
+const OrdersPage = lazy(() => import("./pages/Orders"));
 const OnboardingPage = lazy(() => import("./pages/Onboarding"));
 const MeInquiries = lazy(() => import("./pages/me/Inquiries"));
 const MeProfile = lazy(() => import("./pages/me/Profile"));
@@ -232,6 +233,7 @@ export default function App() {
           <Route path="me/company" element={<MeCompany />} />
           <Route path="me/onboarding" element={<MeOnboarding />} />
           <Route path="me/briefings" element={<MeBriefings />} />
+          <Route path="orders" element={<OrdersPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="attendance" element={<AttendanceRoute><Attendance /></AttendanceRoute>} />
           <Route path="offices" element={<ManagerRoute><Offices /></ManagerRoute>} />

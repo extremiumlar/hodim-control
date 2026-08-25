@@ -4077,3 +4077,105 @@ class SafetyBriefing(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# BUYRUQLAR REYESTRI (yangi TZ 3.21 / S-50)
+# ─────────────────────────────────────────────────────────────
+
+
+class OrderKind(str, enum.Enum):
+    """Buyruq turlari — kadr ishidagi rasmiy ro'yxat.
+
+    Ro'yxat YOPIQ: buyruq huquqiy hujjat va uning turi
+    reyestrda aniq nomlanishi kerak. HR o'z nomini yozsa,
+    «qaysi buyruqlar chiqarilgan?» degan savolga javob
+    berib bo'lmasdi."""
+
+    hire = "hire"  # ishga qabul
+    transfer = "transfer"  # boshqa lavozimga o'tkazish
+    leave = "leave"  # ta'til
+    dismissal = "dismissal"  # ishdan bo'shatish
+    reward = "reward"  # rag'batlantirish
+    discipline = "discipline"  # intizomiy jazo
+    salary_change = "salary_change"  # ish haqini o'zgartirish
+    cancellation = "cancellation"  # oldingi buyruqni bekor qilish
+
+
+ORDER_KIND_LABELS: dict[str, str] = {
+    OrderKind.hire.value: "Ishga qabul qilish",
+    OrderKind.transfer.value: "Boshqa lavozimga o'tkazish",
+    OrderKind.leave.value: "Ta'til berish",
+    OrderKind.dismissal.value: "Ishdan bo'shatish",
+    OrderKind.reward.value: "Rag'batlantirish",
+    OrderKind.discipline.value: "Intizomiy jazo",
+    OrderKind.salary_change.value: "Ish haqini o'zgartirish",
+    OrderKind.cancellation.value: "Buyruqni bekor qilish",
+}
+
+
+class OrderStatus(str, enum.Enum):
+    active = "active"
+    cancelled = "cancelled"
+
+
+class Order(Base):
+    """Kadr buyrug'i (yangi TZ 3.21 / S-50).
+
+    ═══════════════════════════════════════════════════════════
+    ⚠️ IKKI QAT'IY QOIDA
+    ═══════════════════════════════════════════════════════════
+    1. RAQAM TIZIM TOMONIDAN BERILADI VA TAKRORLANMAYDI.
+       Buyruq raqami huquqiy rekvizit: ikkita buyruq bir xil
+       raqam bilan chiqsa, qaysi biri haqiqiy ekani noma'lum
+       bo'ladi va tekshiruvda bu jiddiy kamchilik. Himoya IKKI
+       QATLAMLI:
+         • `number` ustunida UNIQUE cheklov (baza darajasida);
+         • `orders.next_number` da qayta urinish (parallel
+           so'rovda ikkovi bir xil raqamni hisoblab qolsa,
+           ikkinchisi `IntegrityError` oladi va keyingi
+           raqamni oladi).
+       Faqat koddagi «max + 1» yetarli EMAS: ikki so'rov bir
+       vaqtda kelsa ikkalasi ham bir xil sonni ko'radi.
+
+    2. BUYRUQ TAHRIRLANMAYDI. Chiqarilgan buyruq — imzolangan
+       hujjat. Xato bo'lsa u BEKOR QILINADI va yangisi
+       chiqariladi; tahrirlash endpointi ATAYLAB yozilmaydi
+       (S-39 dagi yo'riqnoma qoidasi bilan bir xil sabab).
+       Bekor qilish ham YANGI BUYRUQ yaratadi
+       (`kind="cancellation"`, `cancels_order_id` bilan) —
+       kadr ishida aynan shunday: bekor qilish ham buyruq
+       bilan rasmiylashtiriladi.
+    """
+
+    __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint("number", name="uq_orders_number"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #  «2026-001» ko'rinishida — yil + ketma-ket raqam.
+    number: Mapped[str] = mapped_column(String(20), index=True)
+    kind: Mapped[str] = mapped_column(String(20), index=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    order_date: Mapped[date] = mapped_column(Date, index=True)
+    #  Turga xos maydonlar: lavozim, summa, sana oralig'i va h.k.
+    #  Alohida ustunlar qilinsa har yangi tur uchun migratsiya
+    #  kerak bo'lardi va ustunlarning ko'pi bo'sh turardi.
+    params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #  ⚠️ FAYL SERVERDA SAQLANMAYDI — faqat Telegram `file_id`
+    #  (loyiha naqshi, disk kvotasi 1 GB).
+    file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(12), default=OrderStatus.active.value, index=True
+    )
+    #  Bekor qilingan buyruqqa havola (faqat `cancellation` turida).
+    cancels_order_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

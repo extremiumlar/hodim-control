@@ -13503,6 +13503,314 @@ class _SoxtaUser:
 
 
 
+
+def test_orders_registry() -> None:
+    """S-50 (TZ 3.21) — buyruqlar reyestri: model va raqamlash.
+
+    Qabul mezonlari (TZ):
+      • raqam TAKRORLANMAYDI (PARALLEL test bilan);
+      • TAHRIRLASH endpointi YO\'Q;
+      • BEKOR QILISH yangi yozuv yaratadi.
+    """
+    import concurrent.futures as _fut
+    import httpx
+
+    print(chr(10) + "=" * 60)
+    print("S-50: BUYRUQLAR REYESTRI")
+    print("=" * 60)
+
+    mgr = find_manager_id()
+    if not mgr:
+        check("rahbar topildi", False, "hr/boss/dasturchi yo'q")
+        return
+    mgr_t = token_for(mgr[0], mgr[1])
+
+    conn = db()
+    cur = conn.cursor()
+    ids: dict[str, int] = {}
+
+    def tozala():
+        cur.execute(
+            "delete from orders where note like 'T-Bq%' or user_id in"
+            " (select id from users where full_name like 'T-Bq%')")
+        cur.execute("delete from users where full_name like 'T-Bq%'")
+        conn.commit()
+
+    try:
+        tozala()
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started,"
+            " is_active, created_at) values (999705001,'T-Bq Xodim','employee',"
+            "0,1,datetime('now'))")
+        ids["xodim"] = cur.lastrowid
+        cur.execute(
+            "insert into users (telegram_id, full_name, role, bot_started,"
+            " is_active, created_at) values (999705002,'T-Bq Begona','employee',"
+            "0,1,datetime('now'))")
+        ids["begona"] = cur.lastrowid
+        conn.commit()
+        xodim_t = token_for(ids["xodim"], "employee")
+        begona_t = token_for(ids["begona"], "employee")
+
+        with httpx.Client(base_url=API_BASE, timeout=30) as c:
+            r = c.get("/orders/kinds", headers=auth(mgr_t))
+            check("S-50: turlar ro'yxati -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-50: sakkizta tur bor (7 kadr + bekor qilish)",
+                  len(r.json()) == 8, "=" + str(len(r.json())))
+
+            # ══ RAQAM TIZIM TOMONIDAN BERILADI ══
+            r = c.post("/orders", headers=auth(mgr_t), json={
+                "kind": "hire", "order_date": "2026-08-24",
+                "user_id": ids["xodim"], "note": "T-Bq birinchi",
+                "params": {"lavozim": "Sotuvchi"}})
+            check("S-50: buyruq chiqarildi -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:110])
+            birinchi = r.json() if r.status_code == 201 else {}
+            ids["birinchi"] = birinchi.get("id")
+            check("S-50: raqam TIZIM tomonidan berildi (2026-NNN)",
+                  str(birinchi.get("number", "")).startswith("2026-"),
+                  "=" + str(birinchi.get("number")))
+            check("S-50: turga nom berildi",
+                  birinchi.get("kind_label") == "Ishga qabul qilish",
+                  "=" + str(birinchi.get("kind_label")))
+            check("S-50: parametrlar saqlandi",
+                  (birinchi.get("params") or {}).get("lavozim") == "Sotuvchi",
+                  "=" + str(birinchi.get("params")))
+
+            #  ⚠️ Raqamni QO'LDA berib bo'lmaydi — so'rovda bunday
+            #  maydon umuman qabul qilinmaydi.
+            r = c.post("/orders", headers=auth(mgr_t), json={
+                "kind": "leave", "order_date": "2026-08-24",
+                "number": "2026-999", "note": "T-Bq qo'lda raqam"})
+            qoyilgan = r.json().get("number") if r.status_code == 201 else None
+            check("S-50: ⚠️ so'rovdagi raqam E'TIBORGA OLINMADI",
+                  qoyilgan != "2026-999", "=" + str(qoyilgan))
+
+            # ══ MEZON 1: PARALLEL SO'ROVDA RAQAM TAKRORLANMAYDI ══
+            #  ⚠️ TZ aynan PARALLEL testni talab qiladi. Oddiy
+            #  «max + 1» ikki so'rov bir vaqtda kelganda BIR XIL
+            #  sonni ko'radi — buni ketma-ket test UMUMAN
+            #  ushlamaydi.
+            def _yarat(i):
+                with httpx.Client(base_url=API_BASE, timeout=60) as cc:
+                    rr = cc.post("/orders", headers=auth(mgr_t), json={
+                        "kind": "reward", "order_date": "2026-08-24",
+                        "note": f"T-Bq parallel {i}"})
+                    return rr.status_code, (rr.json().get("number")
+                                            if rr.status_code == 201 else rr.text[:60])
+
+            PARALLEL = 8
+            with _fut.ThreadPoolExecutor(max_workers=PARALLEL) as ex:
+                natijalar = list(ex.map(_yarat, range(PARALLEL)))
+
+            kodlar = [n[0] for n in natijalar]
+            raqamlar = [n[1] for n in natijalar if n[0] == 201]
+            check(f"S-50: {PARALLEL} ta PARALLEL so'rov bajarildi",
+                  all(k == 201 for k in kodlar),
+                  "=" + str([n for n in natijalar if n[0] != 201][:3]))
+            check("S-50: ⚠️ PARALLEL so'rovda RAQAM TAKRORLANMADI",
+                  len(raqamlar) == len(set(raqamlar)),
+                  "soni=" + str(len(raqamlar)) + " noyob=" + str(len(set(raqamlar)))
+                  + " " + str(sorted(raqamlar)))
+
+            #  Bazada ham dublikat yo'q.
+            dublikat = cur.execute(
+                "select number, count(*) c from orders group by number"
+                " having c > 1").fetchall()
+            check("S-50: ⚠️ BAZADA dublikat raqam YO'Q", not dublikat,
+                  "=" + str(dublikat))
+
+            #  Raqamlar KETMA-KET (bo'shliqsiz) bo'lishi shart emas,
+            #  lekin hammasi shu yilga tegishli bo'lishi kerak.
+            check("S-50: barcha raqam shu yilga tegishli",
+                  all(str(n).startswith("2026-") for n in raqamlar),
+                  "=" + str(sorted(raqamlar)[:4]))
+
+            # ══ QAYTA URINISH YO'LINI ANIQ SINASH ══
+            #  ⚠️ Yuqoridagi parallel test POYGA sodir bo'lishiga
+            #  umid qiladi, lekin SQLite yozuvlarni ketma-ket
+            #  qilishi mumkin — u holda qayta urinish yo'li UMUMAN
+            #  bajarilmaydi va test uni tekshirmagan bo'ladi.
+            #  Shuning uchun poygani SUN'IY yaratamiz: raqam
+            #  hisoblagichni BAND raqamni qaytaradigan qilib
+            #  qo'yamiz va kod nima qilishini ko'ramiz.
+            import asyncio as _aio
+
+            from api.services import orders as _osvc
+            from db.base import async_session as _sess
+
+            band = cur.execute(
+                "select number from orders order by id limit 1").fetchone()[0]
+            asl_next = _osvc._next_seq
+            urinishlar = {"soni": 0}
+
+            async def _band_keyin_bosh(db_, year):
+                """Birinchi marta BAND raqamni, keyin haqiqiysini beradi."""
+                urinishlar["soni"] += 1
+                if urinishlar["soni"] == 1:
+                    return int(band.split("-")[1])
+                return await asl_next(db_, year)
+
+            _osvc._next_seq = _band_keyin_bosh
+            try:
+                async def _yarat():
+                    async with _sess() as s2:
+                        return await _osvc.create(
+                            s2, kind="leave", order_date=date(2026, 8, 24),
+                            note="T-Bq qayta urinish")
+
+                natija = _aio.run(_yarat())
+            finally:
+                _osvc._next_seq = asl_next
+
+            check("S-50: ⚠️ BAND raqamda kod QAYTA URINDI va o'tdi",
+                  urinishlar["soni"] >= 2 and natija.number != band,
+                  "urinish=" + str(urinishlar["soni"]) + " raqam=" + str(natija.number))
+            check("S-50: qayta urinishdan keyin ham dublikat YO'Q",
+                  not cur.execute(
+                      "select number from orders group by number"
+                      " having count(*) > 1").fetchall(),
+                  "=toza")
+
+            #  ⚠️ Agar raqam DOIM band bo'lsa — tushunarli xato,
+            #  `IntegrityError` bilan 500 EMAS.
+            _osvc._next_seq = lambda db_, year: _aio.sleep(0, int(band.split("-")[1]))
+            try:
+                async def _doim_band():
+                    async with _sess() as s3:
+                        return await _osvc.create(
+                            s3, kind="leave", order_date=date(2026, 8, 24),
+                            note="T-Bq doim band")
+
+                xato = None
+                try:
+                    _aio.run(_doim_band())
+                except ValueError as e:
+                    xato = str(e)
+                except Exception as e:  # noqa: BLE001
+                    xato = "NOTO'G'RI XATO TURI: " + type(e).__name__
+            finally:
+                _osvc._next_seq = asl_next
+            check("S-50: ⚠️ raqam doim band bo'lsa TUSHUNARLI xato (500 emas)",
+                  xato is not None and "urinishda" in xato, "=" + str(xato)[:90])
+
+            # ══ MEZON 2: TAHRIRLASH ENDPOINTI YO'Q ══
+            for usul in ("PUT", "PATCH"):
+                r = c.request(usul, f"/orders/{ids['birinchi']}",
+                              headers=auth(mgr_t), json={"note": "T-Bq tahrir"})
+                check(f"S-50: ⚠️ {usul} /orders/{{id}} YO'Q -> 405",
+                      r.status_code == 405, "kod=" + str(r.status_code))
+            r = c.delete(f"/orders/{ids['birinchi']}", headers=auth(mgr_t))
+            check("S-50: ⚠️ DELETE ham YO'Q -> 405", r.status_code == 405,
+                  "kod=" + str(r.status_code))
+
+            #  Kodda ham `update` funksiyasi bo'lmasligi kerak.
+            manba = (Path(__file__).resolve().parent / "api" / "services"
+                     / "orders.py").read_text(encoding="utf-8")
+            check("S-50: servisda `update` funksiyasi YO'Q",
+                  "async def update" not in manba, "=api/services/orders.py")
+
+            # ══ MEZON 3: BEKOR QILISH YANGI YOZUV YARATADI ══
+            oldin = cur.execute("select count(*) from orders").fetchone()[0]
+            r = c.post(f"/orders/{ids['birinchi']}/cancel", headers=auth(mgr_t),
+                       json={"reason": "T-Bq xato kiritilgan"})
+            check("S-50: bekor qilish -> 201", r.status_code == 201,
+                  "kod=" + str(r.status_code) + r.text[:110])
+            bekor = r.json() if r.status_code == 201 else {}
+            keyin = cur.execute("select count(*) from orders").fetchone()[0]
+            check("S-50: ⚠️ BEKOR QILISH YANGI YOZUV yaratdi",
+                  keyin == oldin + 1, "=" + str((oldin, keyin)))
+            check("S-50: yangi yozuv «bekor qilish» turida",
+                  bekor.get("kind") == "cancellation", "=" + str(bekor.get("kind")))
+            check("S-50: yangi yozuv ESKISIGA havola qiladi",
+                  bekor.get("cancels_order_id") == ids["birinchi"],
+                  "=" + str(bekor.get("cancels_order_id")))
+            check("S-50: bekor qilish sababi saqlandi",
+                  bekor.get("cancel_reason") == "T-Bq xato kiritilgan",
+                  "=" + str(bekor.get("cancel_reason")))
+            check("S-50: bekor qiluvchi buyruqning O'Z raqami bor",
+                  bekor.get("number") and bekor["number"] != birinchi["number"],
+                  "=" + str((birinchi.get("number"), bekor.get("number"))))
+
+            #  ⚠️ ESKI BUYRUQ O'CHIRILMAYDI va matni o'zgarmaydi.
+            eski = cur.execute(
+                "select status, note, params from orders where id=?",
+                (ids["birinchi"],)).fetchone()
+            check("S-50: ⚠️ eski buyruq O'CHIRILMADI, holati `cancelled`",
+                  eski is not None and eski[0] == "cancelled", "=" + str(eski))
+            check("S-50: ⚠️ eski buyruq MATNI o'zgarmadi",
+                  eski is not None and eski[1] == "T-Bq birinchi", "=" + str(eski[1]))
+
+            #  Ikki marta bekor qilib bo'lmaydi.
+            r = c.post(f"/orders/{ids['birinchi']}/cancel", headers=auth(mgr_t),
+                       json={"reason": "T-Bq ikkinchi"})
+            check("S-50: ikki marta bekor qilish -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+            #  Sababsiz bekor qilib bo'lmaydi.
+            r = c.post("/orders", headers=auth(mgr_t), json={
+                "kind": "leave", "order_date": "2026-08-24", "note": "T-Bq sababsiz"})
+            yangi_id = r.json().get("id")
+            r = c.post(f"/orders/{yangi_id}/cancel", headers=auth(mgr_t),
+                       json={"reason": "   "})
+            check("S-50: sababsiz bekor qilish -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            #  Bekor qilish buyrug'ini TO'G'RIDAN-TO'G'RI yaratib bo'lmaydi.
+            r = c.post("/orders", headers=auth(mgr_t), json={
+                "kind": "cancellation", "order_date": "2026-08-24",
+                "note": "T-Bq to'g'ridan"})
+            check("S-50: ⚠️ «bekor qilish» turini to'g'ridan yaratib bo'lmaydi"
+                  " -> 400", r.status_code == 400, "kod=" + str(r.status_code))
+
+            # ══ KO'RINISH CHEGARASI ══
+            r = c.get("/orders/me", headers=auth(xodim_t))
+            meniki = r.json() if r.status_code == 200 else []
+            check("S-50: xodim O'Z buyruqlarini ko'radi", len(meniki) >= 1,
+                  "=" + str(len(meniki)))
+            check("S-50: hammasi AYNAN o'ziniki",
+                  all(o["user_id"] == ids["xodim"] for o in meniki),
+                  "=" + str([o["user_id"] for o in meniki]))
+
+            r = c.get(f"/orders/{ids['birinchi']}", headers=auth(begona_t))
+            check("S-50: ⚠️ BEGONA buyruq -> 404 (403 emas)",
+                  r.status_code == 404, "kod=" + str(r.status_code))
+            r = c.get("/orders", headers=auth(xodim_t))
+            check("S-50: xodim REYESTRGA kira olmaydi -> 403",
+                  r.status_code == 403, "kod=" + str(r.status_code))
+
+            #  Noma'lum tur rad etiladi.
+            r = c.post("/orders", headers=auth(mgr_t), json={
+                "kind": "raqs", "order_date": "2026-08-24"})
+            check("S-50: noma'lum tur -> 400", r.status_code == 400,
+                  "kod=" + str(r.status_code))
+
+            #  ⚠️ Sahifada TAHRIRLASH tugmasi bo'lmasligi kerak —
+            #  backendda endpoint yo'q, mijozda tugma bo'lsa u
+            #  ishlamas edi va foydalanuvchini chalg'itardi.
+            sahifa = (Path(__file__).resolve().parent / "web" / "src"
+                      / "pages" / "Orders.tsx").read_text(encoding="utf-8")
+            check("S-50: sahifada tahrirlash mutatsiyasi YO'Q",
+                  "useUpdateOrder" not in sahifa and "updateOrder" not in sahifa,
+                  "=Orders.tsx")
+
+            r = c.get("/orders/stats", headers=auth(mgr_t))
+            check("S-50: yig'ma -> 200", r.status_code == 200,
+                  "kod=" + str(r.status_code))
+            check("S-50: yig'mada tur bo'yicha sanoq bor",
+                  "hire" in (r.json().get("by_kind") or {}),
+                  "=" + str(list((r.json().get("by_kind") or {}).keys())))
+
+    except Exception:
+        check("S-50 (umumiy)", False, traceback.format_exc(limit=3).strip())
+    finally:
+        try:
+            cur.execute("delete from orders where note like 'T-Bq%'")
+            tozala()
+        except Exception:
+            print("S-50 tozalash xatosi:" + chr(10) + traceback.format_exc())
+        conn.close()
+
 def test_briefing_report() -> None:
     """S-49 (TZ 3.6) — instruktaj hisoboti va muddat.
 
@@ -18344,6 +18652,12 @@ def main() -> None:
         test_org_employee_side()
     except Exception:
         print("S-41 «Mening o'rnim» testida kutilmagan xato:" + chr(10)
+              + traceback.format_exc())
+
+    try:
+        test_orders_registry()
+    except Exception:
+        print("S-50 buyruqlar testida kutilmagan xato:" + chr(10)
               + traceback.format_exc())
 
     try:

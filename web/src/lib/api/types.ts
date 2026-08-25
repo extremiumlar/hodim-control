@@ -2004,6 +2004,23 @@ export type OrgMyPlace = {
   } | null;
 };
 
+export type OrderRow = {
+  id: number;
+  number: string;
+  kind: string;
+  kind_label: string;
+  user_id: number | null;
+  full_name: string | null;
+  order_date: string;
+  params: Record<string, unknown>;
+  file_id: string | null;
+  status: "active" | "cancelled";
+  cancels_order_id: number | null;
+  cancel_reason: string | null;
+  note: string | null;
+  created_at: string;
+};
+
 export type MyBriefing = {
   id: number;
   kind: string;

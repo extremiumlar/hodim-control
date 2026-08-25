@@ -172,6 +172,10 @@ _MANAGER: list[Section] = [
     #  bir xil qamrov: bu ham mehnat muhofazasi hujjati.
     Section("briefings", "Instruktaj jurnali", "/briefings", "HardHat", 164,
             "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
+    #  Buyruqlar reyestri (TZ 3.21 / S-50) — kadr hujjatlari bilan
+    #  bir xil qamrov: buyruqda ish haqi va intizomiy jazo bo'ladi.
+    Section("orders", "Buyruqlar", "/orders", "FileText", 165,
+            "manager", "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("probation", "Sinov muddati", "/probation", "UserCheck", 163, "manager",
             "Ma'muriyat", visible=lambda c: c.can_view_hr_docs),
     Section("profile-changes", "Ma'lumot so'rovlari", "/profile-changes", "PencilLine",

@@ -25,6 +25,7 @@ import type {
   OrgChart,
   CompanyCard,
   MyBriefing,
+  OrderRow,
   OnboardingPlan,
   OnboardingTemplate,
   InstructionAckOverview,
@@ -1347,6 +1348,12 @@ export const api = {
     apiFetch<OnboardingTemplate[]>("/onboarding/templates"),
   myOnboarding: () => apiFetch<OnboardingPlan | null>("/onboarding/me"),
   myBriefings: () => apiFetch<MyBriefing[]>("/briefings/me"),
+  orders: () => apiFetch<OrderRow[]>("/orders"),
+  cancelOrder: (id: number, reason: string) =>
+    apiFetch<OrderRow>(`/orders/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
   briefingAck: (id: number) =>
     apiFetch<{ ok: boolean }>(`/briefings/me/${id}/ack`, { method: "POST" }),
   onboardingItemDone: (id: number, note?: string) =>

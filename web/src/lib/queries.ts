@@ -1702,6 +1702,17 @@ export const useOnboardingTemplates = () =>
     queryFn: api.onboardingTemplates,
   });
 
+export const useOrders = () =>
+  useQuery({ queryKey: ["orders"], queryFn: api.orders });
+
+/** ⚠️ Tahrirlash mutatsiyasi ATAYLAB yo'q — buyruq tahrirlanmaydi. */
+export const useCancelOrder = () =>
+  useApiMutation(
+    (vars: { id: number; reason: string }) =>
+      api.cancelOrder(vars.id, vars.reason),
+    [["orders"]]
+  );
+
 export const useMyBriefings = () =>
   useQuery({ queryKey: ["briefings", "me"], queryFn: api.myBriefings });
 
